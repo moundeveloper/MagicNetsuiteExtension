@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Magic Netsuite",
+  "version": "1.0",
+  "description": "Press a keyboard shortcut to open the extension UI in a full tab.",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "dist/vue-ui/index.html"
+  },
+  "host_permissions": ["<all_urls>"],
+  "commands": {
+    "open-extension-ui": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
+      },
+      "description": "Open the extension UI in a tab"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "scripts.js",
+        "netsuiteApi.js",
+        "content.js",
+        "customRecords.js",
+        "sandboxCode.js"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "sidePanel",
+    "scripting",
+    "clipboardWrite",
+    "tabs",
+    "webRequest",
+    "storage",
+    "activeTab",
+    "downloads"
+  ]
+}
