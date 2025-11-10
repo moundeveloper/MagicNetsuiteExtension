@@ -63,8 +63,9 @@ const getDeployedScripts = async () => {
       name: `${s.scriptName} | ${s.scriptType}`,
       content: s.scriptFile,
     }));
-  } catch (e) {
-    console.error("Error fetching deployed scripts:", e);
+  } catch (error) {
+    console.error("Error fetching deployed scripts:", error);
+    loading.value = false;
   } finally {
     loading.value = false;
   }

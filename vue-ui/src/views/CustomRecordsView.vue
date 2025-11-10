@@ -71,7 +71,7 @@ onMounted(async () => {
 
 <template>
   <div class="wraper">
-    <h1>Custom Records</h1>
+    <h1>::CUSTOM-RECORDS</h1>
     <DataTable
       v-model:filters="filters"
       :value="records"

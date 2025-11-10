@@ -1,6 +1,6 @@
 <template>
   <div class="wraper">
-    <h1>Request Script</h1>
+    <h1>::REQUEST-SCRIPT</h1>
 
     <Splitter class="flex-1">
       <SplitterPanel
@@ -30,7 +30,7 @@
                   class="text-gray-500 hover:text-red-500 text-xs"
                   @click.stop="closeTab(index)"
                 >
-                  <i class="pi pi-times"></i>
+                  x
                 </button>
               </div>
             </Tab>

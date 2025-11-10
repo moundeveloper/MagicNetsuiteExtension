@@ -74,7 +74,7 @@ onMounted(async () => {
 
 <template>
   <div class="wraper">
-    <h1>Scripts</h1>
+    <h1>::SCRIPTS</h1>
 
     <DataTable
       v-model:filters="filters"

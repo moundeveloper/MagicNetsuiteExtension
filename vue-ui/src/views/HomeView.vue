@@ -23,7 +23,7 @@ const goTo = (route: string) => {
 
 <template>
   <div class="wraper">
-    <h1>FEATURES</h1>
+    <h1>::FEATURES</h1>
     <div class="home-grid">
       <Card
         v-for="feature in features"
@@ -65,17 +65,17 @@ const goTo = (route: string) => {
 .feature-card {
   cursor: pointer;
   text-align: center;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: box-shadow 0.2s, background-color 0.2s;
 }
 
 .feature-card:hover {
-  transform: translateY(-4px);
+  background-color: var(--p-slate-300) !important;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
 }
 
 .feature-icon i {
   font-size: 2rem;
-  color: var(--primary-color);
+  color: var(--text-color-secondary);
 }
 
 .feature-name {

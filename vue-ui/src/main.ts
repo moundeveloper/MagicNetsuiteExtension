@@ -9,6 +9,7 @@ import { definePreset } from "@primeuix/themes";
 import { router } from "./router";
 import { basicSetup } from "codemirror";
 import VueCodemirror from "vue-codemirror";
+import { createPinia } from "pinia";
 
 const auraPreset = definePreset(Aura, {
   semantic: {
@@ -75,6 +76,8 @@ app.use(PrimeVue, {
     },
   },
 });
+
+app.use(createPinia());
 
 app.use(VueCodemirror, {
   // optional default global options

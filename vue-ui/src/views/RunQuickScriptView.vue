@@ -1,6 +1,6 @@
 <template>
   <div class="wraper">
-    <h1>Run Quick Script</h1>
+    <h1>::RUN-QUICK-SCRIPT</h1>
     <Button @click="runCode"> Run </Button>
 
     <vue-splitter is-horizontal class="flex-1 max-h-[76vh]">

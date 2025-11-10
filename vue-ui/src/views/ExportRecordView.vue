@@ -1,189 +1,193 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
-import InputGroup from "primevue/inputgroup";
-import InputGroupAddon from "primevue/inputgroupaddon";
-import InputText from "primevue/inputtext";
-import { FilterMatchMode } from "@primevue/core/api";
+import { Button, Checkbox } from "primevue";
+import TagSelector from "../components/TagSelector.vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { ProgressSpinner } from "primevue";
 
-interface RecordItem {
-  internalid: number;
-  name: string;
-  scriptid: string;
-  description: string;
-  owner: string;
-}
-
-const records = ref<RecordItem[]>();
 const loading = ref(false);
-const filters = ref({
-  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  internalid: { value: null, matchMode: FilterMatchMode.EQUALS },
-  name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  scriptid: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  description: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-});
 
-// Row click handler
-const onRowClick = (event: any) => {
-  const record: RecordItem = event.data;
-  console.log("Row clicked:", record);
-  getCustomRecordUrl(record.internalid);
-};
+// Example tag data
+const availableTags = [
+  { id: 1, label: "Web Development" },
+  { id: 2, label: "API Development" },
+  { id: 3, label: "Cloud Computing" },
+  { id: 4, label: "UX Design" },
+  { id: 5, label: "Team Management" },
+  { id: 6, label: "Quality Assurance" },
+  { id: 7, label: "Data Analysis" },
+  { id: 8, label: "Cybersecurity" },
+  { id: 9, label: "Networking" },
+  { id: 10, label: "Database Administration" },
+];
 
-const getCustomRecords = async () => {
-  const response = await callApi(RequestRoutes.CUSTOM_RECORDS);
-  if (!response) return;
-  const { message: customRecords } = response as ApiResponse;
+// Tag groups (each independent)
+const whitelist = ref<{ id: string | number; label: string }[]>([]);
+const blacklist = ref<{ id: string | number; label: string }[]>([]);
+const sublistWhitelist = ref<{ id: string | number; label: string }[]>([]);
+const sublistBlacklist = ref<{ id: string | number; label: string }[]>([]);
 
-  if (!customRecords || !Array.isArray(customRecords)) return;
-
-  records.value = customRecords.map((record: any) => ({
-    internalid: record.internalid,
-    name: record.name,
-    scriptid: record.scriptid,
-    description: record.description,
-    owner: record.owner,
-  }));
-};
+// Export options
+const exportConfig = ref<string[]>(["FieldID", "Text"]);
 
 const getCustomRecordUrl = async (recordId: number) => {
-  const response = await callApi(RequestRoutes.CUSTOM_RECORD_URL, {
-    recordId,
-  });
+  const response = await callApi(RequestRoutes.CUSTOM_RECORD_URL, { recordId });
   if (!response) return;
   const { message: url } = response as ApiResponse;
-
   window.open(url, "_blank");
+};
+
+const exportRecord = () => {
+  console.log("Export with config:", exportConfig.value);
+  const data = {
+    name: "Alice",
+    age: 30,
+    tags: ["vue", "javascript", "frontend"],
+  };
+
+  // Convert to JSON string
+  const jsonString = JSON.stringify(data, null, 2);
+
+  // Create a Blob (file-like object)
+  const blob = new Blob([jsonString], { type: "application/json" });
+
+  // Create a temporary download link
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "record.json";
+  link.click();
+
+  // Cleanup
+  URL.revokeObjectURL(url);
 };
 
 onMounted(async () => {
   loading.value = true;
-  await getCustomRecords();
   loading.value = false;
 });
 </script>
 
 <template>
-  <div class="wraper">
-    <h1>Custom Records</h1>
-    <DataTable
-      v-model:filters="filters"
-      :value="records"
-      filterDisplay="row"
-      dataKey="internalid"
-      :loading="loading"
-      :globalFilterFields="[
-        'internalid',
-        'name',
-        'scriptid',
-        'description',
-        'owner',
-      ]"
-      scrollable
-      scrollHeight="flex"
-      :virtualScrollerOptions="{ itemSize: 44 }"
-      class="p-datatable-gridlines table-custom"
-      @row-click="onRowClick"
-    >
-      <!-- Global Search using InputGroup -->
-      <template #header>
-        <div class="flex justify-end">
-          <InputGroup style="max-width: 300px">
-            <InputGroupAddon>
-              <i class="pi pi-search"></i>
-            </InputGroupAddon>
-            <InputText
-              v-model="filters['global'].value"
-              placeholder="Keyword Search"
-            />
-          </InputGroup>
+  <div class="wrapper">
+    <header class="flex justify-between items-center mb-4">
+      <h1 class="text-2xl font-semibold tracking-wide text-slate-700">
+        ::EXPORT-RECORD
+      </h1>
+      <Button
+        label="Export"
+        icon="pi pi-download"
+        class="bg-[var(--p-slate-500)] text-white hover:opacity-90 transition w-fit"
+        @click="exportRecord"
+      />
+    </header>
+
+    <!-- Export Config Section -->
+    <section class="card-section">
+      <h2 class="section-title">Include Fields</h2>
+      <div class="flex flex-wrap gap-4">
+        <div
+          v-for="(option, idx) in ['FieldID', 'FieldName', 'Text', 'Value']"
+          :key="idx"
+          class="flex items-center gap-2"
+        >
+          <Checkbox
+            v-model="exportConfig"
+            :inputId="`config-${idx}`"
+            :value="option"
+          />
+          <label
+            :for="`config-${idx}`"
+            class="text-sm font-medium text-slate-700"
+          >
+            {{ option }}
+          </label>
         </div>
-      </template>
+      </div>
+    </section>
 
-      <!-- Columns -->
-      <Column field="internalid" header="Internal ID" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            type="number"
-            @input="filterCallback()"
-            placeholder="Search by ID"
-          />
-        </template>
-      </Column>
+    <!-- Tag Filters -->
+    <section class="tag-sections">
+      <div class="tag-card">
+        <h2 class="section-title">Field Whitelist</h2>
+        <TagSelector
+          v-model="whitelist"
+          :availableTags="availableTags"
+          :tagName="'Whitelist'"
+        />
+      </div>
 
-      <Column field="name" header="Name" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by name"
-          />
-        </template>
-      </Column>
+      <div class="tag-card">
+        <h2 class="section-title">Field Blacklist</h2>
+        <TagSelector
+          v-model="blacklist"
+          :availableTags="availableTags"
+          :tagName="'Blacklist'"
+        />
+      </div>
 
-      <Column field="scriptid" header="Script ID" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Script ID"
-          />
-        </template>
-      </Column>
+      <div class="tag-card">
+        <h2 class="section-title">Sublist Field Whitelist</h2>
+        <TagSelector
+          v-model="sublistWhitelist"
+          :availableTags="availableTags"
+          :tagName="'Whitelist'"
+        />
+      </div>
 
-      <Column field="description" header="Description" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Description"
-          />
-        </template>
-      </Column>
-
-      <Column field="owner" header="Owner" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Owner"
-          />
-        </template>
-      </Column>
-
-      <template #loading>
-        <div class="flex justify-center">
-          <ProgressSpinner />
-        </div>
-      </template>
-
-      <template #empty>No records found.</template>
-    </DataTable>
+      <div class="tag-card">
+        <h2 class="section-title">Sublist Field Blacklist</h2>
+        <TagSelector
+          v-model="sublistBlacklist"
+          :availableTags="availableTags"
+          :tagName="'Blacklist'"
+        />
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.wraper {
+.wrapper {
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  background: #f8fafc;
+  overflow-y: auto;
+}
+
+.card-section {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 1rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
   display: flex;
   flex-direction: column;
   gap: 1rem;
 }
 
-h1 {
-  margin-bottom: 1.5rem;
+.section-title {
+  font-size: 1.1rem;
   font-weight: 600;
-  color: var(--text-color);
+  color: #1e293b;
 }
 
-.table-custom {
-  flex: 1;
+.tag-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.tag-card {
+  background: white;
+  padding: 1.25rem;
+  border-radius: 1rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 </style>

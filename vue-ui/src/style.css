@@ -8,6 +8,9 @@
   line-height: 1.5;
   font-weight: 400;
   font-size: 14px;
+
+  --primary-color: var(--p-slate-500);
+  --secondary-color: var(--p-slate-500);
 }
 
 * {
@@ -21,7 +24,6 @@ a {
 }
 
 h1 {
-  font-size: 1.2em;
 }
 
 body,
