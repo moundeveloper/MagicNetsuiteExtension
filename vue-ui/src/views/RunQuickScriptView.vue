@@ -3,8 +3,15 @@
     <h1>::RUN-QUICK-SCRIPT</h1>
     <Button @click="runCode"> Run </Button>
 
-    <vue-splitter is-horizontal class="flex-1 max-h-[76vh]">
-      <template #top-pane> <CodeEditor v-model:model-value="code" /> </template>
+    <vue-splitter is-horizontal class="flex-1 max-h-[74.69vh]">
+      <template #top-pane>
+        <MonacoCodeEditor
+          ref="editorRef"
+          v-model="code"
+          :readonly="false"
+          :completion-items="completionItems"
+        />
+      </template>
       <template #bottom-pane>
         <TerminalLogs :logs="logs" @command="handleCommand" />
       </template>
@@ -14,13 +21,13 @@
 
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import CodeEditor from "../components/CodeEditor.vue";
 import { callApi } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
-import { terminalResponse, defaultCode } from "../utils/temp";
+import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
+import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -31,6 +38,40 @@ const codeEditorElement = ref<HTMLDivElement | null>(null);
 const panelHeight = ref(0);
 const logs = ref<Log[]>([]);
 const code = ref<string>(defaultCode);
+
+const completionItems = ref([
+  {
+    label: "myCustomFunction",
+    kind: "Function",
+    insertText: "myCustomFunction(${1:param})",
+    snippet: true,
+    documentation: "This is my custom function with autocomplete",
+    detail: "(param: string) => void",
+  },
+  {
+    label: "myVariable",
+    kind: "Variable",
+    insertText: "myVariable",
+    documentation: "A custom variable",
+    detail: "string",
+  },
+  {
+    label: "myClass",
+    kind: "Class",
+    insertText: "class MyClass {\n\tconstructor() {\n\t\t$0\n\t}\n}",
+    snippet: true,
+    documentation: "Custom class template",
+  },
+  {
+    label: "apiCall",
+    kind: "Function",
+    insertText:
+      'fetch("${1:url}")\n\t.then(res => res.json())\n\t.then(data => ${2:console.log(data)})',
+    snippet: true,
+    documentation: "Quick API call snippet",
+    detail: "(url: string) => Promise<any>",
+  },
+]);
 
 const handleCommand = (cmd: string) => {
   logs.value.push({ type: "log", values: [`$ ${cmd}`] });

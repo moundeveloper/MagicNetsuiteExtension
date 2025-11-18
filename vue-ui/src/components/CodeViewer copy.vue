@@ -142,7 +142,7 @@ function applyMarks() {
     if (!search.value.trim()) return;
 
     markInstance.mark(search.value, {
-      separateWordSearch: false,
+      separateWordSearch: !wholeWord.value,
       caseSensitive: caseSensitive.value,
       done: () => {
         const marks = el.querySelectorAll("mark");

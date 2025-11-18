@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { RouterView } from "vue-router";
-import Navbar from "./components/Navbar.vue";
+import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
+import { onMounted, ref, watch } from "vue";
+import { useVhOffset } from "./composables/useVhOffset";
+
+const container = ref<HTMLElement | null>(null);
+const { vhOffset } = useVhOffset(container);
+
+watch(vhOffset, (newValue) => {
+  console.log("vhOffset:", newValue);
+});
 </script>
 
 <template>
-  <Navbar :links="getRouteMap()" />
-  <main>
-    <RouterView />
+  <ItemListNavigation :links="getRouteMap()" />
+  <main ref="container">
+    <RouterView :vhOffset="vhOffset" />
   </main>
 </template>
 
@@ -25,8 +34,12 @@ import { getRouteMap } from "./router/routesMap";
   filter: drop-shadow(0 0 2em #42b883aa);
 }
 
-main > * {
+main {
   height: 100%;
   overflow: hidden;
+  padding: 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 </style>

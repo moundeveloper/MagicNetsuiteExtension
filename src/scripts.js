@@ -52,94 +52,82 @@ window.getScriptUrl = (N, { scriptId }) => {
   return scriptUrl;
 };
 
-const fetchFileContent = (fileId) => {
-  try {
-    // Build the NetSuite media URL dynamically
-    const fileLookup = N.search.lookupFields({
-      type: "file",
-      id: fileId,
-      columns: ["url"],
-    });
-
-    const domain = N.url.resolveDomain({
-      hostType: N.url.HostType.APPLICATION,
-    });
-
-    const fileUrl = `https://${domain}${fileLookup.url}`;
-
-    const response = N.https.get({ url: fileUrl });
-
-    return response.body;
-  } catch (e) {
-    console.error("Error fetching file:", e);
-    return null;
-  }
-};
-
-window.getDeployedScriptFiles = (N, { recordType }) => {
+window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
   console.log("Record Type:", recordType);
   if (!recordType || typeof recordType !== "string") {
     return;
   }
+
   try {
-    console.log("Record Type:", recordType);
-    const scriptSearch = N.search.create({
-      type: "scriptdeployment",
-      filters: [
-        ["isdeployed", "is", "T"],
-        "AND",
-        ["recordtype", "anyof", recordType.toUpperCase()],
-      ],
-      columns: [
-        N.search.createColumn({
-          name: "name",
-          join: "script",
-          label: "Name",
-        }),
-        N.search.createColumn({ name: "scriptid", label: "Custom ID" }),
-        N.search.createColumn({ name: "script", label: "Script ID" }),
-        N.search.createColumn({ name: "recordtype", label: "Record Type" }),
-        N.search.createColumn({ name: "status", label: "Status" }),
-        N.search.createColumn({ name: "isdeployed", label: "Is Deployed" }),
-        N.search.createColumn({ name: "scripttype", label: "Script Type" }),
-        N.search.createColumn({
-          name: "scriptfile",
-          join: "script",
-          label: "Script File",
-        }),
-      ],
+    const sql = `
+    SELECT
+        script.scriptfile,
+        script.name,
+        script.scripttype,
+        script.id as scriptid,
+        file.url
+    FROM
+        scriptdeployment
+        INNER JOIN script ON scriptdeployment.script = script.id
+        INNER JOIN file ON script.scriptfile = file.id
+    WHERE
+        scriptdeployment.recordtype = ?
+        AND scriptdeployment.isdeployed = 'T'
+    `;
+
+    const queryConfig = {
+      query: sql,
+      params: [recordType.toUpperCase()],
+    };
+
+    const resultSet = await query.runSuiteQL.promise(queryConfig);
+    const results = resultSet.asMappedResults();
+
+    console.log(
+      `Found ${results.length} deployed ${recordType.toUpperCase()} scripts.`
+    );
+
+    const domain = url.resolveDomain({
+      hostType: url.HostType.APPLICATION,
     });
 
-    const searchResultCount = scriptSearch.runPaged().count;
-
-    console.log("Search Result Count:", searchResultCount);
-
-    const resultsList = [];
-
-    const pagedData = scriptSearch.runPaged({ pageSize: 1000 });
-
-    pagedData.pageRanges.forEach(function (pageRange) {
-      const page = pagedData.fetch({ index: pageRange.index });
-      page.data.forEach(function (result) {
-        const script = {
-          title: result.getValue({ name: "name", join: "script" }),
-          scripttype: result.getText({ name: "scripttype" }),
-          scriptfile: result.getValue({ name: "scriptfile", join: "script" }),
+    // Build all the fetch promises first
+    const fetchPromises = results.map(async (result) => {
+      const fileUrl = `https://${domain}${result.url}`;
+      try {
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch ${fileUrl}: ${response.statusText}`);
+        }
+        const body = await response.text();
+        console.log(`Fetched ${result.name} (${result.scripttype})`);
+        return {
+          scriptName: result.name,
+          scriptType: result.scripttype,
+          scriptId: result.scriptid,
+          scriptFile: body,
         };
-
-        const scriptFile = fetchFileContent(script.scriptfile);
-
-        resultsList.push({
-          scriptName: script.title,
-          scriptFile,
-          scriptType: script.scripttype,
-        });
-      });
+      } catch (err) {
+        console.error(`Error fetching ${result.name}:`, err);
+        return {
+          scriptName: result.name,
+          scriptType: result.scripttype,
+          scriptId: result.scriptid,
+          scriptFile: null,
+        };
+      }
     });
 
-    console.log("Results List:", resultsList);
+    // Wait for all fetches to complete in parallel
+    const fetchedResults = await Promise.all(fetchPromises);
 
-    return resultsList;
+    console.log(
+      `Fetched ${
+        fetchedResults.filter((f) => f.scriptFile).length
+      } scripts successfully.`
+    );
+
+    return fetchedResults;
   } catch (error) {
     log.error("Error", error);
   }

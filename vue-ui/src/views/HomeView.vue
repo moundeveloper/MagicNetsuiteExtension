@@ -1,45 +1,36 @@
 <script setup lang="ts">
-import { reactive } from "vue";
-import { useRouter } from "vue-router";
-import Card from "primevue/card";
+import { computed, ref } from "vue";
+
 import { getRouteMap } from "../router/routesMap";
+import { InputText } from "primevue";
 
-interface Feature {
-  name: string;
-  route: string;
-  icon: string;
-}
+const searchFeatures = ref("");
 
-const router = useRouter();
-
-const features: Feature[] = getRouteMap().filter(
-  (route) => route.name.toLowerCase() !== "home"
-);
-
-const goTo = (route: string) => {
-  router.push(route);
-};
+const features = computed(() => {
+  return getRouteMap().filter(
+    (route) =>
+      route.name.toLowerCase() !== "home" &&
+      route.name.toLowerCase().includes(searchFeatures.value.toLowerCase())
+  );
+});
 </script>
 
 <template>
   <div class="wraper">
     <h1>::FEATURES</h1>
-    <div class="home-grid">
-      <Card
+    <InputText v-model="searchFeatures" placeholder="Search" />
+    <div
+      class="grid h-[70vh] [grid-template-columns:repeat(auto-fit,180px)] [grid-auto-rows:min-content] gap-8 p-2 overflow-y-auto"
+    >
+      <router-link
         v-for="feature in features"
         :key="feature.route"
-        class="feature-card"
-        @click="goTo(feature.route)"
+        :to="feature.route"
+        class="menu-item aspect-square flex flex-col items-center justify-center"
       >
-        <template #title>
-          <div class="feature-icon">
-            <i :class="feature.icon"></i>
-          </div>
-        </template>
-        <template #content>
-          <div class="feature-name">{{ feature.name }}</div>
-        </template>
-      </Card>
+        <i :class="feature.icon" />
+        <span class="text-center">{{ feature.name }}</span>
+      </router-link>
     </div>
   </div>
 </template>
@@ -52,41 +43,35 @@ const goTo = (route: string) => {
   gap: 1rem;
 }
 
-.p-card {
-  background-color: var(--p-slate-200) !important;
-}
-
 .home-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 1.5rem;
+  gap: 2rem;
 }
 
-.feature-card {
-  cursor: pointer;
-  text-align: center;
-  transition: box-shadow 0.2s, background-color 0.2s;
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+  font-weight: 500;
+  color: var(--p-slate-600);
+  border-radius: 0.5rem;
+  transition: background-color 0.25s, color 0.25s;
+  outline: solid 1px var(--p-slate-600);
 }
 
-.feature-card:hover {
-  background-color: var(--p-slate-300) !important;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+/* Hover: lighter slate tone */
+.menu-item:hover {
+  background-color: var(--p-slate-200);
+  color: var(--p-slate-800);
 }
 
-.feature-icon i {
-  font-size: 2rem;
-  color: var(--text-color-secondary);
-}
-
-.feature-name {
+/* Active: darker slate tone */
+.menu-item.active {
+  background-color: var(--p-slate-300);
+  color: var(--p-slate-900);
   font-weight: 600;
-  font-size: 1rem;
-  margin-top: 0.5rem;
-}
-
-.feature-description {
-  margin-top: 0.75rem;
-  font-size: 0.875rem;
-  color: var(--text-color-secondary);
 }
 </style>

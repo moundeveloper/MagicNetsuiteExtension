@@ -177,7 +177,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-height: 64.34vh;
+  max-height: 65vh;
   overflow-y: auto;
 }
 
