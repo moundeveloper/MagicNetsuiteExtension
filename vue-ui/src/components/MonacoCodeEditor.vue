@@ -9,7 +9,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch, type Ref } from "vue";
 import * as monaco from "monaco-editor";
-import type { editor, IDisposable } from "monaco-editor";
+import * as prettier from "prettier/standalone";
+import parserBabel from "prettier/plugins/babel";
+import prettierPluginEstree from "prettier/plugins/estree";
+import { editor, type IDisposable } from "monaco-editor";
 import themeJson from "../assets/themes/theme.json";
 
 // Configure Monaco workers
@@ -79,6 +82,7 @@ interface EditorConfig {
   autoSizing?: boolean;
   defocusScroll?: boolean;
   minimap?: boolean;
+  disableAutoScrollOnFocus?: boolean;
 }
 
 interface MonacoEditorProps {
@@ -103,6 +107,7 @@ const props = withDefaults(defineProps<MonacoEditorProps>(), {
     autoSizing: true,
     defocusScroll: false,
     minimap: true,
+    disableAutoScrollOnFocus: false,
   }),
 });
 
@@ -123,23 +128,32 @@ onMounted(async () => {
   monaco.editor.defineTheme("monokai", themeJson as any);
   monaco.editor.setTheme("monokai");
 
+  const formatted = await prettier.format(props.modelValue, {
+    parser: "babel",
+    plugins: [parserBabel, prettierPluginEstree],
+    semi: true,
+    singleQuote: true,
+    tabWidth: 2,
+  });
+
   const editorOptions: editor.IStandaloneEditorConstructionOptions = {
     find: { addExtraSpaceOnTop: false },
-    value: props.modelValue,
+    value: formatted,
     language: props.language,
     readOnly: props.readonly,
+    automaticLayout: true,
     minimap: { enabled: props.config.minimap },
     scrollBeyondLastLine: false,
     fontSize: 14,
     lineNumbers: "on",
     renderWhitespace: "selection",
     tabSize: 2,
+    cursorSmoothCaretAnimation: "off",
   };
 
   if (props.config?.defocusScroll) {
     editorOptions.scrollbar = {
       vertical: "hidden",
-      horizontal: "hidden",
       alwaysConsumeMouseWheel: false,
       handleMouseWheel: false,
     };
@@ -148,11 +162,69 @@ onMounted(async () => {
   // Create editor
   editorInstance = monaco.editor.create(editorContainer.value, editorOptions);
 
+  editorInstance?.getDomNode()!.addEventListener("focusin", (e) => {
+    // Temporarily prevent scrolling
+    const x = window.scrollX;
+    const y = window.scrollY;
+    requestAnimationFrame(() => window.scrollTo(x, y));
+  });
+
   if (props.config?.suppressNativeFind) {
     editorInstance.addCommand(
       monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF,
       () => {}
     );
+  }
+
+  const disableAutoScrollOnFocus = () => {
+    // Add listener to the scroll container itself, not individual editors
+    const scrollContainer = document.getElementById("scrollContainerEditors")!;
+    let lastScrollTop = scrollContainer.scrollTop;
+    let blockScroll = false;
+
+    // Monitor all mousedown events on the container
+    scrollContainer.addEventListener(
+      "mousedown",
+      (e) => {
+        // Save current scroll position
+        lastScrollTop = scrollContainer.scrollTop;
+        blockScroll = true;
+
+        console.log("mousedown - saved scroll:", lastScrollTop);
+
+        // Keep blocking and restoring for multiple frames
+        let frameCount = 0;
+        const maxFrames = 10; // Check for up to 10 frames
+
+        const preventAutoScroll = () => {
+          if (blockScroll && frameCount < maxFrames) {
+            if (scrollContainer.scrollTop !== lastScrollTop) {
+              console.log(
+                "Blocking scroll change:",
+                scrollContainer.scrollTop,
+                "->",
+                lastScrollTop
+              );
+              scrollContainer.scrollTop = lastScrollTop;
+            }
+            frameCount++;
+            requestAnimationFrame(preventAutoScroll);
+          }
+        };
+
+        requestAnimationFrame(preventAutoScroll);
+
+        // Stop blocking after delay
+        setTimeout(() => {
+          blockScroll = false;
+        }, 200);
+      },
+      true
+    );
+  };
+
+  if (props.config?.disableAutoScrollOnFocus) {
+    disableAutoScrollOnFocus();
   }
 
   // Register custom completions
@@ -166,7 +238,7 @@ onMounted(async () => {
     emit("change", value);
     if (props.config?.autoSizing) return;
 
-    /* updateEditorHeight(); */
+    updateEditorHeight();
   });
 
   const updateEditorHeight = () => {
@@ -185,12 +257,21 @@ onMounted(async () => {
     updateEditorHeight();
   }
 
+  editorInstance.getDomNode()!.addEventListener("focus", (e) => {
+    e.preventDefault();
+  });
+
   // Listen to focus/blur
-  editorInstance.onDidFocusEditorText(() => {
+  editorInstance.onDidFocusEditorText((e) => {
+    console.log("focus");
     emit("focus");
   });
 
   editorInstance.onDidBlurEditorText(() => {
+    console.log("blur");
+    /* 
+    editorInstance?.focus(); */
+
     emit("blur");
   });
 });

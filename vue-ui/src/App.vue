@@ -2,15 +2,11 @@
 import { RouterView } from "vue-router";
 import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
-import { onMounted, ref, watch } from "vue";
+import { ref } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
-
-watch(vhOffset, (newValue) => {
-  console.log("vhOffset:", newValue);
-});
 </script>
 
 <template>

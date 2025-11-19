@@ -26,6 +26,7 @@
     "monaco-editor": "^0.54.0",
     "onigasm": "^2.2.5",
     "pinia": "^3.0.3",
+    "prettier": "^3.6.2",
     "primeicons": "^7.0.0",
     "primevue": "^4.4.1",
     "prismjs": "^1.30.0",

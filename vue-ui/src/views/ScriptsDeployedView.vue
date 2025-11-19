@@ -1,10 +1,6 @@
 <template>
   <h1>::SEARCH-SCRIPT-DEPLOYED</h1>
 
-  <div v-if="loading" class="progress-spinner">
-    <ProgressSpinner style="width: 3rem; height: 3rem; margin: 2rem auto" />
-  </div>
-
   <div class="search-bar">
     <InputText placeholder="Search" v-model="searchText" @keyup="handleKey" />
     <button
@@ -23,27 +19,59 @@
     >
       |ab|
     </button>
+
+    <MultiSelect
+      v-model="selectedScriptTypes"
+      display="chip"
+      :options="scriptTypes"
+      optionLabel="label"
+      optionValue="value"
+      filter
+      placeholder="Select Script Types"
+      :maxSelectedLabels="3"
+      class="w-full md:w-80"
+    />
+
     <span class="match-counter"
       >{{ currentMatchDisplay }} / {{ totalMatches }}</span
     >
   </div>
 
+  <div v-if="loading" class="progress-spinner">
+    <ProgressSpinner style="width: 3rem; height: 3rem; margin: 2rem auto" />
+  </div>
+
   <div
-    class="flex flex-col gap-4 overflow-y-auto overflow-x-hidden"
+    v-else
+    id="scrollContainerEditors"
+    class="flex flex-col gap-4 overflow-y-auto overflow-x-hidden p-4"
     data-ignore
     ref="scrollContainer"
     :style="{ height: `${vhOffset}vh` }"
   >
-    <div v-for="(item, index) in editors" :key="index">
-      <MonacoCodeEditor
-        :ref="(el) => setItemRef(el, index)"
-        class="editor"
-        v-model="editors[index]!.code"
-        :readonly="true"
-        :completion-items="completionItems"
-        :config="editorConfig"
-      />
-    </div>
+    <Accordion
+      v-for="(item, index) in editors"
+      :key="index"
+      v-model:value="item.opened"
+    >
+      <AccordionPanel value="0">
+        <AccordionHeader class="bg-slate-200">
+          <span class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
+            >{{ item.script?.scriptName }} - {{ item.script?.scriptType }}
+          </span>
+        </AccordionHeader>
+        <AccordionContent>
+          <MonacoCodeEditor
+            :ref="(el) => setItemRef(el, index)"
+            class="editor"
+            v-model="editors[index]!.code"
+            :readonly="true"
+            :completion-items="completionItems"
+            :config="editorConfig"
+          />
+        </AccordionContent>
+      </AccordionPanel>
+    </Accordion>
   </div>
 </template>
 
@@ -55,17 +83,23 @@ import {
   watch,
   nextTick,
   type ComponentPublicInstance,
-  computed,
 } from "vue";
 import ProgressSpinner from "primevue/progressspinner";
 import { callApi } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import * as monaco from "monaco-editor";
-import { InputText } from "primevue";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionHeader,
+  AccordionPanel,
+  InputText,
+  MultiSelect,
+} from "primevue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
 import { defaultCode } from "../utils/temp";
-import { min } from "lodash";
+import { debounce } from "lodash";
 
 const props = defineProps<{
   vhOffset: number;
@@ -74,24 +108,40 @@ const props = defineProps<{
 const loading = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
 
-/*  */
+const selectedScriptTypes = ref<string[]>([]);
+
+const scriptTypes = ref([
+  { label: "Client", value: "client" },
+  { label: "User Event", value: "user_event" },
+  { label: "Workflows", value: "workflows" },
+]);
+
+// Custom completion items
+type DeployedScript = {
+  scriptName: string;
+  scriptType: string;
+  scriptFile: string;
+  scriptId: string;
+};
+
 type Editors = {
   editor?: any; // Reference to MonacoCodeEditor component
   code: string;
-  opened: boolean;
+  opened: string;
   matches?: monaco.editor.FindMatch[];
   decorations?: string[];
+  script?: DeployedScript;
 };
 
 const editors = reactive<Editors[]>([
   {
     code: `function greet(name) {
-  console.log('Hello, ' + name);
-  return 'Welcome!';
+console.log('Hello, ' + name);
+return 'Welcome!';
 }
 
 greet('World');`,
-    opened: false,
+    opened: "0",
     matches: [],
     decorations: [],
   },
@@ -99,14 +149,27 @@ greet('World');`,
     code: `
   console.log('Hello World');
 `,
-    opened: false,
+    opened: "0",
     matches: [],
     decorations: [],
   },
 
   {
     code: defaultCode,
-    opened: false,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+  {
+    code: defaultCode,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+
+  {
+    code: defaultCode,
+    opened: "0",
     matches: [],
     decorations: [],
   },
@@ -116,6 +179,7 @@ const editorConfig = {
   suppressNativeFind: true,
   defocusScroll: true,
   minimap: false,
+  disableAutoScrollOnFocus: true,
 };
 const searchText = ref("");
 const wholeWord = ref(false); // Toggle for whole word search
@@ -125,18 +189,26 @@ const caseSensitive = ref(false); // Toggle for case sensitive search
 const totalMatches = ref(0);
 const currentMatchDisplay = ref(0);
 let globalMatchIndex = 0; // Current match across all editors
-let allMatches: Array<{ editorIndex: number; matchIndex: number }> = [];
+let allMatches: Array<{
+  editorIndex: number;
+  matchIndex: number;
+  lineElement: HTMLElement;
+}> = [];
+
+const debouncedSearch = debounce((value: string) => {
+  performGlobalSearch(value);
+}, 250);
 
 // --- Reactive watch for live search ---
 watch(searchText, async (newValue) => {
   await nextTick(); // Wait for editors to be ready
-  performGlobalSearch(newValue);
+  debouncedSearch(newValue);
 });
 
 // Watch for changes in search options
 watch([caseSensitive, wholeWord], async () => {
   await nextTick();
-  performGlobalSearch(searchText.value);
+  debouncedSearch(searchText.value);
 });
 
 // --- Functions ---
@@ -145,10 +217,12 @@ const performGlobalSearch = (text: string) => {
   let totalCount = 0;
 
   editors.forEach((editorItem, editorIndex) => {
-    const editor = editorItem.editor?.getEditor?.();
+    const editor: monaco.editor.IStandaloneCodeEditor =
+      editorItem.editor?.getEditor?.();
+
     if (!editor) return;
 
-    const model = editor.getModel();
+    const model: monaco.editor.ITextModel = editor.getModel()!;
     if (!model) return;
 
     if (!text) {
@@ -174,8 +248,16 @@ const performGlobalSearch = (text: string) => {
     editorItem.matches = matches;
 
     // Build global match index
-    matches.forEach((_: monaco.editor.FindMatch, matchIndex: number) => {
-      allMatches.push({ editorIndex, matchIndex });
+    matches.forEach((match: monaco.editor.FindMatch, matchIndex: number) => {
+      const editorDom = editor.getContainerDomNode();
+
+      const lineElements = editorDom.querySelectorAll(`.line-numbers`);
+
+      const lineElement = lineElements[
+        match.range.startLineNumber - 1
+      ] as HTMLElement;
+
+      allMatches.push({ editorIndex, matchIndex, lineElement });
     });
 
     totalCount += matches.length;
@@ -189,14 +271,11 @@ const performGlobalSearch = (text: string) => {
   updateAllHighlights();
 };
 
-const scrollToEditor = (editorIndex: number) => {
+const scrollToEditor = (lineElement: HTMLElement) => {
   // Scroll the container to the editor
   if (scrollContainer.value) {
-    const editorElements = scrollContainer.value.querySelectorAll(".editor");
-    const targetEditor = editorElements[editorIndex] as HTMLElement;
-
-    if (targetEditor) {
-      targetEditor.scrollIntoView({
+    if (lineElement) {
+      lineElement.scrollIntoView({
         behavior: "smooth",
         block: "center",
       });
@@ -246,21 +325,7 @@ const updateAllHighlights = async () => {
       const match = editorItem.matches[currentLocalMatchIndex];
       if (match) {
         // First, scroll the container to this editor
-        scrollToEditor(editorIndex);
-
-        // Then, after a short delay, scroll within the Monaco editor
-        setTimeout(() => {
-          // Don't use setSelection in readonly mode, just reveal the range
-          editor.revealRangeInCenterIfOutsideViewport(
-            match.range,
-            monaco.editor.ScrollType.Smooth
-          );
-
-          // Alternative: use revealRangeInCenter for more aggressive scrolling
-          // editor.revealRangeInCenter(match.range, monaco.editor.ScrollType.Smooth);
-
-          // Don't focus the editor to avoid readonly warnings
-        }, 100);
+        scrollToEditor(currentGlobalMatch.lineElement);
       }
     }
   });
@@ -304,24 +369,6 @@ const setItemRef = (
   }
 };
 
-// Custom completion items
-type DeployedScript = {
-  scriptName: string;
-  scriptType: string;
-  scriptFile: string;
-  scriptId: string;
-};
-
-type File = {
-  name: string;
-  content: string;
-  scriptId: string;
-};
-
-const deployedScripts = ref<DeployedScript[]>([]);
-
-const files = ref<File[]>([]);
-
 // --- Fetch scripts ---
 const getDeployedScripts = async () => {
   loading.value = true;
@@ -342,16 +389,17 @@ const getDeployedScripts = async () => {
       return;
     }
 
-    deployedScripts.value = deployedScriptsResponse as DeployedScript[];
+    const deployedScripts = deployedScriptsResponse as DeployedScript[];
 
     // Convert scripts to editor format
     editors.length = 0; // Clear existing editors
-    deployedScripts.value.forEach((scriptItem) => {
+    deployedScripts.forEach((scriptItem) => {
       editors.push({
         code: scriptItem.scriptFile,
-        opened: false,
+        opened: "0",
         matches: [],
         decorations: [],
+        script: scriptItem,
       });
     });
   } catch (error) {
@@ -363,6 +411,9 @@ const getDeployedScripts = async () => {
 };
 
 onMounted(() => {
+  scrollContainer.value?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
   /* getDeployedScripts(); */
 });
 </script>
@@ -415,6 +466,18 @@ onMounted(() => {
 .editor {
   scroll-margin-top: 2rem;
 }
+
+.overlay {
+  width: 100%;
+  height: 100%;
+  cursor: text;
+}
+
+.p-accordionheader {
+  box-shadow: rgba(100, 100, 111, 0.2) 0px 7px 20px 0px;
+  padding: 0;
+  padding-right: 1rem;
+}
 </style>
 
 <style>
@@ -426,5 +489,9 @@ onMounted(() => {
 .other-match-decoration {
   background-color: rgba(180, 200, 255, 0.3);
   border-radius: 2px;
+}
+
+.p-accordioncontent-content {
+  padding: 0 !important;
 }
 </style>
