@@ -5,6 +5,10 @@ export type ApiResponse = {
   message: any;
 };
 
+export const isChromeExtension = Boolean(
+  typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id
+);
+
 const callApi = async (
   route: RequestRoutes,
   payload: any = {}

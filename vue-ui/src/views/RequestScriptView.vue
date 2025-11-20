@@ -1,92 +1,87 @@
 <template>
-  <div class="wraper">
-    <h1>::REQUEST-SCRIPT</h1>
+  <h1>::REQUEST-SCRIPT</h1>
 
-    <Splitter class="flex-1">
-      <SplitterPanel
-        class="flex flex-col justify-center"
-        :size="15"
-        :minSize="15"
-      >
-        <div class="p-4 bg-slate-200">Requests Collection</div>
-        <Tree
-          v-model:value="nodes"
-          class="w-full h-full overflow-y-auto"
-          draggableNodes
-          droppableNodes
-        />
-      </SplitterPanel>
+  <Splitter data-ignore :style="{ height: `${vhOffset}vh` }">
+    <SplitterPanel
+      class="flex flex-col justify-center"
+      :size="15"
+      :minSize="15"
+    >
+      <div class="p-4 bg-slate-200">Requests Collection</div>
+      <Tree
+        v-model:value="nodes"
+        class="w-full h-full overflow-y-auto"
+        draggableNodes
+        droppableNodes
+      />
+    </SplitterPanel>
 
-      <SplitterPanel
-        class="flex flex-col items-center justify-center"
-        :size="85"
-      >
-        <Tabs v-model:value="activeIndex" class="h-full w-full">
-          <TabList class="w-full">
-            <Tab v-for="(tab, index) in tabs" :key="tab.id" :value="tab.id">
-              <div class="flex items-center gap-4">
-                <span class="text-base">{{ tab.title }}</span>
-                <button
-                  class="text-gray-500 hover:text-red-500 text-xs"
-                  @click.stop="closeTab(index)"
-                >
-                  x
-                </button>
-              </div>
-            </Tab>
-          </TabList>
+    <SplitterPanel class="flex flex-col items-center justify-center" :size="85">
+      <Tabs v-model:value="activeIndex" class="h-full w-full">
+        <TabList class="w-full">
+          <Tab v-for="(tab, index) in tabs" :key="tab.id" :value="tab.id">
+            <div class="flex items-center gap-4">
+              <span class="text-base">{{ tab.title }}</span>
+              <button
+                class="text-gray-500 hover:text-red-500 text-xs"
+                @click.stop="closeTab(index)"
+              >
+                x
+              </button>
+            </div>
+          </Tab>
+        </TabList>
 
-          <TabPanels class="h-full tab-pannels">
-            <TabPanel
-              v-for="tab in tabs"
-              :key="tab.id"
-              :value="tab.id"
-              class="h-full flex flex-col"
-            >
-              <!-- Toolbar -->
-              <div class="flex w-full p-4 gap-2 toolbar-custom">
-                <!-- Each Select is bound to the current tab -->
-                <Select
-                  v-model="tab.selectedSuitelet"
-                  :options="suiteletScripts"
-                  filter
-                  optionLabel="label"
-                  placeholder="Select a Script"
-                  class="w-full md:w-56"
-                  @change="handleSuiteletChange(tab)"
-                />
+        <TabPanels class="h-full tab-pannels">
+          <TabPanel
+            v-for="tab in tabs"
+            :key="tab.id"
+            :value="tab.id"
+            class="h-full flex flex-col"
+          >
+            <!-- Toolbar -->
+            <div class="flex w-full p-4 gap-2 toolbar-custom">
+              <!-- Each Select is bound to the current tab -->
+              <Select
+                v-model="tab.selectedSuitelet"
+                :options="suiteletScripts"
+                filter
+                optionLabel="label"
+                placeholder="Select a Script"
+                class="w-full md:w-56"
+                @change="handleSuiteletChange(tab)"
+              />
 
-                <Select
-                  v-model="tab.selectedDeployment"
-                  :options="suiteletDeployments"
-                  filter
-                  optionLabel="label"
-                  placeholder="Select a Deployment"
-                  class="w-full md:w-56"
-                />
+              <Select
+                v-model="tab.selectedDeployment"
+                :options="suiteletDeployments"
+                filter
+                optionLabel="label"
+                placeholder="Select a Deployment"
+                class="w-full md:w-56"
+              />
 
-                <Select
-                  v-model="tab.selectedRequestMethod"
-                  :options="requestMethods"
-                  optionLabel="label"
-                  optionValue="value"
-                  placeholder="Select a Request Method"
-                  class="w-full md:w-56"
-                />
+              <Select
+                v-model="tab.selectedRequestMethod"
+                :options="requestMethods"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="Select a Request Method"
+                class="w-full md:w-56"
+              />
 
-                <Button @click="sendRequest(tab)">Send</Button>
-              </div>
+              <Button @click="sendRequest(tab)">Send</Button>
+            </div>
 
-              <vue-splitter is-horizontal class="flex-1">
-                <template #top-pane>Top Pane content</template>
-                <template #bottom-pane>Bottom Pane content</template>
-              </vue-splitter>
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      </SplitterPanel>
-    </Splitter>
-  </div>
+            <vue-splitter is-horizontal class="flex-1">
+              <template #top-pane>Top Pane content</template>
+              <template #bottom-pane>Bottom Pane content</template>
+            </vue-splitter>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
+    </SplitterPanel>
+  </Splitter>
 </template>
 
 <script setup lang="ts">
@@ -138,6 +133,10 @@ const requestMethods = [
 const activeIndex = ref(1);
 
 const nodes = ref(treeNodes);
+
+const props = defineProps<{
+  vhOffset: number;
+}>();
 
 function closeTab(index: number) {
   tabs.splice(index, 1);

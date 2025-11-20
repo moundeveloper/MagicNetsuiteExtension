@@ -29,6 +29,10 @@ const filters = ref({
   owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
 });
 
+const props = defineProps<{
+  vhOffset: number;
+}>();
+
 // Row click handler
 const onRowClick = (event: any) => {
   const record: RecordItem = event.data;
@@ -70,115 +74,107 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="wraper">
-    <h1>::CUSTOM-RECORDS</h1>
-    <DataTable
-      v-model:filters="filters"
-      :value="records"
-      filterDisplay="row"
-      dataKey="internalid"
-      :loading="loading"
-      :globalFilterFields="[
-        'internalid',
-        'name',
-        'scriptid',
-        'description',
-        'owner',
-      ]"
-      scrollable
-      scrollHeight="flex"
-      :virtualScrollerOptions="{ itemSize: 44 }"
-      class="p-datatable-gridlines table-custom"
-      @row-click="onRowClick"
-    >
-      <!-- Global Search using InputGroup -->
-      <template #header>
-        <div class="flex justify-end">
-          <InputGroup style="max-width: 300px">
-            <InputGroupAddon>
-              <i class="pi pi-search"></i>
-            </InputGroupAddon>
-            <InputText
-              v-model="filters['global'].value"
-              placeholder="Keyword Search"
-            />
-          </InputGroup>
-        </div>
+  <h1>::CUSTOM-RECORDS</h1>
+  <DataTable
+    :style="{ height: `${vhOffset}vh` }"
+    data-ignore
+    v-model:filters="filters"
+    :value="records"
+    filterDisplay="row"
+    dataKey="internalid"
+    :loading="loading"
+    :globalFilterFields="[
+      'internalid',
+      'name',
+      'scriptid',
+      'description',
+      'owner',
+    ]"
+    scrollable
+    scrollHeight="flex"
+    :virtualScrollerOptions="{ itemSize: 44 }"
+    class="p-datatable-gridlines table-custom"
+    @row-click="onRowClick"
+  >
+    <!-- Global Search using InputGroup -->
+    <template #header>
+      <div class="flex justify-end">
+        <InputGroup style="max-width: 300px">
+          <InputGroupAddon>
+            <i class="pi pi-search"></i>
+          </InputGroupAddon>
+          <InputText
+            v-model="filters['global'].value"
+            placeholder="Keyword Search"
+          />
+        </InputGroup>
+      </div>
+    </template>
+
+    <!-- Columns -->
+    <Column field="internalid" header="Internal ID" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          type="number"
+          @input="filterCallback()"
+          placeholder="Search by ID"
+        />
       </template>
+    </Column>
 
-      <!-- Columns -->
-      <Column field="internalid" header="Internal ID" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            type="number"
-            @input="filterCallback()"
-            placeholder="Search by ID"
-          />
-        </template>
-      </Column>
-
-      <Column field="name" header="Name" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by name"
-          />
-        </template>
-      </Column>
-
-      <Column field="scriptid" header="Script ID" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Script ID"
-          />
-        </template>
-      </Column>
-
-      <Column field="description" header="Description" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Description"
-          />
-        </template>
-      </Column>
-
-      <Column field="owner" header="Owner" sortable>
-        <template #filter="{ filterModel, filterCallback }">
-          <InputText
-            v-model="filterModel.value"
-            @input="filterCallback()"
-            placeholder="Search by Owner"
-          />
-        </template>
-      </Column>
-
-      <template #loading>
-        <div class="flex justify-center">
-          <ProgressSpinner />
-        </div>
+    <Column field="name" header="Name" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          @input="filterCallback()"
+          placeholder="Search by name"
+        />
       </template>
+    </Column>
 
-      <template #empty>No records found.</template>
-    </DataTable>
-  </div>
+    <Column field="scriptid" header="Script ID" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          @input="filterCallback()"
+          placeholder="Search by Script ID"
+        />
+      </template>
+    </Column>
+
+    <Column field="description" header="Description" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          @input="filterCallback()"
+          placeholder="Search by Description"
+        />
+      </template>
+    </Column>
+
+    <Column field="owner" header="Owner" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          @input="filterCallback()"
+          placeholder="Search by Owner"
+        />
+      </template>
+    </Column>
+
+    <template #loading>
+      <div class="flex justify-center">
+        <ProgressSpinner />
+      </div>
+    </template>
+
+    <template #empty>No records found.</template>
+  </DataTable>
 </template>
 
 <style scoped>
-.wraper {
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
 h1 {
-  margin-bottom: 1.5rem;
   font-weight: 600;
   color: var(--text-color);
 }

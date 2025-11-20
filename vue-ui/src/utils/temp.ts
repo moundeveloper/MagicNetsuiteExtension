@@ -165,3 +165,45 @@ export const treeNodes = [
     icon: "pi pi-fw pi-file",
   },
 ];
+
+export const temporaryCode = [
+  {
+    code: `function greet(name) {
+console.log('Hello, ' + name);
+return 'Welcome!';
+}
+
+greet('World');`,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+  {
+    code: `
+  console.log('Hello World');
+`,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+
+  {
+    code: defaultCode,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+  {
+    code: defaultCode,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+
+  {
+    code: defaultCode,
+    opened: "0",
+    matches: [],
+    decorations: [],
+  },
+];

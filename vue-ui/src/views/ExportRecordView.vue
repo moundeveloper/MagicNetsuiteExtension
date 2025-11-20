@@ -6,6 +6,9 @@ import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 
 const loading = ref(false);
+const props = defineProps<{
+  vhOffset: number;
+}>();
 
 // Example tag data
 const availableTags = [
@@ -69,94 +72,87 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="wrapper">
-    <header class="flex justify-between items-center mb-4">
-      <h1 class="text-2xl font-semibold tracking-wide text-slate-700">
-        ::EXPORT-RECORD
-      </h1>
-      <Button
-        label="Export"
-        icon="pi pi-download"
-        class="bg-[var(--p-slate-500)] text-white hover:opacity-90 transition w-fit"
-        @click="exportRecord"
-      />
-    </header>
+  <header class="flex justify-between items-center mb-4">
+    <h1 class="text-2xl font-semibold tracking-wide text-slate-700">
+      ::EXPORT-RECORD
+    </h1>
+    <Button
+      label="Export"
+      icon="pi pi-download"
+      class="bg-[var(--p-slate-500)] text-white hover:opacity-90 transition w-fit"
+      @click="exportRecord"
+    />
+  </header>
 
-    <!-- Export Config Section -->
-    <section class="card-section">
-      <h2 class="section-title">Include Fields</h2>
-      <div class="flex flex-wrap gap-4">
-        <div
-          v-for="(option, idx) in ['FieldID', 'FieldName', 'Text', 'Value']"
-          :key="idx"
-          class="flex items-center gap-2"
+  <!-- Export Config Section -->
+  <section class="card-section">
+    <h2 class="section-title">Include Fields</h2>
+    <div class="flex flex-wrap gap-4">
+      <div
+        v-for="(option, idx) in ['FieldID', 'FieldName', 'Text', 'Value']"
+        :key="idx"
+        class="flex items-center gap-2"
+      >
+        <Checkbox
+          v-model="exportConfig"
+          :inputId="`config-${idx}`"
+          :value="option"
+        />
+        <label
+          :for="`config-${idx}`"
+          class="text-sm font-medium text-slate-700"
         >
-          <Checkbox
-            v-model="exportConfig"
-            :inputId="`config-${idx}`"
-            :value="option"
-          />
-          <label
-            :for="`config-${idx}`"
-            class="text-sm font-medium text-slate-700"
-          >
-            {{ option }}
-          </label>
-        </div>
+          {{ option }}
+        </label>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <!-- Tag Filters -->
-    <section class="tag-sections">
-      <div class="tag-card">
-        <h2 class="section-title">Field Whitelist</h2>
-        <TagSelector
-          v-model="whitelist"
-          :availableTags="availableTags"
-          :tagName="'Whitelist'"
-        />
-      </div>
+  <!-- Tag Filters -->
+  <section
+    class="tag-sections"
+    :style="{ height: `${vhOffset}vh` }"
+    data-ignore
+  >
+    <div class="tag-card">
+      <h2 class="section-title">Field Whitelist</h2>
+      <TagSelector
+        v-model="whitelist"
+        :availableTags="availableTags"
+        :tagName="'Whitelist'"
+      />
+    </div>
 
-      <div class="tag-card">
-        <h2 class="section-title">Field Blacklist</h2>
-        <TagSelector
-          v-model="blacklist"
-          :availableTags="availableTags"
-          :tagName="'Blacklist'"
-        />
-      </div>
+    <div class="tag-card">
+      <h2 class="section-title">Field Blacklist</h2>
+      <TagSelector
+        v-model="blacklist"
+        :availableTags="availableTags"
+        :tagName="'Blacklist'"
+      />
+    </div>
 
-      <div class="tag-card">
-        <h2 class="section-title">Sublist Field Whitelist</h2>
-        <TagSelector
-          v-model="sublistWhitelist"
-          :availableTags="availableTags"
-          :tagName="'Whitelist'"
-        />
-      </div>
+    <div class="tag-card">
+      <h2 class="section-title">Sublist Field Whitelist</h2>
+      <TagSelector
+        v-model="sublistWhitelist"
+        :availableTags="availableTags"
+        :tagName="'Whitelist'"
+      />
+    </div>
 
-      <div class="tag-card">
-        <h2 class="section-title">Sublist Field Blacklist</h2>
-        <TagSelector
-          v-model="sublistBlacklist"
-          :availableTags="availableTags"
-          :tagName="'Blacklist'"
-        />
-      </div>
-    </section>
-  </div>
+    <div class="tag-card">
+      <h2 class="section-title">Sublist Field Blacklist</h2>
+      <TagSelector
+        v-model="sublistBlacklist"
+        :availableTags="availableTags"
+        :tagName="'Blacklist'"
+      />
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.wrapper {
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  background: #f8fafc;
-  overflow-y: auto;
-}
-
 .card-section {
   background: white;
   padding: 1.5rem;
@@ -177,8 +173,8 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-height: 64.34vh;
   overflow-y: auto;
+  padding: 0.5rem;
 }
 
 .tag-card {

@@ -1,22 +1,20 @@
 <template>
-  <div class="wraper">
-    <h1>::RUN-QUICK-SCRIPT</h1>
-    <Button @click="runCode"> Run </Button>
+  <h1>::RUN-QUICK-SCRIPT</h1>
+  <Button @click="runCode"> Run </Button>
 
-    <vue-splitter is-horizontal class="flex-1 max-h-[74.69vh]">
-      <template #top-pane>
-        <MonacoCodeEditor
-          ref="editorRef"
-          v-model="code"
-          :readonly="false"
-          :completion-items="completionItems"
-        />
-      </template>
-      <template #bottom-pane>
-        <TerminalLogs :logs="logs" @command="handleCommand" />
-      </template>
-    </vue-splitter>
-  </div>
+  <vue-splitter is-horizontal data-ignore :style="{ height: `${vhOffset}vh` }">
+    <template #top-pane>
+      <MonacoCodeEditor
+        ref="editorRef"
+        v-model="code"
+        :readonly="false"
+        :completion-items="completionItems"
+      />
+    </template>
+    <template #bottom-pane>
+      <TerminalLogs :logs="logs" @command="handleCommand" />
+    </template>
+  </vue-splitter>
 </template>
 
 <script lang="ts" setup>
@@ -28,6 +26,7 @@ import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import { completionItems } from "../utils/codeEditorJSCompletion";
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -39,39 +38,9 @@ const panelHeight = ref(0);
 const logs = ref<Log[]>([]);
 const code = ref<string>(defaultCode);
 
-const completionItems = ref([
-  {
-    label: "myCustomFunction",
-    kind: "Function",
-    insertText: "myCustomFunction(${1:param})",
-    snippet: true,
-    documentation: "This is my custom function with autocomplete",
-    detail: "(param: string) => void",
-  },
-  {
-    label: "myVariable",
-    kind: "Variable",
-    insertText: "myVariable",
-    documentation: "A custom variable",
-    detail: "string",
-  },
-  {
-    label: "myClass",
-    kind: "Class",
-    insertText: "class MyClass {\n\tconstructor() {\n\t\t$0\n\t}\n}",
-    snippet: true,
-    documentation: "Custom class template",
-  },
-  {
-    label: "apiCall",
-    kind: "Function",
-    insertText:
-      'fetch("${1:url}")\n\t.then(res => res.json())\n\t.then(data => ${2:console.log(data)})',
-    snippet: true,
-    documentation: "Quick API call snippet",
-    detail: "(url: string) => Promise<any>",
-  },
-]);
+const props = defineProps<{
+  vhOffset: number;
+}>();
 
 const handleCommand = (cmd: string) => {
   logs.value.push({ type: "log", values: [`$ ${cmd}`] });

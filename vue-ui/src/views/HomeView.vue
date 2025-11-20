@@ -5,6 +5,9 @@ import { getRouteMap } from "../router/routesMap";
 import { InputText } from "primevue";
 
 const searchFeatures = ref("");
+const props = defineProps<{
+  vhOffset: number;
+}>();
 
 const features = computed(() => {
   return getRouteMap().filter(
@@ -16,22 +19,22 @@ const features = computed(() => {
 </script>
 
 <template>
-  <div class="wraper">
-    <h1>::FEATURES</h1>
-    <InputText v-model="searchFeatures" placeholder="Search" />
-    <div
-      class="grid h-[70vh] [grid-template-columns:repeat(auto-fit,180px)] [grid-auto-rows:min-content] gap-8 p-2 overflow-y-auto"
+  <h1>::FEATURES</h1>
+  <InputText v-model="searchFeatures" placeholder="Search" />
+  <div
+    :style="{ height: `${vhOffset}vh` }"
+    data-ignore
+    class="grid [grid-template-columns:repeat(auto-fit,180px)] [grid-auto-rows:min-content] gap-8 p-2 overflow-y-auto"
+  >
+    <router-link
+      v-for="feature in features"
+      :key="feature.route"
+      :to="feature.route"
+      class="menu-item aspect-square flex flex-col items-center justify-center"
     >
-      <router-link
-        v-for="feature in features"
-        :key="feature.route"
-        :to="feature.route"
-        class="menu-item aspect-square flex flex-col items-center justify-center"
-      >
-        <i :class="feature.icon" />
-        <span class="text-center">{{ feature.name }}</span>
-      </router-link>
-    </div>
+      <i :class="feature.icon" />
+      <span class="text-center">{{ feature.name }}</span>
+    </router-link>
   </div>
 </template>
 
@@ -58,7 +61,9 @@ const features = computed(() => {
   font-weight: 500;
   color: var(--p-slate-600);
   border-radius: 0.5rem;
-  transition: background-color 0.25s, color 0.25s;
+  transition:
+    background-color 0.25s,
+    color 0.25s;
   outline: solid 1px var(--p-slate-600);
 }
 

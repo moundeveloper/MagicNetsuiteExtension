@@ -50,21 +50,23 @@
     :style="{ height: `${vhOffset}vh` }"
   >
     <Accordion
-      v-for="(item, index) in editors"
-      :key="index"
-      v-model:value="item.opened"
+      v-for="item in computedEditors"
+      :key="item.script?.scriptId"
+      v-model:value="openedState[item.script?.scriptId!]"
     >
       <AccordionPanel value="0">
         <AccordionHeader class="bg-slate-200">
-          <span class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
-            >{{ item.script?.scriptName }} - {{ item.script?.scriptType }}
+          <span
+            class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
+          >
+            {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
           </span>
         </AccordionHeader>
         <AccordionContent>
           <MonacoCodeEditor
-            :ref="(el) => setItemRef(el, index)"
+            :ref="(el) => setItemRef(el, item)"
             class="editor"
-            v-model="editors[index]!.code"
+            v-model="item.code"
             :readonly="true"
             :completion-items="completionItems"
             :config="editorConfig"
@@ -83,9 +85,10 @@ import {
   watch,
   nextTick,
   type ComponentPublicInstance,
+  computed,
 } from "vue";
 import ProgressSpinner from "primevue/progressspinner";
-import { callApi } from "../utils/api";
+import { callApi, isChromeExtension } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import * as monaco from "monaco-editor";
@@ -98,13 +101,14 @@ import {
   MultiSelect,
 } from "primevue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
-import { defaultCode } from "../utils/temp";
+import { defaultCode, temporaryCode } from "../utils/temp";
 import { debounce } from "lodash";
 
 const props = defineProps<{
   vhOffset: number;
 }>();
 
+const openedState = reactive<Record<string, string>>({});
 const loading = ref(false);
 const scrollContainer = ref<HTMLElement | null>(null);
 
@@ -112,8 +116,8 @@ const selectedScriptTypes = ref<string[]>([]);
 
 const scriptTypes = ref([
   { label: "Client", value: "client" },
-  { label: "User Event", value: "user_event" },
-  { label: "Workflows", value: "workflows" },
+  { label: "User Event", value: "userevent" },
+  { label: "Workflow Action", value: "action" },
 ]);
 
 // Custom completion items
@@ -127,53 +131,12 @@ type DeployedScript = {
 type Editors = {
   editor?: any; // Reference to MonacoCodeEditor component
   code: string;
-  opened: string;
   matches?: monaco.editor.FindMatch[];
   decorations?: string[];
   script?: DeployedScript;
 };
 
-const editors = reactive<Editors[]>([
-  {
-    code: `function greet(name) {
-console.log('Hello, ' + name);
-return 'Welcome!';
-}
-
-greet('World');`,
-    opened: "0",
-    matches: [],
-    decorations: [],
-  },
-  {
-    code: `
-  console.log('Hello World');
-`,
-    opened: "0",
-    matches: [],
-    decorations: [],
-  },
-
-  {
-    code: defaultCode,
-    opened: "0",
-    matches: [],
-    decorations: [],
-  },
-  {
-    code: defaultCode,
-    opened: "0",
-    matches: [],
-    decorations: [],
-  },
-
-  {
-    code: defaultCode,
-    opened: "0",
-    matches: [],
-    decorations: [],
-  },
-]);
+const editors = reactive<Editors[]>(temporaryCode);
 
 const editorConfig = {
   suppressNativeFind: true,
@@ -199,6 +162,18 @@ const debouncedSearch = debounce((value: string) => {
   performGlobalSearch(value);
 }, 250);
 
+const computedEditors = computed(() => {
+  // If no script types are selected, return all editors
+  if (!selectedScriptTypes.value || selectedScriptTypes.value.length === 0) {
+    return editors;
+  }
+
+  return editors.filter((editor) => {
+    const type = editor.script?.scriptType?.toLowerCase();
+    return type && selectedScriptTypes.value.includes(type);
+  });
+});
+
 // --- Reactive watch for live search ---
 watch(searchText, async (newValue) => {
   await nextTick(); // Wait for editors to be ready
@@ -207,6 +182,11 @@ watch(searchText, async (newValue) => {
 
 // Watch for changes in search options
 watch([caseSensitive, wholeWord], async () => {
+  await nextTick();
+  debouncedSearch(searchText.value);
+});
+
+watch(selectedScriptTypes, async () => {
   await nextTick();
   debouncedSearch(searchText.value);
 });
@@ -362,10 +342,15 @@ const handleKey = (event: KeyboardEvent) => {
 
 const setItemRef = (
   el: Element | ComponentPublicInstance | null,
-  index: number
+  item: Editors
 ) => {
-  if (el && editors[index]) {
-    editors[index].editor = el;
+  if (el && item) {
+    const originalEditor = editors.find(
+      (e) => e.script?.scriptId === item.script?.scriptId
+    );
+    if (originalEditor) {
+      originalEditor.editor = el;
+    }
   }
 };
 
@@ -373,6 +358,7 @@ const setItemRef = (
 const getDeployedScripts = async () => {
   loading.value = true;
   try {
+    if (!isChromeExtension) return;
     const { message: record } = await callApi(RequestRoutes.CURRENT_REC_TYPE);
     const { type } = record || {};
     if (!type) return;
@@ -393,14 +379,15 @@ const getDeployedScripts = async () => {
 
     // Convert scripts to editor format
     editors.length = 0; // Clear existing editors
+
     deployedScripts.forEach((scriptItem) => {
       editors.push({
         code: scriptItem.scriptFile,
-        opened: "0",
         matches: [],
         decorations: [],
         script: scriptItem,
       });
+      openedState[scriptItem.scriptId] = "0"; // initialize
     });
   } catch (error) {
     console.error("Error fetching deployed scripts:", error);
@@ -411,10 +398,7 @@ const getDeployedScripts = async () => {
 };
 
 onMounted(() => {
-  scrollContainer.value?.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-  });
-  /* getDeployedScripts(); */
+  getDeployedScripts();
 });
 </script>
 
