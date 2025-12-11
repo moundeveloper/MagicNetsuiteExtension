@@ -104,6 +104,7 @@ onMounted(async () => {
           <InputText
             v-model="filters['global'].value"
             placeholder="Keyword Search"
+            :autofocus="true"
           />
         </InputGroup>
       </div>

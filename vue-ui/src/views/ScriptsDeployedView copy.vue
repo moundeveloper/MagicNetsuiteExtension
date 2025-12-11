@@ -191,7 +191,7 @@ type Editors = {
   script?: DeployedScript;
 };
 
-const editors = reactive<Editors[]>([]);
+const editors = reactive<Editors[]>(temporaryCode);
 
 const editorConfig = {
   suppressNativeFind: true,

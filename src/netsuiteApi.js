@@ -75,4 +75,8 @@ const handlers = {
     console.log("Current Record Type action received");
     return window.getCurrentRecordIdType(modules);
   },
+  EXPORT_RECORD: async ({ modules, payload: { config } }) => {
+    console.log("Export Record action received");
+    return window.exportRecord(modules, config);
+  },
 };

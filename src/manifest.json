@@ -11,9 +11,9 @@
   },
   "host_permissions": ["<all_urls>"],
   "commands": {
-    "open-extension-ui": {
+    "open_extension_ui": {
       "suggested_key": {
-        "default": "Ctrl+Shift+U",
+        "default": "Alt+Shift+U",
         "mac": "Command+Shift+U"
       },
       "description": "Open the extension UI in a tab"
@@ -26,7 +26,8 @@
         "netsuiteApi.js",
         "content.js",
         "customRecords.js",
-        "sandboxCode.js"
+        "sandboxCode.js",
+        "exportRecord.js"
       ],
       "matches": ["<all_urls>"]
     }
@@ -44,10 +45,24 @@
     "clipboardWrite",
     "tabs",
     "webRequest",
+    "cookies",
     "storage",
     "activeTab",
-    "downloads"
+    "webRequestBlocking",
+    "declarativeNetRequest",
+    "*://*.netsuite.com/*",
+    "downloads",
+    "debugger"
   ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
   }

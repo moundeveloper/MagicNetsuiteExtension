@@ -177,6 +177,12 @@ greet('World');`,
     opened: "0",
     matches: [],
     decorations: [],
+    script: {
+      scriptId: "1234",
+      scriptName: "My Client Script",
+      scriptType: "CLIENT",
+      scriptFile: "greet.js",
+    },
   },
   {
     code: `
@@ -185,6 +191,12 @@ greet('World');`,
     opened: "0",
     matches: [],
     decorations: [],
+    script: {
+      scriptId: "123",
+      scriptName: "My Script",
+      scriptType: "USEREVENT",
+      scriptFile: "greet.js",
+    },
   },
 
   {
@@ -192,12 +204,24 @@ greet('World');`,
     opened: "0",
     matches: [],
     decorations: [],
+    script: {
+      scriptId: "1235",
+      scriptName: "My Script",
+      scriptType: "ACTION",
+      scriptFile: "greet.js",
+    },
   },
   {
     code: defaultCode,
     opened: "0",
     matches: [],
     decorations: [],
+    script: {
+      scriptId: "1236",
+      scriptName: "My Script",
+      scriptType: "CLIENT",
+      scriptFile: "greet.js",
+    },
   },
 
   {
@@ -205,5 +229,11 @@ greet('World');`,
     opened: "0",
     matches: [],
     decorations: [],
+    script: {
+      scriptId: "1237",
+      scriptName: "My Script",
+      scriptType: "ACTION",
+      scriptFile: "greet.js",
+    },
   },
 ];

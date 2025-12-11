@@ -1,43 +1,40 @@
-/**
- * Exports a record and its fields and sublists into a JSON object.
- *
- * @param {Object} N - The Netsuite API object.
- * @param {string} recordId - The ID of the record to export.
- * @param {string} recordType - The type of the record to export.
- * @param {Object} [config] - Optional configuration object.
- * @param {string[]} [config.blackListFields] - Array of field IDs to exclude from the export.
- * @param {string[]} [config.blackListSublistFields] - Array of field IDs to exclude from the export of sublists.
- * @param {string[]} [config.whiteListFields] - Array of field IDs to include in the export.
- * @param {string[]} [config.whiteListSublists] - Array of sublist IDs to include in the export.
- * @param {string[]} [config.include] - Array of properties to include in the export of each field: ['fieldId', 'fieldName', 'text', 'value']
- *
- * @return {Object} - The exported record data in JSON format.
- */
-const exportRecord = (N, recordId, recordType, config = {}) => {
+const exportRecordDetails = (N, config = {}) => {
   const {
     blackListFields = [],
     blackListSublistFields = [],
+    blackListSublists = [],
     whiteListFields = null,
     whiteListSublists = null,
-    include = null, // Array of properties to include: ['fieldId', 'fieldName', 'text', 'value']
+    whiteListSublistFields = null,
+    include = null,
   } = config;
 
-  const { record } = N;
+  const { record, currentRecord } = N;
+
+  const currRec = currentRecord.get();
+  const recordId = currRec.id;
+  const recordType = currRec.type;
+
+  console.log("Exporting record:", {
+    recordId,
+    recordType,
+    config,
+  });
 
   if (!recordId || !recordType) {
     console.log("No record selected");
     return;
   }
 
-  // 1️⃣ Load record
-  const rec = null;
+  // Load record
+  let rec = null;
   try {
     rec = record.load({
       type: recordType,
       id: recordId,
     });
   } catch (error) {
-    console.log("Record not found");
+    console.log("Record not found", error);
     return;
   }
 
@@ -50,12 +47,10 @@ const exportRecord = (N, recordId, recordType, config = {}) => {
 
   // Helper function to build field data based on include array
   const buildFieldData = (fieldId, getText, getValue, getField) => {
-    // If include is null, return simple text value (backward compatible)
     if (include === null) {
       return getText();
     }
 
-    // Build object with only requested properties
     const fieldData = {};
 
     if (include.includes("fieldId")) {
@@ -78,7 +73,7 @@ const exportRecord = (N, recordId, recordType, config = {}) => {
     return fieldData;
   };
 
-  // 2️⃣ Export body fields
+  // Export body fields
   const fieldIds = rec.getFields();
   exportData.body = {};
 
@@ -97,11 +92,15 @@ const exportRecord = (N, recordId, recordType, config = {}) => {
     );
   });
 
-  // 3️⃣ Export sublists and their fields
+  // Export sublists and their fields
   const sublistIds = rec.getSublists();
   exportData.sublists = {};
 
   sublistIds.forEach((sublistId) => {
+    // ✅ Apply blacklist for sublists
+    if (blackListSublists.includes(sublistId)) return;
+
+    // Apply whitelist for sublists if specified
     if (whiteListSublists !== null && !whiteListSublists.includes(sublistId))
       return;
 
@@ -113,13 +112,21 @@ const exportRecord = (N, recordId, recordType, config = {}) => {
       const lineData = {};
 
       lineFields.forEach((fieldId) => {
+        // ✅ Apply blacklist for sublist fields
         if (blackListSublistFields.includes(fieldId)) return;
+
+        // ✅ Apply whitelist for sublist fields if specified
+        if (
+          whiteListSublistFields !== null &&
+          !whiteListSublistFields.includes(fieldId)
+        )
+          return;
 
         lineData[fieldId] = buildFieldData(
           fieldId,
           () => rec.getSublistText({ sublistId, fieldId, line: i }),
           () => rec.getSublistValue({ sublistId, fieldId, line: i }),
-          () => rec.getSublistField({ sublistId, fieldId, line: i }) // Added line parameter
+          () => rec.getSublistField({ sublistId, fieldId, line: i })
         );
       });
 
@@ -129,9 +136,8 @@ const exportRecord = (N, recordId, recordType, config = {}) => {
 
   return exportData;
 };
-// Example usage:
 
-window.getScripts = async (N, config = {}) => {
-  const exportedRecord = exportRecord(N, config);
+window.exportRecord = async (N, config = {}) => {
+  const exportedRecord = exportRecordDetails(N, config);
   return exportedRecord;
 };

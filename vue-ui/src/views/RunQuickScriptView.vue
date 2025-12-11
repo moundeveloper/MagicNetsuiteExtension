@@ -2,7 +2,12 @@
   <h1>::RUN-QUICK-SCRIPT</h1>
   <Button @click="runCode"> Run </Button>
 
-  <vue-splitter is-horizontal data-ignore :style="{ height: `${vhOffset}vh` }">
+  <vue-splitter
+    is-horizontal
+    data-ignore
+    :style="{ height: `85vh` }"
+    class="max-h-[80vh]"
+  >
     <template #top-pane>
       <MonacoCodeEditor
         ref="editorRef"
@@ -37,7 +42,7 @@ const codeEditorElement = ref<HTMLDivElement | null>(null);
 const panelHeight = ref(0);
 const logs = ref<Log[]>([]);
 const code = ref<string>(defaultCode);
-
+const localHeight = ref(0);
 const props = defineProps<{
   vhOffset: number;
 }>();
@@ -80,6 +85,7 @@ const runCode = async () => {
 let resizeObserver: ResizeObserver;
 
 onMounted(() => {
+  localHeight.value = props.vhOffset;
   if (codeEditorElement.value) {
     // set initial height
     panelHeight.value = codeEditorElement.value.clientHeight;
