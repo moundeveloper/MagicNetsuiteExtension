@@ -10,6 +10,7 @@ import { router } from "./router";
 import { basicSetup } from "codemirror";
 import VueCodemirror from "vue-codemirror";
 import { createPinia } from "pinia";
+import Tooltip from "primevue/tooltip";
 
 const auraPreset = definePreset(Aura, {
   semantic: {
@@ -78,6 +79,8 @@ app.use(PrimeVue, {
 });
 
 app.use(createPinia());
+
+app.directive("tooltip", Tooltip);
 
 app.use(VueCodemirror, {
   // optional default global options

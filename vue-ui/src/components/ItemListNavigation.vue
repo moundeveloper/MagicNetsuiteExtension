@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { useRoute } from "vue-router";
-import type { RouteItem } from "../router/routesMap";
+import {
+  RouteStatus,
+  RouteStatusColors,
+  type RouteItem,
+} from "../router/routesMap";
 import { Button, Drawer, InputText } from "primevue";
+import { useSettings } from "../states/settingsState";
+import ModulesConnected from "./ModulesConnected.vue";
 
 const props = defineProps<{
   links: RouteItem[];
@@ -11,24 +17,46 @@ const props = defineProps<{
 const route = useRoute();
 const visibleBottom = ref(false);
 const search = ref("");
-
-const activeRoute = computed(() => route.path);
+const blackList = ["settings", "modules not found"];
+const { settings } = useSettings();
 
 const filteredLinks = computed(() => {
   return props.links.filter((link) => {
-    return link.name.toLowerCase().includes(search.value.toLowerCase());
+    return (
+      link.name.toLowerCase().includes(search.value.toLowerCase()) &&
+      !blackList.includes(link.name.toLowerCase())
+    );
   });
 });
 
+const parseShortcut = (shortcut: string) => {
+  const parts = shortcut.toLowerCase().split("+");
+  const modifiers = parts.slice(0, -1);
+  const key = parts[parts.length - 1];
+  return { modifiers, key };
+};
+
 const handleKeydown = (e: KeyboardEvent) => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+  const { modifiers, key } = parseShortcut(settings.value.drawerOpen);
+  const ctrlPressed = e.ctrlKey || e.metaKey;
+  const altPressed = e.altKey;
+  const shiftPressed = e.shiftKey;
+
+  let match = true;
+  if (modifiers.includes("ctrl") && !ctrlPressed) match = false;
+  if (modifiers.includes("alt") && !altPressed) match = false;
+  if (modifiers.includes("shift") && !shiftPressed) match = false;
+  if (e.key.toLowerCase() !== key) match = false;
+
+  if (match) {
     e.preventDefault();
-    if (!visibleBottom.value) {
-      visibleBottom.value = true;
-    } else {
-      visibleBottom.value = false;
-    }
+    visibleBottom.value = !visibleBottom.value;
   }
+};
+
+const closeDrawer = (routeStatus: RouteStatus) => {
+  if (routeStatus !== RouteStatus.release) return;
+  visibleBottom.value = false;
 };
 
 onMounted(() => {
@@ -41,12 +69,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Button
-    icon="pi pi-arrow-up"
-    @click="visibleBottom = true"
-    label="Open Menu(Ctrl+K)"
-    class="fixed m-4"
-  />
+  <div class="flex p-4 gap-3">
+    <Button
+      icon="pi pi-arrow-up"
+      @click="visibleBottom = true"
+      :label="`Open Menu(${settings.drawerOpen.toUpperCase()})`"
+      class="fixed flex-1"
+    />
+
+    <RouterLink to="/settings">
+      <Button class="w-full h-full">
+        <i class="pi pi-cog text-white"></i>
+      </Button>
+    </RouterLink>
+
+    <ModulesConnected />
+  </div>
 
   <Drawer
     v-model:visible="visibleBottom"
@@ -58,16 +96,27 @@ onBeforeUnmount(() => {
       <InputText v-model="search" placeholder="Search" autofocus="true" />
 
       <div
-        class="grid [grid-template-columns:repeat(auto-fit,100px)] gap-8 p-2 overflow-y-auto"
+        class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-8 p-2 overflow-y-auto"
       >
         <router-link
           v-for="link in filteredLinks"
           :key="link.route"
-          :to="link.route"
-          class="menu-item aspect-square flex flex-col items-center justify-center"
-          :class="{ active: activeRoute === link.route }"
-          @click="visibleBottom = false"
+          :to="link.status !== RouteStatus.release ? '' : link.route"
+          class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+          :class="{
+            'feature-development': link.status !== RouteStatus.release,
+          }"
+          @click="closeDrawer(link.status)"
         >
+          <div
+            v-if="link.status !== RouteStatus.release"
+            class="feature-status"
+            :style="{
+              backgroundColor: RouteStatusColors[link.status] || '',
+            }"
+          >
+            {{ link.status }}
+          </div>
           <i :class="link.icon" />
           <span class="text-center">{{ link.name }}</span>
         </router-link>
@@ -97,7 +146,9 @@ onBeforeUnmount(() => {
   font-weight: 500;
   color: #475569; /* slate-600 text */
   border-radius: 0.5rem;
-  transition: background-color 0.25s, color 0.25s;
+  transition:
+    background-color 0.25s,
+    color 0.25s;
   outline: solid 1px var(--p-slate-600);
 }
 
@@ -112,5 +163,28 @@ onBeforeUnmount(() => {
   background-color: #cbd5e1; /* slate-300 */
   color: #0f172a; /* slate-900 */
   font-weight: 600;
+}
+
+.feature-status {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  color: white;
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0.5rem;
+  text-transform: uppercase;
+}
+
+.feature-development {
+  cursor: not-allowed;
+  background-color: var(--p-slate-200);
+  outline: solid 1px var(--p-slate-300);
+  color: var(--p-slate-400);
+}
+
+.feature-development:hover {
+  background-color: var(--p-slate-200);
+  color: var(--p-slate-400);
 }
 </style>

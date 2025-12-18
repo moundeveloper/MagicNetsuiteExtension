@@ -1,25 +1,33 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-
-import { getRouteMap } from "../router/routesMap";
+import {
+  getRouteMap,
+  RouteStatus,
+  RouteStatusColors,
+} from "../router/routesMap";
 import { InputText } from "primevue";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 const searchFeatures = ref("");
 const props = defineProps<{
   vhOffset: number;
 }>();
 
+const blackList = ["features", "settings", "modules not found"];
+
 const features = computed(() => {
   return getRouteMap().filter(
     (route) =>
-      route.name.toLowerCase() !== "home" &&
+      !blackList.includes(route.name.toLowerCase()) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase())
   );
 });
 </script>
 
 <template>
-  <h1>::FEATURES</h1>
+  <h1>{{ formattedRouteName }}</h1>
   <InputText v-model="searchFeatures" placeholder="Search" />
   <div
     :style="{ height: `${vhOffset}vh` }"
@@ -29,9 +37,26 @@ const features = computed(() => {
     <router-link
       v-for="feature in features"
       :key="feature.route"
-      :to="feature.route"
-      class="menu-item aspect-square flex flex-col items-center justify-center"
+      :to="
+        feature.status === RouteStatus.release ||
+        feature.status === RouteStatus.new
+          ? feature.route
+          : ''
+      "
+      class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+      :class="{
+        'feature-development': feature.status !== RouteStatus.release,
+      }"
     >
+      <div
+        v-if="feature.status !== RouteStatus.release"
+        class="feature-status"
+        :style="{
+          backgroundColor: RouteStatusColors[feature.status] || '',
+        }"
+      >
+        {{ feature.status }}
+      </div>
       <i :class="feature.icon" />
       <span class="text-center">{{ feature.name }}</span>
     </router-link>
@@ -78,5 +103,28 @@ const features = computed(() => {
   background-color: var(--p-slate-300);
   color: var(--p-slate-900);
   font-weight: 600;
+}
+
+.feature-status {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  color: white;
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0.5rem;
+  text-transform: uppercase;
+}
+
+.feature-development {
+  cursor: not-allowed;
+  background-color: var(--p-slate-200);
+  outline: solid 1px var(--p-slate-300);
+  color: var(--p-slate-400);
+}
+
+.feature-development:hover {
+  background-color: var(--p-slate-200);
+  color: var(--p-slate-400);
 }
 </style>

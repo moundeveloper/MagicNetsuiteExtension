@@ -2,11 +2,41 @@
 import { RouterView } from "vue-router";
 import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
-import { ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
+
+type PanelAction = "open" | "close";
+
+const sendPanelState = (action: PanelAction): void => {
+  chrome.runtime.sendMessage({
+    type: "PANEL_STATE",
+    payload: action,
+  });
+};
+
+onMounted(() => {
+  try {
+    const port = chrome.runtime.connect({ name: "sidePanel" });
+
+    // Optional: detect disconnect from background
+    port.onDisconnect.addListener(() => {
+      console.log("Disconnected from background (cleanup if needed)");
+    });
+  } catch (error) {
+    console.log("Error", error);
+  }
+});
+
+const handleUnload = () => {
+  sendPanelState("close");
+};
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", handleUnload);
+});
 </script>
 
 <template>

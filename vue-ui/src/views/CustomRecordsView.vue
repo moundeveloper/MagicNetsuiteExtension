@@ -6,9 +6,12 @@ import InputGroup from "primevue/inputgroup";
 import InputGroupAddon from "primevue/inputgroupaddon";
 import InputText from "primevue/inputtext";
 import { FilterMatchMode } from "@primevue/core/api";
-import { callApi, type ApiResponse } from "../utils/api";
+import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { ProgressSpinner } from "primevue";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 interface RecordItem {
   internalid: number;
@@ -64,6 +67,7 @@ const getCustomRecordUrl = async (recordId: number) => {
   const { message: url } = response as ApiResponse;
 
   window.open(url, "_blank");
+  closePanel();
 };
 
 onMounted(async () => {
@@ -74,7 +78,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>::CUSTOM-RECORDS</h1>
+  <h1>{{ formattedRouteName }}</h1>
   <DataTable
     :style="{ height: `${vhOffset}vh` }"
     data-ignore
@@ -106,6 +110,7 @@ onMounted(async () => {
           <InputText
             v-model="filters['global'].value"
             placeholder="Keyword Search"
+            :autofocus="true"
           />
         </InputGroup>
       </div>

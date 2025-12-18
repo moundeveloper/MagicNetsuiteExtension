@@ -1,5 +1,5 @@
 <template>
-  <h1>::RUN-QUICK-SCRIPT</h1>
+  <h1>{{ formattedRouteName }}</h1>
   <Button @click="runCode"> Run </Button>
 
   <vue-splitter
@@ -24,7 +24,7 @@
 
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { callApi } from "../utils/api";
+import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
 import { defaultCode } from "../utils/temp";
@@ -32,6 +32,9 @@ import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -47,31 +50,60 @@ const props = defineProps<{
   vhOffset: number;
 }>();
 
-const handleCommand = (cmd: string) => {
-  logs.value.push({ type: "log", values: [`$ ${cmd}`] });
+type CommandHandler = (args: string[]) => void;
 
-  const commandMapping: Record<string, () => any> = {
-    clear: () => (logs.value = []),
-    help: () => {
-      logs.value.push({
-        type: "log",
-        values: ["Available commands: clear, help, echo <text>"],
-      });
-    },
-    echo: () => {
-      const text = cmd.split(" ").slice(1).join(" ");
-      logs.value.push({ type: "log", values: [text] });
-    },
-  };
+const commands: Record<string, CommandHandler> = {
+  clear() {
+    logs.value = [];
+  },
 
-  const handler = commandMapping[cmd.split(" ")[0]!];
+  help() {
+    logs.value.push({
+      type: "log",
+      values: ["Available commands: " + Object.keys(commands).join(", ")],
+    });
+  },
+
+  echo(args) {
+    logs.value.push({
+      type: "log",
+      values: [args.join(" ")],
+    });
+  },
+  modules: async () => {
+    const modules = await getModules();
+    logs.value.push({
+      type: "log",
+      values: [`Available modules: ${modules.join(", ")}`],
+    });
+  },
+};
+
+const handleCommand = (input: string) => {
+  logs.value.push({ type: "log", values: [`$ ${input}`] });
+
+  const [command, ...args] = input.trim().split(/\s+/);
+
+  if (!command) return;
+
+  const handler = commands[command];
 
   if (!handler) {
-    logs.value.push({ type: "error", values: [`Command not found: ${cmd}`] });
+    logs.value.push({
+      type: "error",
+      values: [`Command not found: ${command}`],
+    });
     return;
   }
 
-  handler();
+  handler(args);
+};
+
+const getModules = async () => {
+  const response = await callApi(RequestRoutes.AVAILABLE_MODULES);
+  const { message: modules } = response as ApiResponse;
+
+  return modules || [];
 };
 
 const runCode = async () => {
@@ -85,24 +117,46 @@ const runCode = async () => {
 let resizeObserver: ResizeObserver;
 
 onMounted(() => {
-  localHeight.value = props.vhOffset;
-  if (codeEditorElement.value) {
-    // set initial height
-    panelHeight.value = codeEditorElement.value.clientHeight;
-
-    // observe size changes
-    resizeObserver = new ResizeObserver(() => {
-      if (codeEditorElement.value) {
-        panelHeight.value = codeEditorElement.value.clientHeight;
-      }
+  try {
+    logs.value.push({
+      type: "log",
+      values: ["Available commands: " + Object.keys(commands).join(", ")],
     });
 
-    resizeObserver.observe(codeEditorElement.value);
+    chrome.storage.local.get("cachedCode", (result) => {
+      console.log("Value:", result.cachedCode);
+      code.value = result.cachedCode;
+    });
+
+    localHeight.value = props.vhOffset;
+    if (codeEditorElement.value) {
+      // set initial height
+      panelHeight.value = codeEditorElement.value.clientHeight;
+
+      // observe size changes
+      resizeObserver = new ResizeObserver(() => {
+        if (codeEditorElement.value) {
+          panelHeight.value = codeEditorElement.value.clientHeight;
+        }
+      });
+
+      resizeObserver.observe(codeEditorElement.value);
+    }
+  } catch (error) {
+    console.error(error);
   }
 });
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
+  try {
+    chrome.storage.local.set({ cachedCode: code.value }, () => {
+      console.log("Saved!");
+    });
+
+    resizeObserver?.disconnect();
+  } catch (error) {
+    console.error(error);
+  }
 });
 </script>
 

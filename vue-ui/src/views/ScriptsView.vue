@@ -6,9 +6,12 @@ import InputGroup from "primevue/inputgroup";
 import InputGroupAddon from "primevue/inputgroupaddon";
 import InputText from "primevue/inputtext";
 import { FilterMatchMode } from "@primevue/core/api";
-import { callApi, type ApiResponse } from "../utils/api";
+import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { ProgressSpinner } from "primevue";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 interface ScriptItem {
   internalid: number;
@@ -49,6 +52,8 @@ const getScriptUrl = async (scriptId: number) => {
   const { message: url } = response as ApiResponse;
 
   window.open(url, "_blank");
+
+  closePanel();
 };
 
 const getScripts = async () => {
@@ -77,7 +82,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>::SCRIPTS</h1>
+  <h1>{{ formattedRouteName }}</h1>
 
   <DataTable
     data-ignore

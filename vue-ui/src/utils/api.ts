@@ -32,4 +32,10 @@ const callApi = async (
   });
 };
 
-export { callApi };
+const closePanel = (): void => {
+  chrome.runtime.sendMessage({
+    type: "CLOSE_PANEL",
+  });
+};
+
+export { callApi, closePanel };

@@ -1,5 +1,5 @@
 <template>
-  <h1>::REQUEST-SCRIPT</h1>
+  <h1>{{ formattedRouteName }}</h1>
 
   <Splitter data-ignore :style="{ height: `${vhOffset}vh` }">
     <SplitterPanel
@@ -94,6 +94,9 @@ import TabPanel from "primevue/tabpanel";
 import { Button, Select, Splitter, SplitterPanel, Tree } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import { treeNodes } from "../utils/temp";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 type Tab = {
   id: number;

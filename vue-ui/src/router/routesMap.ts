@@ -5,11 +5,29 @@ import RequestScript from "../views/RequestScriptView.vue";
 import RunQuickScriptView from "../views/RunQuickScriptView.vue";
 import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
 import ExportRecordView from "../views/ExportRecordView.vue";
+import SettingsView from "../views/SettingsView.vue";
+import LogSearchView from "../views/LogSearchView.vue";
+import RequestSnifferView from "../views/RequestSnifferView.vue";
+import BundleSearchView from "../views/BundleSearchView.vue";
+
+export enum RouteStatus {
+  development = "development",
+  fix = "fix",
+  new = "new",
+  release = "release",
+}
+
+export const RouteStatusColors = {
+  [RouteStatus.development]: "#C3BEF7",
+  [RouteStatus.fix]: "#EF8354",
+  [RouteStatus.new]: "#73BA9B",
+};
 
 export type RouteItem = {
   route: string;
   name: string;
   icon: string;
+  status: RouteStatus;
 };
 
 export type Route = {
@@ -18,42 +36,82 @@ export type Route = {
 };
 
 export const routes = [
-  { route: "/", name: "Home", icon: "pi pi-home", component: HomeView },
+  {
+    route: "/",
+    name: "Features",
+    icon: "pi pi-home",
+    component: HomeView,
+    status: RouteStatus.release,
+  },
+  {
+    route: "/settings",
+    name: "Settings",
+    icon: "pi pi-cog",
+    component: SettingsView,
+    status: RouteStatus.release,
+  },
+  {
+    route: "/logs",
+    name: "Logs",
+    icon: "pi pi-file",
+    component: LogSearchView,
+    status: RouteStatus.development,
+  },
+  {
+    route: "/request-sniffer",
+    name: "Request Sniffer",
+    icon: "pi pi-receipt",
+    component: RequestSnifferView,
+    status: RouteStatus.development,
+  },
+  {
+    route: "/bundles",
+    name: "Bundles",
+    icon: "pi pi-box",
+    component: BundleSearchView,
+    status: RouteStatus.development,
+  },
   {
     route: "/request-script",
     name: "Request Script",
     icon: "pi pi-globe",
     component: RequestScript,
+    status: RouteStatus.development,
   },
   {
     route: "/custom-records",
     name: "Custom Records",
     icon: "pi pi-table",
     component: CustomRecordsView,
+    status: RouteStatus.release,
   },
   {
     route: "/scripts",
     name: "Scripts",
     icon: "pi pi-code",
     component: ScriptsView,
+    status: RouteStatus.release,
   },
   {
     route: "/run-quick-script",
     name: "Run Quick Script",
     icon: "pi pi-file",
     component: RunQuickScriptView,
+    status: RouteStatus.release,
   },
   {
     route: "/scripts-deployed",
     name: "Scripts Deployed",
     icon: "pi pi-list",
     component: ScriptsDeployedView,
+    status: RouteStatus.release,
   },
   {
     route: "/export-record",
     name: "Export Record",
     icon: "pi pi-download",
     component: ExportRecordView,
+    status: RouteStatus.fix,
   },
 ];
 
@@ -62,6 +120,7 @@ export const getRouteMap = (): RouteItem[] => {
     route: route.route,
     name: route.name,
     icon: route.icon,
+    status: route.status,
   }));
 };
 

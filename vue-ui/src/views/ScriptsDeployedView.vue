@@ -1,5 +1,5 @@
 <template>
-  <h1>::SEARCH-SCRIPT-DEPLOYED</h1>
+  <h1>{{ formattedRouteName }}</h1>
 
   <div class="search-container">
     <div class="search-bar">
@@ -39,7 +39,13 @@
           <i class="pi pi-arrow-down"></i>
         </Button>
         {{ currentMatchDisplay }} / {{ totalMatches }}
-        <span v-if="currentScriptName"> | {{ currentScriptName }}</span>
+        <span
+          class="cursor-pointer"
+          v-if="currentScriptName"
+          @click="goToScript(currentScriptId)"
+        >
+          | {{ currentScriptName }}</span
+        >
       </span>
     </div>
     <Panel header="Advanced Filters" toggleable>
@@ -107,6 +113,7 @@
         <AccordionHeader class="bg-slate-200">
           <span
             class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
+            @click="goToScript(item.script?.scriptId!)"
           >
             {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
           </span>
@@ -140,7 +147,7 @@ import {
   computed,
 } from "vue";
 import ProgressSpinner from "primevue/progressspinner";
-import { callApi, isChromeExtension } from "../utils/api";
+import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import * as monaco from "monaco-editor";
@@ -157,6 +164,9 @@ import {
 import { completionItems } from "../utils/codeEditorJSCompletion";
 import { defaultCode, temporaryCode } from "../utils/temp";
 import { debounce } from "lodash";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+
+const { formattedRouteName } = useFormattedRouteName();
 
 const props = defineProps<{
   vhOffset: number;
@@ -250,6 +260,15 @@ const currentScriptName = computed(() => {
   const script = editors[entry.editorIndex]?.script;
   if (!script) return "";
   return `${script.scriptName} (${script.scriptType})`;
+});
+
+const currentScriptId = computed(() => {
+  if (!allMatches.value.length) return "";
+  const entry = allMatches.value[globalMatchIndex.value];
+  if (!entry) return "";
+  const script = editors[entry.editorIndex]?.script;
+  if (!script) return "";
+  return script.scriptId;
 });
 
 // --- Reactive watch for live search ---
@@ -473,6 +492,19 @@ const getDeployedScripts = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const goToScript = async (scriptId: string) => {
+  if (!scriptId) return;
+  const response =
+    (await callApi(RequestRoutes.SCRIPT_URL, {
+      scriptId: scriptId,
+    })) || {};
+
+  if (!response) return;
+  const { message: url } = response as ApiResponse;
+
+  window.open(url, "_blank");
 };
 
 onMounted(() => {

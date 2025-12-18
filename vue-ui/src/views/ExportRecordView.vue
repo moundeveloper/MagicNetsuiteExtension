@@ -4,7 +4,9 @@ import { Button, Checkbox, Panel } from "primevue";
 import TagSelector from "../components/TagSelector.vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
+const { formattedRouteName } = useFormattedRouteName();
 const loading = ref(false);
 const props = defineProps<{
   vhOffset: number;
@@ -197,8 +199,8 @@ onMounted(async () => {
 
 <template>
   <header class="flex justify-between items-center mb-4">
-    <h1 class="text-2xl font-semibold tracking-wide text-slate-700">
-      ::EXPORT-RECORD
+    <h1>
+      {{ formattedRouteName }}
     </h1>
     <Button
       label="Export"

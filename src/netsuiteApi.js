@@ -2,6 +2,8 @@ console.log("netsuiteApi");
 
 const loadNetsuiteApi = async () => {
   return new Promise((resolve, reject) => {
+    if (typeof require === "undefined") return resolve(null);
+
     require(["N"], (NModule) => {
       N = NModule;
       resolve(N);
@@ -14,6 +16,14 @@ window.addEventListener("fromExtension", async ({ detail: request }) => {
   const { action, data: payload } = request;
 
   const handler = handlers[action];
+  if (handler === handlers.CHECK_CONNECTION) {
+    const modules = await loadNetsuiteApi();
+    const result = (await handler({ modules, payload })) || null;
+    sendToExtension({ status: "ok", message: result });
+
+    return;
+  }
+
   if (handler) {
     try {
       const N = await loadNetsuiteApi();
@@ -78,5 +88,13 @@ const handlers = {
   EXPORT_RECORD: async ({ modules, payload: { config } }) => {
     console.log("Export Record action received");
     return window.exportRecord(modules, config);
+  },
+  CHECK_CONNECTION: async ({ modules }) => {
+    if (modules) return "connected";
+    return "disconnected";
+  },
+  AVAILABLE_MODULES: async ({ modules }) => {
+    console.log("Available Modules action received");
+    return Object.keys(modules);
   },
 };
