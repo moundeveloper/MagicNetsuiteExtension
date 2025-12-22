@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import InputGroup from "primevue/inputgroup";
@@ -30,7 +30,6 @@ const props = defineProps<{
 const items = ref<ScriptItem[]>();
 const scriptTypes = ref<{ id: string; label: string }[]>([]);
 const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
-
 const loading = ref(false);
 
 const filters = ref({
@@ -187,7 +186,7 @@ onMounted(async () => {
           <InputText
             v-model="filters['global'].value"
             placeholder="Keyword Search"
-            :autofocus="true"
+            autofocus
           />
         </InputGroup>
 

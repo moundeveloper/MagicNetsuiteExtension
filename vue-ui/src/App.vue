@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RouterView } from "vue-router";
+import { RouterView, useRouter } from "vue-router";
 import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref } from "vue";
@@ -17,8 +17,25 @@ const sendPanelState = (action: PanelAction): void => {
   });
 };
 
-onMounted(() => {
+const router = useRouter();
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "OPEN_VIEW") {
+    router.push({ name: message.view });
+  }
+});
+
+onMounted(async () => {
   try {
+    chrome.storage.session.get("openView", (result) => {
+      console.log("openView", result);
+      if (result?.openView) {
+        router.push({ name: result.openView });
+        chrome.storage.session.remove("openView");
+      }
+    });
+
+    // Port Detection
     const port = chrome.runtime.connect({ name: "sidePanel" });
 
     // Optional: detect disconnect from background

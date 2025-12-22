@@ -93,7 +93,7 @@ onBeforeUnmount(() => {
     style="height: 70vh"
   >
     <div class="flex flex-col gap-4 h-full">
-      <InputText v-model="search" placeholder="Search" autofocus="true" />
+      <InputText v-model="search" placeholder="Search" autofocus />
 
       <div
         class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-8 p-2 overflow-y-auto"
