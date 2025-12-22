@@ -80,26 +80,31 @@ const connectionStates = {
   },
 };
 
-const checkConnection = () => {
-  setInterval(async () => {
-    try {
-      const response = await callApi(RequestRoutes.CHECK_CONNECTION);
-      if (!response) return;
-      const { message: connectionStatus } = response as ApiResponse;
+const checkConnection = async () => {
+  try {
+    const response = await callApi(RequestRoutes.CHECK_CONNECTION);
+    if (!response) return;
 
-      connectionState.value =
-        connectionStatus === ConnectionStates.Connected
-          ? ConnectionStates.Connected
-          : ConnectionStates.Disconnected;
-    } catch (error) {
-      console.log("Error", error);
-      connectionState.value = ConnectionStates.Disconnected;
-    }
-  }, 2000);
+    const { message } = response as ApiResponse;
+    connectionState.value =
+      message === ConnectionStates.Connected
+        ? ConnectionStates.Connected
+        : ConnectionStates.Disconnected;
+  } catch {
+    connectionState.value = ConnectionStates.Disconnected;
+  }
 };
 
 onMounted(() => {
   checkConnection();
+
+  const listener = (message: any) => {
+    if (message.type === "TAB_CONTEXT_CHANGED") {
+      checkConnection();
+    }
+  };
+
+  chrome.runtime.onMessage.addListener(listener);
 });
 </script>
 

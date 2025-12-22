@@ -1,6 +1,20 @@
 <template>
   <h1>{{ formattedRouteName }}</h1>
-  <Button @click="runCode"> Run </Button>
+  <div class="flex items-center gap-2">
+    <Button @click="runCode">Run</Button>
+
+    <span v-if="saveStatus === 'saving'" class="text-xs text-yellow-500">
+      Syncing…
+    </span>
+
+    <span v-else-if="saveStatus === 'saved'" class="text-xs text-green-500">
+      ✓ Saved
+    </span>
+
+    <span v-else-if="saveStatus === 'error'" class="text-xs text-red-500">
+      Save failed
+    </span>
+  </div>
 
   <vue-splitter
     is-horizontal
@@ -23,7 +37,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
@@ -145,6 +159,37 @@ onMounted(() => {
   } catch (error) {
     console.error(error);
   }
+});
+
+type SaveStatus = "idle" | "saving" | "saved" | "error";
+const saveStatus = ref<SaveStatus>("idle");
+let saveTimeout: number | undefined;
+
+watch(code, (newCode) => {
+  // User typed → mark as dirty
+  saveStatus.value = "saving";
+
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+  }
+
+  saveTimeout = window.setTimeout(() => {
+    chrome.storage.local.set({ cachedCode: newCode }, () => {
+      if (chrome.runtime.lastError) {
+        saveStatus.value = "error";
+        return;
+      }
+
+      saveStatus.value = "saved";
+
+      // Optional: return to idle after a bit
+      setTimeout(() => {
+        if (saveStatus.value === "saved") {
+          saveStatus.value = "idle";
+        }
+      }, 1500);
+    });
+  }, 2000);
 });
 
 onBeforeUnmount(() => {
