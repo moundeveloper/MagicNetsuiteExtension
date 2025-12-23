@@ -11,6 +11,7 @@ import { basicSetup } from "codemirror";
 import VueCodemirror from "vue-codemirror";
 import { createPinia } from "pinia";
 import Tooltip from "primevue/tooltip";
+import ToastService from "primevue/toastservice";
 
 const auraPreset = definePreset(Aura, {
   semantic: {
@@ -77,6 +78,8 @@ app.use(PrimeVue, {
     },
   },
 });
+
+app.use(ToastService);
 
 app.use(createPinia());
 

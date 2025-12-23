@@ -4,6 +4,7 @@ import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
+import { Toast } from "primevue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -57,6 +58,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Toast />
   <ItemListNavigation :links="getRouteMap()" />
   <main ref="container">
     <RouterView :vhOffset="vhOffset" />

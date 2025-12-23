@@ -6,12 +6,13 @@
     ref="terminalContainer"
   >
     <div class="logs" ref="logContainer">
-      <div
-        v-for="(log, index) in logs"
-        :key="index"
-        :class="['log-entry', log.type]"
-      >
-        <span v-for="(value, i) in log.values" :key="i">{{ value }}</span>
+      <div v-for="(log, index) in logs" :key="index" class="log-block">
+        <button class="copy-btn" @click="copyLog(log)">
+          <i class="pi pi-clipboard"></i>
+        </button>
+        <div :class="['log-entry', log.type]">
+          <span v-for="(value, i) in log.values" :key="i">{{ value }}</span>
+        </div>
       </div>
     </div>
 
@@ -36,7 +37,7 @@
         @keydown.enter.exact="nextMatch"
         @keydown.enter.shift.exact="prevMatch"
         @keydown.esc="closeSearch"
-        placeholder="Search logs... (Enter: next, Shift+Enter: previous)"
+        placeholder="Search logs..."
         ref="searchInputRef"
         class="search-input"
       />
@@ -51,6 +52,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import Mark from "mark.js";
+import { useToast } from "primevue";
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -79,6 +81,8 @@ const searchInputRef = ref<HTMLInputElement | null>(null);
 let markInstance: Mark | null = null;
 const searchResults = ref<HTMLElement[]>([]);
 const currentMatchIndex = ref(0);
+
+const toast = useToast();
 
 // Debounce search to prevent lag
 let searchTimeout: number | null = null;
@@ -253,6 +257,25 @@ function clearSearch() {
     currentMatchIndex.value = 0;
   }
 }
+
+function copyLog(log: Log) {
+  const text = log.values.join("");
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      // Optional: show feedback
+      console.log("Copied to clipboard");
+      toast.add({
+        severity: "info",
+        summary: "Info",
+        detail: "Copied to clipboard",
+        life: 2000,
+      });
+    })
+    .catch((err) => {
+      console.error("Failed to copy: ", err);
+    });
+}
 </script>
 
 <style scoped>
@@ -382,5 +405,34 @@ mark.current-match {
 
 .search-overlay button:hover {
   background: #666;
+}
+
+.log-block {
+  position: relative;
+  background-color: #3a3f4b;
+  border-radius: 0.25rem;
+  padding: 0.5rem 1rem;
+  margin-bottom: 8px;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  background: var(--p-slate-500);
+  border: none;
+  color: white;
+  padding: 0.25rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.copy-btn:hover {
+  background: var(--p-slate-600);
+}
+
+.log-block:hover .copy-btn {
+  opacity: 1;
 }
 </style>
