@@ -9,11 +9,13 @@ import {
 import { Button, Drawer, InputText } from "primevue";
 import { useSettings } from "../states/settingsState";
 import ModulesConnected from "./ModulesConnected.vue";
+import { Privilege } from "../types/privilege";
 
 const props = defineProps<{
   links: RouteItem[];
 }>();
 
+const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const route = useRoute();
 const visibleBottom = ref(false);
 const search = ref("");
@@ -28,6 +30,17 @@ const filteredLinks = computed(() => {
     );
   });
 });
+
+const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
+
+const canAccess = (link: RouteItem) => {
+  if (link.status === RouteStatus.release) return true;
+  return isAdmin.value; // dev routes only for ADMIN
+};
+
+const isDisabled = (link: RouteItem) => {
+  return !canAccess(link);
+};
 
 const parseShortcut = (shortcut: string) => {
   const parts = shortcut.toLowerCase().split("+");
@@ -101,24 +114,36 @@ onBeforeUnmount(() => {
         <router-link
           v-for="link in filteredLinks"
           :key="link.route"
-          :to="link.status !== RouteStatus.release ? '' : link.route"
-          class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
-          :class="{
-            'feature-development': link.status !== RouteStatus.release,
-          }"
-          @click="closeDrawer(link.status)"
+          :to="link.route"
+          custom
+          v-slot="{ navigate }"
         >
           <div
-            v-if="link.status !== RouteStatus.release"
-            class="feature-status"
-            :style="{
-              backgroundColor: RouteStatusColors[link.status] || '',
+            class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+            :class="{
+              'feature-development': link.status !== RouteStatus.release,
+              'feature-disabled': isDisabled(link),
             }"
+            @click="
+              () => {
+                if (canAccess(link)) {
+                  navigate();
+                  closeDrawer(link.status);
+                }
+              }
+            "
           >
-            {{ link.status }}
+            <div
+              v-if="link.status !== RouteStatus.release"
+              class="feature-status"
+              :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+            >
+              {{ link.status }}
+            </div>
+
+            <i :class="link.icon" />
+            <span class="text-center">{{ link.name }}</span>
           </div>
-          <i :class="link.icon" />
-          <span class="text-center">{{ link.name }}</span>
         </router-link>
       </div>
     </div>
@@ -150,6 +175,7 @@ onBeforeUnmount(() => {
     background-color 0.25s,
     color 0.25s;
   outline: solid 1px var(--p-slate-600);
+  cursor: pointer;
 }
 
 /* Hover: lighter slate tone */
@@ -176,10 +202,22 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
+/* Development route base (badge only, no dimming) */
 .feature-development {
+  outline: solid 1px var(--p-slate-400);
+}
+
+/* Disabled ONLY when user cannot access */
+.feature-disabled {
   cursor: not-allowed;
   background-color: var(--p-slate-200);
+  color: var(--p-slate-400);
   outline: solid 1px var(--p-slate-300);
+}
+
+/* Disabled hover lock */
+.feature-disabled:hover {
+  background-color: var(--p-slate-200);
   color: var(--p-slate-400);
 }
 

@@ -20,14 +20,14 @@ const sendPanelState = (action: PanelAction): void => {
 
 const router = useRouter();
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "OPEN_VIEW") {
-    router.push({ name: message.view });
-  }
-});
-
 onMounted(async () => {
   try {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message.type === "OPEN_VIEW") {
+        router.push({ name: message.view });
+      }
+    });
+
     chrome.storage.session.get("openView", (result) => {
       console.log("openView", result);
       if (result?.openView) {

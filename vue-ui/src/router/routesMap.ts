@@ -9,6 +9,7 @@ import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
 import RequestSnifferView from "../views/RequestSnifferView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
+import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -69,6 +70,13 @@ export const routes = [
     name: "Bundles",
     icon: "pi pi-box",
     component: BundleSearchView,
+    status: RouteStatus.development,
+  },
+  {
+    route: "/better-filecabinet",
+    name: "Better File Cabinet",
+    icon: "pi pi-folder",
+    component: BetterFilecabinetView,
     status: RouteStatus.development,
   },
   {

@@ -31,7 +31,7 @@ const items = ref<ScriptItem[]>();
 const scriptTypes = ref<{ id: string; label: string }[]>([]);
 const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
 const loading = ref(false);
-
+const dtRef = ref<HTMLElement | null>(null);
 const filters = ref({
   global: { value: null, matchMode: FilterMatchMode.CONTAINS },
   internalid: { value: null, matchMode: FilterMatchMode.EQUALS },
@@ -61,9 +61,24 @@ const getScriptUrl = async (scriptId: number) => {
   if (!response) return;
   const { message: url } = response as ApiResponse;
 
-  window.open(url, "_blank");
+  return url;
+};
 
-  closePanel();
+const handleScriptClick = async (
+  callback: () => string | Promise<string>,
+  e: MouseEvent
+) => {
+  if (e.button !== 0 && e.button !== 1) return;
+
+  const url = await callback();
+  if (!url) return;
+
+  if (e.button === 1) {
+    chrome.runtime.sendMessage({ action: "openTab", url });
+    return;
+  }
+
+  window.open(url, "_blank");
 };
 
 const getScriptTypes = async () => {
@@ -129,7 +144,7 @@ const getScriptDeploymentUrl = async (deployment: string) => {
 
   if (!url) return;
 
-  window.open(url, "_blank");
+  return url;
 };
 
 const openSuitelet = async (script: string, deployment: string) => {
@@ -150,6 +165,16 @@ onMounted(async () => {
   await getScripts();
   await getScriptTypes();
   loading.value = false;
+
+  nextTick(() => {
+    if (dtRef.value) {
+      // @ts-ignore: $el exists on PrimeVue component instance
+      const tableEl = dtRef.value.$el as HTMLElement;
+      tableEl.addEventListener("mousedown", (e: MouseEvent) => {
+        if (e.button === 1) e.preventDefault(); // middle click
+      });
+    }
+  });
 });
 </script>
 
@@ -157,6 +182,7 @@ onMounted(async () => {
   <h1>{{ formattedRouteName }}</h1>
 
   <DataTable
+    ref="dtRef"
     data-ignore
     :style="{ height: `${vhOffset}vh` }"
     v-model:filters="filters"
@@ -216,7 +242,9 @@ onMounted(async () => {
         <div class="flex gap-2 flex-col w-[60rem]">
           <div
             class="cursor-pointer p-2 bg-slate-400 color-white rounded-[0.25rem] flex items-center hover:bg-slate-500"
-            @click="getScriptUrl(data.internalid)"
+            @mousedown="
+              (e) => handleScriptClick(() => getScriptUrl(data.internalid), e)
+            "
           >
             🔗 {{ data.name }}
           </div>
@@ -241,7 +269,14 @@ onMounted(async () => {
                   <div class="flex gap-2">
                     <div
                       class="cursor-pointer p-2 bg-slate-400 color-white rounded-[0.25rem] flex items-center hover:bg-slate-500 flex-1"
-                      @click="getScriptDeploymentUrl(deploymentData.primarykey)"
+                      @mousedown="
+                        (e) =>
+                          handleScriptClick(
+                            () =>
+                              getScriptDeploymentUrl(deploymentData.primarykey),
+                            e
+                          )
+                      "
                     >
                       🔗 {{ deploymentData.scriptid }}
                     </div>

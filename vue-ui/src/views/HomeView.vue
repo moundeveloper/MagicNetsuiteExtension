@@ -7,6 +7,7 @@ import {
 } from "../router/routesMap";
 import { InputText } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import { Privilege } from "../types/privilege";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -14,6 +15,9 @@ const searchFeatures = ref("");
 const props = defineProps<{
   vhOffset: number;
 }>();
+
+const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
+const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
 const blackList = ["features", "settings", "modules not found"];
 
@@ -24,11 +28,19 @@ const features = computed(() => {
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase())
   );
 });
+
+const canAccess = (feature: (typeof features.value)[0]) => {
+  if (feature.status === RouteStatus.release) return true;
+  return isAdmin.value; // dev routes only for ADMIN
+};
+
+const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 </script>
 
 <template>
   <h1>{{ formattedRouteName }}</h1>
   <InputText v-model="searchFeatures" placeholder="Search" />
+
   <div
     :style="{ height: `${vhOffset}vh` }"
     data-ignore
@@ -37,28 +49,34 @@ const features = computed(() => {
     <router-link
       v-for="feature in features"
       :key="feature.route"
-      :to="
-        feature.status === RouteStatus.release ||
-        feature.status === RouteStatus.new
-          ? feature.route
-          : ''
-      "
-      class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
-      :class="{
-        'feature-development': feature.status !== RouteStatus.release,
-      }"
+      :to="feature.route"
+      custom
+      v-slot="{ navigate }"
     >
       <div
-        v-if="feature.status !== RouteStatus.release"
-        class="feature-status"
-        :style="{
-          backgroundColor: RouteStatusColors[feature.status] || '',
+        class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+        :class="{
+          'feature-development': feature.status !== RouteStatus.release,
+          'feature-disabled': isDisabled(feature),
         }"
+        @click="
+          () => {
+            if (canAccess(feature)) {
+              navigate();
+            }
+          }
+        "
       >
-        {{ feature.status }}
+        <div
+          v-if="feature.status !== RouteStatus.release"
+          class="feature-status"
+          :style="{ backgroundColor: RouteStatusColors[feature.status] || '' }"
+        >
+          {{ feature.status }}
+        </div>
+        <i :class="feature.icon" />
+        <span class="text-center">{{ feature.name }}</span>
       </div>
-      <i :class="feature.icon" />
-      <span class="text-center">{{ feature.name }}</span>
     </router-link>
   </div>
 </template>
@@ -90,6 +108,7 @@ const features = computed(() => {
     background-color 0.25s,
     color 0.25s;
   outline: solid 1px var(--p-slate-600);
+  cursor: pointer;
 }
 
 /* Hover: lighter slate tone */
@@ -117,9 +136,19 @@ const features = computed(() => {
 }
 
 .feature-development {
+  outline: solid 1px var(--p-slate-400);
+}
+
+/* Disabled ONLY when user cannot access */
+.feature-disabled {
   cursor: not-allowed;
   background-color: var(--p-slate-200);
+  color: var(--p-slate-400);
   outline: solid 1px var(--p-slate-300);
+}
+
+.feature-disabled:hover {
+  background-color: var(--p-slate-200);
   color: var(--p-slate-400);
 }
 

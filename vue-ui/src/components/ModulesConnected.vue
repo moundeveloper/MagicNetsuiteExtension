@@ -96,15 +96,19 @@ const checkConnection = async () => {
 };
 
 onMounted(() => {
-  checkConnection();
+  try {
+    checkConnection();
 
-  const listener = (message: any) => {
-    if (message.type === "TAB_CONTEXT_CHANGED") {
-      checkConnection();
-    }
-  };
+    const listener = (message: any) => {
+      if (message.type === "TAB_CONTEXT_CHANGED") {
+        checkConnection();
+      }
+    };
 
-  chrome.runtime.onMessage.addListener(listener);
+    chrome.runtime.onMessage.addListener(listener);
+  } catch (error) {
+    console.log("Error", error);
+  }
 });
 </script>
 

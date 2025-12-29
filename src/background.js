@@ -53,14 +53,14 @@ function notifyTabChange(reason, tab) {
   });
 }
 
-// 1️⃣ URL changes → wait for load complete
+// URL changes → wait for load complete
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === "complete" && tab.url) {
     notifyTabChange("url-loaded", tab);
   }
 });
 
-// 2️⃣ Tab activated → wait until loaded
+// Tab activated → wait until loaded
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   const tab = await chrome.tabs.get(tabId);
   if (tab.status === "complete") {
@@ -68,7 +68,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   }
 });
 
-// 3️⃣ New tab → wait for load complete
+// New tab → wait for load complete
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.status === "complete" && tab.url) {
     notifyTabChange("tab-created", tab);
@@ -113,6 +113,13 @@ chrome.commands.onCommand.addListener((command) => {
     if (!tab?.id) return;
     chrome.sidePanel.open({ tabId: tab.id });
   });
+});
+
+// Open non active tab with URL
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "openTab") {
+    chrome.tabs.create({ url: msg.url, active: false }); // active: false → background tab
+  }
 });
 
 /* chrome.webRequest.onBeforeSendHeaders.addListener(
