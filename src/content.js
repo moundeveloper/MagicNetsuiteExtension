@@ -17,6 +17,7 @@ const injectScript = (file) => {
     injectScript("sandboxCode.js");
     injectScript("netsuiteApi.js");
     injectScript("exportRecord.js");
+    injectScript("logs.js");
   } catch (error) {
     console.log("Error", error);
   }

@@ -1,195 +1,222 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
-import { Button, Checkbox } from "primevue";
-import TagSelector from "../components/TagSelector.vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import DataTable from "primevue/datatable";
+import Column from "primevue/column";
+import InputGroup from "primevue/inputgroup";
+import InputGroupAddon from "primevue/inputgroupaddon";
+import InputText from "primevue/inputtext";
+import MultiSelect from "primevue/multiselect";
+import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
+import { DatePicker, ProgressSpinner } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
+
+interface LogItem {
+  datetime: string;
+  level: string;
+  message: string;
+  scriptId: string;
+  deploymentId: string;
+  scriptType: string;
+}
+
+const props = defineProps<{ vhOffset: number }>();
+
+const items = ref<LogItem[]>([]);
 const loading = ref(false);
+const dtRef = ref<any>(null);
 
-// Example tag data
-const availableTags = [
-  { id: 1, label: "Web Development" },
-  { id: 2, label: "API Development" },
-  { id: 3, label: "Cloud Computing" },
-  { id: 4, label: "UX Design" },
-  { id: 5, label: "Team Management" },
-  { id: 6, label: "Quality Assurance" },
-  { id: 7, label: "Data Analysis" },
-  { id: 8, label: "Cybersecurity" },
-  { id: 9, label: "Networking" },
-  { id: 10, label: "Database Administration" },
-];
+// filters
+const filters = ref({
+  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
+});
 
-// Tag groups (each independent)
-const whitelist = ref<{ id: string | number; label: string }[]>([]);
-const blacklist = ref<{ id: string | number; label: string }[]>([]);
-const sublistWhitelist = ref<{ id: string | number; label: string }[]>([]);
-const sublistBlacklist = ref<{ id: string | number; label: string }[]>([]);
+// header filters
+const startDate = ref<Date | null>(null);
+const endDate = ref<Date | null>(null);
 
-// Export options
-const exportConfig = ref<string[]>(["FieldID", "Text"]);
+/* Deprecated */
+const dateRange = ref<[Date | null, Date | null] | null>(null);
+/* Deprecated */
+const scriptTypes = ref<{ id: string; label: string }[]>([]);
+const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
 
-const getCustomRecordUrl = async (recordId: number) => {
-  const response = await callApi(RequestRoutes.CUSTOM_RECORD_URL, { recordId });
-  if (!response) return;
-  const { message: url } = response as ApiResponse;
-  window.open(url, "_blank");
+const filteredItems = computed(() => {
+  let result = items.value;
+
+  if (scriptTypesSelected.value.length) {
+    const ids = scriptTypesSelected.value.map((s) => s.id);
+    result = result.filter((l) => ids.includes(l.scriptType));
+  }
+
+  /*   if (dateRange.value?.[0] && dateRange.value?.[1]) {
+    const [start, end] = dateRange.value;
+    result = result.filter((l) => {
+      const d = new Date(l.date);
+      return d >= start! && d <= end!;
+    });
+  } */
+
+  return result;
+});
+
+const getScriptTypes = async () => {
+  const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
+  const { message } = response as ApiResponse;
+  if (Array.isArray(message)) scriptTypes.value = message;
 };
 
-const exportRecord = () => {
-  console.log("Export with config:", exportConfig.value);
-  const data = {
-    name: "Alice",
-    age: 30,
-    tags: ["vue", "javascript", "frontend"],
-  };
+const getLogs = async () => {
+  loading.value = true;
 
-  // Convert to JSON string
-  const jsonString = JSON.stringify(data, null, 2);
+  const response =
+    (await callApi(RequestRoutes.LOGS, {
+      startDate: dateRange.value?.[0],
+      endDate: dateRange.value?.[1],
+      scriptTypes: scriptTypesSelected.value.map((s) => s.id),
+    })) || {};
 
-  // Create a Blob (file-like object)
-  const blob = new Blob([jsonString], { type: "application/json" });
+  const { message } = response as ApiResponse;
 
-  // Create a temporary download link
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "record.json";
-  link.click();
+  if (Array.isArray(message)) {
+    items.value = message.map((log: any) => {
+      return {
+        datetime: "",
+        level: log.type,
+        message: log.detail,
+        scriptId: "2",
+        deploymentId: "1",
+        scriptType: log.scripttype,
+      };
+    });
+  }
 
-  // Cleanup
-  URL.revokeObjectURL(url);
+  loading.value = false;
 };
+
+watch([dateRange, scriptTypesSelected], () => {
+  getLogs();
+});
 
 onMounted(async () => {
-  loading.value = true;
-  loading.value = false;
+  await getScriptTypes();
+  await getLogs();
+
+  nextTick(() => {
+    if (dtRef.value) {
+      const tableEl = dtRef.value.$el as HTMLElement;
+      tableEl.addEventListener("mousedown", (e: MouseEvent) => {
+        if (e.button === 1) e.preventDefault();
+      });
+    }
+  });
 });
 </script>
 
 <template>
-  <div class="wrapper">
-    <header class="flex justify-between items-center mb-4">
-      <h1>
-        {{ formattedRouteName }}
-      </h1>
-      <Button
-        label="Export"
-        icon="pi pi-download"
-        class="bg-[var(--p-slate-500)] text-white hover:opacity-90 transition w-fit"
-        @click="exportRecord"
-      />
-    </header>
+  <h1>{{ formattedRouteName }}</h1>
 
-    <!-- Export Config Section -->
-    <section class="card-section">
-      <h2 class="section-title">Include Fields</h2>
-      <div class="flex flex-wrap gap-4">
-        <div
-          v-for="(option, idx) in ['FieldID', 'FieldName', 'Text', 'Value']"
-          :key="idx"
-          class="flex items-center gap-2"
-        >
-          <Checkbox
-            v-model="exportConfig"
-            :inputId="`config-${idx}`"
-            :value="option"
-          />
-          <label
-            :for="`config-${idx}`"
-            class="text-sm font-medium text-slate-700"
-          >
-            {{ option }}
+  <DataTable
+    ref="dtRef"
+    :style="{ height: `${vhOffset}vh` }"
+    v-model:filters="filters"
+    :value="filteredItems"
+    dataKey="id"
+    :globalFilterFields="['message', 'scriptId', 'deploymentId', 'level']"
+    scrollable
+    scrollHeight="flex"
+    :virtualScrollerOptions="{ itemSize: 44 }"
+    class="p-datatable-gridlines table-custom"
+    :loading="loading"
+  >
+    <template #header>
+      <div class="flex flex-wrap justify-end items-start gap-4">
+        <div class="flex-auto">
+          <label for="datepicker-24h" class="font-bold block mb-2"
+            >Global Search
           </label>
+          <InputGroup>
+            <InputGroupAddon>
+              <i class="pi pi-search" />
+            </InputGroupAddon>
+            <InputText
+              v-model="filters.global.value"
+              placeholder="Search logs"
+            />
+          </InputGroup>
+        </div>
+
+        <div class="flex-auto">
+          <label for="datepicker-24h" class="font-bold block mb-2"
+            >Start Date
+          </label>
+          <DatePicker
+            id="datepicker-24h"
+            v-model="startDate"
+            showTime
+            hourFormat="24"
+            fluid
+          />
+        </div>
+
+        <div class="flex-auto">
+          <label for="datepicker-24h" class="font-bold block mb-2"
+            >End Date
+          </label>
+          <DatePicker
+            id="datepicker-24h"
+            v-model="endDate"
+            showTime
+            hourFormat="24"
+            fluid
+          />
+        </div>
+        <div class="flex-auto">
+          <label for="datepicker-24h" class="font-bold block mb-2"
+            >Script Types
+          </label>
+
+          <MultiSelect
+            v-model="scriptTypesSelected"
+            :options="scriptTypes"
+            optionLabel="label"
+            filter
+            placeholder="Script Types"
+            class="w-full md:w-64"
+          />
         </div>
       </div>
-    </section>
+    </template>
 
-    <!-- Tag Filters -->
-    <section class="tag-sections">
-      <div class="tag-card">
-        <h2 class="section-title">Field Whitelist</h2>
-        <TagSelector
-          v-model="whitelist"
-          :availableTags="availableTags"
-          :tagName="'Whitelist'"
-        />
-      </div>
+    <Column field="datetime" header="Date / Time" sortable> </Column>
 
-      <div class="tag-card">
-        <h2 class="section-title">Field Blacklist</h2>
-        <TagSelector
-          v-model="blacklist"
-          :availableTags="availableTags"
-          :tagName="'Blacklist'"
-        />
-      </div>
+    <Column field="level" header="Level" sortable />
 
-      <div class="tag-card">
-        <h2 class="section-title">Sublist Field Whitelist</h2>
-        <TagSelector
-          v-model="sublistWhitelist"
-          :availableTags="availableTags"
-          :tagName="'Whitelist'"
-        />
-      </div>
+    <Column field="scriptType" header="Script Type" sortable />
 
-      <div class="tag-card">
-        <h2 class="section-title">Sublist Field Blacklist</h2>
-        <TagSelector
-          v-model="sublistBlacklist"
-          :availableTags="availableTags"
-          :tagName="'Blacklist'"
-        />
-      </div>
-    </section>
-  </div>
+    <Column field="scriptId" header="Script" sortable />
+
+    <Column field="deploymentId" header="Deployment" sortable />
+
+    <Column field="message" header="Message" />
+
+    <template #loading>
+      <div class="flex justify-center"><ProgressSpinner /></div>
+    </template>
+
+    <template #empty>No logs found.</template>
+  </DataTable>
 </template>
 
 <style scoped>
-.wrapper {
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-  background: #f8fafc;
-  overflow-y: auto;
+.table-custom {
+  flex: 1;
 }
-
-.card-section {
-  background: white;
-  padding: 1.5rem;
-  border-radius: 1rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.section-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.tag-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  max-height: 65vh;
-  overflow-y: auto;
-}
-
-.tag-card {
-  background: white;
-  padding: 1.25rem;
-  border-radius: 1rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+pre {
+  margin: 0;
+  font-family: inherit;
 }
 </style>

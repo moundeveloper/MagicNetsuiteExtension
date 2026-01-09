@@ -39,7 +39,8 @@
         "content.js",
         "customRecords.js",
         "sandboxCode.js",
-        "exportRecord.js"
+        "exportRecord.js",
+        "logs.js"
       ],
       "matches": ["<all_urls>"]
     }

@@ -65,7 +65,9 @@ const handlers = {
       return await window.runQuickScript(modules, { code });
     } catch (err) {
       // Return the error as a log entry
-      return [{ type: "error", values: ["Script execution error: " + err.message] }];
+      return [
+        { type: "error", values: ["Script execution error: " + err.message] },
+      ];
     }
   },
   SCRIPTS_DEPLOYED: async ({ modules, payload: { recordType } }) => {
@@ -103,5 +105,9 @@ const handlers = {
   SUITELET_URL: async ({ modules, payload: { script, deployment } }) => {
     console.log("Open Suitelet action received");
     return window.getSuiteletUrl(modules, { script, deployment });
+  },
+  LOGS: async ({ modules }) => {
+    console.log("Logs action received");
+    return window.getLogsByTime(modules, {});
   },
 };

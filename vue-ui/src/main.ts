@@ -2,6 +2,9 @@ import { createApp } from "vue";
 import "./style.css";
 import "primeicons/primeicons.css";
 import "virtual:uno.css";
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+
 import App from "./App.vue";
 import PrimeVue from "primevue/config";
 import Aura from "@primeuix/themes/aura";

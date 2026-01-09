@@ -1,10 +1,15 @@
 /**
- * Retrieves logs based on optional startTime and/or endTime
- * @param {string} startTime - "HH:MM", logs after this time (optional)
- * @param {string} endTime - "HH:MM", logs before this time (optional)
- * @returns {search.Search} - A saved search object ready to run
+ * Get script execution logs by time range
+ * @param {Object} options
+ * @param {string} [options.startTime] - start time in format "HH:mm"
+ * @param {string} [options.endTime] - end time in format "HH:mm"
+ * @returns {Promise<SearchResult>} - search result containing script execution logs
  */
-const getLogsByTime = ({ startTime, endTime }) => {
+window.getLogsByTime = async (
+  { search },
+  { startTime = null, endTime = null }
+) => {
+  console.log("Get logs by time", startTime, endTime);
   const timeToMinutes = (timeStr) => {
     if (!timeStr || !timeStr.includes(":")) return NaN;
     const [h, m] = timeStr.split(":").map(Number);
@@ -33,7 +38,7 @@ const getLogsByTime = ({ startTime, endTime }) => {
     filters.push([formula, "lessthanorequalto", timeToMinutes(endTime)]);
   }
 
-  return search.create({
+  const logsSearch = search.create({
     type: "scriptexecutionlog",
     filters,
     columns: [
@@ -47,9 +52,31 @@ const getLogsByTime = ({ startTime, endTime }) => {
       search.createColumn({ name: "detail" }),
     ],
   });
+
+  console.log("count: ", logsSearch.runPaged().count);
+
+  const results = [];
+  const pagedData = await logsSearch.runPaged.promise({ pageSize: 1000 });
+
+  pagedData.pageRanges.forEach(async (pageRange) => {
+    const page = await pagedData.fetch.promise({ index: pageRange.index });
+
+    page.data.forEach((result) => {
+      results.push(
+        result.columns.reduce((acc, col) => {
+          acc[col.name] = result.getValue(col);
+          return acc;
+        }, {})
+      );
+    });
+  });
+
+  console.log("Results", results);
+
+  return results;
 };
 
-const logsSearch = getLogsByTime({ startTime: "8:23", endTime: "8:46" });
+/* const logsSearch = getLogsByTime({ startTime: "8:23", endTime: "8:46" });
 console.log("count: ", logsSearch.runPaged().count);
 
 const results = [];
@@ -65,4 +92,4 @@ logsSearch
     );
   });
 
-console.log("Results", results);
+console.log("Results", results); */
