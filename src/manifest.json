@@ -9,6 +9,7 @@
   "side_panel": {
     "default_path": "dist/vue-ui/index.html"
   },
+  "action": {},
   "host_permissions": ["<all_urls>"],
   "commands": {
     "toggle_extension_ui": {
@@ -40,7 +41,8 @@
         "customRecords.js",
         "sandboxCode.js",
         "exportRecord.js",
-        "logs.js"
+        "logs.js",
+        "mediaItems.js"
       ],
       "matches": ["<all_urls>"]
     }

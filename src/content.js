@@ -18,6 +18,7 @@ const injectScript = (file) => {
     injectScript("netsuiteApi.js");
     injectScript("exportRecord.js");
     injectScript("logs.js");
+    injectScript("mediaItems.js");
   } catch (error) {
     console.log("Error", error);
   }
@@ -137,3 +138,44 @@ window.fetch = function (...args) {
     return response;
   });
 };
+
+// Open on mainsetup
+const openOnMainSetup = () => {
+  console.log("openOnMainSetup");
+  if (!window.location.href.includes("/app/setup/mainsetup.nl")) return;
+
+  const button = document.createElement("button");
+  button.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "MAIN_SETUP" });
+  });
+
+  button.dispatchEvent(
+    new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    })
+  );
+};
+
+if (document.readyState === "complete") {
+  openOnMainSetup();
+} else {
+  window.addEventListener("load", openOnMainSetup, { once: true });
+}
+
+// Open Main Setup
+let keysPressed = {};
+
+document.addEventListener("keydown", (e) => {
+  keysPressed[e.key.toLowerCase()] = true;
+
+  // Check if both "c" and "s" are pressed
+  if (keysPressed["c"] && keysPressed["s"]) {
+    chrome.runtime.sendMessage({ type: "OPEN_MAIN_SETUP" });
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  keysPressed[e.key.toLowerCase()] = false;
+});

@@ -110,4 +110,17 @@ const handlers = {
     console.log("Logs action received");
     return window.getLogsByTime(modules, {});
   },
+  ROOT_FOLDERS: async ({ modules }) => {
+    console.log("Root Folders action received");
+    return window.getRootFolders(modules);
+  },
+  CREATE_FOLDER: async ({ modules, payload: { name, parentFolder } }) => {
+    console.log("Create Folder action received");
+    const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
+    return await window.createFolder(modules, {
+      folderName: name,
+      parentFolderId: parentFolder,
+      csrfToken,
+    });
+  },
 };

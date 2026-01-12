@@ -20,6 +20,7 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
+  console.log("Command:", command);
   if (command === "toggle_extension_ui") {
     if (panelState === "open") {
       chrome.sidePanel.setOptions({ enabled: false });
@@ -29,6 +30,7 @@ chrome.commands.onCommand.addListener((command) => {
     }
 
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      console.log("Tab ID:", tab);
       chrome.sidePanel.open({ tabId: tab.id });
     });
 
@@ -41,6 +43,35 @@ chrome.runtime.onMessage.addListener((message) => {
   chrome.sidePanel.setOptions({ enabled: false });
   chrome.sidePanel.setOptions({ enabled: true });
   console.log("Panel closed");
+});
+
+// Open panel on mainsetup
+chrome.runtime.onMessage.addListener((message) => {
+  console.log("Message: ", message);
+  if (message?.type !== "MAIN_SETUP") return;
+
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    console.log("Panel opened: ", tab);
+    chrome.sidePanel.open({ tabId: tab.id });
+  });
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message.type !== "OPEN_MAIN_SETUP") return;
+
+  const tab = sender.tab;
+  if (!tab || !tab.url) return;
+
+  try {
+    const url = new URL(tab.url);
+    const baseUrl = `${url.protocol}//${url.hostname}`;
+    const newPath = "/app/setup/mainsetup.nl";
+    const newUrl = baseUrl + newPath;
+
+    chrome.tabs.create({ url: newUrl });
+  } catch (err) {
+    console.error("Invalid tab URL:", tab.url, err);
+  }
 });
 
 // TAB CHANGED
@@ -122,56 +153,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-/* chrome.webRequest.onBeforeSendHeaders.addListener(
-  async function (details) {
-    console.log("=== NetSuite REQUEST ===");
-    console.log("URL:", details.url);
-    console.log("Method:", details.method);
-    console.log("Full Details:", details);
+// Sniff requests
 
-    // Headers
-    const headers = {};
-    for (const h of details.requestHeaders || []) {
-      headers[h.name] = h.value;
-    }
-    console.log("Headers:", headers);
-
-    // Cookies
-    const url = new URL(details.url);
-    const cookies = await chrome.cookies.getAll({
-      domain: url.hostname.replace(/^www\./, ""),
-    });
-    console.log("Cookies:", cookies);
-
-    return { requestHeaders: details.requestHeaders };
-  },
-  { urls: ["*://*.netsuite.com/*"] },
-  ["requestHeaders", "extraHeaders"]
-);
-
-chrome.webRequest.onHeadersReceived.addListener(
-  function (details) {
-    console.log("=== NetSuite RESPONSE ===");
-    console.log("URL:", details.url);
-    console.log("Status:", details.statusCode);
-    console.log("Headers:", details.responseHeaders);
-    console.log("Full Details:", details);
-  },
-  { urls: ["*://*.netsuite.com/*"] },
-  ["responseHeaders", "extraHeaders"]
-);
-
-chrome.webRequest.onBeforeRequest.addListener(
-  function (details) {
-    console.log("Request Details:", details);
-  },
-  { urls: ["*://*.netsuite.com/*"] },
-  ["requestBody"]
-);
- */
-
-/* // Store request bodies to correlate with responses
-const requestBodyMap = new Map();
+// Store request bodies to correlate with responses
+/* const requestBodyMap = new Map();
 
 chrome.webRequest.onBeforeRequest.addListener(
   function (details) {
@@ -223,35 +208,6 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["requestBody"]
 );
 
-chrome.webRequest.onBeforeSendHeaders.addListener(
-  async function (details) {
-    console.log("=== NetSuite REQUEST HEADERS ===");
-    console.log("URL:", details.url);
-    console.log("Method:", details.method);
-
-    // Headers
-    const headers = {};
-    for (const h of details.requestHeaders || []) {
-      headers[h.name] = h.value;
-    }
-    console.log("Headers:", headers);
-
-    // Cookies
-    try {
-      const url = new URL(details.url);
-      const cookies = await chrome.cookies.getAll({
-        domain: url.hostname.replace(/^www\./, ""),
-      });
-      console.log("Cookies:", cookies);
-    } catch (error) {
-      console.log("Error getting cookies:", error);
-    }
-
-    return { requestHeaders: details.requestHeaders };
-  },
-  { urls: ["*://*.netsuite.com/*"] },
-  ["requestHeaders", "extraHeaders"]
-);
 
 chrome.webRequest.onHeadersReceived.addListener(
   function (details) {
@@ -291,122 +247,4 @@ chrome.webRequest.onCompleted.addListener(
 
 let activeTabId = null;
 
-// Start debugging when user clicks extension icon
-chrome.action.onClicked.addListener((tab) => {
-  activeTabId = tab.id;
-  chrome.debugger.attach({ tabId: tab.id }, "1.3", () => {
-    chrome.debugger.sendCommand({ tabId: tab.id }, "Network.enable");
-  });
-});
-
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  if (source.tabId !== activeTabId) return;
-
-  if (method === "Network.responseReceived") {
-    const { requestId, response } = params;
-
-    chrome.debugger.sendCommand(
-      { tabId: source.tabId },
-      "Network.getResponseBody",
-      { requestId },
-      (responseBody) => {
-        if (responseBody && !responseBody.error) {
-          console.log("=== DEBUGGER RESPONSE BODY ===");
-          console.log("URL:", response.url);
-          console.log("Status:", response.status);
-          console.log("Body:", responseBody.body);
-        }
-      }
-    );
-  }
-
-  if (method === "Network.requestWillBeSent") {
-    console.log("=== DEBUGGER REQUEST ===");
-    console.log("URL:", params.request.url);
-    console.log("Method:", params.request.method);
-    console.log("Headers:", params.request.headers);
-    console.log("Post Data:", params.request.postData);
-  }
-});
-
-// Listen for messages from content script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log(`=== ${message.type.toUpperCase()} ===`);
-
-  switch (message.type) {
-    case "xhr_request":
-      console.log("XHR Request URL:", message.url);
-      console.log("XHR Method:", message.method);
-      console.log("XHR Headers:", message.headers);
-      console.log("XHR Body:", message.body);
-      console.log("Timestamp:", new Date(message.timestamp).toISOString());
-      break;
-
-    case "xhr_response":
-      console.log("XHR Response URL:", message.url);
-      console.log("XHR Status:", message.status);
-      console.log("XHR Response Body:", message.responseText);
-      console.log("XHR Response Headers:", message.responseHeaders);
-      console.log("Timestamp:", new Date(message.timestamp).toISOString());
-      break;
-
-    case "fetch_request":
-      console.log("Fetch Request URL:", message.url);
-      console.log("Fetch Method:", message.method);
-      console.log("Fetch Headers:", message.headers);
-      console.log("Fetch Body:", message.body);
-      console.log("Timestamp:", new Date(message.timestamp).toISOString());
-      break;
-
-    case "fetch_response":
-      console.log("Fetch Response URL:", message.url);
-      console.log("Fetch Status:", message.status);
-      console.log("Fetch Response Body:", message.responseBody);
-      console.log("Fetch Response Headers:", message.responseHeaders);
-      console.log("Timestamp:", new Date(message.timestamp).toISOString());
-      break;
-  }
-
-  console.log("Full Message:", message);
-  console.log("Sender Tab:", sender.tab);
-
-  // Optional: Store in storage for persistence
-  chrome.storage.local.get(["networkLogs"], (result) => {
-    const logs = result.networkLogs || [];
-    logs.push(message);
-    // Keep only last 1000 entries to avoid memory issues
-    if (logs.length > 1000) logs.shift();
-    chrome.storage.local.set({ networkLogs: logs });
-  });
-
-  sendResponse({ received: true }); // Acknowledge receipt
-});
-
-// Optional: Function to get all stored logs
-function getStoredLogs() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(["networkLogs"], (result) => {
-      resolve(result.networkLogs || []);
-    });
-  });
-}
-
-// Optional: Clear logs function
-function clearStoredLogs() {
-  chrome.storage.local.remove(["networkLogs"]);
-}
-
-// Optional: Export logs
-function exportLogs() {
-  getStoredLogs().then((logs) => {
-    const dataStr = JSON.stringify(logs, null, 2);
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    chrome.downloads.download({
-      url: url,
-      filename: `netsuite-logs-${Date.now()}.json`,
-    });
-  });
-}
  */

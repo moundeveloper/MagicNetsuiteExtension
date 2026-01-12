@@ -4,7 +4,7 @@ import { ref, computed, type ComputedRef, type Ref } from "vue";
 export const MAX_TAGS = 6;
 
 export function useTags() {
-  const tags = ref<string[]>(["bruh", "bruh2", "bruh3"]);
+  const tags = ref<string[]>([]);
 
   const isTagSelected = (tag: string) => tags.value.includes(tag);
 

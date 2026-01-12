@@ -14,4 +14,6 @@ export enum RequestRoutes {
   SCRIPT_DEPLOYMENT_URL = "SCRIPT_DEPLOYMENT_URL",
   SUITELET_URL = "SUITELET_URL",
   LOGS = "LOGS",
+  ROOT_FOLDERS = "ROOT_FOLDERS",
+  MEDIA_ITEMS = "MEDIA_ITEMS", // Both files and folders
 }

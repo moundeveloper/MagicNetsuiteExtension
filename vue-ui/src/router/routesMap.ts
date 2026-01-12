@@ -14,14 +14,14 @@ import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 export enum RouteStatus {
   development = "development",
   fix = "fix",
-  new = "new",
+  draft = "draft",
   release = "release",
 }
 
 export const RouteStatusColors = {
   [RouteStatus.development]: "#C3BEF7",
   [RouteStatus.fix]: "#EF8354",
-  [RouteStatus.new]: "#73BA9B",
+  [RouteStatus.draft]: "#73BA9B",
 };
 
 export type RouteItem = {
@@ -56,21 +56,21 @@ export const routes = [
     name: "Logs",
     icon: "pi pi-file",
     component: LogSearchView,
-    status: RouteStatus.development,
+    status: RouteStatus.draft,
   },
   {
     route: "/request-sniffer",
     name: "Request Sniffer",
     icon: "pi pi-receipt",
     component: RequestSnifferView,
-    status: RouteStatus.development,
+    status: RouteStatus.draft,
   },
   {
     route: "/bundles",
     name: "Bundles",
     icon: "pi pi-box",
     component: BundleSearchView,
-    status: RouteStatus.development,
+    status: RouteStatus.draft,
   },
   {
     route: "/better-filecabinet",
@@ -84,7 +84,7 @@ export const routes = [
     name: "Request Script",
     icon: "pi pi-globe",
     component: RequestScript,
-    status: RouteStatus.development,
+    status: RouteStatus.draft,
   },
   {
     route: "/custom-records",

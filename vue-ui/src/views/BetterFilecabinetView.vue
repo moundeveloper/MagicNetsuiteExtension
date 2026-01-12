@@ -10,6 +10,8 @@ import {
   Toolbar,
   Tree,
 } from "primevue";
+import { RequestRoutes } from "../types/request";
+import { callApi, type ApiResponse } from "../utils/api";
 
 type File = {
   id: number;
@@ -180,9 +182,20 @@ const onKeyUp = (event: KeyboardEvent) => {
   }
 };
 
+const getRootFolders = async () => {
+  const response = (await callApi(RequestRoutes.ROOT_FOLDERS)) || {};
+
+  if (!response) return;
+  const { message: rootFolders } = response as ApiResponse;
+
+  console.log(rootFolders);
+};
+
 onMounted(() => {
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+
+  getRootFolders();
 });
 
 onUnmounted(() => {
