@@ -9,7 +9,19 @@
   "side_panel": {
     "default_path": "dist/vue-ui/index.html"
   },
-  "action": {},
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    },
+    "default_title": "Magic Netsuite"
+  },
   "host_permissions": ["<all_urls>"],
   "commands": {
     "toggle_extension_ui": {

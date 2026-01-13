@@ -94,9 +94,9 @@ const handlers = {
     console.log("Script Types action received");
     return window.getScriptTypes(modules);
   },
-  SCRIPT_DEPLOYMENTS: async ({ modules, payload: { scriptId } }) => {
+  SCRIPT_DEPLOYMENTS: async ({ modules, payload: { scriptId, scriptIds } }) => {
     console.log("Script Deployments action received");
-    return window.getDeployments(modules, { scriptId });
+    return window.getDeployments(modules, { scriptId, scriptIds });
   },
   SCRIPT_DEPLOYMENT_URL: async ({ modules, payload: { deployment } }) => {
     console.log("Script Deployment URL action received");

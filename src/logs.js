@@ -3,13 +3,31 @@
  * @param {Object} options
  * @param {string} [options.startTime] - start time in format "HH:mm"
  * @param {string} [options.endTime] - end time in format "HH:mm"
+ * @param {string} [options.type] - script type
+ * @param {string} [options.scriptId] - script id
+ * @param {string} [options.scriptDeploymentId] - script deployment id
+ * @param {string} [options.user] - user
  * @returns {Promise<SearchResult>} - search result containing script execution logs
  */
 window.getLogsByTime = async (
   { search },
-  { startTime = null, endTime = null }
+  {
+    startDate = null,
+    endDate = null,
+    startTime = null,
+    endTime = null,
+    type = null,
+    scriptId = null,
+    scriptDeploymentId = null,
+  }
 ) => {
-  console.log("Get logs by time", startTime, endTime);
+  console.log("Get logs by time: ", {
+    startTime,
+    endTime,
+    type,
+    scriptId,
+    scriptDeploymentId,
+  });
   const timeToMinutes = (timeStr) => {
     if (!timeStr || !timeStr.includes(":")) return NaN;
     const [h, m] = timeStr.split(":").map(Number);
@@ -17,6 +35,17 @@ window.getLogsByTime = async (
   };
 
   const filters = [["date", "within", "today"]];
+
+  if (startDate && endDate) {
+    filters.push("AND");
+    filters.push(["date", "between", startDate, endDate]);
+  } else if (startDate) {
+    filters.push("AND");
+    filters.push(["date", "onorafter", startDate]);
+  } else if (endDate) {
+    filters.push("AND");
+    filters.push(["date", "onorbefore", endDate]);
+  }
 
   // Build formula for total minutes
   const formula =
@@ -36,6 +65,21 @@ window.getLogsByTime = async (
   } else if (endTime) {
     filters.push("AND");
     filters.push([formula, "lessthanorequalto", timeToMinutes(endTime)]);
+  }
+
+  if (type) {
+    filters.push("AND");
+    filters.push(["type", "anyof", type]);
+  }
+
+  if (scriptId) {
+    filters.push("AND");
+    filters.push(["script.internalid", "anyof", scriptId]);
+  }
+
+  if (scriptDeploymentId) {
+    filters.push("AND");
+    filters.push(["scriptdeployment.internalid", "anyof", scriptDeploymentId]);
   }
 
   const logsSearch = search.create({

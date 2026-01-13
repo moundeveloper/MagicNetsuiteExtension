@@ -143,11 +143,20 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
   }
 };
 
-window.getDeployments = async ({ query, url }, { scriptId }) => {
+window.getDeployments = async (
+  { query, url },
+  { scriptId = null, scriptIds = [] }
+) => {
   console.log("Script ID:", scriptId);
 
-  if (!scriptId) {
-    return null;
+  let queryCondition = `
+    WHERE script = ?
+    `;
+
+  if (scriptIds.length > 0) {
+    queryCondition = `
+    WHERE script IN (?)
+    `;
   }
 
   try {
@@ -161,14 +170,18 @@ window.getDeployments = async ({ query, url }, { scriptId }) => {
          primarykey
     FROM
         scriptdeployment
-    WHERE
-        script = ?
+    ${queryCondition}
     `;
 
     const queryConfig = {
       query: sql,
-      params: [scriptId],
     };
+
+    if (scriptId) {
+      queryConfig.params = [scriptId];
+    } else if (scriptIds.length > 0) {
+      queryConfig.params = [scriptIds.join(",")];
+    }
 
     const resultSet = await query.runSuiteQL.promise(queryConfig);
     const results = resultSet.asMappedResults();

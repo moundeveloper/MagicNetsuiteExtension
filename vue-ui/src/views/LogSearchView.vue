@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import InputGroup from "primevue/inputgroup";
@@ -9,7 +9,7 @@ import MultiSelect from "primevue/multiselect";
 import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { DatePicker, ProgressSpinner } from "primevue";
+import { DatePicker, Panel, ProgressSpinner, Select } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
@@ -29,39 +29,73 @@ const items = ref<LogItem[]>([]);
 const loading = ref(false);
 const dtRef = ref<any>(null);
 
-// filters
-const filters = ref({
-  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
+/* =======================
+   LOOKUP DATA
+======================= */
+
+const scripts = ref<{ id: string; label: string }[]>([]);
+const scriptDeployments = ref<{ id: string; label: string }[]>([]);
+const scriptTypes = ref<{ id: string; label: string }[]>([]);
+
+/* =======================
+   FILTER STATE (SINGLE SOURCE)
+======================= */
+
+const filtersState = reactive({
+  query: {
+    startDate: null as Date | null,
+    endDate: null as Date | null,
+    scriptIds: [] as string[],
+    deploymentIds: [] as string[],
+    scriptTypes: [] as string[],
+  },
+  quick: {
+    global: null as string | null,
+    startDate: null as Date | null,
+    endDate: null as Date | null,
+    scriptTypes: [] as string[],
+  },
 });
 
-// header filters
-const startDate = ref<Date | null>(null);
-const endDate = ref<Date | null>(null);
+/* =======================
+   DATATABLE FILTERS
+======================= */
 
-/* Deprecated */
-const dateRange = ref<[Date | null, Date | null] | null>(null);
-/* Deprecated */
-const scriptTypes = ref<{ id: string; label: string }[]>([]);
-const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
+const tableFilters = computed(() => ({
+  global: {
+    value: filtersState.quick.global,
+    matchMode: FilterMatchMode.CONTAINS,
+  },
+}));
+
+/* =======================
+   CLIENT-SIDE FILTERING
+======================= */
 
 const filteredItems = computed(() => {
-  let result = items.value;
+  let result = [...items.value];
 
-  if (scriptTypesSelected.value.length) {
-    const ids = scriptTypesSelected.value.map((s) => s.id);
-    result = result.filter((l) => ids.includes(l.scriptType));
+  if (filtersState.quick.scriptTypes.length) {
+    result = result.filter((l) =>
+      filtersState.quick.scriptTypes.includes(l.scriptType)
+    );
   }
 
-  /*   if (dateRange.value?.[0] && dateRange.value?.[1]) {
-    const [start, end] = dateRange.value;
+  if (filtersState.quick.startDate && filtersState.quick.endDate) {
     result = result.filter((l) => {
-      const d = new Date(l.date);
-      return d >= start! && d <= end!;
+      const d = new Date(l.datetime);
+      return (
+        d >= filtersState.quick.startDate! && d <= filtersState.quick.endDate!
+      );
     });
-  } */
+  }
 
   return result;
 });
+
+/* =======================
+   API CALLS
+======================= */
 
 const getScriptTypes = async () => {
   const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
@@ -69,46 +103,93 @@ const getScriptTypes = async () => {
   if (Array.isArray(message)) scriptTypes.value = message;
 };
 
+const getScripts = async () => {
+  const response = (await callApi(RequestRoutes.SCRIPTS)) || {};
+  const { message: results } = response as ApiResponse;
+  if (!Array.isArray(results)) return;
+  scripts.value = results.map(({ id, name }) => {
+    return {
+      id: id,
+      label: name,
+    };
+  });
+};
+
+const getDeployments = async () => {
+  console.log("deployment filters", filtersState.query.scriptIds);
+  const response =
+    (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
+      scriptIds: filtersState.query.scriptIds,
+    })) || {};
+  const { message: results } = response as ApiResponse;
+  if (!Array.isArray(results)) return;
+  scriptDeployments.value = results.map(({ primarykey, scriptid }) => {
+    return {
+      id: primarykey,
+      label: scriptid,
+    };
+  });
+};
+
 const getLogs = async () => {
   loading.value = true;
 
   const response =
     (await callApi(RequestRoutes.LOGS, {
-      startDate: dateRange.value?.[0],
-      endDate: dateRange.value?.[1],
-      scriptTypes: scriptTypesSelected.value.map((s) => s.id),
+      startDate: filtersState.query.startDate,
+      endDate: filtersState.query.endDate,
+      scriptIds: filtersState.query.scriptIds,
+      deploymentIds: filtersState.query.deploymentIds,
+      scriptTypes: filtersState.query.scriptTypes,
     })) || {};
 
   const { message } = response as ApiResponse;
 
-  if (Array.isArray(message)) {
-    items.value = message.map((log: any) => {
-      return {
-        datetime: "",
+  items.value = Array.isArray(message)
+    ? message.map((log: any) => ({
+        datetime: log.datetime,
         level: log.type,
         message: log.detail,
-        scriptId: "2",
-        deploymentId: "1",
+        scriptId: log.scriptid,
+        deploymentId: log.deploymentid,
         scriptType: log.scripttype,
-      };
-    });
-  }
+      }))
+    : [];
 
   loading.value = false;
 };
 
-watch([dateRange, scriptTypesSelected], () => {
-  getLogs();
-});
+/* =======================
+   REACTIVE QUERY WATCH
+======================= */
+
+watch(
+  () => filtersState.query,
+  () => getLogs(),
+  { deep: true }
+);
+
+watch(
+  () => filtersState.query.scriptIds,
+  () => getDeployments(),
+
+  { deep: true }
+);
+
+/* =======================
+   LIFECYCLE
+======================= */
 
 onMounted(async () => {
   await getScriptTypes();
+  await getScripts();
+  await getDeployments();
   await getLogs();
 
   nextTick(() => {
     if (dtRef.value) {
-      const tableEl = dtRef.value.$el as HTMLElement;
-      tableEl.addEventListener("mousedown", (e: MouseEvent) => {
+      const el = dtRef.value.$el as HTMLElement;
+      el.addEventListener("mousedown", (e: MouseEvent) => {
         if (e.button === 1) e.preventDefault();
       });
     }
@@ -119,12 +200,79 @@ onMounted(async () => {
 <template>
   <h1>{{ formattedRouteName }}</h1>
 
+  <!-- ===================== QUERY FILTERS ===================== -->
+
+  <Panel header="Query Filters" toggleable>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div>
+        <label class="font-bold block mb-2">Start Date</label>
+        <DatePicker
+          v-model="filtersState.query.startDate"
+          showTime
+          hourFormat="24"
+          fluid
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">End Date</label>
+        <DatePicker
+          v-model="filtersState.query.endDate"
+          showTime
+          hourFormat="24"
+          fluid
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">Script Types</label>
+        <MultiSelect
+          v-model="filtersState.query.scriptTypes"
+          :options="scriptTypes"
+          optionLabel="label"
+          optionValue="id"
+          filter
+          class="w-full"
+          placeholder="Script Types"
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">Script</label>
+        <MultiSelect
+          v-model="filtersState.query.scriptIds"
+          :options="scripts"
+          optionLabel="label"
+          optionValue="id"
+          filter
+          class="w-full"
+          placeholder="Select Scripts"
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">Deployment</label>
+        <MultiSelect
+          v-model="filtersState.query.deploymentIds"
+          :options="scriptDeployments"
+          optionLabel="label"
+          optionValue="id"
+          filter
+          class="w-full"
+          placeholder="Select Deployments"
+        />
+      </div>
+    </div>
+  </Panel>
+
+  <!-- ===================== DATATABLE ===================== -->
+
   <DataTable
     ref="dtRef"
     :style="{ height: `${vhOffset}vh` }"
-    v-model:filters="filters"
+    v-model:filters="tableFilters"
     :value="filteredItems"
-    dataKey="id"
+    dataKey="datetime"
     :globalFilterFields="['message', 'scriptId', 'deploymentId', 'level']"
     scrollable
     scrollHeight="flex"
@@ -132,79 +280,67 @@ onMounted(async () => {
     class="p-datatable-gridlines table-custom"
     :loading="loading"
   >
+    <!-- ===================== QUICK FILTERS ===================== -->
+
     <template #header>
-      <div class="flex flex-wrap justify-end items-start gap-4">
-        <div class="flex-auto">
-          <label for="datepicker-24h" class="font-bold block mb-2"
-            >Global Search
-          </label>
-          <InputGroup>
-            <InputGroupAddon>
-              <i class="pi pi-search" />
-            </InputGroupAddon>
-            <InputText
-              v-model="filters.global.value"
-              placeholder="Search logs"
+      <Panel header="Quick Filters (Current Results)" toggleable>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="font-bold block mb-2">Global Search</label>
+            <InputGroup>
+              <InputGroupAddon>
+                <i class="pi pi-search" />
+              </InputGroupAddon>
+              <InputText v-model="filtersState.quick.global" />
+            </InputGroup>
+          </div>
+
+          <div>
+            <label class="font-bold block mb-2">Start Date</label>
+            <DatePicker
+              v-model="filtersState.quick.startDate"
+              showTime
+              hourFormat="24"
+              fluid
             />
-          </InputGroup>
-        </div>
+          </div>
 
-        <div class="flex-auto">
-          <label for="datepicker-24h" class="font-bold block mb-2"
-            >Start Date
-          </label>
-          <DatePicker
-            id="datepicker-24h"
-            v-model="startDate"
-            showTime
-            hourFormat="24"
-            fluid
-          />
-        </div>
+          <div>
+            <label class="font-bold block mb-2">End Date</label>
+            <DatePicker
+              v-model="filtersState.quick.endDate"
+              showTime
+              hourFormat="24"
+              fluid
+            />
+          </div>
 
-        <div class="flex-auto">
-          <label for="datepicker-24h" class="font-bold block mb-2"
-            >End Date
-          </label>
-          <DatePicker
-            id="datepicker-24h"
-            v-model="endDate"
-            showTime
-            hourFormat="24"
-            fluid
-          />
+          <div>
+            <label class="font-bold block mb-2">Script Types</label>
+            <MultiSelect
+              v-model="filtersState.quick.scriptTypes"
+              :options="scriptTypes"
+              optionLabel="label"
+              optionValue="id"
+              filter
+              class="w-full"
+            />
+          </div>
         </div>
-        <div class="flex-auto">
-          <label for="datepicker-24h" class="font-bold block mb-2"
-            >Script Types
-          </label>
-
-          <MultiSelect
-            v-model="scriptTypesSelected"
-            :options="scriptTypes"
-            optionLabel="label"
-            filter
-            placeholder="Script Types"
-            class="w-full md:w-64"
-          />
-        </div>
-      </div>
+      </Panel>
     </template>
 
-    <Column field="datetime" header="Date / Time" sortable> </Column>
-
+    <Column field="datetime" header="Date / Time" sortable />
     <Column field="level" header="Level" sortable />
-
     <Column field="scriptType" header="Script Type" sortable />
-
     <Column field="scriptId" header="Script" sortable />
-
     <Column field="deploymentId" header="Deployment" sortable />
-
     <Column field="message" header="Message" />
 
     <template #loading>
-      <div class="flex justify-center"><ProgressSpinner /></div>
+      <div class="flex justify-center">
+        <ProgressSpinner />
+      </div>
     </template>
 
     <template #empty>No logs found.</template>
@@ -214,9 +350,5 @@ onMounted(async () => {
 <style scoped>
 .table-custom {
   flex: 1;
-}
-pre {
-  margin: 0;
-  font-family: inherit;
 }
 </style>
