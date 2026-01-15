@@ -1,90 +1,82 @@
-/**
- * Get script execution logs by time range
- * @param {Object} options
- * @param {string} [options.startTime] - start time in format "HH:mm"
- * @param {string} [options.endTime] - end time in format "HH:mm"
- * @param {string} [options.type] - script type
- * @param {string} [options.scriptId] - script id
- * @param {string} [options.scriptDeploymentId] - script deployment id
- * @param {string} [options.user] - user
- * @returns {Promise<SearchResult>} - search result containing script execution logs
- */
 window.getLogsByTime = async (
-  { search },
+  { search, format },
   {
-    startDate = null,
-    endDate = null,
-    startTime = null,
-    endTime = null,
-    type = null,
-    scriptId = null,
-    scriptDeploymentId = null,
+    startDate,
+    endDate,
+    scriptIds = [],
+    deploymentIds = [],
+    scriptTypes = [],
+    type,
   }
 ) => {
-  console.log("Get logs by time: ", {
-    startTime,
-    endTime,
+  console.log("Get logs by time:", {
+    startDate,
+    endDate,
+    scriptIds,
+    deploymentIds,
+    scriptTypes,
     type,
-    scriptId,
-    scriptDeploymentId,
   });
-  const timeToMinutes = (timeStr) => {
-    if (!timeStr || !timeStr.includes(":")) return NaN;
-    const [h, m] = timeStr.split(":").map(Number);
-    return h * 60 + m;
-  };
 
-  const filters = [["date", "within", "today"]];
+  const dateToMinutes = (date) => date.getHours() * 60 + date.getMinutes();
 
+  // Initialize filters
+  const filters = [];
+
+  // Date filters
   if (startDate && endDate) {
-    filters.push("AND");
     filters.push(["date", "between", startDate, endDate]);
   } else if (startDate) {
-    filters.push("AND");
     filters.push(["date", "onorafter", startDate]);
   } else if (endDate) {
-    filters.push("AND");
     filters.push(["date", "onorbefore", endDate]);
+  } else {
+    filters.push(["date", "within", "today"]);
   }
 
-  // Build formula for total minutes
+  // Time filters
+  const startTime = startDate ? dateToMinutes(startDate) : null;
+  const endTime = endDate ? dateToMinutes(endDate) : null;
+
+  console.log("Time filters:", { startTime, endTime });
+
   const formula =
     "formulanumeric: (TO_NUMBER(TO_CHAR({time}, 'HH24')) * 60) + TO_NUMBER(TO_CHAR({time}, 'MI'))";
 
-  if (startTime && endTime) {
-    filters.push("AND");
-    filters.push([
-      formula,
-      "between",
-      timeToMinutes(startTime),
-      timeToMinutes(endTime),
-    ]);
-  } else if (startTime) {
-    filters.push("AND");
-    filters.push([formula, "greaterthan", timeToMinutes(startTime)]);
-  } else if (endTime) {
-    filters.push("AND");
-    filters.push([formula, "lessthanorequalto", timeToMinutes(endTime)]);
+  if (startTime != null && endTime != null) {
+    filters.push([formula, "between", startTime, endTime]);
+  } else if (startTime != null) {
+    filters.push([formula, "greaterthan", startTime]);
+  } else if (endTime != null) {
+    filters.push([formula, "lessthanorequalto", endTime]);
   }
 
+  // Type filters
   if (type) {
-    filters.push("AND");
     filters.push(["type", "anyof", type]);
   }
-
-  if (scriptId) {
-    filters.push("AND");
-    filters.push(["script.internalid", "anyof", scriptId]);
+  if (scriptTypes.length > 0) {
+    filters.push(["type", "anyof", scriptTypes]);
   }
 
-  if (scriptDeploymentId) {
-    filters.push("AND");
-    filters.push(["scriptdeployment.internalid", "anyof", scriptDeploymentId]);
+  // Script / deployment filters
+  if (scriptIds.length > 0) {
+    filters.push(["script.internalid", "anyof", scriptIds]);
+  }
+  if (deploymentIds.length > 0) {
+    filters.push(["scriptdeployment.internalid", "anyof", deploymentIds]);
   }
 
+  // Helpers
+  const getColumnKey = (col) =>
+    col.join ? col.join + "." + col.name : col.name;
+  const getColumnValue = (result, col) =>
+    result.getValue({ name: col.name, join: col.join || null });
+
+  // Create search
   const logsSearch = search.create({
     type: "scriptexecutionlog",
-    filters,
+    filters: filters.join("AND"),
     columns: [
       search.createColumn({ name: "view" }),
       search.createColumn({ name: "title" }),
@@ -94,46 +86,71 @@ window.getLogsByTime = async (
       search.createColumn({ name: "user" }),
       search.createColumn({ name: "scripttype" }),
       search.createColumn({ name: "detail" }),
+      search.createColumn({
+        name: "internalid",
+        join: "script",
+        label: "Script ID",
+      }),
+      search.createColumn({
+        name: "internalid",
+        join: "scriptDeployment",
+        label: "Deployment ID",
+      }),
+      search.createColumn({
+        name: "scriptid",
+        join: "scriptDeployment",
+        label: "Custom ID",
+      }),
+      search.createColumn({
+        name: "name",
+        join: "script",
+        label: "Script Name",
+      }),
     ],
   });
 
-  console.log("count: ", logsSearch.runPaged().count);
+  console.log("Total logs count:", logsSearch.runPaged().count);
 
   const results = [];
   const pagedData = await logsSearch.runPaged.promise({ pageSize: 1000 });
 
-  pagedData.pageRanges.forEach(async (pageRange) => {
+  for (const pageRange of pagedData.pageRanges) {
     const page = await pagedData.fetch.promise({ index: pageRange.index });
 
-    page.data.forEach((result) => {
-      results.push(
-        result.columns.reduce((acc, col) => {
-          acc[col.name] = result.getValue(col);
-          return acc;
-        }, {})
-      );
-    });
-  });
+    for (const result of page.data) {
+      const row = {};
 
-  console.log("Results", results);
+      result.columns.forEach((col) => {
+        let value = getColumnValue(result, col);
+        let key = getColumnKey(col);
 
+        if (col.name === "date") {
+          value = format.parse({ value: value, type: format.Type.DATE });
+          key = "datetime";
+        }
+
+        if (col.name === "time") {
+          const timeValue = format.parse({
+            value: value,
+            type: format.Type.TIMEOFDAY,
+          });
+          const datetime = row["datetime"] || new Date();
+          datetime.setHours(
+            timeValue.getHours(),
+            timeValue.getMinutes(),
+            timeValue.getSeconds()
+          );
+          value = datetime;
+          key = "datetime";
+        }
+
+        row[key] = value;
+      });
+
+      results.push(row);
+    }
+  }
+
+  console.log("Results:", results);
   return results;
 };
-
-/* const logsSearch = getLogsByTime({ startTime: "8:23", endTime: "8:46" });
-console.log("count: ", logsSearch.runPaged().count);
-
-const results = [];
-logsSearch
-  .runPaged({ pageSize: 1000 })
-  .fetch({ index: 0 })
-  .data.forEach((r) => {
-    results.push(
-      r.columns.reduce((acc, col) => {
-        acc[col.name] = r.getValue(col);
-        return acc;
-      }, {})
-    );
-  });
-
-console.log("Results", results); */

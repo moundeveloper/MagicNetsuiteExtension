@@ -9,19 +9,22 @@ import MultiSelect from "primevue/multiselect";
 import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { DatePicker, Panel, ProgressSpinner, Select } from "primevue";
+import { DatePicker, Panel, ProgressSpinner, Select, Tag } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
 
-interface LogItem {
+type LogItem = {
   datetime: string;
+  title: string;
   level: string;
   message: string;
   scriptId: string;
   deploymentId: string;
   scriptType: string;
-}
+  scriptName: string;
+  deploymentName: string;
+};
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -35,7 +38,8 @@ const dtRef = ref<any>(null);
 
 const scripts = ref<{ id: string; label: string }[]>([]);
 const scriptDeployments = ref<{ id: string; label: string }[]>([]);
-const scriptTypes = ref<{ id: string; label: string }[]>([]);
+const scriptTypesQuery = ref<{ id: string; label: string }[]>([]);
+const scriptTypesQuick = ref<{ id: string; label: string }[]>([]);
 
 /* =======================
    FILTER STATE (SINGLE SOURCE)
@@ -76,22 +80,45 @@ const filteredItems = computed(() => {
   let result = [...items.value];
 
   if (filtersState.quick.scriptTypes.length) {
-    result = result.filter((l) =>
-      filtersState.quick.scriptTypes.includes(l.scriptType)
+    result = result.filter((log) =>
+      filtersState.quick.scriptTypes.includes(log.scriptType)
     );
   }
 
-  if (filtersState.quick.startDate && filtersState.quick.endDate) {
+  if (filtersState.quick.startDate || filtersState.quick.endDate) {
+    const start = filtersState.quick.startDate
+      ? filtersState.quick.startDate.getTime()
+      : -Infinity;
+
+    const end = filtersState.quick.endDate
+      ? (() => {
+          const d = new Date(filtersState.quick.endDate);
+          d.setSeconds(59, 999); // include full minute
+          return d.getTime();
+        })()
+      : Infinity;
+
     result = result.filter((l) => {
-      const d = new Date(l.datetime);
-      return (
-        d >= filtersState.quick.startDate! && d <= filtersState.quick.endDate!
-      );
+      const logTime = Date.parse(l.datetime);
+      return logTime >= start && logTime <= end;
     });
   }
 
   return result;
 });
+
+const formatToLocalDate = (value: string | Date) => {
+  const d = value instanceof Date ? value : new Date(value);
+
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
 
 /* =======================
    API CALLS
@@ -100,7 +127,15 @@ const filteredItems = computed(() => {
 const getScriptTypes = async () => {
   const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
   const { message } = response as ApiResponse;
-  if (Array.isArray(message)) scriptTypes.value = message;
+  if (Array.isArray(message)) scriptTypesQuery.value = message;
+
+  if (Array.isArray(message))
+    scriptTypesQuick.value = message.map(({ label }) => {
+      return {
+        id: label,
+        label: label,
+      };
+    });
 };
 
 const getScripts = async () => {
@@ -123,12 +158,14 @@ const getDeployments = async () => {
     })) || {};
   const { message: results } = response as ApiResponse;
   if (!Array.isArray(results)) return;
-  scriptDeployments.value = results.map(({ primarykey, scriptid }) => {
-    return {
-      id: primarykey,
-      label: scriptid,
-    };
-  });
+  scriptDeployments.value = results.map(
+    ({ primarykey, scriptid, scriptname }) => {
+      return {
+        id: primarykey,
+        label: `${scriptid.toUpperCase()} (${scriptname})`,
+      };
+    }
+  );
 };
 
 const getLogs = async () => {
@@ -148,11 +185,14 @@ const getLogs = async () => {
   items.value = Array.isArray(message)
     ? message.map((log: any) => ({
         datetime: log.datetime,
+        title: log.title,
         level: log.type,
         message: log.detail,
-        scriptId: log.scriptid,
-        deploymentId: log.deploymentid,
+        scriptId: log["script.scriptid"],
+        deploymentId: log["scriptDeployment.internalid"],
         scriptType: log.scripttype,
+        scriptName: log["script.name"],
+        deploymentName: log["scriptDeployment.scriptid"],
       }))
     : [];
 
@@ -205,7 +245,7 @@ onMounted(async () => {
   <Panel header="Query Filters" toggleable>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
-        <label class="font-bold block mb-2">Start Date</label>
+        <label class="font-bold block mb-2">Start Datetime</label>
         <DatePicker
           v-model="filtersState.query.startDate"
           showTime
@@ -215,7 +255,7 @@ onMounted(async () => {
       </div>
 
       <div>
-        <label class="font-bold block mb-2">End Date</label>
+        <label class="font-bold block mb-2">End Datetime</label>
         <DatePicker
           v-model="filtersState.query.endDate"
           showTime
@@ -228,7 +268,7 @@ onMounted(async () => {
         <label class="font-bold block mb-2">Script Types</label>
         <MultiSelect
           v-model="filtersState.query.scriptTypes"
-          :options="scriptTypes"
+          :options="scriptTypesQuery"
           optionLabel="label"
           optionValue="id"
           filter
@@ -273,7 +313,14 @@ onMounted(async () => {
     v-model:filters="tableFilters"
     :value="filteredItems"
     dataKey="datetime"
-    :globalFilterFields="['message', 'scriptId', 'deploymentId', 'level']"
+    :globalFilterFields="[
+      'message',
+      'scriptName',
+      'deploymentName',
+      'level',
+      'scriptType',
+      'title',
+    ]"
     scrollable
     scrollHeight="flex"
     :virtualScrollerOptions="{ itemSize: 44 }"
@@ -283,58 +330,72 @@ onMounted(async () => {
     <!-- ===================== QUICK FILTERS ===================== -->
 
     <template #header>
-      <Panel header="Quick Filters (Current Results)" toggleable>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label class="font-bold block mb-2">Global Search</label>
-            <InputGroup>
-              <InputGroupAddon>
-                <i class="pi pi-search" />
-              </InputGroupAddon>
-              <InputText v-model="filtersState.quick.global" />
-            </InputGroup>
-          </div>
+      <div class="flex flex-col gap-2">
+        <Panel header="Quick Filters (Current Results)" toggleable>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="font-bold block mb-2">Global Search</label>
+              <InputGroup>
+                <InputGroupAddon>
+                  <i class="pi pi-search" />
+                </InputGroupAddon>
+                <InputText v-model="filtersState.quick.global" />
+              </InputGroup>
+            </div>
 
-          <div>
-            <label class="font-bold block mb-2">Start Date</label>
-            <DatePicker
-              v-model="filtersState.quick.startDate"
-              showTime
-              hourFormat="24"
-              fluid
-            />
-          </div>
+            <div>
+              <label class="font-bold block mb-2">Start Datetime</label>
+              <DatePicker
+                v-model="filtersState.quick.startDate"
+                showTime
+                hourFormat="24"
+                fluid
+              />
+            </div>
 
-          <div>
-            <label class="font-bold block mb-2">End Date</label>
-            <DatePicker
-              v-model="filtersState.quick.endDate"
-              showTime
-              hourFormat="24"
-              fluid
-            />
-          </div>
+            <div>
+              <label class="font-bold block mb-2">End Datetime</label>
+              <DatePicker
+                v-model="filtersState.quick.endDate"
+                showTime
+                hourFormat="24"
+                fluid
+              />
+            </div>
 
-          <div>
-            <label class="font-bold block mb-2">Script Types</label>
-            <MultiSelect
-              v-model="filtersState.quick.scriptTypes"
-              :options="scriptTypes"
-              optionLabel="label"
-              optionValue="id"
-              filter
-              class="w-full"
-            />
+            <div>
+              <label class="font-bold block mb-2">Script Types</label>
+              <MultiSelect
+                v-model="filtersState.quick.scriptTypes"
+                :options="scriptTypesQuick"
+                optionLabel="label"
+                optionValue="id"
+                filter
+                class="w-full"
+              />
+            </div>
           </div>
-        </div>
-      </Panel>
+        </Panel>
+
+        <Tag
+          severity="info"
+          :value="`${filteredItems.length}`"
+          class="w-fit"
+        ></Tag>
+      </div>
     </template>
 
-    <Column field="datetime" header="Date / Time" sortable />
+    <Column field="datetime" header="Date / Time" sortable>
+      <template #body="{ data }">
+        {{ formatToLocalDate(data.datetime) }}
+      </template>
+    </Column>
+
+    <Column field="title" header="Title" sortable />
     <Column field="level" header="Level" sortable />
     <Column field="scriptType" header="Script Type" sortable />
-    <Column field="scriptId" header="Script" sortable />
-    <Column field="deploymentId" header="Deployment" sortable />
+    <Column field="scriptName" header="Script" sortable />
+    <Column field="deploymentName" header="Deployment" sortable />
     <Column field="message" header="Message" />
 
     <template #loading>

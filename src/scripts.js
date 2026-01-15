@@ -38,7 +38,7 @@ window.getScripts = async (N, { scriptId = null } = {}) => {
 
 window.getScriptTypes = async (N) => {
   const { query } = N;
-  const sql = `SELECT name as label, id FROM scripttype ORDER BY name ASC;`;
+  const sql = `SELECT name as label, id FROM scripttype ORDER BY name ASC`;
   const queryConfig = { query: sql };
   const resultSet = await query.runSuiteQL.promise(queryConfig);
   const results = resultSet.asMappedResults();
@@ -162,14 +162,18 @@ window.getDeployments = async (
   try {
     const sql = `
     SELECT
-         scriptid, 
-         recordtype,
-         isdeployed, 
-         status, 
-         loglevel,
-         primarykey
+         scriptDeployment.scriptid, 
+         scriptDeployment.recordtype,
+         scriptDeployment.isdeployed, 
+         scriptDeployment.status, 
+         scriptDeployment.loglevel,
+         scriptDeployment.primarykey,
+         script.id,
+         script.name as scriptname,
     FROM
         scriptdeployment
+    INNER JOIN script
+    ON 	scriptDeployment.script = script.id
     ${queryCondition}
     `;
 

@@ -106,9 +106,24 @@ const handlers = {
     console.log("Open Suitelet action received");
     return window.getSuiteletUrl(modules, { script, deployment });
   },
-  LOGS: async ({ modules }) => {
-    console.log("Logs action received");
-    return window.getLogsByTime(modules, {});
+  LOGS: async ({
+    modules,
+    payload: { startDate, endDate, scriptIds, deploymentIds, scriptTypes },
+  }) => {
+    console.log("Logs action received", { startDate, endDate });
+
+    startDate = startDate ? new Date(startDate) : null;
+    endDate = endDate ? new Date(endDate) : null;
+
+    console.log("Logs action received 2", { startDate, endDate });
+
+    return window.getLogsByTime(modules, {
+      startDate,
+      endDate,
+      scriptIds,
+      deploymentIds,
+      scriptTypes,
+    });
   },
   ROOT_FOLDERS: async ({ modules }) => {
     console.log("Root Folders action received");

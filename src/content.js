@@ -15,10 +15,10 @@ const injectScript = (file) => {
     injectScript("scripts.js");
     injectScript("customRecords.js");
     injectScript("sandboxCode.js");
-    injectScript("netsuiteApi.js");
     injectScript("exportRecord.js");
     injectScript("logs.js");
     injectScript("mediaItems.js");
+    injectScript("netsuiteApi.js");
   } catch (error) {
     console.log("Error", error);
   }
