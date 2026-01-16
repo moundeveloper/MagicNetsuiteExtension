@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
 import InputGroup from "primevue/inputgroup";
@@ -11,6 +19,7 @@ import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import {
   Button,
+  ContextMenu,
   DatePicker,
   Panel,
   ProgressSpinner,
@@ -23,6 +32,7 @@ import type { Background } from "@vue-flow/background";
 const { formattedRouteName } = useFormattedRouteName();
 
 type LogItem = {
+  internalid: string;
   datetime: string;
   title: string;
   level: string;
@@ -72,6 +82,31 @@ const filtersState = reactive({
     wholeWord: false,
     regex: false,
   },
+});
+
+const cm = ref();
+const selectedLog = ref<LogItem | null>(null);
+const selectedContext = ref<"script" | "deployment" | null>(null);
+
+const menuModel = computed(() => {
+  if (!selectedContext.value) return [];
+
+  return [
+    {
+      label: `Filter by ${
+        selectedContext.value === "script" ? "Script" : "Deployment"
+      } (Query)`,
+      icon: "pi pi-search",
+      command: applyQueryFilter,
+    },
+    {
+      label: `Filter by ${
+        selectedContext.value === "script" ? "Script" : "Deployment"
+      } (Quick)`,
+      icon: "pi pi-filter",
+      command: applyQuickFilter,
+    },
+  ];
 });
 
 /* =======================
@@ -169,6 +204,40 @@ const formatToLocalDate = (value: string | Date) => {
   });
 };
 
+const applyQueryFilter = () => {
+  if (!selectedLog.value || !selectedContext.value) return;
+
+  if (selectedContext.value === "script") {
+    console.log("QUERY FILTER: script", selectedLog.value.scriptId);
+  }
+
+  if (selectedContext.value === "deployment") {
+    console.log("QUERY FILTER: deployment", selectedLog.value.deploymentId);
+  }
+};
+
+const applyQuickFilter = () => {
+  if (!selectedLog.value || !selectedContext.value) return;
+
+  if (selectedContext.value === "script") {
+    console.log("QUICK FILTER: script", selectedLog.value.scriptName);
+  }
+
+  if (selectedContext.value === "deployment") {
+    console.log("QUICK FILTER: deployment", selectedLog.value.deploymentName);
+  }
+};
+
+const openCellMenu = (
+  event: MouseEvent,
+  row: LogItem,
+  context: "script" | "deployment"
+) => {
+  selectedLog.value = row;
+  selectedContext.value = context;
+  cm.value.show(event);
+};
+
 /* =======================
    API CALLS
 ======================= */
@@ -233,6 +302,7 @@ const getLogs = async () => {
 
   items.value = Array.isArray(message)
     ? message.map((log: any) => ({
+        internalid: log.internalid,
         datetime: log.datetime,
         title: log.title,
         level: log.type,
@@ -276,6 +346,20 @@ onMounted(async () => {
         if (e.button === 1) e.preventDefault();
       });
     }
+  });
+
+  const stopMenuRightClick = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(".p-contextmenu")) {
+      e.preventDefault(); // stop browser menu
+      e.stopPropagation(); // stop event from bubbling
+    }
+  };
+
+  document.addEventListener("contextmenu", stopMenuRightClick, true);
+
+  onBeforeUnmount(() => {
+    document.removeEventListener("contextmenu", stopMenuRightClick, true);
   });
 });
 </script>
@@ -361,13 +445,13 @@ onMounted(async () => {
   </Panel>
 
   <!-- ===================== DATATABLE ===================== -->
-
+  <ContextMenu ref="cm" :model="menuModel" />
   <DataTable
     ref="dtRef"
     :style="{ height: `${vhOffset}vh` }"
     v-model:filters="tableFilters"
     :value="filteredItems"
-    dataKey="datetime"
+    dataKey="internalid"
     :globalFilterFields="[
       'message',
       'scriptName',
@@ -381,6 +465,7 @@ onMounted(async () => {
     :virtualScrollerOptions="{ itemSize: 44 }"
     class="p-datatable-gridlines table-custom"
     :loading="loading"
+    v-model:contextMenuSelection="selectedLog"
   >
     <!-- ===================== QUICK FILTERS ===================== -->
 
@@ -510,8 +595,28 @@ onMounted(async () => {
     <Column field="title" header="Title" sortable />
     <Column field="level" header="Level" sortable />
     <Column field="scriptType" header="Script Type" sortable />
-    <Column field="scriptName" header="Script" sortable />
-    <Column field="deploymentName" header="Deployment" sortable />
+    <Column field="scriptName" header="Script">
+      <template #body="{ data }">
+        <div
+          class="filterable-cell"
+          @contextmenu.prevent="openCellMenu($event, data, 'script')"
+        >
+          {{ data.scriptName }}
+        </div>
+      </template>
+    </Column>
+
+    <Column field="deploymentName" header="Deployment">
+      <template #body="{ data }">
+        <div
+          class="filterable-cell"
+          @contextmenu.prevent="openCellMenu($event, data, 'deployment')"
+        >
+          {{ data.deploymentName }}
+        </div>
+      </template>
+    </Column>
+
     <Column field="message" header="Message" />
 
     <template #loading>
@@ -540,6 +645,24 @@ onMounted(async () => {
 }
 
 .p-inputgroupaddon {
+  padding: 0 !important;
+}
+
+.filterable-cell {
+  height: 100%;
+  width: 100%;
+  cursor: context-menu;
+  text-decoration: underline dotted;
+  display: flex;
+  align-items: center;
+}
+
+.filterable-cell:hover {
+  background-color: var(--p-surface-100);
+}
+
+td:has(> .filterable-cell) {
+  cursor: context-menu;
   padding: 0 !important;
 }
 </style>

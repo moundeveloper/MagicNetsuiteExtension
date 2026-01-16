@@ -95,6 +95,7 @@ window.getLogsByTime = async (
     type: "scriptexecutionlog",
     filters: filters,
     columns: [
+      search.createColumn({ name: "internalid" }),
       search.createColumn({ name: "view" }),
       search.createColumn({ name: "title" }),
       search.createColumn({ name: "type" }),

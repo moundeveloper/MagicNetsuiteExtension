@@ -56,7 +56,7 @@ export const routes = [
     name: "Logs",
     icon: "pi pi-file",
     component: LogSearchView,
-    status: RouteStatus.draft,
+    status: RouteStatus.release,
   },
   {
     route: "/request-sniffer",

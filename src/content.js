@@ -9,6 +9,23 @@ const injectScript = (file) => {
   (document.head || document.documentElement).appendChild(script);
 };
 
+const injectUi = () => {
+  const container = document.createElement("div");
+  container.id = "app";
+  document.body.appendChild(container);
+
+  // 2. Inject CSS
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = chrome.runtime.getURL("dist/assets/index-BerDq4bQ.css");
+  document.head.appendChild(link);
+
+  // 3. Inject JS
+  const script = document.createElement("script");
+  script.src = chrome.runtime.getURL("dist/assets/index-BMazU1fq.js");
+  document.body.appendChild(script);
+};
+
 (async function () {
   try {
     /* const { logStuff } = await import(chrome.runtime.getURL("./utils.js")); */
@@ -19,6 +36,7 @@ const injectScript = (file) => {
     injectScript("logs.js");
     injectScript("mediaItems.js");
     injectScript("netsuiteApi.js");
+    injectUi();
   } catch (error) {
     console.log("Error", error);
   }
