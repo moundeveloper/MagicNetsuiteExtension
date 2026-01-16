@@ -115,8 +115,6 @@ const handlers = {
     startDate = startDate ? new Date(startDate) : null;
     endDate = endDate ? new Date(endDate) : null;
 
-    console.log("Logs action received 2", { startDate, endDate });
-
     return window.getLogsByTime(modules, {
       startDate,
       endDate,

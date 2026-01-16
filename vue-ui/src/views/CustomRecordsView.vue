@@ -102,7 +102,7 @@ onMounted(async () => {
   >
     <!-- Global Search using InputGroup -->
     <template #header>
-      <div class="flex justify-end">
+      <div class="flex">
         <InputGroup style="max-width: 300px">
           <InputGroupAddon>
             <i class="pi pi-search"></i>
@@ -117,16 +117,6 @@ onMounted(async () => {
     </template>
 
     <!-- Columns -->
-    <Column field="internalid" header="Internal ID" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          type="number"
-          @input="filterCallback()"
-          placeholder="Search by ID"
-        />
-      </template>
-    </Column>
 
     <Column field="name" header="Name" sortable>
       <template #filter="{ filterModel, filterCallback }">
@@ -148,22 +138,33 @@ onMounted(async () => {
       </template>
     </Column>
 
-    <Column field="description" header="Description" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Description"
-        />
-      </template>
-    </Column>
-
     <Column field="owner" header="Owner" sortable>
       <template #filter="{ filterModel, filterCallback }">
         <InputText
           v-model="filterModel.value"
           @input="filterCallback()"
           placeholder="Search by Owner"
+        />
+      </template>
+    </Column>
+
+    <Column field="internalid" header="Internal ID" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          type="number"
+          @input="filterCallback()"
+          placeholder="Search by ID"
+        />
+      </template>
+    </Column>
+
+    <Column field="description" header="Description" sortable>
+      <template #filter="{ filterModel, filterCallback }">
+        <InputText
+          v-model="filterModel.value"
+          @input="filterCallback()"
+          placeholder="Search by Description"
         />
       </template>
     </Column>

@@ -20,16 +20,24 @@ window.getLogsByTime = async (
 
   const dateToMinutes = (date) => date.getHours() * 60 + date.getMinutes();
 
-  // Initialize filters
   const filters = [];
+
+  const formatDateSearch = (date) => {
+    return format.format({ value: date, type: format.Type.DATE });
+  };
 
   // Date filters
   if (startDate && endDate) {
-    filters.push(["date", "between", startDate, endDate]);
+    filters.push([
+      "date",
+      "between",
+      formatDateSearch(startDate),
+      formatDateSearch(endDate),
+    ]);
   } else if (startDate) {
-    filters.push(["date", "onorafter", startDate]);
+    filters.push(["date", "onorafter", formatDateSearch(startDate)]);
   } else if (endDate) {
-    filters.push(["date", "onorbefore", endDate]);
+    filters.push(["date", "onorbefore", formatDateSearch(endDate)]);
   } else {
     filters.push(["date", "within", "today"]);
   }
@@ -44,26 +52,33 @@ window.getLogsByTime = async (
     "formulanumeric: (TO_NUMBER(TO_CHAR({time}, 'HH24')) * 60) + TO_NUMBER(TO_CHAR({time}, 'MI'))";
 
   if (startTime != null && endTime != null) {
+    if (filters.length > 0) filters.push("AND");
     filters.push([formula, "between", startTime, endTime]);
   } else if (startTime != null) {
-    filters.push([formula, "greaterthan", startTime]);
+    if (filters.length > 0) filters.push("AND");
+    filters.push([formula, "greaterthanorequalto", startTime]);
   } else if (endTime != null) {
+    if (filters.length > 0) filters.push("AND");
     filters.push([formula, "lessthanorequalto", endTime]);
   }
 
   // Type filters
   if (type) {
+    if (filters.length > 0) filters.push("AND");
     filters.push(["type", "anyof", type]);
   }
   if (scriptTypes.length > 0) {
+    if (filters.length > 0) filters.push("AND");
     filters.push(["type", "anyof", scriptTypes]);
   }
 
   // Script / deployment filters
   if (scriptIds.length > 0) {
+    if (filters.length > 0) filters.push("AND");
     filters.push(["script.internalid", "anyof", scriptIds]);
   }
   if (deploymentIds.length > 0) {
+    if (filters.length > 0) filters.push("AND");
     filters.push(["scriptdeployment.internalid", "anyof", deploymentIds]);
   }
 
@@ -73,10 +88,12 @@ window.getLogsByTime = async (
   const getColumnValue = (result, col) =>
     result.getValue({ name: col.name, join: col.join || null });
 
+  console.log("Filters:", filters);
+
   // Create search
   const logsSearch = search.create({
     type: "scriptexecutionlog",
-    filters: filters.join("AND"),
+    filters: filters,
     columns: [
       search.createColumn({ name: "view" }),
       search.createColumn({ name: "title" }),
@@ -109,10 +126,10 @@ window.getLogsByTime = async (
     ],
   });
 
-  console.log("Total logs count:", logsSearch.runPaged().count);
-
   const results = [];
   const pagedData = await logsSearch.runPaged.promise({ pageSize: 1000 });
+
+  console.log("Total logs count:", pagedData.count);
 
   for (const pageRange of pagedData.pageRanges) {
     const page = await pagedData.fetch.promise({ index: pageRange.index });

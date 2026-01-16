@@ -42,7 +42,7 @@
         <span
           class="cursor-pointer"
           v-if="currentScriptName"
-          @click="goToScript(currentScriptId)"
+          @mousedown="goToScript($event, currentScriptId)"
         >
           | {{ currentScriptName }}</span
         >
@@ -113,13 +113,13 @@
         <AccordionHeader class="bg-slate-200">
           <span
             class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
-            @click="goToScript(item.script?.scriptId!)"
+            @mousedown="goToScript($event, item.script?.scriptId!)"
           >
             {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
           </span>
         </AccordionHeader>
         <AccordionContent class="position-relative">
-          <Button class="inspect-button" size="small"
+          <Button class="inspect-button" size="small" v-if="item.code"
             ><i class="pi pi-search"></i> Inspect</Button
           >
           <MonacoCodeEditor
@@ -494,17 +494,27 @@ const getDeployedScripts = async () => {
   }
 };
 
-const goToScript = async (scriptId: string) => {
+const goToScript = async (event: MouseEvent, scriptId: string) => {
   if (!scriptId) return;
+
+  // Only react to left (0) or middle (1) click
+  if (event.button !== 0 && event.button !== 1) return;
+
+  event.preventDefault();
+
   const response =
-    (await callApi(RequestRoutes.SCRIPT_URL, {
-      scriptId: scriptId,
-    })) || {};
+    (await callApi(RequestRoutes.SCRIPT_URL, { scriptId })) || {};
 
   if (!response) return;
+
   const { message: url } = response as ApiResponse;
 
-  window.open(url, "_blank");
+  if (event.button === 1) {
+    // Middle click → open in new tab, stay on current page
+    chrome.runtime.sendMessage({ action: "openTab", url });
+  } else {
+    window.open(url, "_blank");
+  }
 };
 
 onMounted(() => {

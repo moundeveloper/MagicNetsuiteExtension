@@ -9,8 +9,16 @@ import MultiSelect from "primevue/multiselect";
 import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { DatePicker, Panel, ProgressSpinner, Select, Tag } from "primevue";
+import {
+  Button,
+  DatePicker,
+  Panel,
+  ProgressSpinner,
+  Select,
+  Tag,
+} from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import type { Background } from "@vue-flow/background";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -59,6 +67,11 @@ const filtersState = reactive({
     endDate: null as Date | null,
     scriptTypes: [] as string[],
   },
+  quickOptions: {
+    caseSensitive: false,
+    wholeWord: false,
+    regex: false,
+  },
 });
 
 /* =======================
@@ -78,13 +91,49 @@ const tableFilters = computed(() => ({
 
 const filteredItems = computed(() => {
   let result = [...items.value];
+  const query = filtersState.quick.global?.trim();
 
+  // Quick filter global
+  if (query) {
+    const { caseSensitive, wholeWord, regex } = filtersState.quickOptions;
+    const flags = caseSensitive ? "g" : "gi";
+    let searchRegex: RegExp;
+
+    try {
+      if (regex) {
+        searchRegex = new RegExp(query, flags);
+      } else if (wholeWord) {
+        searchRegex = new RegExp(`\\b${query}\\b`, flags);
+      } else {
+        searchRegex = new RegExp(
+          query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          flags
+        ); // escape regex
+      }
+    } catch (e) {
+      searchRegex = /$^/; // never match if invalid regex
+    }
+
+    result = result.filter((log) =>
+      [
+        "message",
+        "scriptName",
+        "deploymentName",
+        "level",
+        "scriptType",
+        "title",
+      ].some((field) => searchRegex.test((log as any)[field]))
+    );
+  }
+
+  // Script Types quick filter
   if (filtersState.quick.scriptTypes.length) {
     result = result.filter((log) =>
       filtersState.quick.scriptTypes.includes(log.scriptType)
     );
   }
 
+  // Start / End Date quick filter
   if (filtersState.quick.startDate || filtersState.quick.endDate) {
     const start = filtersState.quick.startDate
       ? filtersState.quick.startDate.getTime()
@@ -93,7 +142,7 @@ const filteredItems = computed(() => {
     const end = filtersState.quick.endDate
       ? (() => {
           const d = new Date(filtersState.quick.endDate);
-          d.setSeconds(59, 999); // include full minute
+          d.setSeconds(59, 999);
           return d.getTime();
         })()
       : Infinity;
@@ -204,12 +253,6 @@ const getLogs = async () => {
 ======================= */
 
 watch(
-  () => filtersState.query,
-  () => getLogs(),
-  { deep: true }
-);
-
-watch(
   () => filtersState.query.scriptIds,
   () => getDeployments(),
 
@@ -242,7 +285,19 @@ onMounted(async () => {
 
   <!-- ===================== QUERY FILTERS ===================== -->
 
-  <Panel header="Query Filters" toggleable>
+  <Panel toggleable class="query-panel">
+    <template #header>
+      <div class="flex justify-between items-center gap-4 h-full">
+        <span>Query Filters</span>
+        <Button
+          @click="getLogs"
+          class="h-full bg-[var(--p-slate-300)] !rounded-none"
+        >
+          <i class="pi pi-search"></i>
+          Run Search</Button
+        >
+      </div>
+    </template>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
         <label class="font-bold block mb-2">Start Datetime</label>
@@ -336,10 +391,71 @@ onMounted(async () => {
             <div>
               <label class="font-bold block mb-2">Global Search</label>
               <InputGroup>
-                <InputGroupAddon>
-                  <i class="pi pi-search" />
+                <!-- Input field -->
+                <InputGroupAddon class="flex-1">
+                  <InputText
+                    v-model="filtersState.quick.global"
+                    placeholder="Search..."
+                    class="w-full"
+                  />
                 </InputGroupAddon>
-                <InputText v-model="filtersState.quick.global" />
+
+                <!-- Case Sensitive Toggle -->
+                <InputGroupAddon>
+                  <div
+                    :style="{
+                      backgroundColor: filtersState.quickOptions.caseSensitive
+                        ? 'var(--p-slate-300)'
+                        : 'var(--p-slate-100)',
+                    }"
+                    @click="
+                      filtersState.quickOptions.caseSensitive =
+                        !filtersState.quickOptions.caseSensitive
+                    "
+                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+                    title="Case Sensitive"
+                  >
+                    Aa
+                  </div>
+                </InputGroupAddon>
+
+                <!-- Whole Word Toggle -->
+                <InputGroupAddon>
+                  <div
+                    :style="{
+                      backgroundColor: filtersState.quickOptions.wholeWord
+                        ? 'var(--p-slate-300)'
+                        : 'var(--p-slate-100)',
+                    }"
+                    @click="
+                      filtersState.quickOptions.wholeWord =
+                        !filtersState.quickOptions.wholeWord
+                    "
+                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+                    title="Whole Word"
+                  >
+                    "W"
+                  </div>
+                </InputGroupAddon>
+
+                <!-- Regex Toggle -->
+                <InputGroupAddon>
+                  <div
+                    :style="{
+                      backgroundColor: filtersState.quickOptions.regex
+                        ? 'var(--p-slate-300)'
+                        : 'var(--p-slate-100)',
+                    }"
+                    @click="
+                      filtersState.quickOptions.regex =
+                        !filtersState.quickOptions.regex
+                    "
+                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+                    title="Regex"
+                  >
+                    .*
+                  </div>
+                </InputGroupAddon>
               </InputGroup>
             </div>
 
@@ -411,5 +527,25 @@ onMounted(async () => {
 <style scoped>
 .table-custom {
   flex: 1;
+}
+
+.p-inputtext {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-color: transparent !important;
+}
+.p-inputtext:active,
+.p-inputtext:focus {
+  border: 1px solid var(--p-slate-500) !important;
+}
+
+.p-inputgroupaddon {
+  padding: 0 !important;
+}
+</style>
+
+<style>
+.query-panel .p-panel-header {
+  padding-block: 0 !important;
 }
 </style>
