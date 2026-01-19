@@ -54,7 +54,8 @@
         "sandboxCode.js",
         "exportRecord.js",
         "logs.js",
-        "mediaItems.js"
+        "mediaItems.js",
+        "dist/vue-ui/*"
       ],
       "matches": ["<all_urls>"]
     }

@@ -10,20 +10,21 @@ const injectScript = (file) => {
 };
 
 const injectUi = () => {
-  const container = document.createElement("div");
-  container.id = "app";
-  document.body.appendChild(container);
+  if (document.getElementById("my-extension-frame")) return;
 
-  // 2. Inject CSS
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = chrome.runtime.getURL("dist/assets/index-BerDq4bQ.css");
-  document.head.appendChild(link);
+  const iframe = document.createElement("iframe");
+  iframe.id = "my-extension-frame";
+  iframe.src = chrome.runtime.getURL("dist/vue-ui/index.html");
 
-  // 3. Inject JS
-  const script = document.createElement("script");
-  script.src = chrome.runtime.getURL("dist/assets/index-BMazU1fq.js");
-  document.body.appendChild(script);
+  iframe.style.position = "fixed";
+  iframe.style.top = "0";
+  iframe.style.right = "0";
+  iframe.style.width = "100%";
+  iframe.style.height = "100vh";
+  iframe.style.border = "none";
+  iframe.style.zIndex = "2147483647";
+
+  document.documentElement.appendChild(iframe);
 };
 
 (async function () {
@@ -36,7 +37,7 @@ const injectUi = () => {
     injectScript("logs.js");
     injectScript("mediaItems.js");
     injectScript("netsuiteApi.js");
-    injectUi();
+    /*  injectUi(); */
   } catch (error) {
     console.log("Error", error);
   }
