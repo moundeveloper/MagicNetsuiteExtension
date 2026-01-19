@@ -7,7 +7,7 @@ window.getLogsByTime = async (
     deploymentIds = [],
     scriptTypes = [],
     type,
-  }
+  },
 ) => {
   console.log("Get logs by time:", {
     startDate,
@@ -156,7 +156,7 @@ window.getLogsByTime = async (
           datetime.setHours(
             timeValue.getHours(),
             timeValue.getMinutes(),
-            timeValue.getSeconds()
+            timeValue.getSeconds(),
           );
           value = datetime;
           key = "datetime";
@@ -169,6 +169,5 @@ window.getLogsByTime = async (
     }
   }
 
-  console.log("Results:", results);
   return results;
 };

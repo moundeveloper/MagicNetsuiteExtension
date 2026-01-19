@@ -66,7 +66,7 @@ const getScriptUrl = async (scriptId: number) => {
 
 const handleScriptClick = async (
   callback: () => string | Promise<string>,
-  e: MouseEvent
+  e: MouseEvent,
 ) => {
   if (e.button !== 0 && e.button !== 1) return;
 
@@ -74,7 +74,7 @@ const handleScriptClick = async (
   if (!url) return;
 
   if (e.button === 1) {
-    chrome.runtime.sendMessage({ action: "openTab", url });
+    chrome.runtime.sendMessage({ type: "openTab", url });
     return;
   }
 
@@ -96,7 +96,7 @@ const getScriptTypes = async () => {
 
 const fetchDeployments = async (
   event: { originalEvent: Event; value: boolean },
-  script: ScriptItem
+  script: ScriptItem,
 ) => {
   if (event.value) return;
 
@@ -204,7 +204,7 @@ onMounted(async () => {
   >
     <!-- Global Search using InputGroup -->
     <template #header>
-      <div class="flex justify-end gap-4">
+      <div class="flex gap-4">
         <InputGroup style="max-width: 300px">
           <InputGroupAddon>
             <i class="pi pi-search"></i>
@@ -274,7 +274,7 @@ onMounted(async () => {
                           handleScriptClick(
                             () =>
                               getScriptDeploymentUrl(deploymentData.primarykey),
-                            e
+                            e,
                           )
                       "
                     >

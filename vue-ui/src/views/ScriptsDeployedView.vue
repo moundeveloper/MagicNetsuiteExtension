@@ -511,7 +511,7 @@ const goToScript = async (event: MouseEvent, scriptId: string) => {
 
   if (event.button === 1) {
     // Middle click → open in new tab, stay on current page
-    chrome.runtime.sendMessage({ action: "openTab", url });
+    chrome.runtime.sendMessage({ type: "openTab", url });
   } else {
     window.open(url, "_blank");
   }

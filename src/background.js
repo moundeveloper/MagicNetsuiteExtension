@@ -5,6 +5,7 @@ chrome.sidePanel
   .catch((error) => console.error(error));
 
 /** @type {"open" | "close"} */
+const PANEL_STATE = { OPEN: "open", CLOSE: "close" };
 let panelState = "close";
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -46,7 +47,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 // Open panel on mainsetup
-chrome.runtime.onMessage.addListener((message) => {
+/* chrome.runtime.onMessage.addListener((message) => {
   console.log("Message: ", message);
   if (message?.type !== "MAIN_SETUP") return;
 
@@ -54,7 +55,7 @@ chrome.runtime.onMessage.addListener((message) => {
     console.log("Panel opened: ", tab);
     chrome.sidePanel.open({ tabId: tab.id });
   });
-});
+}); */
 
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message.type !== "OPEN_MAIN_SETUP") return;
@@ -147,9 +148,19 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 // Open non active tab with URL
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === "openTab") {
-    chrome.tabs.create({ url: msg.url, active: false }); // active: false → background tab
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "openTab") {
+    chrome.tabs.create({ url: message.url, active: false }); // active: false → background tab
+  }
+
+  if (message.type === "UI_INJECTED") {
+    const tab = sender.tab;
+    if (!tab || !tab.url) return;
+
+    sendResponse({
+      injectAllowed: tab.url.includes("/app/setup/mainsetup.nl"),
+    });
+    return true;
   }
 });
 
