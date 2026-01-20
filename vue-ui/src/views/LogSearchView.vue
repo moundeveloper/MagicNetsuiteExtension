@@ -142,7 +142,7 @@ const filteredItems = computed(() => {
       } else {
         searchRegex = new RegExp(
           query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-          flags
+          flags,
         ); // escape regex
       }
     } catch (e) {
@@ -157,14 +157,14 @@ const filteredItems = computed(() => {
         "level",
         "scriptType",
         "title",
-      ].some((field) => searchRegex.test((log as any)[field]))
+      ].some((field) => searchRegex.test((log as any)[field])),
     );
   }
 
   // Script Types quick filter
   if (filtersState.quick.scriptTypes.length) {
     result = result.filter((log) =>
-      filtersState.quick.scriptTypes.includes(log.scriptType)
+      filtersState.quick.scriptTypes.includes(log.scriptType),
     );
   }
 
@@ -231,7 +231,7 @@ const applyQuickFilter = () => {
 const openCellMenu = (
   event: MouseEvent,
   row: LogItem,
-  context: "script" | "deployment"
+  context: "script" | "deployment",
 ) => {
   selectedLog.value = row;
   selectedContext.value = context;
@@ -282,7 +282,7 @@ const getDeployments = async () => {
         id: primarykey,
         label: `${scriptid.toUpperCase()} (${scriptname})`,
       };
-    }
+    },
   );
 };
 
@@ -326,7 +326,7 @@ watch(
   () => filtersState.query.scriptIds,
   () => getDeployments(),
 
-  { deep: true }
+  { deep: true },
 );
 
 /* =======================
@@ -462,7 +462,7 @@ onMounted(async () => {
     ]"
     scrollable
     scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 44 }"
+    :virtualScrollerOptions="{ itemSize: 100 }"
     class="p-datatable-gridlines table-custom"
     :loading="loading"
     v-model:contextMenuSelection="selectedLog"

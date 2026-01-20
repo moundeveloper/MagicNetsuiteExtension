@@ -306,7 +306,7 @@ const performGlobalSearch = (text: string) => {
       // Clear decorations if empty
       editorItem.decorations = editor.deltaDecorations(
         editorItem.decorations || [],
-        []
+        [],
       );
       editorItem.matches = [];
       return;
@@ -319,7 +319,7 @@ const performGlobalSearch = (text: string) => {
       false, // isRegex - set to false for literal search
       caseSensitive.value, // matchCase
       wholeWord.value ? "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?" : null, // wordSeparators - standard word boundaries
-      true // captureMatches
+      true, // captureMatches
     );
 
     editorItem.matches = matches;
@@ -369,7 +369,7 @@ const updateAllHighlights = async () => {
     if (!editorItem.matches.length) {
       editorItem.decorations = editor.deltaDecorations(
         editorItem.decorations || [],
-        []
+        [],
       );
       return;
     }
@@ -392,7 +392,7 @@ const updateAllHighlights = async () => {
 
     editorItem.decorations = editor.deltaDecorations(
       editorItem.decorations || [],
-      newDecorations
+      newDecorations,
     );
 
     // If this editor has the current match, reveal it
@@ -439,11 +439,11 @@ const handleKey = (event: KeyboardEvent) => {
 
 const setItemRef = (
   el: Element | ComponentPublicInstance | null,
-  item: Editors
+  item: Editors,
 ) => {
   if (el && item) {
     const originalEditor = editors.find(
-      (e) => e.script?.scriptId === item.script?.scriptId
+      (e) => e.script?.scriptId === item.script?.scriptId,
     );
     if (originalEditor) {
       originalEditor.editor = el;
@@ -464,7 +464,7 @@ const getDeployedScripts = async () => {
       RequestRoutes.SCRIPTS_DEPLOYED,
       {
         recordType: type,
-      }
+      },
     );
 
     if (!deployedScriptsResponse) {
@@ -511,7 +511,7 @@ const goToScript = async (event: MouseEvent, scriptId: string) => {
 
   if (event.button === 1) {
     // Middle click → open in new tab, stay on current page
-    chrome.runtime.sendMessage({ type: "openTab", url });
+    chrome.runtime.sendMessage({ type: "OPEN_NON_ACTIVE_TAB", url });
   } else {
     window.open(url, "_blank");
   }

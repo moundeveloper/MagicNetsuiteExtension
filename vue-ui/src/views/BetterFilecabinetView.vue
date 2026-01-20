@@ -227,7 +227,7 @@ onUnmounted(() => {
         class="h-full w-full"
         scrollable
         scrollHeight="flex"
-        :virtualScrollerOptions="{ itemSize: 44 }"
+        :virtualScrollerOptions="{ itemSize: 100 }"
         v-model:selection="selectedMediaItems"
         selectionMode="multiple"
         :metaKeySelection="metaKey"

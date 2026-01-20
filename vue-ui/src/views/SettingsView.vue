@@ -1,18 +1,12 @@
 <script setup lang="ts">
-import { useRoute } from "vue-router";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { useSettings } from "../states/settingsState";
-import { ref } from "vue";
-import { InputText } from "primevue";
+import { reactive, ref, watch } from "vue";
+import InputText from "primevue/inputtext";
+import Checkbox from "primevue/checkbox";
 
 const { formattedRouteName } = useFormattedRouteName();
-const { settings, updateDrawerShortcut } = useSettings();
-
-const drawerShortcutInput = ref(settings.value.drawerOpen);
-
-const handleDrawerShortcutChange = () => {
-  updateDrawerShortcut(drawerShortcutInput.value);
-};
+const { settings } = useSettings();
 </script>
 
 <template>
@@ -28,9 +22,16 @@ const handleDrawerShortcutChange = () => {
       <label for="drawer-open">Open Navigation Drawer:</label>
       <InputText
         id="drawer-open"
-        v-model="drawerShortcutInput"
-        @blur="handleDrawerShortcutChange"
+        v-model="settings.drawerOpen"
         placeholder="e.g., ctrl+k"
+      />
+    </div>
+    <div class="shortcut-item">
+      <label for="customization-open"> Open On Customization Page:</label>
+      <Checkbox
+        id="customization-open"
+        v-model="settings.openOnCustomizationPage"
+        binary
       />
     </div>
   </div>

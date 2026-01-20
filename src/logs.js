@@ -132,42 +132,66 @@ window.getLogsByTime = async (
 
   console.log("Total logs count:", pagedData.count);
 
-  for (const pageRange of pagedData.pageRanges) {
-    const page = await pagedData.fetch.promise({ index: pageRange.index });
+  const allResults = [];
 
-    for (const result of page.data) {
-      const row = {};
+  console.time("fetch pages");
 
-      result.columns.forEach((col) => {
-        let value = getColumnValue(result, col);
-        let key = getColumnKey(col);
+  const pages = await Promise.all(
+    pagedData.pageRanges.map(async (pageRange) => {
+      const label = `page ${pageRange.index}`;
+      console.time(label);
+      const page = await pagedData.fetch.promise({ index: pageRange.index });
+      console.timeEnd(label);
+      return page;
+    }),
+  );
 
-        if (col.name === "date") {
-          value = format.parse({ value: value, type: format.Type.DATE });
-          key = "datetime";
-        }
-
-        if (col.name === "time") {
-          const timeValue = format.parse({
-            value: value,
-            type: format.Type.TIMEOFDAY,
-          });
-          const datetime = row["datetime"] || new Date();
-          datetime.setHours(
-            timeValue.getHours(),
-            timeValue.getMinutes(),
-            timeValue.getSeconds(),
-          );
-          value = datetime;
-          key = "datetime";
-        }
-
-        row[key] = value;
-      });
-
-      results.push(row);
-    }
+  for (const page of pages) {
+    allResults.push(...page.data);
   }
+
+  console.timeEnd("fetch pages");
+
+  console.log("Total results:", allResults.length);
+
+  console.time("transform results");
+
+  for (const result of allResults) {
+    const row = {};
+
+    result.columns.forEach((col) => {
+      let value = getColumnValue(result, col);
+      let key = getColumnKey(col);
+
+      if (col.name === "date") {
+        value = format.parse({ value, type: format.Type.DATE });
+        key = "datetime";
+      }
+
+      if (col.name === "time") {
+        const timeValue = format.parse({
+          value,
+          type: format.Type.TIMEOFDAY,
+        });
+
+        const datetime = row["datetime"] || new Date();
+        datetime.setHours(
+          timeValue.getHours(),
+          timeValue.getMinutes(),
+          timeValue.getSeconds(),
+        );
+
+        value = datetime;
+        key = "datetime";
+      }
+
+      row[key] = value;
+    });
+
+    results.push(row);
+  }
+
+  console.timeEnd("transform results");
 
   return results;
 };

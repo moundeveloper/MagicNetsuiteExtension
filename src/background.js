@@ -1,65 +1,153 @@
-// background.js
-
+// Enable side panel
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error(error));
 
+// ENUMS
 /** @type {"open" | "close"} */
 const PANEL_STATE = { OPEN: "open", CLOSE: "close" };
-let panelState = "close";
 
+/** @type {"panel" | "page"} */
+const UI_SOURCE = { PANEL: "panel", PAGE: "page" };
+
+/** @type {"open" | "close"} */
+const CONNECT_PORT = { SIDE_PANEL: "sidePanel" };
+
+/** @type {"Scripts" | "Custom Records"} */
+const UI_VIEWS = {
+  SCRIPTS: "Scripts",
+  CUSTOM_RECORDS: "Custom Records",
+};
+
+// GLOBALS
+let uiSource = UI_SOURCE.PANEL;
+let panelState = PANEL_STATE.CLOSE;
+
+// PORT LISTENERS
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "sidePanel") return;
+  const connectPortMap = {
+    [CONNECT_PORT.SIDE_PANEL]: setPanelState,
+    [CONNECT_PORT.DISCONNECT]: disconnectPort,
+  };
 
-  panelState = "open";
-  console.log("Panel state set to OPEN");
+  const connectPortHandler = connectPortMap[port.name];
+  if (!connectPortHandler) {
+    console.log("Port not found:", port.name);
+    return;
+  }
 
-  port.onDisconnect.addListener(() => {
-    panelState = "close";
-    console.log("Panel state set to CLOSE (panel disconnected)");
-  });
+  connectPortHandler({ port });
 });
 
+const setPanelState = ({ port }) => {
+  console.log("[PortListener][setPanelState] Panel state: ", panelState);
+  if (uiSource === UI_SOURCE.PANEL) {
+    panelState = PANEL_STATE.OPEN;
+    console.log("[PortListener][setPanelState] Panel state set to OPEN");
+  }
+
+  // It seems it doesn't disconnect if the UI page is still open, in this case when it is on mainsetup
+  port.onDisconnect.addListener(() => {
+    panelState = PANEL_STATE.CLOSE;
+    console.log(
+      "[PortListener][setPanelState] Panel state set to CLOSE (panel disconnected)",
+    );
+  });
+};
+
+const disconnectPort = ({ port }) => {
+  port.disconnect();
+  console.log("[PortListener][disconnectPort] Port disconnected");
+};
+
+// COMMANDS
 chrome.commands.onCommand.addListener((command) => {
   console.log("Command:", command);
-  if (command === "toggle_extension_ui") {
-    if (panelState === "open") {
-      chrome.sidePanel.setOptions({ enabled: false });
-      chrome.sidePanel.setOptions({ enabled: true });
-      console.log("Panel closed");
-      return;
-    }
+  const commandMap = {
+    toggle_extension_ui: togglePanel,
+    open_panel_scripts: openCommandView,
+    open_panel_custom_records: openCommandView,
+  };
 
-    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      console.log("Tab ID:", tab);
-      chrome.sidePanel.open({ tabId: tab.id });
-    });
-
-    console.log("Panel opened");
+  const commandHandler = commandMap[command];
+  if (!commandHandler) {
+    console.log("Command not found:", command);
+    return;
   }
+
+  commandHandler({ command });
 });
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message?.type !== "CLOSE_PANEL") return;
-  chrome.sidePanel.setOptions({ enabled: false });
-  chrome.sidePanel.setOptions({ enabled: true });
-  console.log("Panel closed");
-});
-
-// Open panel on mainsetup
-/* chrome.runtime.onMessage.addListener((message) => {
-  console.log("Message: ", message);
-  if (message?.type !== "MAIN_SETUP") return;
+const togglePanel = () => {
+  if (panelState === PANEL_STATE.OPEN) {
+    chrome.sidePanel.setOptions({ enabled: false });
+    chrome.sidePanel.setOptions({ enabled: true });
+    console.log("[togglePanel] Panel closed");
+    return;
+  }
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    console.log("Panel opened: ", tab);
+    chrome.sidePanel.open({ tabId: tab.id });
+    panelState = PANEL_STATE.OPEN;
+    console.log("[togglePanel] Panel opened");
+  });
+};
+
+const openCommandView = ({ command }) => {
+  const commandsViewMap = {
+    open_panel_scripts: UI_VIEWS.SCRIPTS,
+    open_panel_custom_records: UI_VIEWS.CUSTOM_RECORDS,
+  };
+
+  panelState = PANEL_STATE.OPEN;
+  let view = "home";
+
+  if (!commandsViewMap[command]) {
+    return;
+  }
+
+  view = commandsViewMap[command];
+  // store intent ONLY
+  chrome.storage.session.set({ openView: view });
+
+  // open EXACTLY like toggle
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab?.id) return;
     chrome.sidePanel.open({ tabId: tab.id });
   });
-}); */
+};
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (message.type !== "OPEN_MAIN_SETUP") return;
+// MESSAGE LISTENERS
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log("Message: ", message.type);
+  const messageMap = {
+    CLOSE_PANEL: closeResetPanel,
+    OPEN_MAIN_SETUP: createTabOnMainSetup,
+    OPEN_NON_ACTIVE_TAB: openNonActiveTab,
+    UI_INJECTED: isUIInjectAllowed,
+    UI_SOURCE: setUISource,
+  };
 
+  const messageHandler = messageMap[message.type];
+  if (!messageHandler) {
+    console.log("Message not found:", message.type);
+    return;
+  }
+
+  const asynchronous = messageHandler({ message, sender, sendResponse });
+
+  return asynchronous;
+});
+
+const closeResetPanel = () => {
+  chrome.sidePanel.setOptions({ enabled: false });
+  chrome.sidePanel.setOptions({ enabled: true });
+  console.log("[OnMessage][closeResetPanel] Panel closed");
+
+  return true;
+};
+
+const createTabOnMainSetup = ({ sender }) => {
   const tab = sender.tab;
   if (!tab || !tab.url) return;
 
@@ -71,19 +159,49 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
     chrome.tabs.create({ url: newUrl });
   } catch (err) {
-    console.error("Invalid tab URL:", tab.url, err);
+    console.error(
+      "[OnMessage][createTabOnMainSetup] Invalid tab URL:",
+      tab.url,
+      err,
+    );
   }
-});
 
-// TAB CHANGED
-function notifyTabChange(reason, tab) {
+  return true;
+};
+
+const openNonActiveTab = ({ message }) => {
+  chrome.tabs.create({ url: message.url, active: false }); // active: false → background tab
+
+  return true;
+};
+
+const isUIInjectAllowed = ({ message, sender, sendResponse }) => {
+  const tab = sender.tab;
+  if (!tab || !tab.url) return;
+
+  sendResponse({
+    injectAllowed: tab.url.includes("/app/setup/mainsetup.nl"),
+  });
+
+  return true; // True to allow Asyncronous message
+};
+
+const setUISource = ({ message }) => {
+  console.log("[OnMessage][setUISource] UI Source:", message.source);
+  uiSource = message.source;
+
+  return true; // True to allow Asyncronous message
+};
+
+// TAB LISTENERS
+const notifyTabChange = (reason, tab) => {
   chrome.runtime.sendMessage({
     type: "TAB_CONTEXT_CHANGED",
     reason,
     url: tab.url,
     tabId: tab.id,
   });
-}
+};
 
 // URL changes → wait for load complete
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -122,52 +240,10 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
     });
 });
 
-// Shortcut View
-chrome.commands.onCommand.addListener((command) => {
-  const commandsMap = {
-    "open-panel-scripts": "Scripts",
-    "open-panel-custom-records": "Custom Records",
-  };
-
-  panelState = "open";
-  let view = "home";
-
-  if (!commandsMap[command]) {
-    return;
-  }
-
-  view = commandsMap[command];
-  // store intent ONLY
-  chrome.storage.session.set({ openView: view });
-
-  // open EXACTLY like toggle
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (!tab?.id) return;
-    chrome.sidePanel.open({ tabId: tab.id });
-  });
-});
-
-// Open non active tab with URL
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "openTab") {
-    chrome.tabs.create({ url: message.url, active: false }); // active: false → background tab
-  }
-
-  if (message.type === "UI_INJECTED") {
-    const tab = sender.tab;
-    if (!tab || !tab.url) return;
-
-    sendResponse({
-      injectAllowed: tab.url.includes("/app/setup/mainsetup.nl"),
-    });
-    return true;
-  }
-});
-
 // Sniff requests
 
 // Store request bodies to correlate with responses
-/* const requestBodyMap = new Map();
+const requestBodyMap = new Map();
 
 chrome.webRequest.onBeforeRequest.addListener(
   function (details) {
@@ -216,9 +292,8 @@ chrome.webRequest.onBeforeRequest.addListener(
     console.log("Full Request Details:", details);
   },
   { urls: ["*://*.netsuite.com/*"] },
-  ["requestBody"]
+  ["requestBody"],
 );
-
 
 chrome.webRequest.onHeadersReceived.addListener(
   function (details) {
@@ -242,7 +317,7 @@ chrome.webRequest.onHeadersReceived.addListener(
     console.log("Full Response Details:", details);
   },
   { urls: ["*://*.netsuite.com/*"] },
-  ["responseHeaders", "extraHeaders"]
+  ["responseHeaders", "extraHeaders"],
 );
 
 // Additional listener for completed requests
@@ -253,9 +328,7 @@ chrome.webRequest.onCompleted.addListener(
     console.log("Status:", details.statusCode);
     console.log("Type:", details.type);
   },
-  { urls: ["*://*.netsuite.com/*"] }
+  { urls: ["*://*.netsuite.com/*"] },
 );
 
 let activeTabId = null;
-
- */

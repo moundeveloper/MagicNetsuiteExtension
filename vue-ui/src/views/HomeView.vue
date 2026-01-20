@@ -8,6 +8,7 @@ import {
 import { InputText } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { Privilege } from "../types/privilege";
+import MagicNetsuiteLogo from "../components/MagicNetsuiteLogo.vue";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -25,7 +26,7 @@ const features = computed(() => {
   return getRouteMap().filter(
     (route) =>
       !blackList.includes(route.name.toLowerCase()) &&
-      route.name.toLowerCase().includes(searchFeatures.value.toLowerCase())
+      route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()),
   );
 });
 
@@ -40,7 +41,12 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 <template>
   <h1>{{ formattedRouteName }}</h1>
   <InputText v-model="searchFeatures" placeholder="Search" />
-
+  <!--   <MagicNetsuiteLogo
+    class="logo-bg-decoration"
+    width="50rem"
+    fill="var(--p-slate-600)"
+  />
+ -->
   <div
     :style="{ height: `${vhOffset}vh` }"
     data-ignore
@@ -155,5 +161,13 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 .feature-development:hover {
   background-color: var(--p-slate-200);
   color: var(--p-slate-400);
+}
+
+.logo-bg-decoration {
+  position: absolute;
+  top: 0;
+  right: 0;
+  transform: translate(-50%, 50%);
+  opacity: 0.3;
 }
 </style>

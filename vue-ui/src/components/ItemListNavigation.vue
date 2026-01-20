@@ -10,6 +10,7 @@ import { Button, Drawer, InputText } from "primevue";
 import { useSettings } from "../states/settingsState";
 import ModulesConnected from "./ModulesConnected.vue";
 import { Privilege } from "../types/privilege";
+import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 
 const props = defineProps<{
   links: RouteItem[];
@@ -50,7 +51,7 @@ const parseShortcut = (shortcut: string) => {
 };
 
 const handleKeydown = (e: KeyboardEvent) => {
-  const { modifiers, key } = parseShortcut(settings.value.drawerOpen);
+  const { modifiers, key } = parseShortcut(settings.drawerOpen);
   const ctrlPressed = e.ctrlKey || e.metaKey;
   const altPressed = e.altKey;
   const shiftPressed = e.shiftKey;
@@ -83,6 +84,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex p-4 gap-3">
+    <MagicNetsuiteLogo width="3rem" fill="var(--p-slate-600)" />
     <Button
       icon="pi pi-arrow-up"
       @click="visibleBottom = true"

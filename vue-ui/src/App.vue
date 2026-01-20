@@ -22,6 +22,7 @@ const router = useRouter();
 
 onMounted(async () => {
   try {
+    // Open Panel on a specific route
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "OPEN_VIEW") {
         router.push({ name: message.view });
@@ -86,5 +87,6 @@ main {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  position: relative;
 }
 </style>

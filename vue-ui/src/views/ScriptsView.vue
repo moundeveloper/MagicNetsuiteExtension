@@ -74,7 +74,7 @@ const handleScriptClick = async (
   if (!url) return;
 
   if (e.button === 1) {
-    chrome.runtime.sendMessage({ type: "openTab", url });
+    chrome.runtime.sendMessage({ type: "OPEN_NON_ACTIVE_TAB", url });
     return;
   }
 
@@ -108,6 +108,7 @@ const fetchDeployments = async (
     })) || {};
 
   script.scriptDeployments = (response as ApiResponse)?.message || [];
+  await nextTick();
   script.deploymentsLoading = false;
 };
 
@@ -198,7 +199,7 @@ onMounted(async () => {
     ]"
     scrollable
     scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 44 }"
+    :virtualScrollerOptions="{ itemSize: 100 }"
     class="p-datatable-gridlines table-custom"
     :loading="loading"
   >

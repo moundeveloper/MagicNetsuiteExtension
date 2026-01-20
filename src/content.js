@@ -15,6 +15,8 @@ const DOCK_ID = "magic-netsuite-dock";
 const TOGGLE_ID = "magic-netsuite-toggle";
 
 const createDock = async () => {
+  await initMagicNetsuiteSettings();
+
   if (document.getElementById(DOCK_ID)) return;
 
   const dock = document.createElement("div");
@@ -143,15 +145,29 @@ const createDock = async () => {
     "/app/setup/mainsetup.nl",
   );
 
-  if (injectAllowed) {
+  const isCustomizationPage = window.location.href.includes("sc=-90");
+
+  if (injectAllowed && isCustomizationPage) {
     dock.style.display = "block";
-    injectUi(injectAllowed);
+    injectUI();
 
     document.head.appendChild(style);
     document.body.appendChild(dock);
 
     const checkbox = document.getElementById(TOGGLE_ID);
-    checkbox.checked = true;
+
+    chrome.runtime.sendMessage({ type: "UI_SOURCE", source: "page" });
+
+    const { magic_netsuite_settings: magicNetsuiteSettings } =
+      (await chrome.storage.sync.get(["magic_netsuite_settings"])) || {};
+    if (magicNetsuiteSettings.openOnCustomizationPage) {
+      console.log("[initMagicNetsuiteSettings] openOnCustomizationPage");
+      checkbox.checked = true;
+      showUI();
+    } else {
+      console.log("[initMagicNetsuiteSettings] !openOnCustomizationPage");
+      checkbox.checked = false;
+    }
 
     checkbox.addEventListener("change", async () => {
       if (checkbox.checked) {
@@ -197,7 +213,7 @@ const hideUI = () => {
 };
 
 // inject iframe if not exists
-const injectUi = () => {
+const injectUI = () => {
   let iframe = document.getElementById(FRAME_ID);
   if (iframe) return;
 
@@ -221,15 +237,64 @@ const injectUi = () => {
 
   // 1️⃣ Append hidden first
   document.body.appendChild(iframe);
-
-  // 2️⃣ Give the browser a tiny delay to register initial state
-  setTimeout(() => {
-    iframe.style.opacity = "1";
-    iframe.style.transform = "translateY(0)";
-    iframe.style.pointerEvents = "auto";
-  }, 50); // 50ms delay is enough
 };
 
+const initMagicNetsuiteSettings = async () => {
+  const checkSettings = await chrome.storage.sync.get([
+    "magic_netsuite_settings",
+  ]);
+  console.log("[initMagicNetsuiteSettings] result", checkSettings);
+  if (checkSettings.magic_netsuite_settings) {
+    console.log("[initMagicNetsuiteSettings] Settings already exist");
+    return;
+  }
+
+  const settings = {
+    extensionToggle: "Alt+Shift+U",
+    drawerOpen: "ctrl+k",
+    openOnCustomizationPage: true,
+  };
+
+  console.log("[initMagicNetsuiteSettings] Settings created");
+  await chrome.storage.sync.set({ magic_netsuite_settings: settings });
+};
+
+const initUIWidgets = () => {
+  const logoHTML = `
+<svg id="magic-netsuite-logo" height="1.5rem" viewBox="0 0 231 189" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M101.121 0.28651C54.6933 2.26513 15.4319 12.9936 3.78105 26.8879C0.967244 30.2735 0.0439656 32.5599 0 36.2534C0 38.6717 0.263794 39.8588 1.14311 41.7495C6.94657 54.1049 32.2708 64.4816 69.2459 69.626C82.4356 71.4727 86.6563 71.8685 100.242 72.572C114.574 73.3194 136.601 72.7039 150.143 71.1649C182.457 67.6034 206.331 60.9201 220.532 51.5986C224.708 48.8286 228.973 44.2118 230.116 41.1339C234.908 28.251 220.092 16.5551 188.613 8.33288C164.431 2.04528 131.501 -0.988598 101.121 0.28651ZM127.5 19.7649C138.624 20.2925 143.812 20.7762 152.781 22.2272C170.675 25.1291 182.721 29.7899 184.7 34.5825C185.579 36.6051 185.227 37.8363 183.337 39.9468C178.413 45.355 161.31 50.1476 138.931 52.3901C130.05 53.2695 99.0985 53.1376 90.1296 52.1702C64.9372 49.4002 48.5381 44.0799 45.9441 37.7923C41.5036 27.1078 83.7985 17.7423 127.5 19.7649Z" fill="white"/>
+  <path d="M49.0657 78.7715C48.5821 81.9813 46.8674 93.2374 45.2846 103.746C41.6355 128.017 38.7338 147.188 37.5467 154.706C36.4036 161.961 36.5355 164.072 38.47 167.106C42.3389 173.13 49.5493 177.614 61.7718 181.572C90.3934 190.937 134.623 191.509 164.871 182.935C178.413 179.109 187.689 173.877 191.91 167.721C194.196 164.424 194.372 162.753 193.317 156.245C192.394 150.749 191.558 145.341 187.953 121.554C184.084 95.9635 180.523 73.2753 180.347 73.0995C180.259 73.0115 176.918 73.5392 172.961 74.2866C163.113 76.0894 150.363 77.6723 139.107 78.4637C128.248 79.2112 106.573 79.3431 95.4934 78.6836C82.2158 77.8921 64.6295 75.7376 54.8252 73.6271C49.6812 72.5718 50.1648 72.1761 49.0657 78.7715ZM103.979 102.691C106.045 105.373 109.387 109.726 111.453 112.408C113.519 115.046 118.663 121.729 122.884 127.226L130.578 137.251L130.71 117.42L130.798 97.5903H148.824V165.743H140.119C131.633 165.743 131.369 165.699 130.446 164.731C129.611 163.808 102.044 128.369 100.725 126.434C100.154 125.643 100.066 127.973 100.066 145.605L100.022 165.743H81.9959V97.5903L91.0968 97.6783L100.242 97.8102L103.979 102.691Z" fill="white"/>
+</svg>
+  `;
+
+  const addLogo = () => {
+    // Select the span inside the menu item with the unique data-automation-id
+    const menuItemSpan = document.querySelector(
+      'div[data-widget="MenuItem"][data-automation-id="-90"] a span',
+    );
+
+    if (menuItemSpan && !menuItemSpan.querySelector("#magic-netsuite-logo")) {
+      menuItemSpan.insertAdjacentHTML("afterbegin", logoHTML);
+
+      // Optional: style the span so the SVG aligns nicely
+      menuItemSpan.style.display = "flex";
+      menuItemSpan.style.alignItems = "center";
+      menuItemSpan.style.gap = "0.5rem"; // spacing between logo and text
+    }
+  };
+
+  // Observe the menu container to handle dynamic re-renders
+  const menuContainer =
+    document.querySelector('div[data-widget="Menu"]') || document.body;
+
+  const observer = new MutationObserver(addLogo);
+  observer.observe(menuContainer, { childList: true, subtree: true });
+
+  // Initial attempt in case the menu is already loaded
+  addLogo();
+};
+
+// Setup backend
 (async function () {
   try {
     /* const { logStuff } = await import(chrome.runtime.getURL("./utils.js")); */
@@ -240,12 +305,14 @@ const injectUi = () => {
     injectScript("logs.js");
     injectScript("mediaItems.js");
     injectScript("netsuiteApi.js");
+    initUIWidgets();
     createDock();
   } catch (error) {
     console.log("Error", error);
   }
 })();
 
+// Intercept messages and relay (PAGE <-> UI)
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const requestId = Math.random().toString(36).substring(2, 10);
 
@@ -360,31 +427,6 @@ window.fetch = function (...args) {
     return response;
   });
 };
-
-// Open on mainsetup
-const openOnMainSetup = () => {
-  console.log("openOnMainSetup");
-  if (!window.location.href.includes("/app/setup/mainsetup.nl")) return;
-
-  const button = document.createElement("button");
-  button.addEventListener("click", () => {
-    chrome.runtime.sendMessage({ type: "MAIN_SETUP" });
-  });
-
-  button.dispatchEvent(
-    new MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-    }),
-  );
-};
-
-if (document.readyState === "complete") {
-  openOnMainSetup();
-} else {
-  window.addEventListener("load", openOnMainSetup, { once: true });
-}
 
 // Open Main Setup
 let keysPressed = {};

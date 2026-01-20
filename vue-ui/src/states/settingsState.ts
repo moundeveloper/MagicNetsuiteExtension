@@ -1,43 +1,49 @@
 // settingsState.ts
-import { ref, readonly, onMounted } from "vue";
+import { onMounted, reactive, watch } from "vue";
 
 export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
+  openOnCustomizationPage: boolean;
 }
 
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
-  drawerOpen: "ctrl+k"
+  drawerOpen: "ctrl+k",
+  openOnCustomizationPage: true,
 };
 
-const settings = ref<ShortcutsSettings>(defaultSettings);
+const settings = reactive<ShortcutsSettings>(defaultSettings);
 
 export function useSettings() {
   const loadSettings = async () => {
-    const result = await chrome.storage.sync.get(['shortcuts']);
-    if (result.shortcuts) {
-      settings.value = { ...defaultSettings, ...result.shortcuts };
+    const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    if (result.magic_netsuite_settings) {
+      Object.assign(settings, {
+        ...defaultSettings,
+        ...result.magic_netsuite_settings,
+      });
     }
   };
 
   const saveSettings = async () => {
-    await chrome.storage.sync.set({ shortcuts: settings.value });
+    console.log("[saveSettings]", settings);
+    await chrome.storage.sync.set({ magic_netsuite_settings: settings });
   };
 
-  const updateDrawerShortcut = (newShortcut: string) => {
-    settings.value.drawerOpen = newShortcut.toLowerCase();
-    saveSettings();
-  };
+  watch(
+    () => settings,
+    () => {
+      saveSettings();
+    },
+    { deep: true },
+  );
 
   onMounted(() => {
     loadSettings();
   });
 
   return {
-    settings: readonly(settings),
-    updateDrawerShortcut,
-    loadSettings,
-    saveSettings
+    settings: settings,
   };
 }
