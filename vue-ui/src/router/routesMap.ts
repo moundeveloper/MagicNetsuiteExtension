@@ -10,18 +10,19 @@ import LogSearchView from "../views/LogSearchView.vue";
 import RequestSnifferView from "../views/RequestSnifferView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
+import PlaygroundView from "../views/PlaygroundView.vue";
 
 export enum RouteStatus {
   development = "development",
   fix = "fix",
   draft = "draft",
-  release = "release",
+  release = "release"
 }
 
 export const RouteStatusColors = {
   [RouteStatus.development]: "#C3BEF7",
   [RouteStatus.fix]: "#EF8354",
-  [RouteStatus.draft]: "#73BA9B",
+  [RouteStatus.draft]: "#73BA9B"
 };
 
 export type RouteItem = {
@@ -42,85 +43,92 @@ export const routes = [
     name: "Features",
     icon: "pi pi-home",
     component: HomeView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/settings",
     name: "Settings",
     icon: "pi pi-cog",
     component: SettingsView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/logs",
     name: "Logs",
     icon: "pi pi-file",
     component: LogSearchView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/request-sniffer",
     name: "Request Sniffer",
     icon: "pi pi-receipt",
     component: RequestSnifferView,
-    status: RouteStatus.draft,
+    status: RouteStatus.draft
   },
   {
     route: "/bundles",
     name: "Bundles",
     icon: "pi pi-box",
     component: BundleSearchView,
-    status: RouteStatus.draft,
+    status: RouteStatus.draft
   },
   {
     route: "/better-filecabinet",
     name: "Better File Cabinet",
     icon: "pi pi-folder",
     component: BetterFilecabinetView,
-    status: RouteStatus.development,
+    status: RouteStatus.development
   },
   {
     route: "/request-script",
     name: "Request Script",
     icon: "pi pi-globe",
     component: RequestScript,
-    status: RouteStatus.draft,
+    status: RouteStatus.draft
   },
   {
     route: "/custom-records",
     name: "Custom Records",
     icon: "pi pi-table",
     component: CustomRecordsView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/scripts",
     name: "Scripts",
     icon: "pi pi-code",
     component: ScriptsView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
+  },
+  {
+    route: "/playground",
+    name: "Playground",
+    icon: "pi-directions-alt",
+    component: PlaygroundView,
+    status: RouteStatus.development
   },
   {
     route: "/run-quick-script",
     name: "Run Quick Script",
     icon: "pi pi-file",
     component: RunQuickScriptView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/scripts-deployed",
     name: "Scripts Deployed",
     icon: "pi pi-list",
     component: ScriptsDeployedView,
-    status: RouteStatus.release,
+    status: RouteStatus.release
   },
   {
     route: "/export-record",
     name: "Export Record",
     icon: "pi pi-download",
     component: ExportRecordView,
-    status: RouteStatus.fix,
-  },
+    status: RouteStatus.fix
+  }
 ];
 
 export const getRouteMap = (): RouteItem[] => {
@@ -128,7 +136,7 @@ export const getRouteMap = (): RouteItem[] => {
     route: route.route,
     name: route.name,
     icon: route.icon,
-    status: route.status,
+    status: route.status
   }));
 };
 
@@ -136,6 +144,6 @@ export const getRoutes = () => {
   return routes.map((route) => ({
     path: route.route,
     name: route.name,
-    component: route.component,
+    component: route.component
   }));
 };

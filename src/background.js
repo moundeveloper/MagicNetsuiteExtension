@@ -243,7 +243,7 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
 // Sniff requests
 
 // Store request bodies to correlate with responses
-const requestBodyMap = new Map();
+/* const requestBodyMap = new Map();
 
 chrome.webRequest.onBeforeRequest.addListener(
   function (details) {
@@ -332,3 +332,4 @@ chrome.webRequest.onCompleted.addListener(
 );
 
 let activeTabId = null;
+ */

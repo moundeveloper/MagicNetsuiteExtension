@@ -87,7 +87,7 @@ const getScriptTypes = async () => {
   if (!response) return;
   const { message: scriptTypesFetched } = response as ApiResponse;
 
-  console.log(scriptTypesFetched);
+  console.log("scriptTypesFetched", scriptTypesFetched);
 
   if (!scriptTypesFetched || !Array.isArray(scriptTypesFetched)) return;
 

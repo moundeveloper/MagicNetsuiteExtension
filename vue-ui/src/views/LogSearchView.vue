@@ -408,6 +408,7 @@ onMounted(async () => {
         <MultiSelect
           v-model="filtersState.query.scriptTypes"
           :options="scriptTypesQuery"
+          :virtualScrollerOptions="{ itemSize: 44 }"
           optionLabel="label"
           optionValue="id"
           filter
@@ -420,6 +421,7 @@ onMounted(async () => {
         <label class="font-bold block mb-2">Script</label>
         <MultiSelect
           v-model="filtersState.query.scriptIds"
+          :virtualScrollerOptions="{ itemSize: 44 }"
           :options="scripts"
           optionLabel="label"
           optionValue="id"

@@ -29,10 +29,19 @@ window.addEventListener("message", async (event) => {
 
   try {
     const modules = await loadNetsuiteApi();
+    console.log("Modules:", modules);
+
+    if (!modules) {
+      console.log("Could not load netsuiteApi");
+      sendToExtension({ requestId, status: "API_NOT_AVAILABLE" });
+      return;
+    }
+
     const result = (await handler({ modules, payload })) || null;
 
     sendToExtension({ requestId, status: "ok", message: result });
   } catch (err) {
+    console.log("Error:", err);
     sendToExtension({ requestId, status: "error", message: err.message });
   }
 });

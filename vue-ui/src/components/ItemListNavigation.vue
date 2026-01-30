@@ -98,7 +98,7 @@ onBeforeUnmount(() => {
       </Button>
     </RouterLink>
 
-    <ModulesConnected />
+    <!-- <ModulesConnected /> -->
   </div>
 
   <Drawer

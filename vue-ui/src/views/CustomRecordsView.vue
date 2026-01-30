@@ -96,7 +96,7 @@ onMounted(async () => {
     ]"
     scrollable
     scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 100 }"
+    :virtualScrollerOptions="{ itemSize: 44 }"
     class="p-datatable-gridlines table-custom"
     @row-click="onRowClick"
   >

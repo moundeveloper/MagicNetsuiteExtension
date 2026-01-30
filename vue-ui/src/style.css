@@ -11,6 +11,10 @@
 
   --primary-color: var(--p-slate-500);
   --secondary-color: var(--p-slate-500);
+
+  /* In between slate shades */
+  --m-slate-150: #eaf0f8;
+  --m-slate-250: #e2ecf7;
 }
 
 * {
@@ -31,6 +35,7 @@ html,
 #app {
   height: 100%;
   font-family: "JetBrainsMono";
+  overflow: hidden;
 }
 
 #app {

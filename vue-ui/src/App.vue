@@ -5,6 +5,7 @@ import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
+import MagicNetsuiteLogo from "./components/MagicNetsuiteLogo.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -61,6 +62,11 @@ onBeforeUnmount(() => {
 <template>
   <Toast />
   <ItemListNavigation :links="getRouteMap()" />
+  <MagicNetsuiteLogo
+    class="logo-bg-decoration"
+    width="25rem"
+    fill="var(--p-slate-200)"
+  />
   <main ref="container">
     <RouterView :vhOffset="vhOffset" />
   </main>
@@ -88,5 +94,12 @@ main {
   flex-direction: column;
   gap: 1rem;
   position: relative;
+}
+
+.logo-bg-decoration {
+  position: absolute;
+  top: 50%;
+  right: 50%;
+  transform: translate(50%, -50%);
 }
 </style>

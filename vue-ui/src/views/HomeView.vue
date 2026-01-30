@@ -8,7 +8,6 @@ import {
 import { InputText } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { Privilege } from "../types/privilege";
-import MagicNetsuiteLogo from "../components/MagicNetsuiteLogo.vue";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -41,12 +40,7 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 <template>
   <h1>{{ formattedRouteName }}</h1>
   <InputText v-model="searchFeatures" placeholder="Search" />
-  <!--   <MagicNetsuiteLogo
-    class="logo-bg-decoration"
-    width="50rem"
-    fill="var(--p-slate-600)"
-  />
- -->
+
   <div
     :style="{ height: `${vhOffset}vh` }"
     data-ignore
@@ -119,7 +113,7 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 
 /* Hover: lighter slate tone */
 .menu-item:hover {
-  background-color: var(--p-slate-200);
+  background-color: color-mix(in srgb, var(--p-slate-200) 30%, transparent);
   color: var(--p-slate-800);
 }
 
@@ -154,20 +148,12 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 }
 
 .feature-disabled:hover {
-  background-color: var(--p-slate-200);
+  background-color: color-mix(in srgb, var(--p-slate-200) 70%, transparent);
   color: var(--p-slate-400);
 }
 
 .feature-development:hover {
-  background-color: var(--p-slate-200);
+  background-color: color-mix(in srgb, var(--p-slate-200) 70%, transparent);
   color: var(--p-slate-400);
-}
-
-.logo-bg-decoration {
-  position: absolute;
-  top: 0;
-  right: 0;
-  transform: translate(-50%, 50%);
-  opacity: 0.3;
 }
 </style>
