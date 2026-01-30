@@ -313,321 +313,103 @@ const initUIWidgets = () => {
 })();
 
 // Intercept messages and relay (PAGE <-> UI)
-// ============================================================================
-// Constants & Configuration
-// ============================================================================
-
-const MESSAGE_TYPES = {
-  TO_EXTENSION: "TO_EXTENSION",
-  FROM_EXTENSION: "FROM_EXTENSION",
-  STREAM_END: "STREAM_END",
-  STREAM_ERROR: "STREAM_ERROR",
-  STREAM_ABORT: "STREAM_ABORT"
-};
-
-const REQUEST_MODES = {
-  NORMAL: "normal",
-  STREAM: "stream"
-};
-
-const STREAM_TIMEOUT = 30000; // 30 seconds
-const MAX_RETRY_ATTEMPTS = 3;
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-const generateRequestId = () => {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
-};
-
-const createMessageFilter = (requestId) => (event) => {
-  if (event.source !== window) return false;
-  if (event.data?.type !== MESSAGE_TYPES.TO_EXTENSION) return false;
-  if (event.data?.payload?.requestId !== requestId) return false;
-  return true;
-};
-
-// ============================================================================
-// Stream Handler
-// ============================================================================
-
-class StreamHandler {
-  constructor(requestId, sendResponse) {
-    this.requestId = requestId;
-    this.sendResponse = sendResponse;
-    this.timeoutId = null;
-    this.isActive = true;
-    this.chunkCount = 0;
-  }
-
-  start() {
-    this.handleStream = this.handleStream.bind(this);
-    window.addEventListener("message", this.handleStream);
-
-    // Set timeout for stream
-    this.timeoutId = setTimeout(() => {
-      this.sendError("Stream timeout exceeded");
-      this.cleanup();
-    }, STREAM_TIMEOUT);
-
-    console.log(`[Stream ${this.requestId}] Started`);
-  }
-
-  handleStream(event) {
-    if (!this.isActive) return;
-    if (!createMessageFilter(this.requestId)(event)) return;
-
-    const { payload } = event.data;
-    this.chunkCount++;
-
-    console.log(
-      `[Stream ${this.requestId}] Chunk #${this.chunkCount}`,
-      payload
-    );
-
-    // Handle different stream events
-    switch (payload.type) {
-      case MESSAGE_TYPES.STREAM_END:
-        console.log(
-          `[Stream ${this.requestId}] Completed with ${this.chunkCount} chunks`
-        );
-        this.sendResponse({ ...payload, isComplete: true });
-        this.cleanup();
-        break;
-
-      case MESSAGE_TYPES.STREAM_ERROR:
-        console.error(`[Stream ${this.requestId}] Error:`, payload.error);
-        this.sendError(payload.error);
-        this.cleanup();
-        break;
-
-      case MESSAGE_TYPES.STREAM_ABORT:
-        console.log(`[Stream ${this.requestId}] Aborted by sender`);
-        this.cleanup();
-        break;
-
-      default:
-        // Regular stream chunk
-        this.sendResponse({ ...payload, isComplete: false });
-    }
-  }
-
-  sendError(error) {
-    this.sendResponse({
-      status: "error",
-      error,
-      requestId: this.requestId
-    });
-  }
-
-  cleanup() {
-    this.isActive = false;
-    window.removeEventListener("message", this.handleStream);
-
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
-    }
-  }
-
-  abort() {
-    console.log(`[Stream ${this.requestId}] Manually aborted`);
-    this.cleanup();
-  }
-}
-
-// ============================================================================
-// Normal Request Handler
-// ============================================================================
-
-class NormalRequestHandler {
-  constructor(requestId, sendResponse, retryAttempts = 0) {
-    this.requestId = requestId;
-    this.sendResponse = sendResponse;
-    this.retryAttempts = retryAttempts;
-    this.timeoutId = null;
-    this.isActive = true;
-  }
-
-  start() {
-    this.handleResponse = this.handleResponse.bind(this);
-    window.addEventListener("message", this.handleResponse);
-
-    // Set timeout for normal request
-    this.timeoutId = setTimeout(() => {
-      if (this.retryAttempts < MAX_RETRY_ATTEMPTS) {
-        console.warn(
-          `[Request ${this.requestId}] Timeout, retrying... (${this.retryAttempts + 1}/${MAX_RETRY_ATTEMPTS})`
-        );
-        this.cleanup();
-        // Retry logic would be handled by the caller
-        this.sendResponse({
-          status: "retry",
-          requestId: this.requestId,
-          attempt: this.retryAttempts + 1
-        });
-      } else {
-        console.error(
-          `[Request ${this.requestId}] Timeout after ${MAX_RETRY_ATTEMPTS} attempts`
-        );
-        this.sendResponse({
-          status: "error",
-          error: "Request timeout",
-          requestId: this.requestId
-        });
-        this.cleanup();
-      }
-    }, STREAM_TIMEOUT);
-
-    console.log(`[Request ${this.requestId}] Started`);
-  }
-
-  handleResponse(event) {
-    if (!this.isActive) return;
-    if (!createMessageFilter(this.requestId)(event)) return;
-
-    const { payload } = event.data;
-    console.log(`[Request ${this.requestId}] Response received`, payload);
-
-    this.sendResponse(payload);
-    this.cleanup();
-  }
-
-  cleanup() {
-    this.isActive = false;
-    window.removeEventListener("message", this.handleResponse);
-
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
-    }
-  }
-}
-
-// ============================================================================
-// Request Manager (tracks active requests)
-// ============================================================================
-
-class RequestManager {
-  constructor() {
-    this.activeRequests = new Map();
-  }
-
-  addRequest(requestId, handler) {
-    this.activeRequests.set(requestId, handler);
-  }
-
-  removeRequest(requestId) {
-    this.activeRequests.delete(requestId);
-  }
-
-  abortRequest(requestId) {
-    const handler = this.activeRequests.get(requestId);
-    if (handler && typeof handler.abort === "function") {
-      handler.abort();
-      this.removeRequest(requestId);
-      return true;
-    }
-    return false;
-  }
-
-  abortAll() {
-    this.activeRequests.forEach((handler, requestId) => {
-      if (typeof handler.abort === "function") {
-        handler.abort();
-      }
-    });
-    this.activeRequests.clear();
-  }
-
-  getActiveCount() {
-    return this.activeRequests.size;
-  }
-}
-
-const requestManager = new RequestManager();
-
-// ============================================================================
-// Main Message Listener
-// ============================================================================
-
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  const { mode = REQUEST_MODES.NORMAL, action } = msg;
-  const requestId = generateRequestId();
+  const { mode } = msg;
+  const requestId =
+    Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
 
-  console.log(`[${mode.toUpperCase()}] New request:`, { requestId, action });
+  if (mode === "stream") {
+    // 🔹 STREAMING request
+    console.log("mode", mode);
+    const handleStream = (event) => {
+      if (event.source !== window) return;
+      const data = event.data?.payload;
+      if (!data || event.data?.type !== "TO_EXTENSION") return;
+      if (data.requestId !== requestId) return;
 
-  // Handle special commands
-  if (action === "ABORT_REQUEST" && msg.targetRequestId) {
-    const aborted = requestManager.abortRequest(msg.targetRequestId);
-    sendResponse({
-      status: aborted ? "ok" : "error",
-      message: aborted ? "Request aborted" : "Request not found"
-    });
-    return false;
+      sendResponse(data);
+    };
+
+    window.addEventListener("message", handleStream);
+    return true; // keep sendResponse alive
   }
 
-  if (action === "ABORT_ALL_REQUESTS") {
-    requestManager.abortAll();
-    sendResponse({ status: "ok", message: "All requests aborted" });
-    return false;
-  }
+  // 🔹 NORMAL request
+  const handleResponse = (event) => {
+    console.log("event", event);
+    if (event.source !== window) return;
+    const data = event.data?.payload;
+    if (!data || event.data?.type !== "TO_EXTENSION") return;
+    if (data.requestId !== requestId) return;
 
-  if (action === "GET_ACTIVE_REQUESTS") {
-    sendResponse({
-      status: "ok",
-      activeRequests: requestManager.getActiveCount()
-    });
-    return false;
-  }
+    sendResponse(data);
+    window.removeEventListener("message", handleResponse);
+  };
 
-  // Create appropriate handler
-  let handler;
+  window.addEventListener("message", handleResponse);
 
-  if (mode === REQUEST_MODES.STREAM) {
-    handler = new StreamHandler(requestId, (response) => {
-      try {
-        sendResponse(response);
-      } catch (error) {
-        console.error(`[Stream ${requestId}] Error sending response:`, error);
-      }
-    });
+  window.postMessage(
+    { type: "FROM_EXTENSION", payload: { ...msg, requestId } },
+    "*"
+  );
+
+  return true; // keep sendResponse alive
+});
+
+/* chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const requestId = Math.random().toString(36).slice(2);
+  console.log("requestId", msg);
+  const isStreaming = msg?.data.mode === "stream";
+
+  if (!isStreaming) {
+    // 🔹 NORMAL request → single response
+    const handleResponse = (event) => {
+      console.log("handleResponse");
+      if (event.source !== window) return;
+      if (event.data?.type !== "TO_EXTENSION") return;
+
+      const payload = event.data.payload;
+      if (payload.requestId !== requestId) return;
+
+      sendResponse(payload);
+      window.removeEventListener("message", handleResponse);
+    };
+
+    window.addEventListener("message", handleResponse);
   } else {
-    handler = new NormalRequestHandler(requestId, (response) => {
-      try {
-        sendResponse(response);
-        requestManager.removeRequest(requestId);
-      } catch (error) {
-        console.error(`[Request ${requestId}] Error sending response:`, error);
+    // 🔹 STREAMING request
+    const handleStream = (event) => {
+      console.log("handleStream");
+      if (event.source !== window) return;
+      if (event.data?.type !== "TO_EXTENSION") return;
+
+      const payload = event.data.payload;
+      if (payload.requestId !== requestId) return;
+
+      chrome.runtime.sendMessage({
+        type: "STREAM_LOG",
+        payload
+      });
+
+      if (payload.event === "done") {
+        window.removeEventListener("message", handleStream);
+        sendResponse({ ok: true }); // resolve caller
       }
-    });
+    };
+
+    window.addEventListener("message", handleStream);
   }
 
-  // Track and start handler
-  requestManager.addRequest(requestId, handler);
-  handler.start();
-
-  // Send message to page
   window.postMessage(
     {
-      type: MESSAGE_TYPES.FROM_EXTENSION,
-      payload: { ...msg, requestId, mode }
+      type: "FROM_EXTENSION",
+      payload: { ...msg, requestId }
     },
     "*"
   );
 
-  return true; // Keep sendResponse alive
-});
-
-// ============================================================================
-// Cleanup on unload
-// ============================================================================
-
-window.addEventListener("beforeunload", () => {
-  console.log("Content script unloading, aborting all requests...");
-  requestManager.abortAll();
-});
+  return true;
+}); */
 
 // Intercept XMLHttpRequest
 const originalXHROpen = XMLHttpRequest.prototype.open;

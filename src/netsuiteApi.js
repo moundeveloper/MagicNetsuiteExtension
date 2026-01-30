@@ -23,7 +23,7 @@ window.addEventListener("message", async (event) => {
     return sendToExtension({
       requestId,
       status: "error",
-      message: `No handler for ${action}`,
+      message: `No handler for ${action}`
     });
   }
 
@@ -68,14 +68,15 @@ const handlers = {
     console.log("Custom Record URL action received:", recordId);
     return window.getCustomRecordUrl(modules, { recordId });
   },
-  RUN_QUICK_SCRIPT: async ({ modules, payload: { code } }) => {
+  RUN_QUICK_SCRIPT: async ({ modules, payload: { code, requestId } }) => {
     console.log("Run Quick Script action received");
     try {
-      return await window.runQuickScript(modules, { code });
+      window.runQuickScript(modules, { code, requestId });
+      return { type: "log", values: ["Script execution started"] };
     } catch (err) {
       // Return the error as a log entry
       return [
-        { type: "error", values: ["Script execution error: " + err.message] },
+        { type: "error", values: ["Script execution error: " + err.message] }
       ];
     }
   },
@@ -117,7 +118,7 @@ const handlers = {
   },
   LOGS: async ({
     modules,
-    payload: { startDate, endDate, scriptIds, deploymentIds, scriptTypes },
+    payload: { startDate, endDate, scriptIds, deploymentIds, scriptTypes }
   }) => {
     console.log("Logs action received", { startDate, endDate });
 
@@ -129,7 +130,7 @@ const handlers = {
       endDate,
       scriptIds,
       deploymentIds,
-      scriptTypes,
+      scriptTypes
     });
   },
   ROOT_FOLDERS: async ({ modules }) => {
@@ -142,7 +143,7 @@ const handlers = {
     return await window.createFolder(modules, {
       folderName: name,
       parentFolderId: parentFolder,
-      csrfToken,
+      csrfToken
     });
-  },
+  }
 };

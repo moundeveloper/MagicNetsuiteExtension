@@ -1,5 +1,5 @@
 // Non-blocking runQuickScript - runs on main thread but yields to UI
-window.runQuickScript = async (N, { code }) => {
+window.runQuickScript = async (N, { code, requestId }) => {
   const logs = [];
 
   const stringifyArg = (arg) => {
@@ -13,6 +13,20 @@ window.runQuickScript = async (N, { code }) => {
     return String(arg);
   };
 
+  const emitLog = (requestId, entry) => {
+    window.postMessage(
+      {
+        type: "TO_EXTENSION",
+        payload: {
+          requestId,
+          event: "log",
+          data: entry
+        }
+      },
+      "*"
+    );
+  };
+
   // Helper to yield control back to the browser
   const yieldToMain = () => {
     return new Promise((resolve) => setTimeout(resolve, 0));
@@ -21,17 +35,23 @@ window.runQuickScript = async (N, { code }) => {
   try {
     const fakeConsole = {
       log: (...args) => {
-        logs.push({ type: "log", values: args.map(stringifyArg) });
-        return yieldToMain(); // Yield after each log
+        emitLog(requestId, {
+          type: "log",
+          values: args.map(stringifyArg)
+        });
       },
       warn: (...args) => {
-        logs.push({ type: "warn", values: args.map(stringifyArg) });
-        return yieldToMain();
+        emitLog(requestId, {
+          type: "warn",
+          values: args.map(stringifyArg)
+        });
       },
       error: (...args) => {
-        logs.push({ type: "error", values: args.map(stringifyArg) });
-        return yieldToMain();
-      },
+        emitLog(requestId, {
+          type: "error",
+          values: args.map(stringifyArg)
+        });
+      }
     };
 
     const originalLog = N.log;
@@ -40,7 +60,7 @@ window.runQuickScript = async (N, { code }) => {
         "DEBUG",
         "AUDIT",
         "ERROR",
-        "EMERGENCY",
+        "EMERGENCY"
       ],
       emergency: (...args) => {
         logs.push({ type: "error", values: args.map(stringifyArg) });
@@ -53,12 +73,12 @@ window.runQuickScript = async (N, { code }) => {
       },
       error: (...args) => {
         logs.push({ type: "error", values: args.map(stringifyArg) });
-      },
+      }
     };
 
     const modifiedN = {
       ...N,
-      log: fakeLog,
+      log: fakeLog
     };
 
     const destructuredKeys = Object.keys(modifiedN).join(", ");
@@ -81,5 +101,5 @@ window.runQuickScript = async (N, { code }) => {
     logs.push({ type: "error", values: ["Execution error: " + err] });
   }
 
-  return logs;
+  emitLog(requestId, { type: "done" });
 };

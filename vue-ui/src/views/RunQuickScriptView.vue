@@ -38,7 +38,7 @@
 
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { callApi, type ApiResponse } from "../utils/api";
+import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
 import { defaultCode } from "../utils/temp";
@@ -74,23 +74,23 @@ const commands: Record<string, CommandHandler> = {
   help() {
     logs.value.push({
       type: "log",
-      values: ["Available commands: " + Object.keys(commands).join(", ")],
+      values: ["Available commands: " + Object.keys(commands).join(", ")]
     });
   },
 
   echo(args) {
     logs.value.push({
       type: "log",
-      values: [args.join(" ")],
+      values: [args.join(" ")]
     });
   },
   modules: async () => {
     const modules = await getModules();
     logs.value.push({
       type: "log",
-      values: [`Available modules: ${modules.join(", ")}`],
+      values: [`Available modules: ${modules.join(", ")}`]
     });
-  },
+  }
 };
 
 const handleCommand = (input: string) => {
@@ -105,7 +105,7 @@ const handleCommand = (input: string) => {
   if (!handler) {
     logs.value.push({
       type: "error",
-      values: [`Command not found: ${command}`],
+      values: [`Command not found: ${command}`]
     });
     return;
   }
@@ -121,11 +121,29 @@ const getModules = async () => {
 };
 
 const runCode = async () => {
-  const response = await callApi(RequestRoutes.RUN_QUICK_SCRIPT, {
-    code: code.value,
+  logs.value = [];
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type !== "STREAM_LOG") return;
+
+    const { event, data } = msg.payload;
+
+    if (event === "log") {
+      logs.value.push(data);
+    }
+
+    if (event === "done") {
+      console.log("Execution finished");
+    }
   });
-  console.log(response);
-  logs.value = response.message as Log[];
+
+  await callApi(
+    RequestRoutes.RUN_QUICK_SCRIPT,
+    {
+      code: code.value
+    },
+    ApiRequestType.STREAM
+  );
 };
 
 let resizeObserver: ResizeObserver;
@@ -134,7 +152,7 @@ onMounted(() => {
   try {
     logs.value.push({
       type: "log",
-      values: ["Available commands: " + Object.keys(commands).join(", ")],
+      values: ["Available commands: " + Object.keys(commands).join(", ")]
     });
 
     chrome.storage.local.get("cachedCode", (result) => {
