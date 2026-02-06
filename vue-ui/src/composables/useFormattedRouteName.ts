@@ -9,10 +9,10 @@ export function useFormattedRouteName() {
     const routeName = route.name as string | undefined;
     if (!routeName) return "";
 
-    return `::${routeName.replace(/\s+/g, "-").toUpperCase()}`;
+    return `//${routeName.replace(/\s+/g, "-").toUpperCase()}`;
   });
 
   return {
-    formattedRouteName,
+    formattedRouteName
   };
 }

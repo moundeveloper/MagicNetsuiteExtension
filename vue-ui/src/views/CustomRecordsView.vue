@@ -29,7 +29,7 @@ const filters = ref({
   name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
   scriptid: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
   description: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
+  owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH }
 });
 
 const props = defineProps<{
@@ -55,13 +55,13 @@ const getCustomRecords = async () => {
     name: record.name,
     scriptid: record.scriptid,
     description: record.description,
-    owner: record.owner,
+    owner: record.owner
   }));
 };
 
 const getCustomRecordUrl = async (recordId: number) => {
   const response = await callApi(RequestRoutes.CUSTOM_RECORD_URL, {
-    recordId,
+    recordId
   });
   if (!response) return;
   const { message: url } = response as ApiResponse;
@@ -92,7 +92,7 @@ onMounted(async () => {
       'name',
       'scriptid',
       'description',
-      'owner',
+      'owner'
     ]"
     scrollable
     scrollHeight="flex"
@@ -180,11 +180,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-h1 {
-  font-weight: 600;
-  color: var(--text-color);
-}
-
 .table-custom {
   flex: 1;
 }

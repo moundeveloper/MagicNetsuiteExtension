@@ -6,8 +6,8 @@ window.getLogsByTime = async (
     scriptIds = [],
     deploymentIds = [],
     scriptTypes = [],
-    type,
-  },
+    type
+  }
 ) => {
   console.log("Get logs by time:", {
     startDate,
@@ -15,7 +15,7 @@ window.getLogsByTime = async (
     scriptIds,
     deploymentIds,
     scriptTypes,
-    type,
+    type
   });
 
   const dateToMinutes = (date) => date.getHours() * 60 + date.getMinutes();
@@ -32,7 +32,7 @@ window.getLogsByTime = async (
       "date",
       "between",
       formatDateSearch(startDate),
-      formatDateSearch(endDate),
+      formatDateSearch(endDate)
     ]);
   } else if (startDate) {
     filters.push(["date", "onorafter", formatDateSearch(startDate)]);
@@ -107,24 +107,24 @@ window.getLogsByTime = async (
       search.createColumn({
         name: "internalid",
         join: "script",
-        label: "Script ID",
+        label: "Script ID"
       }),
       search.createColumn({
         name: "internalid",
         join: "scriptDeployment",
-        label: "Deployment ID",
+        label: "Deployment ID"
       }),
       search.createColumn({
         name: "scriptid",
         join: "scriptDeployment",
-        label: "Custom ID",
+        label: "Custom ID"
       }),
       search.createColumn({
         name: "name",
         join: "script",
-        label: "Script Name",
-      }),
-    ],
+        label: "Script Name"
+      })
+    ]
   });
 
   const results = [];
@@ -136,14 +136,20 @@ window.getLogsByTime = async (
 
   console.time("fetch pages");
 
+  const MAX_RESULTS = 6000;
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = Math.ceil(MAX_RESULTS / PAGE_SIZE);
+
+  const pageRangesToFetch = pagedData.pageRanges.slice(0, MAX_PAGES);
+
   const pages = await Promise.all(
-    pagedData.pageRanges.map(async (pageRange) => {
+    pageRangesToFetch.map(async (pageRange) => {
       const label = `page ${pageRange.index}`;
       console.time(label);
       const page = await pagedData.fetch.promise({ index: pageRange.index });
       console.timeEnd(label);
       return page;
-    }),
+    })
   );
 
   for (const page of pages) {
@@ -171,14 +177,14 @@ window.getLogsByTime = async (
       if (col.name === "time") {
         const timeValue = format.parse({
           value,
-          type: format.Type.TIMEOFDAY,
+          type: format.Type.TIMEOFDAY
         });
 
         const datetime = row["datetime"] || new Date();
         datetime.setHours(
           timeValue.getHours(),
           timeValue.getMinutes(),
-          timeValue.getSeconds(),
+          timeValue.getSeconds()
         );
 
         value = datetime;

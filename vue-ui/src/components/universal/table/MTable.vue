@@ -5,7 +5,7 @@
       <!-- Search Input -->
       <div v-if="searchable" class="m-table-search">
         <i class="pi pi-search search-icon"></i>
-        <input
+        <InputText
           type="text"
           v-model="searchQuery"
           :placeholder="searchPlaceholder"
@@ -84,6 +84,7 @@ import {
 import { type ContextMenuItem } from "../../../composables/useMContextMenu";
 import MContextMenu from "../contextMenu/MContextMenu.vue";
 import MTableRow from "./MTableRow.vue";
+import { InputText } from "primevue";
 
 interface Column {
   label: string;
@@ -250,6 +251,7 @@ onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
   flex-direction: column;
   overflow: hidden;
   border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .m-table-header-toolbar {

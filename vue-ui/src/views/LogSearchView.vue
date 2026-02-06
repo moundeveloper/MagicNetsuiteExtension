@@ -6,7 +6,7 @@ import {
   onMounted,
   reactive,
   ref,
-  watch,
+  watch
 } from "vue";
 import DataTable from "primevue/datatable";
 import Column from "primevue/column";
@@ -24,7 +24,7 @@ import {
   Panel,
   ProgressSpinner,
   Select,
-  Tag,
+  Tag
 } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import type { Background } from "@vue-flow/background";
@@ -69,19 +69,19 @@ const filtersState = reactive({
     endDate: null as Date | null,
     scriptIds: [] as string[],
     deploymentIds: [] as string[],
-    scriptTypes: [] as string[],
+    scriptTypes: [] as string[]
   },
   quick: {
     global: null as string | null,
     startDate: null as Date | null,
     endDate: null as Date | null,
-    scriptTypes: [] as string[],
+    scriptTypes: [] as string[]
   },
   quickOptions: {
     caseSensitive: false,
     wholeWord: false,
-    regex: false,
-  },
+    regex: false
+  }
 });
 
 const cm = ref();
@@ -97,15 +97,15 @@ const menuModel = computed(() => {
         selectedContext.value === "script" ? "Script" : "Deployment"
       } (Query)`,
       icon: "pi pi-search",
-      command: applyQueryFilter,
+      command: applyQueryFilter
     },
     {
       label: `Filter by ${
         selectedContext.value === "script" ? "Script" : "Deployment"
       } (Quick)`,
       icon: "pi pi-filter",
-      command: applyQuickFilter,
-    },
+      command: applyQuickFilter
+    }
   ];
 });
 
@@ -116,8 +116,8 @@ const menuModel = computed(() => {
 const tableFilters = computed(() => ({
   global: {
     value: filtersState.quick.global,
-    matchMode: FilterMatchMode.CONTAINS,
-  },
+    matchMode: FilterMatchMode.CONTAINS
+  }
 }));
 
 /* =======================
@@ -142,7 +142,7 @@ const filteredItems = computed(() => {
       } else {
         searchRegex = new RegExp(
           query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-          flags,
+          flags
         ); // escape regex
       }
     } catch (e) {
@@ -156,15 +156,15 @@ const filteredItems = computed(() => {
         "deploymentName",
         "level",
         "scriptType",
-        "title",
-      ].some((field) => searchRegex.test((log as any)[field])),
+        "title"
+      ].some((field) => searchRegex.test((log as any)[field]))
     );
   }
 
   // Script Types quick filter
   if (filtersState.quick.scriptTypes.length) {
     result = result.filter((log) =>
-      filtersState.quick.scriptTypes.includes(log.scriptType),
+      filtersState.quick.scriptTypes.includes(log.scriptType)
     );
   }
 
@@ -200,7 +200,7 @@ const formatToLocalDate = (value: string | Date) => {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
+    second: "2-digit"
   });
 };
 
@@ -231,7 +231,7 @@ const applyQuickFilter = () => {
 const openCellMenu = (
   event: MouseEvent,
   row: LogItem,
-  context: "script" | "deployment",
+  context: "script" | "deployment"
 ) => {
   selectedLog.value = row;
   selectedContext.value = context;
@@ -251,7 +251,7 @@ const getScriptTypes = async () => {
     scriptTypesQuick.value = message.map(({ label }) => {
       return {
         id: label,
-        label: label,
+        label: label
       };
     });
 };
@@ -263,7 +263,7 @@ const getScripts = async () => {
   scripts.value = results.map(({ id, name }) => {
     return {
       id: id,
-      label: name,
+      label: name
     };
   });
 };
@@ -272,7 +272,7 @@ const getDeployments = async () => {
   console.log("deployment filters", filtersState.query.scriptIds);
   const response =
     (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
-      scriptIds: filtersState.query.scriptIds,
+      scriptIds: filtersState.query.scriptIds
     })) || {};
   const { message: results } = response as ApiResponse;
   if (!Array.isArray(results)) return;
@@ -280,9 +280,9 @@ const getDeployments = async () => {
     ({ primarykey, scriptid, scriptname }) => {
       return {
         id: primarykey,
-        label: `${scriptid.toUpperCase()} (${scriptname})`,
+        label: `${scriptid.toUpperCase()} (${scriptname})`
       };
-    },
+    }
   );
 };
 
@@ -295,7 +295,7 @@ const getLogs = async () => {
       endDate: filtersState.query.endDate,
       scriptIds: filtersState.query.scriptIds,
       deploymentIds: filtersState.query.deploymentIds,
-      scriptTypes: filtersState.query.scriptTypes,
+      scriptTypes: filtersState.query.scriptTypes
     })) || {};
 
   const { message } = response as ApiResponse;
@@ -311,7 +311,7 @@ const getLogs = async () => {
         deploymentId: log["scriptDeployment.internalid"],
         scriptType: log.scripttype,
         scriptName: log["script.name"],
-        deploymentName: log["scriptDeployment.scriptid"],
+        deploymentName: log["scriptDeployment.scriptid"]
       }))
     : [];
 
@@ -326,7 +326,7 @@ watch(
   () => filtersState.query.scriptIds,
   () => getDeployments(),
 
-  { deep: true },
+  { deep: true }
 );
 
 /* =======================
@@ -377,7 +377,7 @@ onMounted(async () => {
           @click="getLogs"
           class="h-full bg-[var(--p-slate-300)] !rounded-none"
         >
-          <i class="pi pi-search"></i>
+          <i class="pi pi-search text-white"></i>
           Run Search</Button
         >
       </div>
@@ -447,7 +447,6 @@ onMounted(async () => {
   </Panel>
 
   <!-- ===================== DATATABLE ===================== -->
-  <ContextMenu ref="cm" :model="menuModel" />
   <DataTable
     ref="dtRef"
     :style="{ height: `${vhOffset}vh` }"
@@ -460,11 +459,11 @@ onMounted(async () => {
       'deploymentName',
       'level',
       'scriptType',
-      'title',
+      'title'
     ]"
     scrollable
     scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 100 }"
+    :virtualScrollerOptions="{ itemSize: 60 }"
     class="p-datatable-gridlines table-custom"
     :loading="loading"
     v-model:contextMenuSelection="selectedLog"
@@ -493,7 +492,7 @@ onMounted(async () => {
                     :style="{
                       backgroundColor: filtersState.quickOptions.caseSensitive
                         ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)',
+                        : 'var(--p-slate-100)'
                     }"
                     @click="
                       filtersState.quickOptions.caseSensitive =
@@ -512,7 +511,7 @@ onMounted(async () => {
                     :style="{
                       backgroundColor: filtersState.quickOptions.wholeWord
                         ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)',
+                        : 'var(--p-slate-100)'
                     }"
                     @click="
                       filtersState.quickOptions.wholeWord =
@@ -531,7 +530,7 @@ onMounted(async () => {
                     :style="{
                       backgroundColor: filtersState.quickOptions.regex
                         ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)',
+                        : 'var(--p-slate-100)'
                     }"
                     @click="
                       filtersState.quickOptions.regex =
@@ -582,7 +581,7 @@ onMounted(async () => {
 
         <Tag
           severity="info"
-          :value="`${filteredItems.length}`"
+          :value="`${filteredItems.length} Limited to 6000 for performance reasons.`"
           class="w-fit"
         ></Tag>
       </div>

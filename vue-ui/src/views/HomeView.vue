@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import {
   getRouteMap,
   RouteStatus,
-  RouteStatusColors,
+  RouteStatusColors
 } from "../router/routesMap";
 import { InputText } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
@@ -17,6 +17,7 @@ const props = defineProps<{
 }>();
 
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
+const mode = import.meta.env.MODE;
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
 const blackList = ["features", "settings", "modules not found"];
@@ -25,7 +26,8 @@ const features = computed(() => {
   return getRouteMap().filter(
     (route) =>
       !blackList.includes(route.name.toLowerCase()) &&
-      route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()),
+      route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
+      (mode === "development" || route.status === RouteStatus.release)
   );
 });
 
@@ -57,7 +59,7 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
         class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
         :class="{
           'feature-development': feature.status !== RouteStatus.release,
-          'feature-disabled': isDisabled(feature),
+          'feature-disabled': isDisabled(feature)
         }"
         @click="
           () => {

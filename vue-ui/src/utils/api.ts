@@ -27,20 +27,56 @@ type MessagePayload = {
 const callApi = async (
   route: RequestRoutes,
   payload: any = {},
-  mode: ApiRequestType = ApiRequestType.NORMAL
+  mode: ApiRequestType = ApiRequestType.NORMAL,
+  streamHandler?: Function
 ): Promise<ApiResponse> => {
   const activeTab = await getActiveNetsuiteTab();
-
   const messagePayload: MessagePayload = {
     action: route,
-    mode,
-    data: payload
+    data: payload,
+    mode
   };
 
+  // =========================
+  // STREAM MODE (PORTS)
+  // =========================
+  if (mode === ApiRequestType.STREAM) {
+    return new Promise((resolve, reject) => {
+      // 🔑 Open a persistent port
+      const port = chrome.tabs.connect(activeTab.id!, {
+        name: "stream-api"
+      });
+
+      // Receive stream chunks
+      port.onMessage.addListener((message: any) => {
+        if (streamHandler) {
+          streamHandler(message);
+        }
+
+        // Resolve when stream completes
+        if (message.isComplete) {
+          port.disconnect();
+          resolve(message);
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        }
+      });
+
+      // Send initial request (same payload as before)
+      port.postMessage(messagePayload);
+    });
+  }
+
+  // =========================
+  // NORMAL MODE
+  // =========================
   try {
     return await sendMessageToTab(activeTab.id!, messagePayload);
   } catch (error) {
-    // Fallback to temporary tab if content script not available
     return await handleFallbackWithTempTab(activeTab, messagePayload);
   }
 };

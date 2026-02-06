@@ -2,178 +2,88 @@
 <template>
   <div>Playground</div>
 
-  <MTabs
-    :tabs="tabHeaders"
-    @delete-tab="handleDeleteTab"
-    @add-tab="handleAddTab"
+  <MCard
+    flex
+    direction="column"
+    gap="1rem"
+    padding="1rem"
+    outlined
+    class="overflow-y-auto"
   >
-    <template
-      v-for="codeEditor in codeEditors"
-      :key="codeEditor.id"
-      #[codeEditor.id]="{ contentHeight }"
-    >
-      <!-- Table -->
-      <MTable
-        :rows="users"
-        :height="`${contentHeight}px`"
-        searchable
-        search-placeholder="Search users..."
-        expandable
-      >
-        <MTableColumn label="Name" field="name" :searchable="true">
-          <template #default="{ value }">
-            <strong>{{ value }}</strong>
-          </template>
-        </MTableColumn>
+    <!-- Buttons to trigger search and navigate matches -->
+    <InputText v-model="searchTerm" placeholder="Search..." />
+    <Button @click="triggerSearch">Search</Button>
+    <Button @click="next">Next</Button>
+    <Button @click="previous">Previous</Button>
 
-        <MTableColumn
-          label="Email"
-          field="email"
-          :searchable="true"
-          :context-menu="emailContextMenu"
-        >
-          <template #default="{ value }">
-            <a :href="`mailto:${value}`">{{ value }}</a>
-          </template>
-        </MTableColumn>
-
-        <MTableColumn
-          label="Actions"
-          field="id"
-          :searchable="false"
-          :context-menu="actionsContextMenu"
-        >
-          <template #default="{ row }">
-            <button @click="edit(row)">Edit</button>
-          </template>
-        </MTableColumn>
-
-        <template #expand="{ row }">
-          <div style="padding: 12px">
-            <strong>Details:</strong>
-            {{ row }}
-          </div>
-        </template>
-      </MTable>
-      <!-- Table -->
-    </template>
-  </MTabs>
+    <!-- CodeViewer component -->
+    <CodeViewer
+      ref="codeViewerRef"
+      :code="javascriptCode"
+      language="javascript"
+    />
+  </MCard>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
-import MTabs from "../components/universal/tabs/MTabs.vue";
-import MTable from "../components/universal/table/MTable.vue";
-import MTableColumn from "../components/universal/table/MTableColumn.vue";
-import { defaultUsers } from "../utils/temp";
+import { ref, watch } from "vue";
+import CodeViewer from "../components/CodeViewer.vue";
+import MCard from "../components/universal/card/MCard.vue";
+import { Button, InputText } from "primevue";
 
-const props = defineProps<{
-  vhOffset?: number;
-}>();
+const javascriptCode = `
+const greeting = "Hello, World!";
 
-const defaultCodeEditors = [
-  {
-    id: "controller",
-    title: "Controller.js",
-    content: "const getTime = () => new Date()"
-  },
-  {
-    id: "model",
-    title: "Model.js",
-    content: "const setTime = () => new Date()"
-  },
-  {
-    id: "view",
-    title: "View.js",
-    content: "const addTime = () => new Date()"
-  }
-];
-
-const codeEditors = ref(defaultCodeEditors);
-
-// User type
-interface User {
-  id: number;
-  name: string;
-  email: string;
-  isActive: boolean;
+function calculateSum(a, b) {
+  // This is a comment
+  return a + b;
 }
 
-// Example data
-const users: User[] = defaultUsers;
-
-const tabHeaders = computed(() =>
-  codeEditors.value.map((editor) => ({
-    name: editor.id,
-    label: editor.title
-  }))
-);
-
-const handleDeleteTab = ({ tabId }: { tabId: string }) => {
-  console.log("Tab ID: ", tabId);
-
-  codeEditors.value = codeEditors.value.filter((editor) => editor.id !== tabId);
-};
-
-const handleAddTab = () => {
-  const newId = `tab-${Date.now()}`;
-  codeEditors.value = [
-    ...codeEditors.value,
-    { id: newId, title: "New Tab", content: "New Tab Content" }
-  ];
-};
-
-const edit = (user: User) => {
-  console.log("Editing user: ", user);
-};
-const emailContextMenu = [
-  {
-    label: "Copy Email",
-    icon: "pi pi-copy",
-    action: (row: User) => {
-      navigator.clipboard.writeText(row.email);
-      console.log("Copied:", row.email);
-    }
-  },
-  {
-    label: "Send Email",
-    icon: "pi pi-envelope",
-    action: (row: User) => {
-      window.location.href = `mailto:${row.email}`;
-    }
-  },
-  {
-    label: "Delete",
-    icon: "pi pi-trash",
-    action: (row: User) => {
-      console.log("Delete user:", row);
-    }
+class Person {
+  constructor(name, age) {
+    this.name = name;
+    this.age = age;
   }
-];
-
-// Table
-
-const actionsContextMenu = [
-  {
-    label: "View Details",
-    icon: "pi pi-eye",
-    action: (row: User) => {
-      console.log("View details:", row);
-    }
-  },
-  {
-    label: "Edit",
-    icon: "pi pi-pencil",
-    action: (row: User) => {
-      console.log("Edit user:", row);
-    }
-  },
-  {
-    label: "Archive",
-    icon: "pi pi-archive",
-    action: (row: User) => {
-      console.log("Archive:", row);
-    }
+  
+  greet() {
+    console.log(\`Hello, my name is \${this.name}\`);
   }
-];
+}
+
+const person = new Person("Alice", 30);
+person.greet();
+
+async function fetchData() {
+  try {
+    const response = await fetch('https://api.example.com/data');
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error:', error);
+  }
+}
+`;
+
+const searchTerm = ref("");
+
+const codeViewerRef = ref<InstanceType<typeof CodeViewer> | null>(null);
+
+// Trigger search for "const"
+const triggerSearch = () => {
+  codeViewerRef.value?.search(searchTerm.value);
+};
+
+// Navigate to next match
+const next = () => {
+  codeViewerRef.value?.nextMatch();
+};
+
+// Navigate to previous match
+const previous = () => {
+  codeViewerRef.value?.previousMatch();
+};
+
+watch(searchTerm, () => {
+  codeViewerRef.value?.search(searchTerm.value);
+});
 </script>

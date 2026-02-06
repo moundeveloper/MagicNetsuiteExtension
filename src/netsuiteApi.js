@@ -16,7 +16,13 @@ window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
   if (event.data?.type !== "FROM_EXTENSION") return;
 
-  const { requestId, action, data: payload } = event.data.payload;
+  const { requestId, action, data, mode } = event.data.payload;
+
+  const payload = {
+    requestId,
+    mode,
+    ...data
+  };
 
   const handler = handlers[action];
   if (!handler) {
@@ -68,13 +74,20 @@ const handlers = {
     console.log("Custom Record URL action received:", recordId);
     return window.getCustomRecordUrl(modules, { recordId });
   },
-  RUN_QUICK_SCRIPT: async ({ modules, payload: { code, requestId } }) => {
-    console.log("Run Quick Script action received");
+  RUN_QUICK_SCRIPT: async ({ modules, payload: { code, requestId, mode } }) => {
+    console.log("Run Quick Script action received", { mode });
     try {
-      window.runQuickScript(modules, { code, requestId });
+      // Pass mode to runQuickScript
+      await window.runQuickScript(modules, { code, requestId, mode });
+
+      // For streaming, don't return anything here - data flows through postMessage
+      if (mode === "stream") {
+        return null;
+      }
+
+      // For normal mode, return initial log
       return { type: "log", values: ["Script execution started"] };
     } catch (err) {
-      // Return the error as a log entry
       return [
         { type: "error", values: ["Script execution error: " + err.message] }
       ];

@@ -4,7 +4,7 @@ import { useRoute } from "vue-router";
 import {
   RouteStatus,
   RouteStatusColors,
-  type RouteItem,
+  type RouteItem
 } from "../router/routesMap";
 import { Button, Drawer, InputText } from "primevue";
 import { useSettings } from "../states/settingsState";
@@ -21,13 +21,15 @@ const route = useRoute();
 const visibleBottom = ref(false);
 const search = ref("");
 const blackList = ["settings", "modules not found"];
+const mode = import.meta.env.MODE;
 const { settings } = useSettings();
 
 const filteredLinks = computed(() => {
   return props.links.filter((link) => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
-      !blackList.includes(link.name.toLowerCase())
+      !blackList.includes(link.name.toLowerCase()) &&
+      (mode === "development" || link.status === RouteStatus.release)
     );
   });
 });
@@ -83,14 +85,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex p-4 gap-3">
+  <div class="flex p-4 gap-3 z-10">
     <MagicNetsuiteLogo width="3rem" fill="var(--p-slate-600)" />
     <Button
       icon="pi pi-arrow-up"
       @click="visibleBottom = true"
-      :label="`Open Menu(${settings.drawerOpen.toUpperCase()})`"
       class="fixed flex-1"
-    />
+    >
+      <span class="text-white">{{
+        `Open Menu(${settings.drawerOpen.toUpperCase()})`
+      }}</span>
+    </Button>
 
     <RouterLink to="/settings">
       <Button class="w-full h-full">
@@ -124,7 +129,7 @@ onBeforeUnmount(() => {
             class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
             :class="{
               'feature-development': link.status !== RouteStatus.release,
-              'feature-disabled': isDisabled(link),
+              'feature-disabled': isDisabled(link)
             }"
             @click="
               () => {

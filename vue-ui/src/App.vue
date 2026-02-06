@@ -6,6 +6,7 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
 import MagicNetsuiteLogo from "./components/MagicNetsuiteLogo.vue";
+import GridPattern from "./components/universal/patterns/GridPattern.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -15,7 +16,7 @@ type PanelAction = "open" | "close";
 const sendPanelState = (action: PanelAction): void => {
   chrome.runtime.sendMessage({
     type: "PANEL_STATE",
-    payload: action,
+    payload: action
   });
 };
 
@@ -63,13 +64,14 @@ onBeforeUnmount(() => {
   <Toast />
   <ItemListNavigation :links="getRouteMap()" />
   <MagicNetsuiteLogo
-    class="logo-bg-decoration"
-    width="25rem"
-    fill="var(--p-slate-200)"
+    class="pattern-decoration"
+    :fill="'var(--p-slate-200)'"
+    width="30%"
   />
   <main ref="container">
     <RouterView :vhOffset="vhOffset" />
   </main>
+  <GridPattern class="pattern-decoration" />
 </template>
 
 <style scoped>
@@ -85,6 +87,9 @@ onBeforeUnmount(() => {
 .logo.vue:hover {
   filter: drop-shadow(0 0 2em #42b883aa);
 }
+.item-list-navigation {
+  z-index: 2;
+}
 
 main {
   height: 100%;
@@ -94,12 +99,14 @@ main {
   flex-direction: column;
   gap: 1rem;
   position: relative;
+  z-index: 1;
 }
 
-.logo-bg-decoration {
+.pattern-decoration {
   position: absolute;
   top: 50%;
   right: 50%;
   transform: translate(50%, -50%);
+  z-index: 0;
 }
 </style>

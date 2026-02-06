@@ -1,7 +1,24 @@
 <template>
   <h1>{{ formattedRouteName }}</h1>
   <div class="flex items-center gap-2">
-    <Button @click="runCode">Run</Button>
+    <Button @click="runCode" :disabled="isExecuting">
+      {{ isExecuting ? "Running..." : "Run" }}
+    </Button>
+
+    <!-- Progress Bar for Streaming -->
+    <div
+      v-if="isExecuting && progress.total > 0"
+      class="flex items-center gap-2"
+    >
+      <ProgressBar
+        :value="progress.percentage"
+        :showValue="true"
+        class="w-32"
+      />
+      <span class="text-xs text-gray-600">
+        {{ progress.current }}/{{ progress.total }}
+      </span>
+    </div>
 
     <span v-if="saveStatus === 'saving'" class="text-xs text-yellow-500">
       Syncing…
@@ -26,7 +43,7 @@
       <MonacoCodeEditor
         ref="editorRef"
         v-model="code"
-        :readonly="false"
+        :readonly="isExecuting"
         :completion-items="completionItems"
       />
     </template>
@@ -40,7 +57,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button } from "primevue";
+import { Button, ProgressBar } from "primevue";
 import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
@@ -54,12 +71,24 @@ type Log = {
   type: "log" | "warn" | "error";
   values: string[];
 };
-// v-model code
+
+// State
 const codeEditorElement = ref<HTMLDivElement | null>(null);
 const panelHeight = ref(0);
 const logs = ref<Log[]>([]);
 const code = ref<string>(defaultCode);
 const localHeight = ref(0);
+const isExecuting = ref(false);
+let streamPort: chrome.runtime.Port | null = null;
+
+// Progress tracking
+const progress = ref({
+  current: 0,
+  total: 0,
+  percentage: 0,
+  message: ""
+});
+
 const props = defineProps<{
   vhOffset: number;
 }>();
@@ -84,6 +113,7 @@ const commands: Record<string, CommandHandler> = {
       values: [args.join(" ")]
     });
   },
+
   modules: async () => {
     const modules = await getModules();
     logs.value.push({
@@ -120,33 +150,69 @@ const getModules = async () => {
   return modules || [];
 };
 
-const runCode = async () => {
-  logs.value = [];
+// ============================================================================
+// Streaming Response Handler
+// ============================================================================
+const handleStreamingResponse = (message: {
+  isComplete: boolean;
+  data: any;
+}) => {
+  if (message.isComplete) {
+    isExecuting.value = false;
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type !== "STREAM_LOG") return;
+    return;
+  }
 
-    const { event, data } = msg.payload;
+  const { data } = message;
+  const { type } = data;
 
-    if (event === "log") {
-      logs.value.push(data);
-    }
+  const allowedTypes = ["log", "warn", "error"];
 
-    if (event === "done") {
-      console.log("Execution finished");
-    }
-  });
-
-  await callApi(
-    RequestRoutes.RUN_QUICK_SCRIPT,
-    {
-      code: code.value
-    },
-    ApiRequestType.STREAM
-  );
+  if (allowedTypes.includes(type)) {
+    logs.value.push(data);
+  }
 };
 
-let resizeObserver: ResizeObserver;
+// ============================================================================
+// Run Code with Streaming
+// ============================================================================
+
+const runCode = async () => {
+  isExecuting.value = true;
+
+  // Reset state
+  logs.value = [];
+
+  try {
+    // Call API with streaming mode
+    await callApi(
+      RequestRoutes.RUN_QUICK_SCRIPT,
+      {
+        code: code.value
+      },
+      ApiRequestType.STREAM,
+      (message: any) => {
+        try {
+          handleStreamingResponse(message);
+        } catch (error) {
+          isExecuting.value = false;
+        }
+      }
+    );
+
+    // Note: The streaming handler in content script will call handleStreamingResponse
+    // via the message listener setup below
+  } catch (error) {
+    console.error("Execution error:", error);
+    logs.value.push({
+      type: "error",
+      values: [`Execution failed: ${error}`]
+    });
+    isExecuting.value = false;
+  } finally {
+    isExecuting.value = false;
+  }
+};
 
 onMounted(() => {
   try {
@@ -157,15 +223,14 @@ onMounted(() => {
 
     chrome.storage.local.get("cachedCode", (result) => {
       console.log("Value:", result.cachedCode);
-      code.value = result.cachedCode;
+      code.value = result.cachedCode || defaultCode;
     });
 
     localHeight.value = props.vhOffset;
+
     if (codeEditorElement.value) {
-      // set initial height
       panelHeight.value = codeEditorElement.value.clientHeight;
 
-      // observe size changes
       resizeObserver = new ResizeObserver(() => {
         if (codeEditorElement.value) {
           panelHeight.value = codeEditorElement.value.clientHeight;
@@ -179,12 +244,15 @@ onMounted(() => {
   }
 });
 
+// ============================================================================
+// Auto-save
+// ============================================================================
+
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
 watch(code, (newCode) => {
-  // User typed → mark as dirty
   saveStatus.value = "saving";
 
   if (saveTimeout) {
@@ -200,7 +268,6 @@ watch(code, (newCode) => {
 
       saveStatus.value = "saved";
 
-      // Optional: return to idle after a bit
       setTimeout(() => {
         if (saveStatus.value === "saved") {
           saveStatus.value = "idle";
@@ -209,6 +276,8 @@ watch(code, (newCode) => {
     });
   }, 2000);
 });
+
+let resizeObserver: ResizeObserver;
 
 onBeforeUnmount(() => {
   try {
