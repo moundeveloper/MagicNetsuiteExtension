@@ -1,4 +1,3 @@
-<!-- Usage in Playground -->
 <template>
   <div>Playground</div>
 
@@ -10,17 +9,23 @@
     outlined
     class="overflow-y-auto"
   >
-    <!-- Buttons to trigger search and navigate matches -->
-    <InputText v-model="searchTerm" placeholder="Search..." />
-    <Button @click="triggerSearch">Search</Button>
+    <!-- Global search input -->
+    <InputText
+      v-model="searchTerm"
+      placeholder="Search..."
+      @keyup="handleCodeEditorSearch"
+    />
     <Button @click="next">Next</Button>
     <Button @click="previous">Previous</Button>
 
-    <!-- CodeViewer component -->
+    <!-- Multiple CodeViewers -->
     <CodeViewer
-      ref="codeViewerRef"
-      :code="javascriptCode"
+      v-for="(code, i) in codes"
+      :key="i"
+      :ref="(el) => registerViewer(el as unknown as CodeViewerAPI | null)"
+      :code="code"
       language="javascript"
+      showId
     />
   </MCard>
 </template>
@@ -30,60 +35,54 @@ import { ref, watch } from "vue";
 import CodeViewer from "../components/CodeViewer.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import { Button, InputText } from "primevue";
+import {
+  useCodeViewerSearch,
+  type CodeViewerAPI
+} from "../composables/useCodeViewerSearch";
 
-const javascriptCode = `
-const greeting = "Hello, World!";
-
-function calculateSum(a, b) {
-  // This is a comment
-  return a + b;
-}
-
-class Person {
-  constructor(name, age) {
-    this.name = name;
-    this.age = age;
-  }
-  
-  greet() {
-    console.log(\`Hello, my name is \${this.name}\`);
-  }
-}
-
-const person = new Person("Alice", 30);
-person.greet();
-
-async function fetchData() {
-  try {
-    const response = await fetch('https://api.example.com/data');
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Error:', error);
-  }
-}
-`;
+defineProps<{ vhOffset: number }>();
 
 const searchTerm = ref("");
+const codes = [
+  `const greeting = "Hello, World!";
+function calculateSum(a, b) { return a + b; }`,
+  `class Person {
+  constructor(name, age) { this.name = name; this.age = age; }
+  greet() { console.log(\`Hello, \${this.name}\`); }
+}`,
+  `const greeting = "Hello, World!";
+function calculateSum(a, b) { return a + b; }`,
+  `class Person {
+  constructor(name, age) { this.name = name; this.age = age; }
+  greet() { console.log(\`Hello, \${this.name}\`); }
+}`,
+  `const greeting = "Hello, World!";
+function calculateSum(a, b) { return a + b; }`,
+  `class Person {
+  constructor(name, age) { this.name = name; this.age = age; }
+  greet() { console.log(\`Hello, \${this.name}\`); }
+}`,
+  `const greeting = "Hello, World!";
+function calculateSum(a, b) { return a + b; }`,
+  `class Person {
+  constructor(name, age) { this.name = name; this.age = age; }
+  greet() { console.log(\`Hello, \${this.name}\`); }
+}`,
+  `const greeting = "Hello, World!";
+function calculateSum(a, b) { return a + b; }`,
+  `class Person {
+  constructor(name, age) { this.name = name; this.age = age; }
+  greet() { console.log(\`Hello, \${this.name}\`); }
+}`
+];
 
-const codeViewerRef = ref<InstanceType<typeof CodeViewer> | null>(null);
+const { registerViewer, search, next, previous } = useCodeViewerSearch();
 
-// Trigger search for "const"
-const triggerSearch = () => {
-  codeViewerRef.value?.search(searchTerm.value);
+const handleCodeEditorSearch = (event: KeyboardEvent) => {
+  if (event.key === "Enter" && event.shiftKey) {
+    previous(); // Shift+Enter → go backwards
+  } else if (event.key === "Enter" && !event.shiftKey) {
+    next(); // Enter → go forwards
+  }
 };
-
-// Navigate to next match
-const next = () => {
-  codeViewerRef.value?.nextMatch();
-};
-
-// Navigate to previous match
-const previous = () => {
-  codeViewerRef.value?.previousMatch();
-};
-
-watch(searchTerm, () => {
-  codeViewerRef.value?.search(searchTerm.value);
-});
 </script>

@@ -15,25 +15,24 @@ import {
   type DecorationSet
 } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { oneDark } from "@codemirror/theme-one-dark";
-
-// Prettier (standalone)
 import prettier from "prettier/standalone";
 import babelParser from "prettier/plugins/babel";
 import estreeParser from "prettier/plugins/estree";
-
 import rainbowBrackets from "rainbowbrackets";
+import { generateId } from "../utils/utilities";
+import type { SearchOptions } from "../composables/useCodeViewerSearch";
 
 interface Props {
   code: string;
-  language: "javascript" | "json";
+  language: "javascript";
   autoHeight?: boolean;
+  showId?: boolean;
 }
 
 const props = defineProps<Props>();
-
+const id = ref(generateId());
 const editorEl = ref<HTMLDivElement | null>(null);
 let view: EditorView | null = null;
 
@@ -42,26 +41,50 @@ let currentMatches: { from: number; to: number }[] = [];
 let currentMatchIndex = 0;
 let currentDecorations: DecorationSet = Decoration.none;
 
-// --- StateEffect & StateField for decorations ---
+// --- Decorations for search ---
 const setSearchDecorations = StateEffect.define<DecorationSet>();
 const searchDecorationsField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
   update: (value, tr) => {
-    for (const e of tr.effects) {
-      if (e.is(setSearchDecorations)) return e.value;
-    }
+    for (const e of tr.effects) if (e.is(setSearchDecorations)) return e.value;
     return value.map(tr.changes);
   },
   provide: (f) => EditorView.decorations.from(f)
 });
 
-// --- Format code using Prettier ---
+// --- Decoration for ${…} in template literals ---
+const templateDollarField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update: (value, tr) => {
+    const builder = new RangeSetBuilder<Decoration>();
+    const doc = tr.state.doc.toString();
+
+    // Scan for template literal substitutions ${…}
+    const regex = /\$\{|\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(doc)) !== null) {
+      builder.add(
+        match.index,
+        match.index + match[0].length,
+        Decoration.mark({ class: "cm-template-dollar" })
+      );
+    }
+
+    return builder.finish();
+  },
+  provide: (f) => EditorView.decorations.from(f)
+});
+
+// --- Escape regex helper ---
+const escapeRegExp = (str: string) =>
+  str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// --- Format code ---
 const formatCode = async (code: string) => {
   try {
     return await prettier.format(code, {
-      parser: props.language === "json" ? "json" : "babel",
+      parser: "babel",
       plugins: [babelParser, estreeParser],
-      printWidth: 80,
       semi: true,
       singleQuote: true,
       trailingComma: "es5"
@@ -74,24 +97,22 @@ const formatCode = async (code: string) => {
 // --- Create editor ---
 const createEditor = async () => {
   if (!editorEl.value) return;
-
-  const extensions = [
-    lineNumbers(),
-    highlightSelectionMatches(),
-    keymap.of(searchKeymap),
-    oneDark,
-    EditorView.editable.of(false),
-    EditorView.lineWrapping,
-    props.language === "json" ? json() : javascript({ typescript: false }),
-    searchDecorationsField,
-    rainbowBrackets()
-  ];
-
   const formattedCode = await formatCode(props.code);
 
   const state = EditorState.create({
     doc: formattedCode,
-    extensions
+    extensions: [
+      lineNumbers(),
+      highlightSelectionMatches(),
+      keymap.of(searchKeymap),
+      oneDark,
+      EditorView.editable.of(false),
+      EditorView.lineWrapping,
+      javascript(),
+      searchDecorationsField,
+      templateDollarField,
+      rainbowBrackets()
+    ]
   });
 
   view = new EditorView({
@@ -100,83 +121,50 @@ const createEditor = async () => {
   });
 };
 
+onMounted(createEditor);
+
+// --- Auto height ---
 const resizeEditor = () => {
-  if (!editorEl.value || !view) return;
-
-  // Only resize if autoHeight is true
-  if (!props.autoHeight) return;
-
-  const height = view.contentDOM.scrollHeight;
-  editorEl.value.style.height = `${height}px`;
+  if (!editorEl.value || !view || !props.autoHeight) return;
+  editorEl.value.style.height = `${view.contentDOM.scrollHeight}px`;
 };
 
 watch(
   () => props.code,
-  async () => {
-    if (!view) return;
-
-    // Wait for the DOM to render the updated code
-    requestAnimationFrame(() => resizeEditor());
-  }
-);
-
-onMounted(createEditor);
-
-watch(
-  () => props.code,
-  async (newCode) => {
-    if (!view) return;
-
-    const formattedCode = await formatCode(newCode);
-
-    view.dispatch({
-      changes: {
-        from: 0,
-        to: view.state.doc.length,
-        insert: formattedCode
-      }
-    });
-  }
+  () => requestAnimationFrame(resizeEditor)
 );
 
 // --- Update decorations ---
 const updateDecorations = () => {
   if (!view) return;
-
   const builder = new RangeSetBuilder<Decoration>();
+  const sorted = [...currentMatches].sort((a, b) => a.from - b.from);
 
-  // Create a sorted copy of matches
-  const sortedMatches = [...currentMatches].sort((a, b) => a.from - b.from);
-
-  for (let i = 0; i < sortedMatches.length; i++) {
-    const m = sortedMatches[i]!;
-    const isCurrent = currentMatches[currentMatchIndex] === m;
+  for (const m of sorted) {
     builder.add(
       m.from,
       m.to,
       Decoration.mark({
-        class: isCurrent ? "cm-search-current" : "cm-search-match"
+        class:
+          currentMatches[currentMatchIndex] === m
+            ? "cm-search-current"
+            : "cm-search-match"
       })
     );
   }
 
   currentDecorations = builder.finish();
-
-  view.dispatch({
-    effects: setSearchDecorations.of(currentDecorations)
-  });
+  view.dispatch({ effects: setSearchDecorations.of(currentDecorations) });
 };
 
-// --- Search without panel ---
-const searchWithoutPanel = (query: string, caseSensitive = false) => {
+// --- Search ---
+const searchWithoutPanel = (query: string, options: SearchOptions = {}) => {
   if (!view) return;
 
-  // If search string is empty, reset everything
   if (!query) {
     currentMatches = [];
-    currentMatchIndex = 0;
+    currentMatchIndex = -1;
     currentDecorations = Decoration.none;
-
     view.dispatch({
       selection: EditorSelection.cursor(0),
       effects: setSearchDecorations.of(currentDecorations)
@@ -184,39 +172,40 @@ const searchWithoutPanel = (query: string, caseSensitive = false) => {
     return;
   }
 
-  // Normal search logic for non-empty query
-  const doc = view.state.doc.toString();
-  const flags = caseSensitive ? "g" : "gi";
-  const re = new RegExp(query, flags);
+  const re = buildSearchRegex(query, options);
 
   currentMatches = [];
+  const doc = view.state.doc.toString();
   let match: RegExpExecArray | null;
+
   while ((match = re.exec(doc)) !== null) {
     currentMatches.push({
       from: match.index,
       to: match.index + match[0].length
     });
 
-    // Prevent infinite loop for zero-length matches
+    // Prevent infinite loops on zero-width matches
     if (match.index === re.lastIndex) re.lastIndex++;
   }
 
-  currentMatchIndex = 0;
-
-  if (currentMatches.length > 0) {
-    const m = currentMatches[currentMatchIndex]!;
-    view.dispatch({
-      selection: EditorSelection.single(m.from, m.to),
-      scrollIntoView: true
-    });
-  }
-
+  currentMatchIndex = -1;
   updateDecorations();
+};
+
+const buildSearchRegex = (
+  query: string,
+  { caseSensitive = false, wholeWord = false }: SearchOptions = {}
+) => {
+  const escaped = escapeRegExp(query);
+  const wordWrapped = wholeWord ? `\\b${escaped}\\b` : escaped;
+  const flags = caseSensitive ? "g" : "gi";
+
+  return new RegExp(wordWrapped, flags);
 };
 
 // --- Navigation ---
 const nextMatch = () => {
-  if (!view || currentMatches.length === 0) return;
+  if (!view || !currentMatches.length) return;
   currentMatchIndex = (currentMatchIndex + 1) % currentMatches.length;
   const m = currentMatches[currentMatchIndex]!;
   view.dispatch({
@@ -227,7 +216,7 @@ const nextMatch = () => {
 };
 
 const previousMatch = () => {
-  if (!view || currentMatches.length === 0) return;
+  if (!view || !currentMatches.length) return;
   currentMatchIndex =
     (currentMatchIndex - 1 + currentMatches.length) % currentMatches.length;
   const m = currentMatches[currentMatchIndex]!;
@@ -238,16 +227,64 @@ const previousMatch = () => {
   updateDecorations();
 };
 
-// --- Expose API ---
+const externalSelection = (
+  from: number,
+  to: number,
+  scrollIntoView = false
+) => {
+  if (!view) return;
+
+  const index = currentMatches.findIndex(
+    (match) => match.from === from && match.to === to
+  );
+
+  if (index !== -1) {
+    currentMatchIndex = index;
+    updateDecorations();
+  }
+
+  view.dispatch({
+    selection: EditorSelection.single(from, to),
+    scrollIntoView
+  });
+};
+
+const clearSelection = () => {
+  if (!view) return;
+
+  currentMatchIndex = -1;
+
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const m of currentMatches) {
+    builder.add(m.from, m.to, Decoration.mark({ class: "cm-search-match" }));
+  }
+
+  currentDecorations = builder.finish();
+
+  view.dispatch({
+    selection: EditorSelection.cursor(0),
+    effects: setSearchDecorations.of(currentDecorations)
+  });
+};
+
 defineExpose({
   search: searchWithoutPanel,
   nextMatch,
-  previousMatch
+  previousMatch,
+  getMatches: () => currentMatches,
+  externalSelection,
+  clearSelection,
+  rootEl: editorEl,
+  id
 });
 </script>
 
 <template>
-  <div class="code-viewer" ref="editorEl" />
+  <div class="code-viewer-wrapper">
+    <div v-if="props.showId" class="code-viewer-id">ID: {{ id }}</div>
+
+    <div class="code-viewer" ref="editorEl" />
+  </div>
 </template>
 
 <style scoped>
@@ -265,28 +302,9 @@ defineExpose({
   background-color: rgba(255, 165, 0, 0.7);
 }
 
-/* Depth 0 – outermost */
-.cm-rainbowBracket-0 {
-  color: #61afef !important; /* blue */
-}
-
-/* Depth 1 */
-.cm-rainbowBracket-1 {
-  color: #98c379 !important; /* green */
-}
-
-/* Depth 2 */
-.cm-rainbowBracket-2 {
-  color: #c678dd !important; /* purple */
-}
-
-/* Depth 3 */
-.cm-rainbowBracket-3 {
-  color: #e5c07b !important; /* yellow */
-}
-
-/* Depth 4+ (it cycles) */
-.cm-rainbowBracket-4 {
-  color: #56b6c2 !important; /* cyan */
+/* Highlight $ and } in template literals */
+.cm-template-dollar {
+  color: rgb(223, 202, 13) !important; /* bright orange */
+  font-weight: bold;
 }
 </style>

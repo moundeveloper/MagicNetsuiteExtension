@@ -46,15 +46,23 @@ type MPanelProps = {
   outline?: boolean;
   boxShadow?: boolean;
   toggleable?: boolean;
+  expanded?: boolean;
 };
 
 const props = withDefaults(defineProps<MPanelProps>(), {
   header: "",
   outline: false,
-  toggleable: false
+  toggleable: false,
+  expanded: undefined
 });
 
-const expanded = ref(props.toggleable ? false : true);
+const expanded = ref<boolean>(false);
+
+if (props.expanded !== undefined) {
+  expanded.value = props.expanded;
+} else if (!props.toggleable) {
+  expanded.value = true;
+}
 
 const onEnter = (el: Element) => {
   const element = el as HTMLElement;

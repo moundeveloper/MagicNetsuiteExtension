@@ -27,7 +27,8 @@ const features = computed(() => {
     (route) =>
       !blackList.includes(route.name.toLowerCase()) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
-      (mode === "development" || route.status === RouteStatus.release)
+      (privilegeLevel === Privilege.ADMIN ||
+        route.status === RouteStatus.release)
   );
 });
 

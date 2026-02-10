@@ -3,7 +3,6 @@ import HomeView from "../views/HomeView.vue";
 import ScriptsView from "../views/ScriptsView.vue";
 import RequestScript from "../views/RequestScriptView.vue";
 import RunQuickScriptView from "../views/RunQuickScriptView.vue";
-import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
 import ExportRecordView from "../views/ExportRecordView.vue";
 import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
@@ -11,6 +10,8 @@ import RequestSnifferView from "../views/RequestSnifferView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 import PlaygroundView from "../views/PlaygroundView.vue";
+import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
+import ScriptsDeployedViewAlter from "../views/ScriptsDeployedViewAlter.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -121,6 +122,13 @@ export const routes = [
     icon: "pi pi-list",
     component: ScriptsDeployedView,
     status: RouteStatus.release
+  },
+  {
+    route: "/scripts-deployed-alter",
+    name: "Scripts Deployed Alter",
+    icon: "pi pi-list",
+    component: ScriptsDeployedViewAlter,
+    status: RouteStatus.development
   },
   {
     route: "/export-record",

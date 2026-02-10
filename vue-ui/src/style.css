@@ -124,5 +124,23 @@ html,
 /* Rainbow brackets */
 
 .rainbow-bracket-red {
-  color: rgb(206, 45, 144) !important;
+  color: rgb(206, 45, 144) !important; /* bright pink/red */
+}
+.rainbow-bracket-orange {
+  color: rgb(255, 140, 0) !important; /* vivid orange */
+}
+.rainbow-bracket-yellow {
+  color: rgb(255, 200, 0) !important; /* bright yellow */
+}
+.rainbow-bracket-green {
+  color: rgb(98, 255, 163) !important; /* minty/light green */
+}
+.rainbow-bracket-blue {
+  color: rgb(102, 217, 239) !important; /* light cyan/blue */
+}
+.rainbow-bracket-indigo {
+  color: rgb(180, 142, 255) !important; /* lavender/light purple */
+}
+.rainbow-bracket-violet {
+  color: rgb(238, 130, 238) !important; /* violet / magenta */
 }
