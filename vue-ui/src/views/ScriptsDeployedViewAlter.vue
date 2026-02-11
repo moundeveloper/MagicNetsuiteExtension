@@ -6,8 +6,9 @@
       <InputText
         placeholder="Search"
         v-model="searchTerm"
-        @keyup="handleCodeEditorSearch"
+        @keydown.enter.prevent="handleEnter"
       />
+
       <Button
         @click="caseSensitive = !caseSensitive"
         :class="{ active: caseSensitive }"
@@ -117,8 +118,12 @@
       @click="handlePanelHeaderClick($event, item.script?.scriptId!)"
     >
       <CodeViewer
-        :ref="(el) => registerEditor(el as unknown as CodeViewerAPI, item)"
-        :key="item.script?.scriptId"
+        :ref="
+          (el) => {
+            if (el) registerEditor(el as unknown as CodeViewerAPI, item);
+            else unregisterEditor(item);
+          }
+        "
         :code="item.code"
         language="javascript"
         autoHeight
@@ -155,6 +160,7 @@ const caseSensitive = ref(false);
 /* New Code Start */
 const {
   registerViewer,
+  unregisterViewer,
   search,
   next,
   previous,
@@ -162,21 +168,6 @@ const {
   currentIndex,
   activeViewerId
 } = useCodeViewerSearch();
-
-const handleCodeEditorSearch = (event: KeyboardEvent) => {
-  if (event.key === "Enter" && event.shiftKey) {
-    previous(); // Shift+Enter → go backwards
-  } else if (event.key === "Enter" && !event.shiftKey) {
-    next(); // Enter → go forwards
-  }
-};
-
-watch([searchTerm, caseSensitive, wholeWord], ([term, cs, ww]) => {
-  search(term, {
-    caseSensitive: cs,
-    wholeWord: ww
-  });
-});
 
 const selectedScriptTypes = reactive({
   client: false,
@@ -197,6 +188,7 @@ type Editors = {
 };
 
 const editors = reactive<Editors[]>(dummyEditors);
+const isNavigating = ref(false);
 
 const computedEditors = computed(() => {
   if (
@@ -232,13 +224,44 @@ const currentScriptId = computed(() => {
 });
 
 // Navigation
-const goToNextMatch = async () => {
+const goToNextMatch = () => {
+  isNavigating.value = true;
   next();
 };
 
-const goToPrevMatch = async () => {
+const goToPrevMatch = () => {
+  isNavigating.value = true;
   previous();
 };
+
+const handleEnter = (event: KeyboardEvent) => {
+  if (event.shiftKey) {
+    previous();
+  } else {
+    next();
+  }
+};
+
+watch(
+  [searchTerm, caseSensitive, wholeWord],
+  ([term, cs, ww], [prevTerm, prevCs, prevWw]) => {
+    // Do not rebuild index while navigating
+    if (isNavigating.value) {
+      isNavigating.value = false;
+      return;
+    }
+
+    // Ignore no-op changes
+    if (term === prevTerm && cs === prevCs && ww === prevWw) {
+      return;
+    }
+
+    search(term, {
+      caseSensitive: cs,
+      wholeWord: ww
+    });
+  }
+);
 
 // Fetch scripts
 const getDeployedScripts = async () => {
@@ -255,10 +278,12 @@ const getDeployedScripts = async () => {
     );
     const deployedScripts = deployedScriptsResponse as DeployedScript[];
 
-    /*editors.length = 0;
-         deployedScripts.forEach((scriptItem) => {
+    editors.length = 0;
+    deployedScripts.forEach((scriptItem) => {
       editors.push({ code: scriptItem.scriptFile, script: scriptItem });
-    }); */
+    });
+
+    await nextTick(); // wait for v-for to render
   } catch (error) {
     console.error(error);
   } finally {
@@ -296,6 +321,13 @@ const goToScript = async (event: MouseEvent, scriptId: string) => {
 const registerEditor = (editor: CodeViewerAPI, item: Editors) => {
   item.editor = editor;
   registerViewer(editor);
+};
+
+const unregisterEditor = (item: Editors) => {
+  if (item.editor) {
+    unregisterViewer(item.editor.id);
+    item.editor = null;
+  }
 };
 </script>
 

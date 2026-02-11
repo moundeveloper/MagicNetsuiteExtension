@@ -34,6 +34,20 @@ export const useCodeViewerSearch = () => {
     viewers.value.push(viewer);
   };
 
+  const unregisterViewer = (id: string) => {
+    viewers.value = viewers.value.filter((v) => v.id !== id);
+
+    // clean active viewer if it was removed
+    if (activeViewer.value?.id === id) {
+      activeViewer.value = null;
+    }
+
+    // also remove its matches
+    allMatches.value = allMatches.value.filter((m) => m.viewer.id !== id);
+
+    currentIndex.value = 0;
+  };
+
   const clearAllSelections = () => {
     viewers.value.forEach((v) => v.clearSelection());
     activeViewer.value = null; // ← Use .value
@@ -109,6 +123,7 @@ export const useCodeViewerSearch = () => {
 
   return {
     registerViewer,
+    unregisterViewer,
     search,
     next,
     previous,
