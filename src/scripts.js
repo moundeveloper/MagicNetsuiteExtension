@@ -74,7 +74,8 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
         script.scriptfile,
         script.name,
         script.scripttype,
-        script.id as scriptid,
+        script.id,
+        script.scriptid,
         file.url
     FROM
         scriptdeployment
@@ -87,7 +88,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
 
     const queryConfig = {
       query: sql,
-      params: [recordType.toUpperCase()],
+      params: [recordType.toUpperCase()]
     };
 
     const resultSet = await query.runSuiteQL.promise(queryConfig);
@@ -98,7 +99,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
     );
 
     const domain = url.resolveDomain({
-      hostType: url.HostType.APPLICATION,
+      hostType: url.HostType.APPLICATION
     });
 
     // Build all the fetch promises first
@@ -115,7 +116,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
           scriptName: result.name,
           scriptType: result.scripttype,
           scriptId: result.scriptid,
-          scriptFile: body,
+          scriptFile: body
         };
       } catch (err) {
         console.error(`Error fetching ${result.name}:`, err);
@@ -123,7 +124,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
           scriptName: result.name,
           scriptType: result.scripttype,
           scriptId: result.scriptid,
-          scriptFile: null,
+          scriptFile: null
         };
       }
     });
@@ -178,7 +179,7 @@ window.getDeployments = async (
     `;
 
     const queryConfig = {
-      query: sql,
+      query: sql
     };
 
     if (scriptId) {
@@ -221,7 +222,7 @@ window.getSuiteletUrl = async (N, { script, deployment }) => {
     url.resolveScript({
       scriptId: script,
       deploymentId: deployment,
-      returnExternalUrl: false,
+      returnExternalUrl: false
     });
   console.log("Suitelet URL:", suiteletUrl);
   return suiteletUrl;
