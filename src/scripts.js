@@ -152,15 +152,26 @@ window.getDeployments = async (
   { scriptId = null, scriptIds = [] }
 ) => {
   console.log("Script ID:", scriptId);
+  console.log("Script IDs:", scriptIds);
 
-  let queryCondition = `
-    WHERE script = ?
-    `;
+  let queryCondition = "";
+  let params = [];
 
-  if (scriptIds.length > 0) {
-    queryCondition = `
-    WHERE script IN (?)
-    `;
+  if (scriptId) {
+    queryCondition = "WHERE script = ?";
+    params = [scriptId];
+  } else if (scriptIds && scriptIds.length > 0) {
+    // Create placeholders for each ID: (?, ?, ?)
+    const placeholders = scriptIds.map(() => "?").join(", ");
+    queryCondition = `WHERE script IN (${placeholders})`;
+    params = scriptIds;
+  }
+
+  console.log("queryCondition:", queryCondition);
+  console.log("params:", params);
+
+  if (!queryCondition) {
+    return [];
   }
 
   try {
@@ -182,14 +193,11 @@ window.getDeployments = async (
     `;
 
     const queryConfig = {
-      query: sql
+      query: sql,
+      params: params
     };
 
-    if (scriptId) {
-      queryConfig.params = [scriptId];
-    } else if (scriptIds.length > 0) {
-      queryConfig.params = [scriptIds.join(",")];
-    }
+    console.log("queryConfig:", queryConfig);
 
     const resultSet = await query.runSuiteQL.promise(queryConfig);
     const results = resultSet.asMappedResults();

@@ -62,7 +62,13 @@ onMounted(async () => {
 <template>
   <h1>{{ formattedRouteName }}</h1>
 
-  <MCard flex direction="column" autoHeight outlined :style="{ height: `${props.vhOffset}vh` }">
+  <MCard
+    flex
+    direction="column"
+    autoHeight
+    outlined
+    :style="{ height: `${props.vhOffset}vh` }"
+  >
     <template #default="{ contentHeight }">
       <MTable
         :rows="records || []"
@@ -73,22 +79,40 @@ onMounted(async () => {
       >
         <MTableColumn label="Name" field="name" width="1fr" searchable>
           <template #default="{ value, row }">
-            <span
-              class="cursor-pointer text-[var(--p-blue-600)] hover:underline"
+            <div
+              class="flex gap-2 cursor-pointer hover:underline"
               @click="getCustomRecordUrl(row.internalid)"
             >
-              {{ value }}
-            </span>
+              <i class="pi pi-link text-[var(--p-slate-600)]"></i>
+              <span class="text-[var(--p-slate-600)]">
+                {{ value }}
+              </span>
+            </div>
           </template>
         </MTableColumn>
 
-        <MTableColumn label="Script ID" field="scriptid" width="1fr" searchable />
+        <MTableColumn
+          label="Script ID"
+          field="scriptid"
+          width="1fr"
+          searchable
+        />
 
         <MTableColumn label="Owner" field="owner" width="1fr" searchable />
 
-        <MTableColumn label="Internal ID" field="internalid" width="100px" searchable />
+        <MTableColumn
+          label="Internal ID"
+          field="internalid"
+          width="100px"
+          searchable
+        />
 
-        <MTableColumn label="Description" field="description" width="1fr" searchable>
+        <MTableColumn
+          label="Description"
+          field="description"
+          width="1fr"
+          searchable
+        >
           <template #default="{ value }">
             <span class="truncate block max-w-[300px]" :title="value">
               {{ value || "-" }}

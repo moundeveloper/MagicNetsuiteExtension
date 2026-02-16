@@ -134,8 +134,6 @@ window.getLogsByTime = async (
 
   const allResults = [];
 
-  console.time("fetch pages");
-
   const MAX_RESULTS = 6000;
   const PAGE_SIZE = 1000;
   const MAX_PAGES = Math.ceil(MAX_RESULTS / PAGE_SIZE);
@@ -144,10 +142,7 @@ window.getLogsByTime = async (
 
   const pages = await Promise.all(
     pageRangesToFetch.map(async (pageRange) => {
-      const label = `page ${pageRange.index}`;
-      console.time(label);
       const page = await pagedData.fetch.promise({ index: pageRange.index });
-      console.timeEnd(label);
       return page;
     })
   );
@@ -156,11 +151,7 @@ window.getLogsByTime = async (
     allResults.push(...page.data);
   }
 
-  console.timeEnd("fetch pages");
-
   console.log("Total results:", allResults.length);
-
-  console.time("transform results");
 
   for (const result of allResults) {
     const row = {};
@@ -196,8 +187,6 @@ window.getLogsByTime = async (
 
     results.push(row);
   }
-
-  console.timeEnd("transform results");
 
   return results;
 };

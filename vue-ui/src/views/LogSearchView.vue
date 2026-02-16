@@ -20,11 +20,12 @@ import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import { type ContextMenuItem } from "../composables/useMContextMenu";
 
 const { formattedRouteName } = useFormattedRouteName();
 
 type LogItem = {
-  internalid: string;
+  id: string;
   datetime: string;
   title: string;
   level: string;
@@ -43,23 +44,23 @@ const loading = ref(false);
 
 /* =======================
    LOOKUP DATA
-======================= */
+ ======================= */
 
-const scripts = ref<{ id: string; label: string }[]>([]);
-const scriptDeployments = ref<{ id: string; label: string }[]>([]);
+const scripts = ref<{ id: number; label: string }[]>([]);
+const scriptDeployments = ref<{ id: number; label: string }[]>([]);
 const scriptTypesQuery = ref<{ id: string; label: string }[]>([]);
 const scriptTypesQuick = ref<{ id: string; label: string }[]>([]);
 
 /* =======================
    FILTER STATE (SINGLE SOURCE)
-======================= */
+ ======================= */
 
 const filtersState = reactive({
   query: {
     startDate: null as Date | null,
     endDate: null as Date | null,
-    scriptIds: [] as string[],
-    deploymentIds: [] as string[],
+    scriptIds: [] as number[],
+    deploymentIds: [] as number[],
     scriptTypes: [] as string[]
   },
   quick: {
@@ -75,9 +76,89 @@ const filtersState = reactive({
   }
 });
 
-const cm = ref();
-const selectedLog = ref<LogItem | null>(null);
-const selectedContext = ref<"script" | "deployment" | null>(null);
+const deploymentsLoaded = ref(false);
+
+const addToQueryFilters = async (
+  row: LogItem,
+  context: "script" | "deployment"
+) => {
+  if (context === "script") {
+    console.log("addToQueryFilters called with context: script, row:", row);
+    const scriptId = Number(row.scriptId);
+    console.log("scriptId extracted:", scriptId, "row.scriptId:", row.scriptId);
+    if (!isNaN(scriptId)) {
+      const currentIds = [...filtersState.query.scriptIds];
+      if (!currentIds.includes(scriptId)) {
+        currentIds.push(scriptId);
+      }
+      filtersState.query.scriptIds = currentIds;
+      console.log("scriptIds after update:", filtersState.query.scriptIds);
+      getDeployments();
+    }
+  } else if (context === "deployment" && row.scriptId && row.deploymentId) {
+    console.log("addToQueryFilters called with context: deployment, row:", row);
+    const scriptId = Number(row.scriptId);
+    const deploymentId = Number(row.deploymentId);
+    console.log("scriptId:", scriptId, "deploymentId:", deploymentId);
+
+    const currentIds = [...filtersState.query.scriptIds];
+    if (!currentIds.includes(scriptId)) {
+      currentIds.push(scriptId);
+    }
+    filtersState.query.scriptIds = currentIds;
+    console.log("scriptIds after update:", filtersState.query.scriptIds);
+    getDeployments();
+
+    // Wait for the specific deployment to be available in the list
+    const waitForDeployment = () => {
+      const foundDeployment = scriptDeployments.value.find(
+        (deployment) => deployment.id === deploymentId
+      );
+
+      if (foundDeployment) {
+        if (!filtersState.query.deploymentIds.includes(deploymentId)) {
+          filtersState.query.deploymentIds = [
+            ...filtersState.query.deploymentIds,
+            deploymentId
+          ];
+        }
+        return true;
+      }
+      return false;
+    };
+
+    // Check immediately first (in case deployments are already loaded)
+    if (!waitForDeployment()) {
+      // If not found, wait for deployments to load
+      const checkDeploymentsInterval = setInterval(() => {
+        if (waitForDeployment()) {
+          clearInterval(checkDeploymentsInterval);
+        }
+      }, 100);
+
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        clearInterval(checkDeploymentsInterval);
+      }, 5000);
+    }
+  }
+};
+
+const scriptContextMenu: ContextMenuItem[] = [
+  {
+    label: "Add Script to Query Filters",
+    icon: "pi pi-filter",
+    action: (row: LogItem) => addToQueryFilters(row, "script")
+  }
+];
+
+const deploymentContextMenu: ContextMenuItem[] = [
+  {
+    label: "Add Deployment to Query Filters",
+    icon: "pi pi-filter",
+    action: (row: LogItem) => addToQueryFilters(row, "deployment")
+  }
+];
 
 /* =======================
    CLIENT-SIDE FILTERING
@@ -163,43 +244,9 @@ const formatToLocalDate = (value: string | Date) => {
   });
 };
 
-const applyQueryFilter = () => {
-  if (!selectedLog.value || !selectedContext.value) return;
-
-  if (selectedContext.value === "script") {
-    console.log("QUERY FILTER: script", selectedLog.value.scriptId);
-  }
-
-  if (selectedContext.value === "deployment") {
-    console.log("QUERY FILTER: deployment", selectedLog.value.deploymentId);
-  }
-};
-
-const applyQuickFilter = () => {
-  if (!selectedLog.value || !selectedContext.value) return;
-
-  if (selectedContext.value === "script") {
-    console.log("QUICK FILTER: script", selectedLog.value.scriptName);
-  }
-
-  if (selectedContext.value === "deployment") {
-    console.log("QUICK FILTER: deployment", selectedLog.value.deploymentName);
-  }
-};
-
-const openCellMenu = (
-  event: MouseEvent,
-  row: LogItem,
-  context: "script" | "deployment"
-) => {
-  selectedLog.value = row;
-  selectedContext.value = context;
-  cm.value.show(event);
-};
-
 /* =======================
    API CALLS
-======================= */
+ ======================= */
 
 const getScriptTypes = async () => {
   const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
@@ -228,17 +275,18 @@ const getScripts = async () => {
 };
 
 const getDeployments = async () => {
-  console.log("deployment filters", filtersState.query.scriptIds);
+  console.log("getDeployments called with scriptIds:", filtersState.query.scriptIds);
   const response =
     (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
       scriptIds: filtersState.query.scriptIds
     })) || {};
+  console.log("getDeployments response:", response);
   const { message: results } = response as ApiResponse;
   if (!Array.isArray(results)) return;
   scriptDeployments.value = results.map(
     ({ primarykey, scriptid, scriptname }) => {
       return {
-        id: primarykey,
+        id: Number(primarykey),
         label: `${scriptid.toUpperCase()} (${scriptname})`
       };
     }
@@ -262,12 +310,11 @@ const getLogs = async () => {
   items.value = Array.isArray(message)
     ? message.map((log: any) => ({
         id: log.internalid,
-        internalid: log.internalid,
         datetime: log.datetime,
         title: log.title,
         level: log.type,
         message: log.detail,
-        scriptId: log["script.scriptid"],
+        scriptId: log["script.internalid"],
         deploymentId: log["scriptDeployment.internalid"],
         scriptType: log.scripttype,
         scriptName: log["script.name"],
@@ -539,27 +586,19 @@ onMounted(async () => {
 
         <MTableColumn label="Script Type" field="scriptType" width="150px" />
 
-        <MTableColumn label="Script" field="scriptName" width="1fr">
-          <template #default="{ value, row }">
-            <div
-              class="filterable-cell"
-              @contextmenu.prevent="openCellMenu($event, row, 'script')"
-            >
-              {{ value }}
-            </div>
-          </template>
-        </MTableColumn>
+        <MTableColumn
+          label="Script"
+          field="scriptName"
+          width="1fr"
+          :context-menu="scriptContextMenu"
+        />
 
-        <MTableColumn label="Deployment" field="deploymentName" width="1fr">
-          <template #default="{ value, row }">
-            <div
-              class="filterable-cell"
-              @contextmenu.prevent="openCellMenu($event, row, 'deployment')"
-            >
-              {{ value }}
-            </div>
-          </template>
-        </MTableColumn>
+        <MTableColumn
+          label="Deployment"
+          field="deploymentName"
+          width="1fr"
+          :context-menu="deploymentContextMenu"
+        />
 
         <MTableColumn label="Message" field="message" width="2fr" />
 
@@ -581,10 +620,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.table-custom {
-  flex: 1;
-}
-
 .p-inputtext {
   border-top-right-radius: 0 !important;
   border-bottom-right-radius: 0 !important;
@@ -596,24 +631,6 @@ onMounted(async () => {
 }
 
 .p-inputgroupaddon {
-  padding: 0 !important;
-}
-
-.filterable-cell {
-  height: 100%;
-  width: 100%;
-  cursor: context-menu;
-  text-decoration: underline dotted;
-  display: flex;
-  align-items: center;
-}
-
-.filterable-cell:hover {
-  background-color: var(--p-surface-100);
-}
-
-td:has(> .filterable-cell) {
-  cursor: context-menu;
   padding: 0 !important;
 }
 </style>

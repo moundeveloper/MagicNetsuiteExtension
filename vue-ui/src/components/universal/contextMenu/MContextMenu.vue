@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useMContextMenu } from "../../../composables/useMContextMenu";
 
 const {
@@ -36,14 +36,23 @@ const {
   hideContextMenu
 } = useMContextMenu();
 
-const handleItemClick = (item: any) => {
-  if (item.action && contextMenuRow.value) {
-    item.action(contextMenuRow.value);
+const capturedRow = ref<any>(null);
+
+watch(contextMenuVisible, (visible) => {
+  if (visible) {
+    capturedRow.value = contextMenuRow.value;
+  } else {
+    capturedRow.value = null;
   }
-  hideContextMenu(); // <-- this closes the menu
+});
+
+const handleItemClick = (item: any) => {
+  if (item.action && capturedRow.value) {
+    item.action(capturedRow.value);
+  }
+  hideContextMenu();
 };
 
-// Attach outside click listener here in the component
 const handleClickOutside = (event: MouseEvent) => {
   if (
     contextMenuRef.value &&
