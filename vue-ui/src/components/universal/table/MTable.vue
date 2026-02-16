@@ -1,7 +1,7 @@
 <template>
   <div class="m-table" :style="{ height: height }">
     <!-- Header Toolbar -->
-    <div v-if="$slots.toolbar || searchable" class="m-table-header-toolbar">
+    <div v-if="$slots.toolbar || searchable || collapsible" class="m-table-header-toolbar">
       <!-- Search Input -->
       <div v-if="searchable" class="m-table-search">
         <i class="pi pi-search search-icon"></i>
@@ -20,6 +20,41 @@
         </button>
       </div>
 
+      <!-- Column Visibility Toggle -->
+      <div v-if="collapsible" class="m-table-column-toggle">
+        <button
+          @click="showColumnControls = !showColumnControls"
+          class="column-toggle-btn"
+          :class="{ active: showColumnControls }"
+          title="Toggle Columns"
+        >
+          <i class="pi pi-table"></i>
+        </button>
+        
+        <div v-if="showColumnControls" class="column-controls-dropdown">
+          <div class="column-controls-header">
+            <span>Columns</span>
+            <button @click="showColumnControls = false" class="close-btn">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+          <div class="column-controls-list">
+            <label
+              v-for="(col, index) in columnsWithVisibility"
+              :key="index"
+              class="column-control-item"
+            >
+              <input
+                type="checkbox"
+                :checked="col.visible"
+                @change="toggleColumn(col.field)"
+              />
+              <span>{{ col.label }}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
       <!-- Custom toolbar slot -->
       <slot name="toolbar" />
     </div>
@@ -28,7 +63,7 @@
     <div class="m-table-header" :style="{ gridTemplateColumns }">
       <div v-if="expandable" class="m-table-expand-cell"></div>
       <div
-        v-for="(column, index) in columns"
+        v-for="(column, index) in visibleColumns"
         :key="index"
         class="m-table-header-cell"
       >
@@ -52,11 +87,13 @@
           v-for="row in visibleRows"
           :key="row.data.id"
           :row="row.data"
-          :columns="columns"
+          :columns="visibleColumns"
           :expandable="expandable"
           :gridTemplateColumns="gridTemplateColumns"
           :expanded="isRowExpanded(row.data)"
+          :autoRowHeight="autoRowHeight"
           @toggle-expand="toggleRowExpand(row.data)"
+          @row-height="registerRowHeight"
         >
           <template #expand="{ row }">
             <slot name="expand" :row="row" />
@@ -105,6 +142,10 @@ interface Column {
   searchable?: boolean;
 }
 
+interface ColumnWithVisibility extends Column {
+  visible: boolean;
+}
+
 interface RowWithIndex {
   index: number;
   data: any;
@@ -119,6 +160,9 @@ const props = withDefaults(
     searchable?: boolean;
     searchPlaceholder?: string;
     expandable?: boolean;
+    collapsible?: boolean;
+    collapsibleKey?: string;
+    autoRowHeight?: boolean;
     loading?: boolean;
   }>(),
   {
@@ -127,6 +171,9 @@ const props = withDefaults(
     searchable: false,
     searchPlaceholder: "Search...",
     expandable: false,
+    collapsible: false,
+    collapsibleKey: "m-table-columns",
+    autoRowHeight: false,
     loading: false
   }
 );
@@ -136,7 +183,72 @@ const scrollContainer = ref<HTMLElement | null>(null);
 const scrollTop = ref(0);
 const containerHeight = ref(0);
 const searchQuery = ref("");
-const expandedRows = ref<Set<string>>(new Set()); // store row.id
+const expandedRows = ref<Set<string>>(new Set());
+const showColumnControls = ref(false);
+const columnVisibility = ref<Record<string, boolean>>({});
+const rowHeights = ref<Record<string, number>>({});
+const rowElements = ref<Record<string, HTMLElement>>({});
+
+const registerRowHeight = (id: string, height: number) => {
+  if (props.autoRowHeight && height > 0) {
+    rowHeights.value[id] = height;
+  }
+};
+
+const getRowHeight = (row: any) => {
+  if (props.autoRowHeight && row.id) {
+    return rowHeights.value[row.id] || props.rowHeight;
+  }
+  return props.rowHeight;
+};
+
+const getTotalHeight = () => {
+  if (props.autoRowHeight) {
+    return filteredRows.value.reduce((total, row) => {
+      return total + (rowHeights.value[row.id] || props.rowHeight);
+    }, 0);
+  }
+  return filteredRows.value.length * props.rowHeight;
+};
+
+const STORAGE_PREFIX = "m-table-";
+
+const loadColumnVisibility = () => {
+  if (!props.collapsibleKey) return null;
+  try {
+    const saved = localStorage.getItem(STORAGE_PREFIX + props.collapsibleKey);
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveColumnVisibility = () => {
+  if (!props.collapsibleKey) return;
+  try {
+    localStorage.setItem(
+      STORAGE_PREFIX + props.collapsibleKey,
+      JSON.stringify(columnVisibility.value)
+    );
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const initColumnVisibility = () => {
+  const cols = columns.value;
+  const saved = loadColumnVisibility();
+  
+  const visibility: Record<string, boolean> = {};
+  cols.forEach((col) => {
+    if (saved && saved.hasOwnProperty(col.field)) {
+      visibility[col.field] = saved[col.field];
+    } else {
+      visibility[col.field] = true;
+    }
+  });
+  columnVisibility.value = visibility;
+};
 
 // Extract column definitions from default slot
 const columns = computed<Column[]>(() => {
@@ -176,6 +288,23 @@ const columns = computed<Column[]>(() => {
     });
 });
 
+const columnsWithVisibility = computed<ColumnWithVisibility[]>(() => {
+  return columns.value.map((col) => ({
+    ...col,
+    visible: columnVisibility.value[col.field] ?? true
+  }));
+});
+
+const visibleColumns = computed(() => {
+  if (!props.collapsible) return columns.value;
+  return columns.value.filter((col) => columnVisibility.value[col.field] !== false);
+});
+
+const toggleColumn = (field: string) => {
+  columnVisibility.value[field] = !columnVisibility.value[field];
+  saveColumnVisibility();
+};
+
 // Filter rows based on search query
 const filteredRows = computed(() => {
   if (!searchQuery.value.trim()) return props.rows;
@@ -191,6 +320,34 @@ const filteredRows = computed(() => {
 
 // Virtual scroll calculations
 const visibleRange = computed(() => {
+  if (props.autoRowHeight) {
+    let accumulatedHeight = 0;
+    let startIndex = 0;
+    let endIndex = 0;
+    
+    for (let i = 0; i < filteredRows.value.length; i++) {
+      const rowHeight = rowHeights.value[filteredRows.value[i].id] || props.rowHeight;
+      
+      if (accumulatedHeight + rowHeight <= scrollTop.value && startIndex === 0) {
+        accumulatedHeight += rowHeight;
+        startIndex = i + 1;
+      }
+      
+      if (accumulatedHeight < scrollTop.value + (containerHeight.value || 0) + props.rowHeight * props.buffer) {
+        endIndex = i + 1;
+      }
+      
+      if (accumulatedHeight > scrollTop.value + (containerHeight.value || 0) + props.rowHeight * props.buffer * 2) {
+        break;
+      }
+    }
+    
+    return { 
+      startIndex: Math.max(0, startIndex - props.buffer), 
+      endIndex: Math.min(filteredRows.value.length, endIndex + props.buffer) 
+    };
+  }
+  
   const start = Math.max(
     0,
     Math.floor(scrollTop.value / props.rowHeight) - props.buffer
@@ -211,23 +368,33 @@ const visibleRows = computed<RowWithIndex[]>(() => {
     .map((row, idx) => ({ index: startIndex + idx, data: row }));
 });
 
-const offsetTop = computed(
-  () => visibleRange.value.startIndex * props.rowHeight
-);
-const offsetBottom = computed(() =>
-  Math.max(
+const offsetTop = computed(() => {
+  if (props.autoRowHeight) {
+    let height = 0;
+    for (let i = 0; i < visibleRange.value.startIndex; i++) {
+      height += rowHeights.value[filteredRows.value[i]?.id] || props.rowHeight;
+    }
+    return height;
+  }
+  return visibleRange.value.startIndex * props.rowHeight;
+});
+
+const offsetBottom = computed(() => {
+  if (props.autoRowHeight) {
+    return Math.max(0, getTotalHeight() - offsetTop.value - (containerHeight.value || 0));
+  }
+  return Math.max(
     0,
     filteredRows.value.length * props.rowHeight -
       visibleRange.value.endIndex * props.rowHeight
-  )
-);
+  );
+});
 
 const gridTemplateColumns = computed(() => {
+  const visibleCols = props.collapsible ? visibleColumns.value : columns.value;
   const expandCol = props.expandable ? "40px " : "";
-  const cols = columns.value.map((c) => {
+  const cols = visibleCols.map((c) => {
     const width = c.width || "1fr";
-    // If it's already a fixed size (px, rem, etc), use it as-is
-    // Otherwise use minmax to prevent columns from becoming too small
     if (width.includes("px") || width.includes("rem") || width.includes("%")) {
       return width;
     }
@@ -252,8 +419,20 @@ const toggleRowExpand = (row: any) => {
   if (!props.expandable) return;
   if (expandedRows.value.has(row.id)) expandedRows.value.delete(row.id);
   else expandedRows.value.add(row.id);
-  expandedRows.value = new Set(expandedRows.value); // trigger reactivity
+  expandedRows.value = new Set(expandedRows.value);
+  
+  if (props.autoRowHeight) {
+    nextTick(() => {
+      registerRowHeight(row.id, 0);
+    });
+  }
 };
+
+watch(rowHeights, () => {
+  if (scrollContainer.value) {
+    scrollContainer.value.scrollTop = scrollTop.value;
+  }
+}, { deep: true });
 
 watch(searchQuery, () => {
   scrollTop.value = 0;
@@ -270,6 +449,18 @@ watch(() => props.height, () => {
   nextTick(updateContainerHeight);
 });
 
+watch(() => props.collapsible, (newVal) => {
+  if (newVal) {
+    initColumnVisibility();
+  }
+});
+
+watch(columns, () => {
+  if (props.collapsible) {
+    initColumnVisibility();
+  }
+}, { deep: true });
+
 let resizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
@@ -277,6 +468,10 @@ onMounted(() => {
     updateContainerHeight();
     window.addEventListener("resize", updateContainerHeight);
     
+    if (props.collapsible) {
+      initColumnVisibility();
+    }
+
     if (scrollContainer.value) {
       resizeObserver = new ResizeObserver(() => {
         updateContainerHeight();
@@ -304,6 +499,92 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.m-table-column-toggle {
+  position: relative;
+}
+
+.column-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  background: var(--p-slate-100);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.column-toggle-btn:hover {
+  background: var(--p-slate-100);
+}
+
+.column-toggle-btn.active {
+  background: var(--p-slate-200);
+  border-color: var(--p-slate-400);
+}
+
+.column-controls-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  min-width: 200px;
+  background: var(--p-slate-100);
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+}
+
+.column-controls-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--p-slate-200);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--p-slate-500);
+}
+
+.close-btn:hover {
+  color: var(--p-slate-700);
+}
+
+.column-controls-list {
+  padding: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.column-control-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  transition: background 0.15s ease;
+}
+
+.column-control-item:hover {
+  background: var(--p-slate-100);
+}
+
+.column-control-item input {
+  cursor: pointer;
+}
+
 .m-table-header-toolbar {
   padding: 12px 16px;
   border-bottom: 1px solid var(--p-slate-300);
@@ -311,6 +592,7 @@ onUnmounted(() => {
   gap: 12px;
   align-items: center;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .m-table-search {
@@ -370,8 +652,8 @@ onUnmounted(() => {
   background-color: var(--m-slate-200);
   border-bottom: 1px solid var(--p-slate-300);
   flex-shrink: 0;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
 }
 
 .m-table-header-cell {

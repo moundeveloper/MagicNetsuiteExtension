@@ -1,6 +1,6 @@
 <!-- MTableRow.vue -->
 <template>
-  <div class="m-table-row-wrapper">
+  <div class="m-table-row-wrapper" ref="rowRef">
     <div class="m-table-row" :style="{ gridTemplateColumns }">
       <div
         v-if="expandable"
@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useMContextMenu } from "../../../composables/useMContextMenu";
 
 interface Column {
@@ -67,16 +67,34 @@ const props = defineProps<{
   columns: Column[];
   expandable: boolean;
   gridTemplateColumns: string;
-  expanded: boolean; // <-- controlled from parent
+  expanded: boolean;
+  autoRowHeight?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "toggle-expand", row: any): void;
+  (e: "row-height", id: string, height: number): void;
 }>();
+
+const rowRef = ref<HTMLElement | null>(null);
+
+const updateHeight = () => {
+  if (props.autoRowHeight && rowRef.value && props.row?.id) {
+    const height = rowRef.value.getBoundingClientRect().height;
+    emit("row-height", props.row.id, height);
+  }
+};
+
+onMounted(() => {
+  updateHeight();
+});
+
+watch(() => props.expanded, updateHeight);
+watch(() => props.row, updateHeight, { deep: true });
 
 const toggle = () => {
   if (props.expandable) {
-    emit("toggle-expand", props.row); // parent updates expandedRows
+    emit("toggle-expand", props.row);
   }
 };
 
@@ -103,7 +121,9 @@ const { showContextMenu } = useMContextMenu();
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  width: 100%;
 }
 
 /* Remove right border for last cell */

@@ -509,7 +509,13 @@ onMounted(async () => {
   ></Tag>
 
   <!-- ===================== TABLE ===================== -->
-  <MCard flex direction="column" autoHeight outlined :style="{ height: `${vhOffset}vh` }">
+  <MCard
+    flex
+    direction="column"
+    autoHeight
+    outlined
+    :style="{ height: `${vhOffset}vh` }"
+  >
     <template #default="{ contentHeight }">
       <MTable
         :rows="filteredItems"
@@ -517,6 +523,9 @@ onMounted(async () => {
         :loading="loading"
         searchable
         search-placeholder="Search logs..."
+        collapsible
+        collapsible-key="log-search-view"
+        :auto-row-height="true"
       >
         <MTableColumn label="Date / Time" field="datetime" width="180px">
           <template #default="{ value }">
