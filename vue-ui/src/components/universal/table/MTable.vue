@@ -270,22 +270,28 @@ watch(() => props.height, () => {
   nextTick(updateContainerHeight);
 });
 
+let resizeObserver: ResizeObserver | null = null;
+
 onMounted(() => {
   nextTick(() => {
     updateContainerHeight();
     window.addEventListener("resize", updateContainerHeight);
     
-    // Use ResizeObserver for more reliable height tracking
     if (scrollContainer.value) {
-      const observer = new ResizeObserver(() => {
+      resizeObserver = new ResizeObserver(() => {
         updateContainerHeight();
       });
-      observer.observe(scrollContainer.value);
+      resizeObserver.observe(scrollContainer.value);
     }
   });
 });
 
-onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
+onUnmounted(() => {
+  window.removeEventListener("resize", updateContainerHeight);
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+  }
+});
 </script>
 
 <style scoped>

@@ -1,25 +1,24 @@
 <script setup lang="ts">
 import {
   computed,
-  nextTick,
   onBeforeUnmount,
   onMounted,
   reactive,
   ref,
   watch
 } from "vue";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
 import InputGroup from "primevue/inputgroup";
 import InputGroupAddon from "primevue/inputgroupaddon";
 import InputText from "primevue/inputtext";
 import MultiSelect from "primevue/multiselect";
-import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import { Button, DatePicker, Tag } from "primevue";
 import MPanel from "../components/universal/panels/MPanel.vue";
+import MCard from "../components/universal/card/MCard.vue";
+import MTable from "../components/universal/table/MTable.vue";
+import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
@@ -41,7 +40,6 @@ const props = defineProps<{ vhOffset: number }>();
 
 const items = ref<LogItem[]>([]);
 const loading = ref(false);
-const dtRef = ref<any>(null);
 
 /* =======================
    LOOKUP DATA
@@ -82,19 +80,8 @@ const selectedLog = ref<LogItem | null>(null);
 const selectedContext = ref<"script" | "deployment" | null>(null);
 
 /* =======================
-   DATATABLE FILTERS
-======================= */
-
-const tableFilters = computed(() => ({
-  global: {
-    value: filtersState.quick.global,
-    matchMode: FilterMatchMode.CONTAINS
-  }
-}));
-
-/* =======================
    CLIENT-SIDE FILTERING
-======================= */
+ ======================= */
 
 const filteredItems = computed(() => {
   let result = [...items.value];
@@ -274,6 +261,7 @@ const getLogs = async () => {
 
   items.value = Array.isArray(message)
     ? message.map((log: any) => ({
+        id: log.internalid,
         internalid: log.internalid,
         datetime: log.datetime,
         title: log.title,
@@ -310,15 +298,6 @@ onMounted(async () => {
   await getScripts();
   await getDeployments();
   await getLogs();
-
-  nextTick(() => {
-    if (dtRef.value) {
-      const el = dtRef.value.$el as HTMLElement;
-      el.addEventListener("mousedown", (e: MouseEvent) => {
-        if (e.button === 1) e.preventDefault();
-      });
-    }
-  });
 
   const stopMenuRightClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
@@ -418,188 +397,178 @@ onMounted(async () => {
     </div>
   </MPanel>
 
-  <!-- ===================== DATATABLE ===================== -->
-  <DataTable
-    ref="dtRef"
-    :style="{ height: `${vhOffset}vh` }"
-    v-model:filters="tableFilters"
-    :value="filteredItems"
-    dataKey="internalid"
-    :globalFilterFields="[
-      'message',
-      'scriptName',
-      'deploymentName',
-      'level',
-      'scriptType',
-      'title'
-    ]"
-    scrollable
-    scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 60 }"
-    class="p-datatable-gridlines table-custom"
-    :loading="loading"
-    v-model:contextMenuSelection="selectedLog"
-  >
-    <!-- ===================== QUICK FILTERS ===================== -->
+  <!-- ===================== QUICK FILTERS ===================== -->
 
-    <template #header>
-      <div class="flex flex-col gap-2">
-        <MPanel outline header="Quick Filters (Current Results)" toggleable>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label class="font-bold block mb-2">Global Search</label>
-              <InputGroup>
-                <!-- Input field -->
-                <InputGroupAddon class="flex-1">
-                  <InputText
-                    v-model="filtersState.quick.global"
-                    placeholder="Search..."
-                    class="w-full"
-                  />
-                </InputGroupAddon>
+  <MPanel outline header="Quick Filters (Current Results)" toggleable>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div>
+        <label class="font-bold block mb-2">Global Search</label>
+        <InputGroup>
+          <InputGroupAddon class="flex-1">
+            <InputText
+              v-model="filtersState.quick.global"
+              placeholder="Search..."
+              class="w-full"
+            />
+          </InputGroupAddon>
 
-                <!-- Case Sensitive Toggle -->
-                <InputGroupAddon>
-                  <div
-                    :style="{
-                      backgroundColor: filtersState.quickOptions.caseSensitive
-                        ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)'
-                    }"
-                    @click="
-                      filtersState.quickOptions.caseSensitive =
-                        !filtersState.quickOptions.caseSensitive
-                    "
-                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-                    title="Case Sensitive"
-                  >
-                    Aa
-                  </div>
-                </InputGroupAddon>
-
-                <!-- Whole Word Toggle -->
-                <InputGroupAddon>
-                  <div
-                    :style="{
-                      backgroundColor: filtersState.quickOptions.wholeWord
-                        ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)'
-                    }"
-                    @click="
-                      filtersState.quickOptions.wholeWord =
-                        !filtersState.quickOptions.wholeWord
-                    "
-                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-                    title="Whole Word"
-                  >
-                    "W"
-                  </div>
-                </InputGroupAddon>
-
-                <!-- Regex Toggle -->
-                <InputGroupAddon>
-                  <div
-                    :style="{
-                      backgroundColor: filtersState.quickOptions.regex
-                        ? 'var(--p-slate-300)'
-                        : 'var(--p-slate-100)'
-                    }"
-                    @click="
-                      filtersState.quickOptions.regex =
-                        !filtersState.quickOptions.regex
-                    "
-                    class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-                    title="Regex"
-                  >
-                    .*
-                  </div>
-                </InputGroupAddon>
-              </InputGroup>
+          <InputGroupAddon>
+            <div
+              :style="{
+                backgroundColor: filtersState.quickOptions.caseSensitive
+                  ? 'var(--p-slate-300)'
+                  : 'var(--p-slate-100)'
+              }"
+              @click="
+                filtersState.quickOptions.caseSensitive =
+                  !filtersState.quickOptions.caseSensitive
+              "
+              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+              title="Case Sensitive"
+            >
+              Aa
             </div>
+          </InputGroupAddon>
 
-            <div>
-              <label class="font-bold block mb-2">Start Datetime</label>
-              <DatePicker
-                v-model="filtersState.quick.startDate"
-                showTime
-                hourFormat="24"
-                fluid
-              />
+          <InputGroupAddon>
+            <div
+              :style="{
+                backgroundColor: filtersState.quickOptions.wholeWord
+                  ? 'var(--p-slate-300)'
+                  : 'var(--p-slate-100)'
+              }"
+              @click="
+                filtersState.quickOptions.wholeWord =
+                  !filtersState.quickOptions.wholeWord
+              "
+              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+              title="Whole Word"
+            >
+              "W"
             </div>
+          </InputGroupAddon>
 
-            <div>
-              <label class="font-bold block mb-2">End Datetime</label>
-              <DatePicker
-                v-model="filtersState.quick.endDate"
-                showTime
-                hourFormat="24"
-                fluid
-              />
+          <InputGroupAddon>
+            <div
+              :style="{
+                backgroundColor: filtersState.quickOptions.regex
+                  ? 'var(--p-slate-300)'
+                  : 'var(--p-slate-100)'
+              }"
+              @click="
+                filtersState.quickOptions.regex =
+                  !filtersState.quickOptions.regex
+              "
+              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+              title="Regex"
+            >
+              .*
             </div>
+          </InputGroupAddon>
+        </InputGroup>
+      </div>
 
-            <div>
-              <label class="font-bold block mb-2">Script Types</label>
-              <MultiSelect
-                v-model="filtersState.quick.scriptTypes"
-                :options="scriptTypesQuick"
-                optionLabel="label"
-                optionValue="id"
-                filter
-                class="w-full"
-              />
+      <div>
+        <label class="font-bold block mb-2">Start Datetime</label>
+        <DatePicker
+          v-model="filtersState.quick.startDate"
+          showTime
+          hourFormat="24"
+          fluid
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">End Datetime</label>
+        <DatePicker
+          v-model="filtersState.quick.endDate"
+          showTime
+          hourFormat="24"
+          fluid
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">Script Types</label>
+        <MultiSelect
+          v-model="filtersState.quick.scriptTypes"
+          :options="scriptTypesQuick"
+          optionLabel="label"
+          optionValue="id"
+          filter
+          class="w-full"
+        />
+      </div>
+    </div>
+  </MPanel>
+
+  <Tag
+    severity="info"
+    :value="`${filteredItems.length} Limited to 6000 for performance reasons.`"
+    class="w-fit"
+  ></Tag>
+
+  <!-- ===================== TABLE ===================== -->
+  <MCard flex direction="column" autoHeight outlined :style="{ height: `${vhOffset}vh` }">
+    <template #default="{ contentHeight }">
+      <MTable
+        :rows="filteredItems"
+        :height="`${contentHeight}px`"
+        :loading="loading"
+        searchable
+        search-placeholder="Search logs..."
+      >
+        <MTableColumn label="Date / Time" field="datetime" width="180px">
+          <template #default="{ value }">
+            {{ formatToLocalDate(value) }}
+          </template>
+        </MTableColumn>
+
+        <MTableColumn label="Title" field="title" width="1fr" />
+
+        <MTableColumn label="Level" field="level" width="100px" />
+
+        <MTableColumn label="Script Type" field="scriptType" width="150px" />
+
+        <MTableColumn label="Script" field="scriptName" width="1fr">
+          <template #default="{ value, row }">
+            <div
+              class="filterable-cell"
+              @contextmenu.prevent="openCellMenu($event, row, 'script')"
+            >
+              {{ value }}
             </div>
+          </template>
+        </MTableColumn>
+
+        <MTableColumn label="Deployment" field="deploymentName" width="1fr">
+          <template #default="{ value, row }">
+            <div
+              class="filterable-cell"
+              @contextmenu.prevent="openCellMenu($event, row, 'deployment')"
+            >
+              {{ value }}
+            </div>
+          </template>
+        </MTableColumn>
+
+        <MTableColumn label="Message" field="message" width="2fr" />
+
+        <template #loading>
+          <div class="flex justify-center">
+            <MLoader />
           </div>
-        </MPanel>
+        </template>
 
-        <Tag
-          severity="info"
-          :value="`${filteredItems.length} Limited to 6000 for performance reasons.`"
-          class="w-fit"
-        ></Tag>
-      </div>
+        <template #empty>
+          <div class="flex flex-col items-center justify-center p-8 gap-4">
+            <i class="pi pi-inbox text-4xl text-[var(--p-slate-400)]"></i>
+            <p class="text-[var(--p-slate-500)]">No logs found.</p>
+          </div>
+        </template>
+      </MTable>
     </template>
-
-    <Column field="datetime" header="Date / Time" sortable>
-      <template #body="{ data }">
-        {{ formatToLocalDate(data.datetime) }}
-      </template>
-    </Column>
-
-    <Column field="title" header="Title" sortable />
-    <Column field="level" header="Level" sortable />
-    <Column field="scriptType" header="Script Type" sortable />
-    <Column field="scriptName" header="Script">
-      <template #body="{ data }">
-        <div
-          class="filterable-cell"
-          @contextmenu.prevent="openCellMenu($event, data, 'script')"
-        >
-          {{ data.scriptName }}
-        </div>
-      </template>
-    </Column>
-
-    <Column field="deploymentName" header="Deployment">
-      <template #body="{ data }">
-        <div
-          class="filterable-cell"
-          @contextmenu.prevent="openCellMenu($event, data, 'deployment')"
-        >
-          {{ data.deploymentName }}
-        </div>
-      </template>
-    </Column>
-
-    <Column field="message" header="Message" />
-
-    <template #loading>
-      <div class="flex justify-center">
-        <MLoader />
-      </div>
-    </template>
-
-    <template #empty>No logs found.</template>
-  </DataTable>
+  </MCard>
 </template>
 
 <style scoped>
