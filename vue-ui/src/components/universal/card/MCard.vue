@@ -1,11 +1,17 @@
 <template>
-  <component :is="tag" class="m-card" :class="cardClasses" :style="cardStyles">
-    <slot></slot>
+  <component
+    :is="tag"
+    ref="cardRef"
+    class="m-card"
+    :class="cardClasses"
+    :style="cardStyles"
+  >
+    <slot :contentHeight="contentHeight"></slot>
   </component>
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
 
 type MCardProps = {
   tag?: string;
@@ -19,6 +25,7 @@ type MCardProps = {
   outlined?: boolean;
   elevated?: boolean;
   radius?: string;
+  autoHeight?: boolean;
 };
 
 const props = withDefaults(defineProps<MCardProps>(), {
@@ -32,7 +39,30 @@ const props = withDefaults(defineProps<MCardProps>(), {
   padding: "1rem",
   outlined: false,
   elevated: false,
-  radius: "0.5rem"
+  radius: "0.5rem",
+  autoHeight: false
+});
+
+const cardRef = ref<HTMLElement | null>(null);
+const contentHeight = ref(0);
+
+const updateContentHeight = () => {
+  if (cardRef.value && props.autoHeight) {
+    contentHeight.value = cardRef.value.clientHeight;
+  }
+};
+
+onMounted(() => {
+  if (props.autoHeight) {
+    updateContentHeight();
+    window.addEventListener("resize", updateContentHeight);
+  }
+});
+
+onUnmounted(() => {
+  if (props.autoHeight) {
+    window.removeEventListener("resize", updateContentHeight);
+  }
 });
 
 const justifyMap = {
@@ -63,6 +93,11 @@ const cardStyles = computed(() => {
     padding: props.padding,
     borderRadius: props.radius
   };
+
+  if (props.autoHeight) {
+    styles.flex = "1";
+    styles.minHeight = "0";
+  }
 
   if (props.flex) {
     styles.display = "flex";

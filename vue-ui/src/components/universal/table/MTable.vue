@@ -25,7 +25,7 @@
     </div>
 
     <!-- Header Columns -->
-    <div class="m-table-header" :style="gridTemplateColumns">
+    <div class="m-table-header" :style="{ gridTemplateColumns }">
       <div v-if="expandable" class="m-table-expand-cell"></div>
       <div
         v-for="(column, index) in columns"
@@ -38,32 +38,41 @@
 
     <!-- Body with Virtual Scrolling -->
     <div class="m-table-body" ref="scrollContainer" @scroll="handleScroll">
-      <div :style="{ height: `${offsetTop}px` }"></div>
-
-      <MTableRow
-        v-for="row in visibleRows"
-        :key="row.data.id"
-        :row="row.data"
-        :columns="columns"
-        :expandable="expandable"
-        :gridTemplateColumns="gridTemplateColumns"
-        :expanded="isRowExpanded(row.data)"
-        @toggle-expand="toggleRowExpand(row.data)"
-      >
-        <template #expand="{ row }">
-          <slot name="expand" :row="row" />
-        </template>
-      </MTableRow>
-
-      <div v-if="filteredRows.length === 0" class="m-table-empty">
-        <i
-          class="pi pi-search"
-          style="font-size: 2rem; color: var(--p-slate-400)"
-        />
-        <p>No results found for "{{ searchQuery }}"</p>
+      <!-- Loading State -->
+      <div v-if="loading" class="m-table-loading">
+        <slot name="loading">
+          <MLoader />
+        </slot>
       </div>
 
-      <div :style="{ height: `${offsetBottom}px` }"></div>
+      <template v-else>
+        <div :style="{ height: `${offsetTop}px`, flexShrink: 0 }"></div>
+
+        <MTableRow
+          v-for="row in visibleRows"
+          :key="row.data.id"
+          :row="row.data"
+          :columns="columns"
+          :expandable="expandable"
+          :gridTemplateColumns="gridTemplateColumns"
+          :expanded="isRowExpanded(row.data)"
+          @toggle-expand="toggleRowExpand(row.data)"
+        >
+          <template #expand="{ row }">
+            <slot name="expand" :row="row" />
+          </template>
+        </MTableRow>
+
+        <div v-if="filteredRows.length === 0" class="m-table-empty">
+          <i
+            class="pi pi-search"
+            style="font-size: 2rem; color: var(--p-slate-400)"
+          />
+          <p>No results found for "{{ searchQuery }}"</p>
+        </div>
+
+        <div :style="{ height: `${offsetBottom}px` }"></div>
+      </template>
     </div>
 
     <!-- Global Context Menu -->
@@ -84,6 +93,7 @@ import {
 import { type ContextMenuItem } from "../../../composables/useMContextMenu";
 import MContextMenu from "../contextMenu/MContextMenu.vue";
 import MTableRow from "./MTableRow.vue";
+import MLoader from "../patterns/MLoader.vue";
 import { InputText } from "primevue";
 
 interface Column {
@@ -109,13 +119,15 @@ const props = withDefaults(
     searchable?: boolean;
     searchPlaceholder?: string;
     expandable?: boolean;
+    loading?: boolean;
   }>(),
   {
     rowHeight: 48,
-    buffer: 5,
+    buffer: 3,
     searchable: false,
     searchPlaceholder: "Search...",
-    expandable: false
+    expandable: false,
+    loading: false
   }
 );
 
@@ -148,8 +160,10 @@ const columns = computed<Column[]>(() => {
 
       const contextMenu =
         columnProps.contextMenu || columnProps["context-menu"] || null;
-      const searchable =
-        columnProps.searchable !== undefined ? columnProps.searchable : true;
+      const searchableProp = columnProps.searchable;
+      const searchable = searchableProp === false || searchableProp === "false"
+        ? false
+        : true;
 
       return {
         label: columnProps.label || "",
@@ -210,13 +224,23 @@ const offsetBottom = computed(() =>
 
 const gridTemplateColumns = computed(() => {
   const expandCol = props.expandable ? "40px " : "";
-  const cols = columns.value.map((c) => c.width).join(" ");
-  return { gridTemplateColumns: expandCol + cols };
+  const cols = columns.value.map((c) => {
+    const width = c.width || "1fr";
+    // If it's already a fixed size (px, rem, etc), use it as-is
+    // Otherwise use minmax to prevent columns from becoming too small
+    if (width.includes("px") || width.includes("rem") || width.includes("%")) {
+      return width;
+    }
+    return `minmax(100px, ${width})`;
+  }).join(" ");
+  return expandCol + cols;
 });
 
 // Scroll handling
-const handleScroll = (e: Event) =>
-  (scrollTop.value = (e.target as HTMLElement).scrollTop);
+const handleScroll = (e: Event) => {
+  scrollTop.value = (e.target as HTMLElement).scrollTop;
+};
+
 const updateContainerHeight = () => {
   if (scrollContainer.value)
     containerHeight.value = scrollContainer.value.clientHeight;
@@ -236,10 +260,29 @@ watch(searchQuery, () => {
   if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
 });
 
-onMounted(() => {
-  updateContainerHeight();
-  window.addEventListener("resize", updateContainerHeight);
+watch(() => props.loading, (newVal) => {
+  if (newVal === false) {
+    nextTick(updateContainerHeight);
+  }
+});
+
+watch(() => props.height, () => {
   nextTick(updateContainerHeight);
+});
+
+onMounted(() => {
+  nextTick(() => {
+    updateContainerHeight();
+    window.addEventListener("resize", updateContainerHeight);
+    
+    // Use ResizeObserver for more reliable height tracking
+    if (scrollContainer.value) {
+      const observer = new ResizeObserver(() => {
+        updateContainerHeight();
+      });
+      observer.observe(scrollContainer.value);
+    }
+  });
 });
 
 onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
@@ -252,6 +295,7 @@ onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
   overflow: hidden;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.1);
+  min-width: 0;
 }
 
 .m-table-header-toolbar {
@@ -260,6 +304,7 @@ onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .m-table-search {
@@ -315,14 +360,12 @@ onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
 
 .m-table-header {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
   gap: 1px;
   background-color: var(--m-slate-200);
   border-bottom: 1px solid var(--p-slate-300);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  flex-shrink: 0;
+  width: max-content;
+  min-width: 100%;
 }
 
 .m-table-header-cell {
@@ -331,11 +374,29 @@ onUnmounted(() => window.removeEventListener("resize", updateContainerHeight));
   font-size: 0.875rem;
   color: var(--p-slate-900);
   text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .m-table-body {
-  overflow-y: auto;
+  overflow: auto;
   flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.m-table-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
 }
 
 .m-table-empty {

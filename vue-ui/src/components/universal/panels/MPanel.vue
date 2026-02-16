@@ -28,7 +28,7 @@
       @after-leave="onAfterLeave"
     >
       <div v-if="expanded" class="m-panel-content-wrapper">
-        <div class="m-panel-content px-4">
+        <div class="m-panel-content px-4 pt-2">
           <slot name="content">
             <slot />
           </slot>

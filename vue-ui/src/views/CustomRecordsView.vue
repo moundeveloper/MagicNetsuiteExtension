@@ -1,14 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
-import InputGroup from "primevue/inputgroup";
-import InputGroupAddon from "primevue/inputgroupaddon";
-import InputText from "primevue/inputtext";
-import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { ProgressSpinner } from "primevue";
+import MCard from "../components/universal/card/MCard.vue";
+import MTable from "../components/universal/table/MTable.vue";
+import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
@@ -23,25 +19,10 @@ interface RecordItem {
 
 const records = ref<RecordItem[]>();
 const loading = ref(false);
-const filters = ref({
-  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  internalid: { value: null, matchMode: FilterMatchMode.EQUALS },
-  name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  scriptid: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  description: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH }
-});
 
 const props = defineProps<{
   vhOffset: number;
 }>();
-
-// Row click handler
-const onRowClick = (event: any) => {
-  const record: RecordItem = event.data;
-  console.log("Row clicked:", record);
-  getCustomRecordUrl(record.internalid);
-};
 
 const getCustomRecords = async () => {
   const response = await callApi(RequestRoutes.CUSTOM_RECORDS);
@@ -51,6 +32,7 @@ const getCustomRecords = async () => {
   if (!customRecords || !Array.isArray(customRecords)) return;
 
   records.value = customRecords.map((record: any) => ({
+    id: record.internalid,
     internalid: record.internalid,
     name: record.name,
     scriptid: record.scriptid,
@@ -79,108 +61,48 @@ onMounted(async () => {
 
 <template>
   <h1>{{ formattedRouteName }}</h1>
-  <DataTable
-    :style="{ height: `${vhOffset}vh` }"
-    data-ignore
-    v-model:filters="filters"
-    :value="records"
-    filterDisplay="row"
-    dataKey="internalid"
-    :loading="loading"
-    :globalFilterFields="[
-      'internalid',
-      'name',
-      'scriptid',
-      'description',
-      'owner'
-    ]"
-    scrollable
-    scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 44 }"
-    class="p-datatable-gridlines table-custom"
-    @row-click="onRowClick"
-  >
-    <!-- Global Search using InputGroup -->
-    <template #header>
-      <div class="flex">
-        <InputGroup style="max-width: 300px">
-          <InputGroupAddon>
-            <i class="pi pi-search"></i>
-          </InputGroupAddon>
-          <InputText
-            v-model="filters['global'].value"
-            placeholder="Keyword Search"
-            :autofocus="true"
-          />
-        </InputGroup>
-      </div>
+
+  <MCard flex direction="column" autoHeight outlined :style="{ height: `${props.vhOffset}vh` }">
+    <template #default="{ contentHeight }">
+      <MTable
+        :rows="records || []"
+        :height="`${contentHeight}px`"
+        :loading="loading"
+        searchable
+        search-placeholder="Search records..."
+      >
+        <MTableColumn label="Name" field="name" width="1fr" searchable>
+          <template #default="{ value, row }">
+            <span
+              class="cursor-pointer text-[var(--p-blue-600)] hover:underline"
+              @click="getCustomRecordUrl(row.internalid)"
+            >
+              {{ value }}
+            </span>
+          </template>
+        </MTableColumn>
+
+        <MTableColumn label="Script ID" field="scriptid" width="1fr" searchable />
+
+        <MTableColumn label="Owner" field="owner" width="1fr" searchable />
+
+        <MTableColumn label="Internal ID" field="internalid" width="100px" searchable />
+
+        <MTableColumn label="Description" field="description" width="1fr" searchable>
+          <template #default="{ value }">
+            <span class="truncate block max-w-[300px]" :title="value">
+              {{ value || "-" }}
+            </span>
+          </template>
+        </MTableColumn>
+
+        <template #empty>
+          <div class="flex flex-col items-center justify-center p-8 gap-4">
+            <i class="pi pi-inbox text-4xl text-[var(--p-slate-400)]"></i>
+            <p class="text-[var(--p-slate-500)]">No records found.</p>
+          </div>
+        </template>
+      </MTable>
     </template>
-
-    <!-- Columns -->
-
-    <Column field="name" header="Name" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by name"
-        />
-      </template>
-    </Column>
-
-    <Column field="scriptid" header="Script ID" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Script ID"
-        />
-      </template>
-    </Column>
-
-    <Column field="owner" header="Owner" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Owner"
-        />
-      </template>
-    </Column>
-
-    <Column field="internalid" header="Internal ID" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          type="number"
-          @input="filterCallback()"
-          placeholder="Search by ID"
-        />
-      </template>
-    </Column>
-
-    <Column field="description" header="Description" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Description"
-        />
-      </template>
-    </Column>
-
-    <template #loading>
-      <div class="flex justify-center">
-        <ProgressSpinner />
-      </div>
-    </template>
-
-    <template #empty>No records found.</template>
-  </DataTable>
+  </MCard>
 </template>
-
-<style scoped>
-.table-custom {
-  flex: 1;
-}
-</style>

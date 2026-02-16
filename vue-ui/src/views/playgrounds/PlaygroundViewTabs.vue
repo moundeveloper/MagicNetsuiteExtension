@@ -63,6 +63,9 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
 import { defaultUsers } from "../../utils/temp";
+import MTabs from "../../components/universal/tabs/MTabs.vue";
+import MTable from "../../components/universal/table/MTable.vue";
+import MTableColumn from "../../components/universal/table/MTableColumn.vue";
 
 const props = defineProps<{
   vhOffset?: number;

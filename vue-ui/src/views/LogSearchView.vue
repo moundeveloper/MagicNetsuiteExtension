@@ -17,17 +17,10 @@ import MultiSelect from "primevue/multiselect";
 import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import {
-  Button,
-  ContextMenu,
-  DatePicker,
-  Panel,
-  ProgressSpinner,
-  Select,
-  Tag
-} from "primevue";
+import MLoader from "../components/universal/patterns/MLoader.vue";
+import { Button, DatePicker, Tag } from "primevue";
+import MPanel from "../components/universal/panels/MPanel.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
-import type { Background } from "@vue-flow/background";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -87,27 +80,6 @@ const filtersState = reactive({
 const cm = ref();
 const selectedLog = ref<LogItem | null>(null);
 const selectedContext = ref<"script" | "deployment" | null>(null);
-
-const menuModel = computed(() => {
-  if (!selectedContext.value) return [];
-
-  return [
-    {
-      label: `Filter by ${
-        selectedContext.value === "script" ? "Script" : "Deployment"
-      } (Query)`,
-      icon: "pi pi-search",
-      command: applyQueryFilter
-    },
-    {
-      label: `Filter by ${
-        selectedContext.value === "script" ? "Script" : "Deployment"
-      } (Quick)`,
-      icon: "pi pi-filter",
-      command: applyQuickFilter
-    }
-  ];
-});
 
 /* =======================
    DATATABLE FILTERS
@@ -369,9 +341,9 @@ onMounted(async () => {
 
   <!-- ===================== QUERY FILTERS ===================== -->
 
-  <Panel toggleable class="query-panel">
+  <MPanel outline toggleable>
     <template #header>
-      <div class="flex justify-between items-center gap-4 h-full">
+      <div class="flex justify-between items-center gap-4 h-full flex-1">
         <span>Query Filters</span>
         <Button
           @click="getLogs"
@@ -444,7 +416,7 @@ onMounted(async () => {
         />
       </div>
     </div>
-  </Panel>
+  </MPanel>
 
   <!-- ===================== DATATABLE ===================== -->
   <DataTable
@@ -472,7 +444,7 @@ onMounted(async () => {
 
     <template #header>
       <div class="flex flex-col gap-2">
-        <Panel header="Quick Filters (Current Results)" toggleable>
+        <MPanel outline header="Quick Filters (Current Results)" toggleable>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="font-bold block mb-2">Global Search</label>
@@ -577,7 +549,7 @@ onMounted(async () => {
               />
             </div>
           </div>
-        </Panel>
+        </MPanel>
 
         <Tag
           severity="info"
@@ -622,7 +594,7 @@ onMounted(async () => {
 
     <template #loading>
       <div class="flex justify-center">
-        <ProgressSpinner />
+        <MLoader />
       </div>
     </template>
 

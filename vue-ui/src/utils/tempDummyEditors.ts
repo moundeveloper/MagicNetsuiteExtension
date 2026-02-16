@@ -24,18 +24,70 @@ export const dummyEditors: {
  * @NApiVersion 2.1
  * @NScriptType ClientScript
  */
-define([], () => {
+define(["N/currentRecord", "N/ui/message"], (currentRecord, message) => {
+
   const pageInit = (context) => {
-    console.log("Sales Order page initialized");
+    const rec = currentRecord.get();
+    console.log("Sales Order initialized:", rec.id);
+
+    const msg = message.create({
+      title: "Sales Order Loaded",
+      message: "Review mandatory fields before saving.",
+      type: message.Type.INFORMATION
+    });
+
+    msg.show({ duration: 3000 });
   };
 
   const fieldChanged = (context) => {
+    const rec = currentRecord.get();
+
     if (context.fieldId === "entity") {
-      console.log("Customer changed");
+      const customer = rec.getValue("entity");
+      console.log("Customer changed:", customer);
+
+      if (!customer) {
+        alert("Customer must be selected.");
+      }
+    }
+
+    if (context.fieldId === "trandate") {
+      const date = rec.getValue("trandate");
+      console.log("Transaction date updated:", date);
     }
   };
 
-  return { pageInit, fieldChanged };
+  const validateLine = (context) => {
+    if (context.sublistId === "item") {
+      const rec = currentRecord.get();
+      const quantity = rec.getCurrentSublistValue({
+        sublistId: "item",
+        fieldId: "quantity"
+      });
+
+      if (!quantity || quantity <= 0) {
+        alert("Quantity must be greater than zero.");
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const saveRecord = () => {
+    const rec = currentRecord.get();
+    const total = rec.getValue("total");
+
+    if (!total || total <= 0) {
+      alert("Total must be greater than zero.");
+      return false;
+    }
+
+    console.log("Sales Order validated successfully.");
+    return true;
+  };
+
+  return { pageInit, fieldChanged, validateLine, saveRecord };
 });
 `
   },
@@ -52,17 +104,40 @@ define([], () => {
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(["N/error"], (error) => {
-  const beforeSubmit = (context) => {
-    if (!context.newRecord.getValue("entity")) {
-      throw error.create({
-        name: "MISSING_ENTITY",
-        message: "Entity is required"
-      });
-    }
+define(["N/error", "N/log"], (error, log) => {
+
+  const beforeLoad = (context) => {
+    log.debug("Before Load Triggered", context.type);
   };
 
-  return { beforeSubmit };
+  const beforeSubmit = (context) => {
+    const rec = context.newRecord;
+
+    const entity = rec.getValue("entity");
+    const memo = rec.getValue("memo");
+
+    if (!entity) {
+      throw error.create({
+        name: "MISSING_ENTITY",
+        message: "Entity is required before saving.",
+        notifyOff: false
+      });
+    }
+
+    if (memo && memo.length > 200) {
+      throw error.create({
+        name: "MEMO_TOO_LONG",
+        message: "Memo cannot exceed 200 characters."
+      });
+    }
+
+    log.audit({
+      title: "Validation Passed",
+      details: "Record ready for submission"
+    });
+  };
+
+  return { beforeLoad, beforeSubmit };
 });
 `
   },
@@ -79,38 +154,37 @@ define(["N/error"], (error) => {
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(["N/log"], (log) => {
+define(["N/log", "N/record"], (log, record) => {
+
   const afterSubmit = (context) => {
+    if (context.type === context.UserEventType.DELETE) {
+      log.audit("Record Deleted", context.oldRecord.id);
+      return;
+    }
+
+    const recId = context.newRecord.id;
+
     log.debug({
       title: "Record Saved",
-      details: context.newRecord.id
+      details: recId
     });
+
+    try {
+      record.submitFields({
+        type: context.newRecord.type,
+        id: recId,
+        values: {
+          custbody_processed_flag: true
+        }
+      });
+
+      log.audit("Post Processing Complete", recId);
+    } catch (e) {
+      log.error("Post Processing Failed", e);
+    }
   };
 
   return { afterSubmit };
-});
-`
-  },
-
-  {
-    script: {
-      scriptId: "custscript_client_customer",
-      scriptName: "Customer Client Enhancements",
-      scriptType: "client",
-      scriptFile: "customer_client.js"
-    },
-    code: `
-/**
- * @NApiVersion 2.1
- * @NScriptType ClientScript
- */
-define([], () => {
-  const validateLine = (context) => {
-    console.log("Validating sublist line");
-    return true;
-  };
-
-  return { validateLine };
 });
 `
   },
@@ -127,119 +201,36 @@ define([], () => {
  * @NApiVersion 2.1
  * @NScriptType WorkflowActionScript
  */
-define(["N/record"], (record) => {
+define(["N/record", "N/log"], (record, log) => {
+
   const onAction = (context) => {
     const rec = record.load({
       type: context.newRecord.type,
       id: context.newRecord.id
     });
 
-    rec.setValue({
-      fieldId: "approvalstatus",
-      value: 2
-    });
+    const amount = rec.getValue("total");
+
+    if (amount > 10000) {
+      rec.setValue({
+        fieldId: "approvalstatus",
+        value: 1
+      });
+
+      log.audit("Requires Approval", amount);
+    } else {
+      rec.setValue({
+        fieldId: "approvalstatus",
+        value: 2
+      });
+
+      log.audit("Auto Approved", amount);
+    }
 
     rec.save();
   };
 
   return { onAction };
-});
-`
-  },
-
-  {
-    script: {
-      scriptId: "custscript_client_invoice",
-      scriptName: "Invoice Client Helper",
-      scriptType: "client",
-      scriptFile: "invoice_client.js"
-    },
-    code: `
-/**
- * @NApiVersion 2.1
- * @NScriptType ClientScript
- */
-define([], () => {
-  const saveRecord = () => {
-    console.log("Invoice saved");
-    return true;
-  };
-
-  return { saveRecord };
-});
-`
-  },
-
-  {
-    script: {
-      scriptId: "custscript_ue_po_defaults",
-      scriptName: "PO Default Values",
-      scriptType: "userevent",
-      scriptFile: "po_defaults.js"
-    },
-    code: `
-/**
- * @NApiVersion 2.1
- * @NScriptType UserEventScript
- */
-define([], () => {
-  const beforeLoad = (context) => {
-    context.newRecord.setValue({
-      fieldId: "memo",
-      value: "Auto-filled by UE"
-    });
-  };
-
-  return { beforeLoad };
-});
-`
-  },
-
-  {
-    script: {
-      scriptId: "custscript_workflow_notify",
-      scriptName: "Workflow Email Notify",
-      scriptType: "action",
-      scriptFile: "workflow_notify.js"
-    },
-    code: `
-/**
- * @NApiVersion 2.1
- * @NScriptType WorkflowActionScript
- */
-define(["N/email"], (email) => {
-  const onAction = () => {
-    email.send({
-      author: -5,
-      recipients: ["test@example.com"],
-      subject: "Workflow Triggered",
-      body: "The workflow has executed."
-    });
-  };
-
-  return { onAction };
-});
-`
-  },
-
-  {
-    script: {
-      scriptId: "custscript_client_search",
-      scriptName: "Client Search Helper",
-      scriptType: "client",
-      scriptFile: "client_search.js"
-    },
-    code: `
-/**
- * @NApiVersion 2.1
- * @NScriptType ClientScript
- */
-define([], () => {
-  const lineInit = () => {
-    console.log("Line initialized");
-  };
-
-  return { lineInit };
 });
 `
   },
@@ -256,13 +247,20 @@ define([], () => {
  * @NApiVersion 2.1
  * @NScriptType UserEventScript
  */
-define(["N/search"], (search) => {
-  const afterSubmit = () => {
-    search.create({
+define(["N/search", "N/log"], (search, log) => {
+
+  const afterSubmit = (context) => {
+    const results = search.create({
       type: "customrecord_test",
-      filters: [],
+      filters: [["isinactive", "is", "T"]],
       columns: ["internalid"]
-    }).run();
+    }).run().getRange({ start: 0, end: 100 });
+
+    if (results && results.length) {
+      log.audit("Inactive Records Found", results.length);
+    } else {
+      log.debug("No Cleanup Needed", "All records active");
+    }
   };
 
   return { afterSubmit };

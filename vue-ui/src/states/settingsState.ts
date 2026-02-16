@@ -10,19 +10,24 @@ export interface ShortcutsSettings {
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
-  openOnCustomizationPage: true,
+  openOnCustomizationPage: true
 };
 
 const settings = reactive<ShortcutsSettings>(defaultSettings);
 
 export function useSettings() {
   const loadSettings = async () => {
-    const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
-    if (result.magic_netsuite_settings) {
-      Object.assign(settings, {
-        ...defaultSettings,
-        ...result.magic_netsuite_settings,
-      });
+    try {
+      console.log("[loadSettings]");
+      const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+      if (result.magic_netsuite_settings) {
+        Object.assign(settings, {
+          ...defaultSettings,
+          ...result.magic_netsuite_settings
+        });
+      }
+    } catch (error) {
+      console.log("[loadSettings] error", "Storage not available");
     }
   };
 
@@ -36,7 +41,7 @@ export function useSettings() {
     () => {
       saveSettings();
     },
-    { deep: true },
+    { deep: true }
   );
 
   onMounted(() => {
@@ -44,6 +49,6 @@ export function useSettings() {
   });
 
   return {
-    settings: settings,
+    settings: settings
   };
 }

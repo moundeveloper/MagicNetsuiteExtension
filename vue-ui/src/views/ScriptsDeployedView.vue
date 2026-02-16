@@ -3,7 +3,12 @@
 
   <MCard flex direction="column" gap="1rem" padding="1rem" outlined elevated>
     <MCard flex direction="row" gap="1rem" padding="0">
-      <InputText placeholder="Search" v-model="searchText" @keyup="handleKey" />
+      <InputText
+        placeholder="Search"
+        v-model="searchTerm"
+        @keydown.enter.prevent="handleEnter"
+      />
+
       <Button
         @click="caseSensitive = !caseSensitive"
         :class="{ active: caseSensitive }"
@@ -24,7 +29,7 @@
       <span class="match-counter flex gap-4 items-center">
         <Button
           @click="goToPrevMatch"
-          :disabled="totalMatches === 0"
+          :disabled="matchesCount === 0"
           size="small"
           variant="outlined"
         >
@@ -32,22 +37,23 @@
         </Button>
         <Button
           @click="goToNextMatch"
-          :disabled="totalMatches === 0"
+          :disabled="matchesCount === 0"
           size="small"
           variant="outlined"
         >
           <i class="pi pi-arrow-down"></i>
         </Button>
-        {{ currentMatchDisplay }} / {{ totalMatches }}
+        {{ currentIndex }} / {{ matchesCount }}
         <span
           class="cursor-pointer"
           v-if="currentScriptName"
           @mousedown="goToScript($event, currentScriptId)"
         >
-          | {{ currentScriptName }}</span
-        >
+          | {{ currentScriptName }}
+        </span>
       </span>
     </MCard>
+
     <MPanel outline toggleable header="Advanced Filters">
       <div class="p-3 flex flex-wrap">
         <MPanel outline header="Script Type">
@@ -61,7 +67,6 @@
             >
               Client
             </Button>
-
             <Button
               @click="
                 selectedScriptTypes.userevent = !selectedScriptTypes.userevent
@@ -83,7 +88,7 @@
               size="small"
               variant="outlined"
             >
-              Worflow-action
+              Workflow-action
             </Button>
           </div>
         </MPanel>
@@ -91,48 +96,39 @@
     </MPanel>
   </MCard>
 
-  <div v-if="loading" class="progress-spinner">
-    <ProgressSpinner style="width: 3rem; height: 3rem; margin: 2rem auto" />
+  <div v-if="loading" class="flex items-center justify-center h-full w-full">
+    <MLoader />
   </div>
 
   <div
     v-else
     id="scrollContainerEditors"
-    class="flex flex-col gap-4 overflow-y-auto overflow-x-hidden p-4"
+    class="flex flex-col gap-4 overflow-y-auto overflow-x-hidden p-4 editor-scroller"
     data-ignore
-    ref="scrollContainer"
     :style="{ height: `${vhOffset}vh` }"
   >
-    <Accordion
-      class="editor-accordion"
-      v-for="item in computedEditors"
+    <MPanel
+      v-for="(item, index) in computedEditors"
       :key="item.script?.scriptId"
-      v-model:value="openedState[item.script?.scriptId!]"
+      outline
+      toggleable
+      expanded
+      :header="`${item.script?.scriptName} - ${item.script?.scriptType}`"
+      class="editor-panel"
+      @click="handlePanelHeaderClick($event, item.script?.scriptId!)"
     >
-      <AccordionPanel value="0">
-        <AccordionHeader class="bg-slate-200">
-          <span
-            class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none"
-            @mousedown="goToScript($event, item.script?.scriptId!)"
-          >
-            {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
-          </span>
-        </AccordionHeader>
-        <AccordionContent class="position-relative">
-          <!-- <Button class="inspect-button" size="small" v-if="item.code"
-            ><i class="pi pi-search"></i> Inspect</Button
-          > -->
-          <MonacoCodeEditor
-            :ref="(el) => setItemRef(el, item)"
-            class="editor"
-            v-model="item.code"
-            :readonly="true"
-            :completion-items="completionItems"
-            :config="editorConfig"
-          />
-        </AccordionContent>
-      </AccordionPanel>
-    </Accordion>
+      <CodeViewer
+        :ref="
+          (el) => {
+            if (el) registerEditor(el as unknown as CodeViewerAPI, item);
+            else unregisterEditor(item);
+          }
+        "
+        :code="item.code"
+        language="javascript"
+        autoHeight
+      />
+    </MPanel>
   </div>
 </template>
 
@@ -140,320 +136,180 @@
 import {
   ref,
   reactive,
-  onMounted,
-  watch,
   nextTick,
-  type ComponentPublicInstance,
-  computed
+  watch,
+  computed,
+  onMounted,
+  toRefs
 } from "vue";
-import ProgressSpinner from "primevue/progressspinner";
-import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
-import { RequestRoutes } from "../types/request";
-import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
-import * as monaco from "monaco-editor";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionHeader,
-  AccordionPanel,
-  Button,
-  InputText,
-  MultiSelect,
-  Panel
-} from "primevue";
-import { completionItems } from "../utils/codeEditorJSCompletion";
-import { defaultCode, temporaryCode } from "../utils/temp";
-import { debounce } from "lodash";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import MCard from "../components/universal/card/MCard.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
-
-const { formattedRouteName } = useFormattedRouteName();
-
-const props = defineProps<{
-  vhOffset: number;
-}>();
-
-const openedState = reactive<Record<string, string>>({});
-const loading = ref(false);
-const scrollContainer = ref<HTMLElement | null>(null);
-
-const selectedScriptTypes = reactive<{
-  client: boolean;
-  userevent: boolean;
-  workflowaction: boolean;
-}>({
-  client: false,
-  userevent: false,
-  workflowaction: false
-});
+import MLoader from "../components/universal/patterns/MLoader.vue";
+import { Button, InputText } from "primevue";
+import CodeViewer from "../components/CodeViewer.vue";
+import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
+import { RequestRoutes } from "../types/request";
+import {
+  useCodeViewerSearch,
+  type CodeViewerAPI
+} from "../composables/useCodeViewerSearch";
 
 type DeployedScript = {
   scriptName: string;
   scriptType: string;
   scriptFile: string;
   scriptId: string;
+  id: number;
 };
-
 type Editors = {
-  editor?: any; // Reference to MonacoCodeEditor component
+  editor?: CodeViewerAPI | null;
   code: string;
-  matches?: monaco.editor.FindMatch[];
-  decorations?: string[];
   script?: DeployedScript;
 };
 
-const editors = reactive<Editors[]>([]);
+const { formattedRouteName } = useFormattedRouteName();
 
-const editorConfig = {
-  suppressNativeFind: true,
-  defocusScroll: true,
-  minimap: false,
-  disableAutoScrollOnFocus: true
-};
-const searchText = ref("");
-const wholeWord = ref(false); // Toggle for whole word search
-const caseSensitive = ref(false); // Toggle for case sensitive search
+const props = defineProps<{ vhOffset: number }>();
 
-// --- State ---
-// totalMatches and currentMatchDisplay remain refs
-const totalMatches = ref(0);
-const currentMatchDisplay = ref(0);
+const loading = ref(false);
+const searchTerm = ref("");
+const wholeWord = ref(false);
+const caseSensitive = ref(false);
 
-// MAKE THESE REACTIVE (fixes computed updates)
-const globalMatchIndex = ref(0); // was let globalMatchIndex = 0;
-const allMatches = ref<
-  Array<{
-    editorIndex: number;
-    matchIndex: number;
-    lineElement: HTMLElement | null;
-  }>
->([]); // was plain array
+/* New Code Start */
+const {
+  registerViewer,
+  unregisterViewer,
+  search,
+  next,
+  previous,
+  matchesCount,
+  currentIndex,
+  activeViewerId
+} = useCodeViewerSearch();
 
-const debouncedSearch = debounce((value: string) => {
-  performGlobalSearch(value);
-}, 250);
+const selectedScriptTypes = reactive({
+  client: false,
+  userevent: false,
+  workflowaction: false
+});
+
+const { client, userevent, workflowaction } = toRefs(selectedScriptTypes);
+
+const editors = ref<Editors[]>([]);
+const isNavigating = ref(false);
 
 const computedEditors = computed(() => {
-  // If no script types are selected, return all editors
-  if (
-    !selectedScriptTypes.client &&
-    !selectedScriptTypes.userevent &&
-    !selectedScriptTypes.workflowaction
-  ) {
-    return editors;
+  if (!client.value && !userevent.value && !workflowaction.value) {
+    return [...editors.value];
   }
-
-  return editors.filter((editor) => {
+  return editors.value.filter((editor) => {
     const type = editor.script?.scriptType?.toLowerCase();
     return (
-      (selectedScriptTypes.client && type === "client") ||
-      (selectedScriptTypes.userevent && type === "userevent") ||
-      (selectedScriptTypes.workflowaction && type === "action")
+      (client.value && type === "client") ||
+      (userevent.value && type === "userevent") ||
+      (workflowaction.value && type === "action")
     );
   });
 });
 
-// --- NEW computed using reactive refs ---
 const currentScriptName = computed(() => {
-  if (!allMatches.value.length) return "";
-  const entry = allMatches.value[globalMatchIndex.value];
-  if (!entry) return "";
-  const script = editors[entry.editorIndex]?.script;
-  if (!script) return "";
-  return `${script.scriptName} (${script.scriptType})`;
+  const activeId = activeViewerId.value;
+  if (!activeId) return "";
+
+  const match = editors.value.find((item) => item.editor?.id === activeId);
+  return match?.script?.scriptName || "";
 });
 
 const currentScriptId = computed(() => {
-  if (!allMatches.value.length) return "";
-  const entry = allMatches.value[globalMatchIndex.value];
-  if (!entry) return "";
-  const script = editors[entry.editorIndex]?.script;
-  if (!script) return "";
-  return script.scriptId;
+  const activeId = activeViewerId.value;
+  if (!activeId) return "";
+
+  const match = editors.value.find((item) => item.editor?.id === activeId);
+  return match?.script?.scriptId || "";
 });
 
-// --- Reactive watch for live search ---
-watch(searchText, async (newValue) => {
-  await nextTick(); // Wait for editors to be ready
-  debouncedSearch(newValue);
-});
-
-// Watch for changes in search options
-watch([caseSensitive, wholeWord], async () => {
-  await nextTick();
-  debouncedSearch(searchText.value);
-});
-
-watch(selectedScriptTypes, async () => {
-  await nextTick();
-  debouncedSearch(searchText.value);
-});
-
-// --- Functions ---
-const performGlobalSearch = (text: string) => {
-  allMatches.value = [];
-  let totalCount = 0;
-
-  editors.forEach((editorItem, editorIndex) => {
-    const editor: monaco.editor.IStandaloneCodeEditor =
-      editorItem.editor?.getEditor?.();
-
-    if (!editor) return;
-
-    const model: monaco.editor.ITextModel = editor.getModel()!;
-    if (!model) return;
-
-    if (!text) {
-      // Clear decorations if empty
-      editorItem.decorations = editor.deltaDecorations(
-        editorItem.decorations || [],
-        []
-      );
-      editorItem.matches = [];
-      return;
-    }
-
-    // Find matches in this editor
-    const matches = model.findMatches(
-      text,
-      true, // search all
-      false, // isRegex - set to false for literal search
-      caseSensitive.value, // matchCase
-      wholeWord.value ? "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?" : null, // wordSeparators - standard word boundaries
-      true // captureMatches
-    );
-
-    editorItem.matches = matches;
-
-    // Build global match index
-    matches.forEach((match: monaco.editor.FindMatch, matchIndex: number) => {
-      const editorDom = editor.getContainerDomNode();
-
-      const lineElements = editorDom.querySelectorAll(`.line-numbers`);
-      const lineElement = (lineElements[match.range.startLineNumber - 1] ||
-        null) as HTMLElement | null;
-
-      allMatches.value.push({ editorIndex, matchIndex, lineElement });
-    });
-
-    totalCount += matches.length;
-  });
-
-  totalMatches.value = totalCount;
-  globalMatchIndex.value = 0;
-  currentMatchDisplay.value = totalCount > 0 ? 1 : 0;
-
-  // Update highlights on all editors
-  updateAllHighlights();
-};
-
-const scrollToEditor = (lineElement: HTMLElement | null) => {
-  // Scroll the container to the editor
-  if (scrollContainer.value) {
-    if (lineElement) {
-      lineElement.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    }
-  }
-};
-
-const updateAllHighlights = async () => {
-  // Wait for next tick to ensure DOM is updated
-  await nextTick();
-
-  editors.forEach((editorItem, editorIndex) => {
-    const editor = editorItem.editor?.getEditor?.();
-    if (!editor || !editorItem.matches) return;
-
-    if (!editorItem.matches.length) {
-      editorItem.decorations = editor.deltaDecorations(
-        editorItem.decorations || [],
-        []
-      );
-      return;
-    }
-
-    // Determine if current global match is in this editor
-    const currentGlobalMatch = allMatches.value[globalMatchIndex.value];
-    const isCurrentEditor = currentGlobalMatch?.editorIndex === editorIndex;
-    const currentLocalMatchIndex = currentGlobalMatch?.matchIndex;
-
-    const newDecorations: monaco.editor.IModelDeltaDecoration[] =
-      editorItem.matches.map((match, idx) => ({
-        range: match.range,
-        options: {
-          inlineClassName:
-            isCurrentEditor && idx === currentLocalMatchIndex
-              ? "current-match-decoration"
-              : "other-match-decoration"
-        }
-      }));
-
-    editorItem.decorations = editor.deltaDecorations(
-      editorItem.decorations || [],
-      newDecorations
-    );
-
-    // If this editor has the current match, reveal it
-    if (isCurrentEditor && currentLocalMatchIndex !== undefined) {
-      const match = editorItem.matches[currentLocalMatchIndex];
-      if (match) {
-        // First, scroll the container to this editor
-        scrollToEditor(currentGlobalMatch.lineElement || null);
-      }
-    }
-  });
-};
-
-// Navigate matches globally
+// Navigation
 const goToNextMatch = () => {
-  if (!allMatches.value.length) return;
-  globalMatchIndex.value =
-    (globalMatchIndex.value + 1) % allMatches.value.length;
-  currentMatchDisplay.value = globalMatchIndex.value + 1;
-  updateAllHighlights();
+  isNavigating.value = true;
+  next();
+  nextTick(() => {
+    isNavigating.value = false;
+  });
 };
 
 const goToPrevMatch = () => {
-  if (!allMatches.value.length) return;
-  globalMatchIndex.value =
-    (globalMatchIndex.value - 1 + allMatches.value.length) %
-    allMatches.value.length;
-  currentMatchDisplay.value = globalMatchIndex.value + 1;
-  updateAllHighlights();
+  isNavigating.value = true;
+  previous();
+  nextTick(() => {
+    isNavigating.value = false;
+  });
 };
 
-// --- Key navigation ---
-const handleKey = (event: KeyboardEvent) => {
-  if (!allMatches.value.length) return;
-
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    goToNextMatch();
-  } else if (event.key === "Enter" && event.shiftKey) {
-    event.preventDefault();
-    goToPrevMatch();
+const handleEnter = (event: KeyboardEvent) => {
+  if (event.shiftKey) {
+    previous();
+  } else {
+    next();
   }
 };
 
-const setItemRef = (
-  el: Element | ComponentPublicInstance | null,
-  item: Editors
-) => {
-  if (el && item) {
-    const originalEditor = editors.find(
-      (e) => e.script?.scriptId === item.script?.scriptId
+watch(
+  [searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction],
+  async (
+    [term, cs, ww, cl, ue, wa],
+    [prevTerm, prevCs, prevWw, prevCl, prevUe, prevWa]
+  ) => {
+    console.log(
+      "searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction",
+      term,
+      cs,
+      ww,
+      cl,
+      ue,
+      wa
     );
-    if (originalEditor) {
-      originalEditor.editor = el;
+    // Do not rebuild index while navigating
+    if (isNavigating.value) {
+      isNavigating.value = false;
+      return;
     }
-  }
-};
 
-// --- Fetch scripts ---
+    console.log("isNavigating.value", isNavigating.value);
+
+    // Always rebuild search when filters change
+    const filtersChanged = cl !== prevCl || ue !== prevUe || wa !== prevWa;
+
+    // Ignore no-op changes ONLY when both filters and search params unchanged
+    if (
+      !filtersChanged &&
+      term === prevTerm &&
+      cs === prevCs &&
+      ww === prevWw
+    ) {
+      return;
+    }
+
+    console.log("filtersChanged", filtersChanged);
+
+    // Wait for filtered editors to render when filters change
+    if (filtersChanged) {
+      await nextTick();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    console.log("computedEditors.value", computedEditors.value);
+
+    // If filters changed OR search params changed, rebuild
+    search(term, computedEditors.value, {
+      caseSensitive: cs,
+      wholeWord: ww
+    });
+  }
+);
+
+// Fetch scripts
 const getDeployedScripts = async () => {
   loading.value = true;
   try {
@@ -464,166 +320,85 @@ const getDeployedScripts = async () => {
 
     const { message: deployedScriptsResponse } = await callApi(
       RequestRoutes.SCRIPTS_DEPLOYED,
-      {
-        recordType: type
-      }
+      { recordType: type }
     );
-
-    if (!deployedScriptsResponse) {
-      console.error("Error fetching deployed scripts");
-      return;
-    }
-
     const deployedScripts = deployedScriptsResponse as DeployedScript[];
 
-    // Convert scripts to editor format
-    editors.length = 0; // Clear existing editors
-
+    editors.value.length = 0;
     deployedScripts.forEach((scriptItem) => {
-      editors.push({
-        code: scriptItem.scriptFile,
-        matches: [],
-        decorations: [],
-        script: scriptItem
-      });
-      openedState[scriptItem.scriptId] = "0"; // initialize
+      editors.value.push({ code: scriptItem.scriptFile, script: scriptItem });
     });
+
+    await nextTick(); // wait for v-for to render
   } catch (error) {
-    console.error("Error fetching deployed scripts:", error);
-    loading.value = false;
+    console.error(error);
   } finally {
     loading.value = false;
   }
 };
 
+onMounted(() => getDeployedScripts());
+
+const handlePanelHeaderClick = (event: MouseEvent, scriptId: string) => {
+  // Only handle middle click for opening in new tab
+  if (event.button === 1) {
+    event.preventDefault();
+    event.stopPropagation();
+    goToScript(event, scriptId);
+  }
+};
+
 const goToScript = async (event: MouseEvent, scriptId: string) => {
   if (!scriptId) return;
-
-  // Only react to left (0) or middle (1) click
-  if (event.button !== 0 && event.button !== 1) return;
+  if (event.button !== 1) return; // Only middle click
 
   event.preventDefault();
 
   const response =
     (await callApi(RequestRoutes.SCRIPT_URL, { scriptId })) || {};
-
   if (!response) return;
-
   const { message: url } = response as ApiResponse;
+  chrome.runtime.sendMessage({
+    type: "OPEN_NON_ACTIVE_TAB",
+    url: url
+  });
+};
 
-  if (event.button === 1) {
-    // Middle click → open in new tab, stay on current page
-    chrome.runtime.sendMessage({ type: "OPEN_NON_ACTIVE_TAB", url });
-  } else {
-    window.open(url, "_blank");
+const registerEditor = (editor: CodeViewerAPI, item: Editors) => {
+  const wasNull = !item.editor;
+  item.editor = editor;
+  if (wasNull) {
+    registerViewer(editor);
   }
 };
 
-onMounted(() => {
-  getDeployedScripts();
-});
+const unregisterEditor = (item: Editors) => {
+  if (item.editor) {
+    unregisterViewer(item.editor.id);
+    item.editor = null;
+  }
+};
 </script>
 
-<style scoped>
-:root {
-  --p-panel-background: #fff !important;
-}
-
-.match-counter {
-  font-size: 0.9rem;
-  color: #1d1d1d;
-  white-space: nowrap;
-}
-
+<style>
 .search-option-btn {
   padding: 0.25rem 0.5rem;
   border: 1px solid #ccc;
   border-radius: 0.25rem;
-  color: var(--p-slate-500);
-  background: var(--m-slate-150);
+  color: var(--p-slate-500) !important;
+  background: var(--m-slate-150) !important;
   cursor: pointer;
   font-size: 0.85rem;
-  transition: all 0.2s;
+  transition: all 0.25s ease-in-out;
 }
 
 .search-option-btn.active {
-  background: var(--p-slate-500);
-  color: white;
+  background: var(--p-slate-500) !important;
+  color: #fff !important;
 }
 
 .search-option-btn:hover {
-  background: var(--p-slate-500) !important;
-  color: white !important;
-}
-
-.progress-spinner {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-.inspect-button {
-  position: absolute;
-  top: 0;
-  right: 0;
-  margin: 1rem;
-  z-index: 1;
-  background-color: rgba(0, 0, 0, 0.5) !important;
-}
-
-.inspect-button:hover {
-  background-color: var(--p-slate-500) !important;
-}
-.editor {
-  scroll-margin-top: 2rem;
-}
-
-.overlay {
-  width: 100%;
-  height: 100%;
-  cursor: text;
-}
-
-.editor-accordion .p-accordionheader {
-  box-shadow: rgba(100, 100, 111, 0.2) 0px 7px 20px 0px;
-  padding: 0;
-  padding-right: 1rem;
-}
-
-.search-container {
-  background-color: #fff;
-  border-radius: 0.5rem;
-  overflow: hidden;
-}
-</style>
-
-<style>
-.current-match-decoration {
-  background-color: rgba(224, 132, 26, 0.5);
-  border-radius: 2px;
-}
-
-.other-match-decoration {
-  background-color: rgba(180, 200, 255, 0.3);
-  border-radius: 2px;
-}
-
-.editor-accordion .p-accordioncontent-content {
-  padding: 0 !important;
-}
-
-.search-container .p-panel-header {
-  background-color: #fff !important;
-  justify-content: start !important;
-  gap: 1rem !important;
-}
-
-.search-container .p-panel-content {
-  background-color: #fff !important;
-}
-
-.search-container .p-panel {
-  outline: none !important;
-  border: none !important;
+  background: var(--p-slate-600) !important;
+  color: #fff !important;
 }
 </style>

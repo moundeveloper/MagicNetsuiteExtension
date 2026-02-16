@@ -1,7 +1,7 @@
 <!-- MTableRow.vue -->
 <template>
   <div class="m-table-row-wrapper">
-    <div class="m-table-row" :style="gridTemplateColumns">
+    <div class="m-table-row" :style="{ gridTemplateColumns }">
       <div
         v-if="expandable"
         class="m-table-expand-cell cursor-pointer"
@@ -37,7 +37,7 @@
     <div
       v-if="expandable && expanded"
       class="m-table-row"
-      :style="gridTemplateColumns"
+      :style="{ gridTemplateColumns }"
     >
       <div class="m-table-expand-cell"></div>
       <div
@@ -66,7 +66,7 @@ const props = defineProps<{
   row: any;
   columns: Column[];
   expandable: boolean;
-  gridTemplateColumns: Record<string, string>;
+  gridTemplateColumns: string;
   expanded: boolean; // <-- controlled from parent
 }>();
 
@@ -86,11 +86,10 @@ const { showContextMenu } = useMContextMenu();
 <style scoped>
 .m-table-row {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 0; /* remove the gap so borders align properly */
+  gap: 0;
   border-bottom: 1px solid var(--p-slate-200);
   transition: background-color 0.15s ease;
+  min-width: 0;
 }
 
 /* Normal cells with vertical dividers */
@@ -101,6 +100,10 @@ const { showContextMenu } = useMContextMenu();
   display: flex;
   align-items: center;
   border-right: 1px solid var(--p-slate-200);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Remove right border for last cell */

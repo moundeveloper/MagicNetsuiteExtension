@@ -11,7 +11,6 @@ import BundleSearchView from "../views/BundleSearchView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 import PlaygroundView from "../views/PlaygroundView.vue";
 import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
-import ScriptsDeployedViewAlter from "../views/ScriptsDeployedViewAlter.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -123,13 +122,7 @@ export const routes = [
     component: ScriptsDeployedView,
     status: RouteStatus.release
   },
-  {
-    route: "/scripts-deployed-alter",
-    name: "Scripts Deployed Alter",
-    icon: "pi pi-list",
-    component: ScriptsDeployedViewAlter,
-    status: RouteStatus.development
-  },
+
   {
     route: "/export-record",
     name: "Export Record",

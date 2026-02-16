@@ -47,7 +47,7 @@ onMounted(async () => {
       console.log("Disconnected from background (cleanup if needed)");
     });
   } catch (error) {
-    console.log("Error", error);
+    console.log("[App] Error", "Could not connect to background");
   }
 });
 

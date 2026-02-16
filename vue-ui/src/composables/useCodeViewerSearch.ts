@@ -17,7 +17,7 @@ export interface CodeViewerAPI {
 
 export const useCodeViewerSearch = () => {
   const viewers = ref<CodeViewerAPI[]>([]);
-  const activeViewer = ref<CodeViewerAPI | null>(null); // ← Make this reactive!
+  const activeViewer = ref<CodeViewerAPI | null>(null);
 
   const allMatches = ref<{ viewer: CodeViewerAPI; from: number; to: number }[]>(
     []
@@ -50,16 +50,27 @@ export const useCodeViewerSearch = () => {
 
   const clearAllSelections = () => {
     viewers.value.forEach((v) => v.clearSelection());
-    activeViewer.value = null; // ← Use .value
+    activeViewer.value = null;
   };
 
-  const search = (query: string, options?: SearchOptions) => {
+  const search = (
+    query: string,
+    filteredEditors?: { editor?: CodeViewerAPI | null }[],
+    options?: SearchOptions
+  ) => {
     allMatches.value = [];
     currentIndex.value = 0;
 
     clearAllSelections();
 
-    viewers.value.forEach((viewer) => {
+    // Only search through filtered editors if provided
+    const editorsToSearch = filteredEditors
+      ? filteredEditors.filter((e) => e.editor).map((e) => e.editor!)
+      : viewers.value;
+
+    console.log("editorsToSearch", editorsToSearch);
+
+    editorsToSearch.forEach((viewer) => {
       viewer.search(query, options);
       viewer.getMatches().forEach((m) => {
         allMatches.value.push({ viewer, ...m });
@@ -85,27 +96,6 @@ export const useCodeViewerSearch = () => {
 
     // select in CodeMirror
     match.viewer.externalSelection(match.from, match.to, false);
-
-    // --- smooth scroll using DOM, optimized ---
-    requestAnimationFrame(() => {
-      let lineEl: HTMLElement | undefined;
-
-      // Use precomputed line map if available
-      if (match.viewer.matchLineMap) {
-        for (const [key, el] of match.viewer.matchLineMap) {
-          if (key.from === match.from && key.to === match.to) {
-            lineEl = el;
-            break;
-          }
-        }
-      }
-
-      // Fallback to root element if line not found
-      (lineEl || match.viewer.rootEl)?.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
-      });
-    });
   };
 
   const next = () => {

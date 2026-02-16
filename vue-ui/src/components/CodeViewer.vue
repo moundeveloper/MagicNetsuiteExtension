@@ -204,14 +204,21 @@ const buildSearchRegex = (
 };
 
 // --- Navigation ---
+
+// --- Force true vertical centering ---
+
 const nextMatch = () => {
   if (!view || !currentMatches.length) return;
   currentMatchIndex = (currentMatchIndex + 1) % currentMatches.length;
   const m = currentMatches[currentMatchIndex]!;
+  const centerPos = Math.floor((m.from + m.to) / 2);
+
   view.dispatch({
-    selection: EditorSelection.single(m.from, m.to),
-    scrollIntoView: true
+    selection: EditorSelection.single(m.from, m.to)
   });
+
+  console.log("centerPos", centerPos);
+
   updateDecorations();
 };
 
@@ -220,10 +227,11 @@ const previousMatch = () => {
   currentMatchIndex =
     (currentMatchIndex - 1 + currentMatches.length) % currentMatches.length;
   const m = currentMatches[currentMatchIndex]!;
+
   view.dispatch({
-    selection: EditorSelection.single(m.from, m.to),
-    scrollIntoView: true
+    selection: EditorSelection.single(m.from, m.to)
   });
+
   updateDecorations();
 };
 
@@ -245,7 +253,9 @@ const externalSelection = (
 
   view.dispatch({
     selection: EditorSelection.single(from, to),
-    scrollIntoView
+    effects: EditorView.scrollIntoView(from, {
+      y: "center"
+    })
   });
 };
 

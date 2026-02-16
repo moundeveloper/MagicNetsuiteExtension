@@ -108,7 +108,9 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
       try {
         const response = await fetch(fileUrl);
         if (!response.ok) {
-          throw new Error(`Failed to fetch ${fileUrl}: ${response.statusText}`);
+          throw new Error(
+            `Failed to fetch ${result.name}: ${response.statusText}`
+          );
         }
         const body = await response.text();
         console.log(`Fetched ${result.name} (${result.scripttype})`);
@@ -119,7 +121,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
           scriptFile: body
         };
       } catch (err) {
-        console.error(`Error fetching ${result.name}:`, err);
+        console.error(err);
         return {
           scriptName: result.name,
           scriptType: result.scripttype,

@@ -8,7 +8,8 @@ import InputText from "primevue/inputtext";
 import { FilterMatchMode } from "@primevue/core/api";
 import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { MultiSelect, Panel, ProgressSpinner } from "primevue";
+import MLoader from "../components/universal/patterns/MLoader.vue";
+import { MultiSelect, Panel } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
@@ -257,7 +258,7 @@ onMounted(async () => {
             @toggle="(e) => fetchDeployments(e, data)"
           >
             <div v-if="data.deploymentsLoading" class="flex justify-center p-4">
-              <ProgressSpinner />
+              <MLoader />
             </div>
             <DataTable
               v-else
@@ -367,7 +368,7 @@ onMounted(async () => {
 
     <template #loading>
       <div class="flex justify-center">
-        <ProgressSpinner />
+        <MLoader />
       </div>
     </template>
 
