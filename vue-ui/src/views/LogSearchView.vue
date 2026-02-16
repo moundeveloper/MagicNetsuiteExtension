@@ -347,7 +347,7 @@ onMounted(async () => {
         <span>Query Filters</span>
         <Button
           @click="getLogs"
-          class="h-full bg-[var(--p-slate-300)] !rounded-none"
+          class="h-full bg-[var(--p-slate-300)] !rounded-sm"
         >
           <i class="pi pi-search text-white"></i>
           Run Search</Button

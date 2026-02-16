@@ -111,12 +111,18 @@
       v-for="(item, index) in computedEditors"
       :key="item.script?.scriptId"
       outline
-      toggleable
       expanded
-      :header="`${item.script?.scriptName} - ${item.script?.scriptType}`"
       class="editor-panel"
-      @click="handlePanelHeaderClick($event, item.script?.scriptId!)"
     >
+      <template #header>
+        <span
+          class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none cursor-pointer"
+          @click="goToScript($event, item.script?.id!)"
+        >
+          {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
+        </span>
+      </template>
+
       <CodeViewer
         :ref="
           (el) => {
@@ -227,7 +233,7 @@ const currentScriptId = computed(() => {
   if (!activeId) return "";
 
   const match = editors.value.find((item) => item.editor?.id === activeId);
-  return match?.script?.scriptId || "";
+  return match?.script?.id ?? "";
 });
 
 // Navigation
@@ -261,22 +267,11 @@ watch(
     [term, cs, ww, cl, ue, wa],
     [prevTerm, prevCs, prevWw, prevCl, prevUe, prevWa]
   ) => {
-    console.log(
-      "searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction",
-      term,
-      cs,
-      ww,
-      cl,
-      ue,
-      wa
-    );
     // Do not rebuild index while navigating
     if (isNavigating.value) {
       isNavigating.value = false;
       return;
     }
-
-    console.log("isNavigating.value", isNavigating.value);
 
     // Always rebuild search when filters change
     const filtersChanged = cl !== prevCl || ue !== prevUe || wa !== prevWa;
@@ -291,15 +286,11 @@ watch(
       return;
     }
 
-    console.log("filtersChanged", filtersChanged);
-
     // Wait for filtered editors to render when filters change
     if (filtersChanged) {
       await nextTick();
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-
-    console.log("computedEditors.value", computedEditors.value);
 
     // If filters changed OR search params changed, rebuild
     search(term, computedEditors.value, {
@@ -339,29 +330,26 @@ const getDeployedScripts = async () => {
 
 onMounted(() => getDeployedScripts());
 
-const handlePanelHeaderClick = (event: MouseEvent, scriptId: string) => {
-  // Only handle middle click for opening in new tab
-  if (event.button === 1) {
-    event.preventDefault();
-    event.stopPropagation();
-    goToScript(event, scriptId);
-  }
-};
-
-const goToScript = async (event: MouseEvent, scriptId: string) => {
+const goToScript = async (event: MouseEvent, scriptId: string | number) => {
+  console.log("scriptId", scriptId);
   if (!scriptId) return;
-  if (event.button !== 1) return; // Only middle click
-
   event.preventDefault();
+  event.stopPropagation();
 
   const response =
     (await callApi(RequestRoutes.SCRIPT_URL, { scriptId })) || {};
   if (!response) return;
   const { message: url } = response as ApiResponse;
-  chrome.runtime.sendMessage({
-    type: "OPEN_NON_ACTIVE_TAB",
-    url: url
-  });
+
+  if (event.button === 1) {
+    chrome.runtime.sendMessage({
+      type: "OPEN_NON_ACTIVE_TAB",
+      url: url
+    });
+    return;
+  }
+
+  window.open(url, "_blank");
 };
 
 const registerEditor = (editor: CodeViewerAPI, item: Editors) => {

@@ -118,6 +118,7 @@ window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
           scriptName: result.name,
           scriptType: result.scripttype,
           scriptId: result.scriptid,
+          id: result.id,
           scriptFile: body
         };
       } catch (err) {
