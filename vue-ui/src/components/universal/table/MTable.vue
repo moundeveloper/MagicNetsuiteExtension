@@ -1,7 +1,10 @@
 <template>
   <div class="m-table" :style="{ height: height }">
     <!-- Header Toolbar -->
-    <div v-if="$slots.toolbar || searchable || collapsible" class="m-table-header-toolbar">
+    <div
+      v-if="$slots.toolbar || searchable || collapsible"
+      class="m-table-header-toolbar"
+    >
       <!-- Default Items Row -->
       <div class="m-table-toolbar-defaults">
         <!-- Search Input -->
@@ -23,7 +26,11 @@
         </div>
 
         <!-- Column Visibility Toggle -->
-        <div v-if="collapsible" class="m-table-column-toggle" ref="columnToggleRef">
+        <div
+          v-if="collapsible"
+          class="m-table-column-toggle"
+          ref="columnToggleRef"
+        >
           <button
             @click="showColumnControls = !showColumnControls"
             class="column-toggle-btn"
@@ -32,9 +39,9 @@
           >
             <i class="pi pi-table"></i>
           </button>
-          
-          <div 
-            v-if="showColumnControls" 
+
+          <div
+            v-if="showColumnControls"
             ref="dropdownRef"
             class="column-controls-dropdown"
             :style="dropdownStyle"
@@ -103,7 +110,7 @@
           :expanded="isRowExpanded(row.data)"
           :autoRowHeight="autoRowHeight"
           @toggle-expand="toggleRowExpand(row.data)"
-          @row-height="registerRowHeight"
+          @row-height="debouncedRegisterRowHeight"
         >
           <template #expand="{ row }">
             <slot name="expand" :row="row" />
@@ -137,6 +144,7 @@ import {
   nextTick,
   type VNode
 } from "vue";
+import debounce from "lodash/debounce";
 import { type ContextMenuItem } from "../../../composables/useMContextMenu";
 import MContextMenu from "../contextMenu/MContextMenu.vue";
 import MTableRow from "./MTableRow.vue";
@@ -199,26 +207,29 @@ const columnVisibility = ref<Record<string, boolean>>({});
 const rowHeights = ref<Record<string, number>>({});
 const rowElements = ref<Record<string, HTMLElement>>({});
 const dropdownPosition = ref<"bottom" | "top">("bottom");
-const dropdownStyle = ref<{ left: string; top: string }>({ left: "0", top: "0" });
+const dropdownStyle = ref<{ left: string; top: string }>({
+  left: "0",
+  top: "0"
+});
 const columnToggleRef = ref<HTMLElement | null>(null);
 const dropdownRef = ref<HTMLElement | null>(null);
 
 const updateDropdownPosition = () => {
   if (!columnToggleRef.value || !dropdownRef.value) return;
-  
+
   const toggleRect = columnToggleRef.value.getBoundingClientRect();
   const dropdownRect = dropdownRef.value.getBoundingClientRect();
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
-  
+
   const spaceBelow = viewportHeight - toggleRect.bottom;
   const spaceAbove = toggleRect.top;
   const spaceRight = viewportWidth - toggleRect.left;
   const spaceLeft = toggleRect.right;
-  
+
   const dropdownHeight = dropdownRect.height;
   const dropdownWidth = dropdownRect.width;
-  
+
   let verticalPos: "bottom" | "top";
   if (spaceBelow >= dropdownHeight + 8) {
     verticalPos = "bottom";
@@ -229,9 +240,9 @@ const updateDropdownPosition = () => {
   } else {
     verticalPos = "top";
   }
-  
+
   dropdownPosition.value = verticalPos;
-  
+
   let leftPos: number;
   if (spaceRight >= dropdownWidth + 8) {
     leftPos = toggleRect.left;
@@ -242,14 +253,22 @@ const updateDropdownPosition = () => {
   } else {
     leftPos = toggleRect.right - dropdownWidth;
   }
-  
+
   dropdownStyle.value = {
     left: `${leftPos}px`,
-    top: verticalPos === "bottom" 
-      ? `${toggleRect.bottom + 4}px` 
-      : `${toggleRect.top - dropdownRect.height - 4}px`
+    top:
+      verticalPos === "bottom"
+        ? `${toggleRect.bottom + 4}px`
+        : `${toggleRect.top - dropdownRect.height - 4}px`
   };
 };
+
+// Add a computed for the estimated row height based on known heights
+const estimatedRowHeight = computed(() => {
+  const known = Object.values(rowHeights.value);
+  if (known.length === 0) return props.rowHeight;
+  return Math.round(known.reduce((a, b) => a + b, 0) / known.length);
+});
 
 const registerRowHeight = (id: string, height: number) => {
   if (props.autoRowHeight && height > 0) {
@@ -257,20 +276,17 @@ const registerRowHeight = (id: string, height: number) => {
   }
 };
 
-const getRowHeight = (row: any) => {
-  if (props.autoRowHeight && row.id) {
-    return rowHeights.value[row.id] || props.rowHeight;
+const debouncedRegisterRowHeight = debounce((id: string, height: number) => {
+  if (props.autoRowHeight && height > 0) {
+    rowHeights.value[id] = height;
   }
-  return props.rowHeight;
-};
+}, 50);
 
-const getTotalHeight = () => {
-  if (props.autoRowHeight) {
-    return filteredRows.value.reduce((total, row) => {
-      return total + (rowHeights.value[row.id] || props.rowHeight);
-    }, 0);
-  }
-  return filteredRows.value.length * props.rowHeight;
+const handleScroll = (e: Event) => {
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(() => {
+    scrollTop.value = (e.target as HTMLElement).scrollTop;
+  });
 };
 
 const STORAGE_PREFIX = "m-table-";
@@ -300,7 +316,7 @@ const saveColumnVisibility = () => {
 const initColumnVisibility = () => {
   const cols = columns.value;
   const saved = loadColumnVisibility();
-  
+
   const visibility: Record<string, boolean> = {};
   cols.forEach((col) => {
     if (saved && saved.hasOwnProperty(col.field)) {
@@ -335,9 +351,8 @@ const columns = computed<Column[]>(() => {
       const contextMenu =
         columnProps.contextMenu || columnProps["context-menu"] || null;
       const searchableProp = columnProps.searchable;
-      const searchable = searchableProp === false || searchableProp === "false"
-        ? false
-        : true;
+      const searchable =
+        searchableProp === false || searchableProp === "false" ? false : true;
 
       return {
         label: columnProps.label || "",
@@ -359,7 +374,9 @@ const columnsWithVisibility = computed<ColumnWithVisibility[]>(() => {
 
 const visibleColumns = computed(() => {
   if (!props.collapsible) return columns.value;
-  return columns.value.filter((col) => columnVisibility.value[col.field] !== false);
+  return columns.value.filter(
+    (col) => columnVisibility.value[col.field] !== false
+  );
 });
 
 const toggleColumn = (field: string) => {
@@ -380,36 +397,8 @@ const filteredRows = computed(() => {
   );
 });
 
-// Virtual scroll calculations
+// Simple visibleRange for fixed height rows
 const visibleRange = computed(() => {
-  if (props.autoRowHeight) {
-    let accumulatedHeight = 0;
-    let startIndex = 0;
-    let endIndex = 0;
-    
-    for (let i = 0; i < filteredRows.value.length; i++) {
-      const rowHeight = rowHeights.value[filteredRows.value[i].id] || props.rowHeight;
-      
-      if (accumulatedHeight + rowHeight <= scrollTop.value && startIndex === 0) {
-        accumulatedHeight += rowHeight;
-        startIndex = i + 1;
-      }
-      
-      if (accumulatedHeight < scrollTop.value + (containerHeight.value || 0) + props.rowHeight * props.buffer) {
-        endIndex = i + 1;
-      }
-      
-      if (accumulatedHeight > scrollTop.value + (containerHeight.value || 0) + props.rowHeight * props.buffer * 2) {
-        break;
-      }
-    }
-    
-    return { 
-      startIndex: Math.max(0, startIndex - props.buffer), 
-      endIndex: Math.min(filteredRows.value.length, endIndex + props.buffer) 
-    };
-  }
-  
   const start = Math.max(
     0,
     Math.floor(scrollTop.value / props.rowHeight) - props.buffer
@@ -423,52 +412,99 @@ const visibleRange = computed(() => {
   return { startIndex: start, endIndex: end };
 });
 
+// Compute all scroll-related values in one pass to ensure consistency
+const scrollState = computed(() => {
+  if (!props.autoRowHeight) {
+    const start = visibleRange.value.startIndex;
+    const end = visibleRange.value.endIndex;
+    return {
+      startIndex: start,
+      endIndex: end,
+      offsetTop: start * props.rowHeight,
+      totalHeight: filteredRows.value.length * props.rowHeight
+    };
+  }
+
+  const scrollPos = scrollTop.value;
+  const viewportHeight = containerHeight.value || 0;
+  const viewportEnd = scrollPos + viewportHeight;
+  const estHeight = estimatedRowHeight.value; // ← use this
+
+  let totalHeight = 0;
+  let startIndex = 0;
+  let endIndex = 0;
+  let foundStart = false;
+
+  for (let i = 0; i < filteredRows.value.length; i++) {
+    const rowH = rowHeights.value[filteredRows.value[i]?.id] || estHeight; // ← here
+    const rowTop = totalHeight;
+    const rowBottom = totalHeight + rowH;
+
+    const bufferPx = props.buffer * estHeight; // ← and here
+    if (!foundStart && rowBottom > scrollPos - bufferPx) {
+      startIndex = i;
+      foundStart = true;
+    }
+    if (foundStart && rowTop < viewportEnd + bufferPx) {
+      endIndex = i + 1;
+    }
+
+    totalHeight = rowBottom;
+  }
+
+  if (!foundStart) {
+    startIndex = filteredRows.value.length;
+    endIndex = filteredRows.value.length;
+  }
+
+  let offsetTop = 0;
+  for (let i = 0; i < startIndex; i++) {
+    offsetTop += rowHeights.value[filteredRows.value[i]?.id] || estHeight; // ← and here
+  }
+
+  return { startIndex, endIndex, offsetTop, totalHeight };
+});
+
 const visibleRows = computed<RowWithIndex[]>(() => {
-  const { startIndex, endIndex } = visibleRange.value;
+  const { startIndex, endIndex } = scrollState.value;
   return filteredRows.value
     .slice(startIndex, endIndex)
     .map((row, idx) => ({ index: startIndex + idx, data: row }));
 });
 
-const offsetTop = computed(() => {
-  if (props.autoRowHeight) {
-    let height = 0;
-    for (let i = 0; i < visibleRange.value.startIndex; i++) {
-      height += rowHeights.value[filteredRows.value[i]?.id] || props.rowHeight;
-    }
-    return height;
-  }
-  return visibleRange.value.startIndex * props.rowHeight;
-});
+const offsetTop = computed(() => scrollState.value.offsetTop);
 
 const offsetBottom = computed(() => {
-  if (props.autoRowHeight) {
-    return Math.max(0, getTotalHeight() - offsetTop.value - (containerHeight.value || 0));
+  const { startIndex, endIndex, offsetTop, totalHeight } = scrollState.value;
+  let renderedHeight = 0;
+  for (let i = startIndex; i < endIndex; i++) {
+    renderedHeight +=
+      rowHeights.value[filteredRows.value[i]?.id] || props.rowHeight;
   }
-  return Math.max(
-    0,
-    filteredRows.value.length * props.rowHeight -
-      visibleRange.value.endIndex * props.rowHeight
-  );
+  return Math.max(0, totalHeight - offsetTop - renderedHeight);
 });
 
 const gridTemplateColumns = computed(() => {
   const visibleCols = props.collapsible ? visibleColumns.value : columns.value;
   const expandCol = props.expandable ? "40px " : "";
-  const cols = visibleCols.map((c) => {
-    const width = c.width || "1fr";
-    if (width.includes("px") || width.includes("rem") || width.includes("%")) {
-      return width;
-    }
-    return `minmax(100px, ${width})`;
-  }).join(" ");
+  const cols = visibleCols
+    .map((c) => {
+      const width = c.width || "1fr";
+      if (
+        width.includes("px") ||
+        width.includes("rem") ||
+        width.includes("%")
+      ) {
+        return width;
+      }
+      return `minmax(100px, ${width})`;
+    })
+    .join(" ");
   return expandCol + cols;
 });
 
 // Scroll handling
-const handleScroll = (e: Event) => {
-  scrollTop.value = (e.target as HTMLElement).scrollTop;
-};
+let rafId: number | null = null;
 
 const updateContainerHeight = () => {
   if (scrollContainer.value)
@@ -482,7 +518,7 @@ const toggleRowExpand = (row: any) => {
   if (expandedRows.value.has(row.id)) expandedRows.value.delete(row.id);
   else expandedRows.value.add(row.id);
   expandedRows.value = new Set(expandedRows.value);
-  
+
   if (props.autoRowHeight) {
     nextTick(() => {
       registerRowHeight(row.id, 0);
@@ -490,32 +526,35 @@ const toggleRowExpand = (row: any) => {
   }
 };
 
-watch(rowHeights, () => {
-  if (scrollContainer.value) {
-    scrollContainer.value.scrollTop = scrollTop.value;
-  }
-}, { deep: true });
-
 watch(searchQuery, () => {
   scrollTop.value = 0;
   if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
 });
 
-watch(() => props.loading, (newVal) => {
-  if (newVal === false) {
+watch(
+  () => props.loading,
+  (newVal) => {
+    if (newVal === false) {
+      nextTick(updateContainerHeight);
+    }
+  }
+);
+
+watch(
+  () => props.height,
+  () => {
     nextTick(updateContainerHeight);
   }
-});
+);
 
-watch(() => props.height, () => {
-  nextTick(updateContainerHeight);
-});
-
-watch(() => props.collapsible, (newVal) => {
-  if (newVal) {
-    initColumnVisibility();
+watch(
+  () => props.collapsible,
+  (newVal) => {
+    if (newVal) {
+      initColumnVisibility();
+    }
   }
-});
+);
 
 watch(showColumnControls, (isOpen) => {
   if (isOpen) {
@@ -532,11 +571,15 @@ const handleOutsideClick = (e: MouseEvent) => {
   }
 };
 
-watch(columns, () => {
-  if (props.collapsible) {
-    initColumnVisibility();
-  }
-}, { deep: true });
+watch(
+  columns,
+  () => {
+    if (props.collapsible) {
+      initColumnVisibility();
+    }
+  },
+  { deep: true }
+);
 
 let resizeObserver: ResizeObserver | null = null;
 
@@ -544,7 +587,7 @@ onMounted(() => {
   nextTick(() => {
     updateContainerHeight();
     window.addEventListener("resize", updateContainerHeight);
-    
+
     if (props.collapsible) {
       initColumnVisibility();
     }
@@ -564,6 +607,8 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
+  if (rafId) cancelAnimationFrame(rafId);
+  debouncedRegisterRowHeight.cancel();
 });
 </script>
 

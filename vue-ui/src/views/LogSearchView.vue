@@ -52,6 +52,13 @@ const scriptDeployments = ref<{ id: number; label: string }[]>([]);
 const scriptTypesQuery = ref<{ id: string; label: string }[]>([]);
 const scriptTypesQuick = ref<{ id: string; label: string }[]>([]);
 
+const LOG_LEVELS = [
+  { id: "DEBUG", label: "Debug" },
+  { id: "AUDIT", label: "Audit" },
+  { id: "ERROR", label: "Error" },
+  { id: "EMERGENCY", label: "Emergency" }
+];
+
 /* =======================
    FILTER STATE (SINGLE SOURCE)
   ======================= */
@@ -68,7 +75,8 @@ const filtersState = reactive({
     global: null as string | null,
     startDate: null as Date | null,
     endDate: null as Date | null,
-    scriptTypes: [] as string[]
+    scriptTypes: [] as string[],
+    logLevels: [] as string[]
   },
   quickOptions: {
     caseSensitive: false,
@@ -206,6 +214,13 @@ const filteredItems = computed(() => {
   if (filtersState.quick.scriptTypes.length) {
     result = result.filter((log) =>
       filtersState.quick.scriptTypes.includes(log.scriptType)
+    );
+  }
+
+  // Log Levels quick filter
+  if (filtersState.quick.logLevels.length) {
+    result = result.filter((log) =>
+      filtersState.quick.logLevels.includes(log.level.toUpperCase().trim())
     );
   }
 
@@ -378,9 +393,9 @@ onMounted(() => {
 });
 
 const init = async () => {
+  await getLogs();
   await getScriptTypes();
   await getScripts();
-  await getLogs();
 };
 
 onBeforeUnmount(() => {
@@ -472,7 +487,13 @@ onBeforeUnmount(() => {
 
   <!-- ===================== QUICK FILTERS ===================== -->
 
-  <MPanel outline expanded header="Quick Filters (Current Results)" box-shadow>
+  <MPanel
+    outline
+    toggleable
+    expanded
+    header="Quick Filters (Current Results)"
+    box-shadow
+  >
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
         <label class="font-bold block mb-2">Global Search</label>
@@ -569,6 +590,17 @@ onBeforeUnmount(() => {
           optionLabel="label"
           optionValue="id"
           filter
+          class="w-full"
+        />
+      </div>
+
+      <div>
+        <label class="font-bold block mb-2">Log Levels</label>
+        <MultiSelect
+          v-model="filtersState.quick.logLevels"
+          :options="LOG_LEVELS"
+          optionLabel="label"
+          optionValue="id"
           class="w-full"
         />
       </div>

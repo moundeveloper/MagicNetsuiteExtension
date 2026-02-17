@@ -52,16 +52,27 @@ const updateContentHeight = () => {
   }
 };
 
+const resizeObserver = ref<ResizeObserver | null>(null);
+
 onMounted(() => {
   if (props.autoHeight) {
     updateContentHeight();
     window.addEventListener("resize", updateContentHeight);
+
+    // Observe the card element itself for size changes
+    resizeObserver.value = new ResizeObserver(() => {
+      updateContentHeight();
+    });
+    if (cardRef.value) {
+      resizeObserver.value.observe(cardRef.value);
+    }
   }
 });
 
 onUnmounted(() => {
   if (props.autoHeight) {
     window.removeEventListener("resize", updateContentHeight);
+    resizeObserver.value?.disconnect();
   }
 });
 
