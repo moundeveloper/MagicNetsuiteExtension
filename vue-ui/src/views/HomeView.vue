@@ -42,7 +42,11 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
 
 const testPing = async () => {
   console.log("Testing ping with 30 second delay...");
-  const result = await callApi("PING" as any, { delay: 30000 }, ApiRequestType.NORMAL);
+  const result = await callApi(
+    "PING" as any,
+    { delay: 30000 },
+    ApiRequestType.NORMAL
+  );
   console.log("Ping result:", result);
 };
 </script>
@@ -145,11 +149,12 @@ const testPing = async () => {
     color 0.25s;
   outline: solid 1px var(--p-slate-600);
   cursor: pointer;
+  background-color: var(--p-slate-100);
 }
 
 /* Hover: lighter slate tone */
 .menu-item:hover {
-  background-color: color-mix(in srgb, var(--p-slate-200) 30%, transparent);
+  background-color: var(--p-slate-200);
   color: var(--p-slate-800);
 }
 

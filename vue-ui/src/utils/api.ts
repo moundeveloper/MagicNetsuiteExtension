@@ -87,6 +87,10 @@ const callApi = async (
 
 const getActiveNetsuiteTab = (): Promise<chrome.tabs.Tab> => {
   return new Promise((resolve, reject) => {
+    if (typeof chrome === "undefined" || !chrome.tabs) {
+      return reject(new Error("Chrome tabs API not available"));
+    }
+    
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const currentTab = tabs[0];
 

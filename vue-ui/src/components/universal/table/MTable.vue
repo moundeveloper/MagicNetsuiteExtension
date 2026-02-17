@@ -23,7 +23,7 @@
         </div>
 
         <!-- Column Visibility Toggle -->
-        <div v-if="collapsible" class="m-table-column-toggle">
+        <div v-if="collapsible" class="m-table-column-toggle" ref="columnToggleRef">
           <button
             @click="showColumnControls = !showColumnControls"
             class="column-toggle-btn"
@@ -33,7 +33,12 @@
             <i class="pi pi-table"></i>
           </button>
           
-          <div v-if="showColumnControls" class="column-controls-dropdown">
+          <div 
+            v-if="showColumnControls" 
+            ref="dropdownRef"
+            class="column-controls-dropdown"
+            :style="dropdownStyle"
+          >
             <div class="column-controls-header">
               <span>Columns</span>
               <button @click="showColumnControls = false" class="close-btn">
@@ -193,6 +198,58 @@ const showColumnControls = ref(false);
 const columnVisibility = ref<Record<string, boolean>>({});
 const rowHeights = ref<Record<string, number>>({});
 const rowElements = ref<Record<string, HTMLElement>>({});
+const dropdownPosition = ref<"bottom" | "top">("bottom");
+const dropdownStyle = ref<{ left: string; top: string }>({ left: "0", top: "0" });
+const columnToggleRef = ref<HTMLElement | null>(null);
+const dropdownRef = ref<HTMLElement | null>(null);
+
+const updateDropdownPosition = () => {
+  if (!columnToggleRef.value || !dropdownRef.value) return;
+  
+  const toggleRect = columnToggleRef.value.getBoundingClientRect();
+  const dropdownRect = dropdownRef.value.getBoundingClientRect();
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  
+  const spaceBelow = viewportHeight - toggleRect.bottom;
+  const spaceAbove = toggleRect.top;
+  const spaceRight = viewportWidth - toggleRect.left;
+  const spaceLeft = toggleRect.right;
+  
+  const dropdownHeight = dropdownRect.height;
+  const dropdownWidth = dropdownRect.width;
+  
+  let verticalPos: "bottom" | "top";
+  if (spaceBelow >= dropdownHeight + 8) {
+    verticalPos = "bottom";
+  } else if (spaceAbove >= dropdownHeight + 8) {
+    verticalPos = "top";
+  } else if (spaceBelow >= spaceAbove) {
+    verticalPos = "bottom";
+  } else {
+    verticalPos = "top";
+  }
+  
+  dropdownPosition.value = verticalPos;
+  
+  let leftPos: number;
+  if (spaceRight >= dropdownWidth + 8) {
+    leftPos = toggleRect.left;
+  } else if (spaceLeft >= dropdownWidth + 8) {
+    leftPos = toggleRect.right - dropdownWidth;
+  } else if (spaceRight >= spaceLeft) {
+    leftPos = toggleRect.left;
+  } else {
+    leftPos = toggleRect.right - dropdownWidth;
+  }
+  
+  dropdownStyle.value = {
+    left: `${leftPos}px`,
+    top: verticalPos === "bottom" 
+      ? `${toggleRect.bottom + 4}px` 
+      : `${toggleRect.top - dropdownRect.height - 4}px`
+  };
+};
 
 const registerRowHeight = (id: string, height: number) => {
   if (props.autoRowHeight && height > 0) {
@@ -460,6 +517,21 @@ watch(() => props.collapsible, (newVal) => {
   }
 });
 
+watch(showColumnControls, (isOpen) => {
+  if (isOpen) {
+    nextTick(updateDropdownPosition);
+    document.addEventListener("click", handleOutsideClick);
+  } else {
+    document.removeEventListener("click", handleOutsideClick);
+  }
+});
+
+const handleOutsideClick = (e: MouseEvent) => {
+  if (!columnToggleRef.value?.contains(e.target as Node)) {
+    showColumnControls.value = false;
+  }
+};
+
 watch(columns, () => {
   if (props.collapsible) {
     initColumnVisibility();
@@ -488,6 +560,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener("resize", updateContainerHeight);
+  document.removeEventListener("click", handleOutsideClick);
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
@@ -531,10 +604,7 @@ onUnmounted(() => {
 }
 
 .column-controls-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 4px;
+  position: fixed;
   min-width: 200px;
   background: var(--p-slate-100);
   border: 1px solid var(--p-slate-300);

@@ -7,6 +7,7 @@ import {
   ref,
   watch
 } from "vue";
+import debounce from "lodash/debounce";
 import InputGroup from "primevue/inputgroup";
 import InputGroupAddon from "primevue/inputgroupaddon";
 import InputText from "primevue/inputtext";
@@ -76,7 +77,7 @@ const filtersState = reactive({
   }
 });
 
-const deploymentsLoaded = ref(false);
+const debouncedSearch = ref("");
 
 const addToQueryFilters = async (
   row: LogItem,
@@ -166,7 +167,7 @@ const deploymentContextMenu: ContextMenuItem[] = [
 
 const filteredItems = computed(() => {
   let result = [...items.value];
-  const query = filtersState.quick.global?.trim();
+  const query = debouncedSearch.value?.trim();
 
   // Quick filter global
   if (query) {
@@ -249,83 +250,102 @@ const formatToLocalDate = (value: string | Date) => {
   ======================= */
 
 const getScriptTypes = async () => {
-  const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
-  const { message } = response as ApiResponse;
-  if (Array.isArray(message)) scriptTypesQuery.value = message;
+  try {
+    const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
+    const { message } = response as ApiResponse;
+    if (Array.isArray(message)) scriptTypesQuery.value = message;
 
-  if (Array.isArray(message))
-    scriptTypesQuick.value = message.map(({ label }) => {
-      return {
-        id: label,
-        label: label
-      };
-    });
+    if (Array.isArray(message))
+      scriptTypesQuick.value = message.map(({ label }) => {
+        return {
+          id: label,
+          label: label
+        };
+      });
+  } catch (error) {
+    console.error("getScriptTypes error:", error);
+  }
 };
 
 const getScripts = async () => {
-  const response = (await callApi(RequestRoutes.SCRIPTS)) || {};
-  const { message: results } = response as ApiResponse;
-  if (!Array.isArray(results)) return;
-  scripts.value = results.map(({ id, name }) => {
-    return {
-      id: id,
-      label: name
-    };
-  });
+  try {
+    const response = (await callApi(RequestRoutes.SCRIPTS)) || {};
+    const { message: results } = response as ApiResponse;
+    if (!Array.isArray(results)) return;
+    scripts.value = results.map(({ id, name }) => {
+      return {
+        id: id,
+        label: name
+      };
+    });
+  } catch (error) {
+    console.error("getScripts error:", error);
+  }
 };
 
 const getDeployments = async () => {
-  console.log(
-    "getDeployments called with scriptIds:",
-    filtersState.query.scriptIds
-  );
-  const response =
-    (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
-      scriptIds: filtersState.query.scriptIds
-    })) || {};
-  console.log("getDeployments response:", response);
-  const { message: results } = response as ApiResponse;
-  if (!Array.isArray(results)) return;
-  scriptDeployments.value = results.map(
-    ({ primarykey, scriptid, scriptname }) => {
-      return {
-        id: Number(primarykey),
-        label: `${scriptid.toUpperCase()} (${scriptname})`
-      };
-    }
-  );
+  try {
+    const response =
+      (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
+        scriptIds: filtersState.query.scriptIds
+      })) || {};
+
+    const { message: results } = response as ApiResponse;
+    if (!Array.isArray(results)) return;
+    scriptDeployments.value = results.map(
+      ({ primarykey, scriptid, scriptname }) => {
+        return {
+          id: Number(primarykey),
+          label: `${scriptid.toUpperCase()} (${scriptname})`
+        };
+      }
+    );
+  } catch (error) {
+    console.error("getDeployments error:", error);
+  }
 };
 
 const getLogs = async () => {
   loading.value = true;
+  try {
+    const response =
+      (await callApi(RequestRoutes.LOGS, {
+        startDate: filtersState.query.startDate,
+        endDate: filtersState.query.endDate,
+        scriptIds: filtersState.query.scriptIds,
+        deploymentIds: filtersState.query.deploymentIds,
+        scriptTypes: filtersState.query.scriptTypes
+      })) || {};
 
-  const response =
-    (await callApi(RequestRoutes.LOGS, {
-      startDate: filtersState.query.startDate,
-      endDate: filtersState.query.endDate,
-      scriptIds: filtersState.query.scriptIds,
-      deploymentIds: filtersState.query.deploymentIds,
-      scriptTypes: filtersState.query.scriptTypes
-    })) || {};
+    const { message } = response as ApiResponse;
 
-  const { message } = response as ApiResponse;
+    items.value = Array.isArray(message)
+      ? message.map((log: any) => ({
+          id: log.internalid,
+          datetime: log.datetime,
+          title: log.title,
+          level: log.type,
+          message: log.detail,
+          scriptId: log["script.internalid"],
+          deploymentId: log["scriptDeployment.internalid"],
+          scriptType: log.scripttype,
+          scriptName: log["script.name"],
+          deploymentName: log["scriptDeployment.scriptid"]
+        }))
+      : [];
+  } catch (error) {
+    console.error("getLogs error:", error);
+  } finally {
+    loading.value = false;
+  }
+};
 
-  items.value = Array.isArray(message)
-    ? message.map((log: any) => ({
-        id: log.internalid,
-        datetime: log.datetime,
-        title: log.title,
-        level: log.type,
-        message: log.detail,
-        scriptId: log["script.internalid"],
-        deploymentId: log["scriptDeployment.internalid"],
-        scriptType: log.scripttype,
-        scriptName: log["script.name"],
-        deploymentName: log["scriptDeployment.scriptid"]
-      }))
-    : [];
-
-  loading.value = false;
+const stopMenuRightClick = (e: MouseEvent) => {
+  const target = e.target as HTMLElement;
+  if (target.closest(".p-contextmenu")) {
+    e.preventDefault(); // stop browser menu
+    e.stopPropagation(); // stop event from bubbling
+  }
 };
 
 /* =======================
@@ -339,30 +359,32 @@ watch(
   { deep: true }
 );
 
+const updateDebouncedSearch = debounce((value: string | null) => {
+  debouncedSearch.value = value || "";
+}, 150);
+
+watch(
+  () => filtersState.quick.global,
+  (newValue) => updateDebouncedSearch(newValue)
+);
+
 /* =======================
    LIFECYCLE
  ======================= */
 
-onMounted(async () => {
-  loading.value = true;
+onMounted(() => {
+  document.addEventListener("contextmenu", stopMenuRightClick, true);
+  init();
+});
+
+const init = async () => {
   await getScriptTypes();
   await getScripts();
-  await getDeployments();
   await getLogs();
+};
 
-  const stopMenuRightClick = (e: MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest(".p-contextmenu")) {
-      e.preventDefault(); // stop browser menu
-      e.stopPropagation(); // stop event from bubbling
-    }
-  };
-
-  document.addEventListener("contextmenu", stopMenuRightClick, true);
-
-  onBeforeUnmount(() => {
-    document.removeEventListener("contextmenu", stopMenuRightClick, true);
-  });
+onBeforeUnmount(() => {
+  document.removeEventListener("contextmenu", stopMenuRightClick, true);
 });
 </script>
 
@@ -450,12 +472,7 @@ onMounted(async () => {
 
   <!-- ===================== QUICK FILTERS ===================== -->
 
-  <MPanel
-    outline
-    header="Quick Filters (Current Results)"
-    toggleable
-    box-shadow
-  >
+  <MPanel outline expanded header="Quick Filters (Current Results)" box-shadow>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
         <label class="font-bold block mb-2">Global Search</label>
@@ -578,16 +595,11 @@ onMounted(async () => {
         :rows="filteredItems"
         :height="`${contentHeight}px`"
         :loading="loading"
-        searchable
         search-placeholder="Search logs..."
         collapsible
         collapsible-key="log-search-view"
         :auto-row-height="true"
       >
-        <template #toolbar>
-          <Button label="Export" icon="pi pi-download" />
-          <Button label="Add New" icon="pi pi-plus" />
-        </template>
         <MTableColumn label="Date / Time" field="datetime" width="180px">
           <template #default="{ value }">
             {{ formatToLocalDate(value) }}
