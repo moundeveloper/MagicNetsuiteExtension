@@ -158,6 +158,11 @@ const scriptContextMenu: ContextMenuItem[] = [
     label: "Add Script to Query Filters",
     icon: "pi pi-filter",
     action: (row: LogItem) => addToQueryFilters(row, "script")
+  },
+  {
+    label: "Go to Script",
+    icon: "pi pi-external-link",
+    action: (row: LogItem) => goToScript(row.scriptId)
   }
 ];
 
@@ -169,9 +174,20 @@ const deploymentContextMenu: ContextMenuItem[] = [
   }
 ];
 
+const goToScript = async (scriptId: string) => {
+  if (!scriptId) return;
+
+  const response =
+    (await callApi(RequestRoutes.SCRIPT_URL, { scriptId })) || {};
+  if (!response) return;
+  const { message: url } = response as ApiResponse;
+
+  window.open(url, "_blank");
+};
+
 /* =======================
    CLIENT-SIDE FILTERING
-  ======================= */
+   ======================= */
 
 const filteredItems = computed(() => {
   let result = [...items.value];
