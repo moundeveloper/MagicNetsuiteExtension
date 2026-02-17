@@ -526,7 +526,17 @@ const toggleRowExpand = (row: any) => {
   }
 };
 
-watch(searchQuery, () => {
+watch(
+  () => props.rows,
+  () => {
+    scrollTop.value = 0;
+    if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
+    // Clear cached heights since we have a new dataset
+    rowHeights.value = {};
+  }
+);
+
+watch(filteredRows, () => {
   scrollTop.value = 0;
   if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
 });
