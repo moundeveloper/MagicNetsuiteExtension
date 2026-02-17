@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { RouterView, useRouter } from "vue-router";
+import { RouterView, useRouter, useRoute } from "vue-router";
 import ItemListNavigation from "./components/ItemListNavigation.vue";
 import { getRouteMap } from "./router/routesMap";
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
 import MagicNetsuiteLogo from "./components/MagicNetsuiteLogo.vue";
@@ -10,6 +10,9 @@ import GridPattern from "./components/universal/patterns/GridPattern.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
+const route = useRoute();
+
+const isProcessingRoute = computed(() => route.path === "/processing");
 
 type PanelAction = "open" | "close";
 
@@ -62,16 +65,17 @@ onBeforeUnmount(() => {
 
 <template>
   <Toast />
-  <ItemListNavigation :links="getRouteMap()" />
+  <ItemListNavigation v-if="!isProcessingRoute" :links="getRouteMap()" />
   <MagicNetsuiteLogo
+    v-if="!isProcessingRoute"
     class="pattern-decoration"
     :fill="'var(--p-slate-200)'"
     width="30%"
   />
-  <main ref="container">
+  <main ref="container" :class="{ 'full-screen': isProcessingRoute }">
     <RouterView :vhOffset="vhOffset" />
   </main>
-  <GridPattern class="pattern-decoration" />
+  <GridPattern v-if="!isProcessingRoute" class="pattern-decoration" />
 </template>
 
 <style scoped>
@@ -100,6 +104,10 @@ main {
   gap: 1rem;
   position: relative;
   z-index: 1;
+}
+
+main.full-screen {
+  padding: 0;
 }
 
 .pattern-decoration {

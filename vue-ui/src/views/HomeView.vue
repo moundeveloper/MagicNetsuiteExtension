@@ -8,6 +8,7 @@ import {
 import { InputText } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { Privilege } from "../types/privilege";
+import { callApi, ApiRequestType } from "../utils/api";
 
 const { formattedRouteName } = useFormattedRouteName();
 
@@ -38,10 +39,21 @@ const canAccess = (feature: (typeof features.value)[0]) => {
 };
 
 const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
+
+const testPing = async () => {
+  console.log("Testing ping with 30 second delay...");
+  const result = await callApi("PING" as any, { delay: 30000 }, ApiRequestType.NORMAL);
+  console.log("Ping result:", result);
+};
 </script>
 
 <template>
   <h1>{{ formattedRouteName }}</h1>
+  <div class="test-buttons">
+    <button class="test-ping-btn" @click="testPing">
+      Test Temp Tab (30s Ping)
+    </button>
+  </div>
   <InputText v-model="searchFeatures" placeholder="Search" />
 
   <div
@@ -90,6 +102,27 @@ const isDisabled = (feature: (typeof features.value)[0]) => !canAccess(feature);
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.test-buttons {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.test-ping-btn {
+  padding: 0.5rem 1rem;
+  background-color: var(--p-primary-500);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.test-ping-btn:hover {
+  background-color: var(--p-primary-600);
 }
 
 .home-grid {

@@ -72,6 +72,11 @@ const app = createApp(App);
 
 app.use(router);
 
+const initialRoute = window.location.hash.slice(1);
+if (initialRoute) {
+  router.push(initialRoute);
+}
+
 app.use(PrimeVue, {
   theme: {
     preset: auraPreset,

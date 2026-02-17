@@ -344,6 +344,7 @@ watch(
  ======================= */
 
 onMounted(async () => {
+  loading.value = true;
   await getScriptTypes();
   await getScripts();
   await getDeployments();

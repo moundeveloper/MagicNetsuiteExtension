@@ -158,5 +158,13 @@ const handlers = {
       parentFolderId: parentFolder,
       csrfToken
     });
+  },
+  PING: async ({ modules, payload: { delay } }) => {
+    console.log("Ping action received with delay:", delay);
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({ pong: true, delay });
+      }, delay);
+    });
   }
 };

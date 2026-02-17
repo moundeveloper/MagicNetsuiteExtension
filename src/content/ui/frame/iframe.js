@@ -20,13 +20,16 @@ export const hideUI = () => {
   iframe.style.transform = "translateY(20px)";
 };
 
-export const injectUI = () => {
+export const injectUI = (route = "") => {
   let iframe = document.getElementById(FRAME_ID);
   if (iframe) return;
 
+  const baseUrl = chrome.runtime.getURL("dist/vue-ui/index.html");
+  const src = route ? `${baseUrl}#${route}` : baseUrl;
+
   iframe = document.createElement("iframe");
   iframe.id = FRAME_ID;
-  iframe.src = chrome.runtime.getURL("dist/vue-ui/index.html");
+  iframe.src = src;
 
   Object.assign(iframe.style, {
     position: "fixed",
