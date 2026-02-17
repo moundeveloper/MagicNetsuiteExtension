@@ -7,11 +7,7 @@
     }"
   >
     <div class="m-panel-header">
-      <div
-        v-if="toggleable"
-        class="m-panel-header-toggle"
-        @click="expanded = !expanded"
-      >
+      <div v-if="toggleable" class="m-panel-header-toggle" @click="onToggle">
         <i
           class="pi pi-angle-down"
           :style="{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }"
@@ -56,6 +52,10 @@ const props = withDefaults(defineProps<MPanelProps>(), {
   expanded: undefined
 });
 
+const emit = defineEmits<{
+  (e: "toggle", expanded: boolean): void;
+}>();
+
 const expanded = ref<boolean>(false);
 
 if (props.expanded !== undefined) {
@@ -63,6 +63,11 @@ if (props.expanded !== undefined) {
 } else if (!props.toggleable) {
   expanded.value = true;
 }
+
+const onToggle = () => {
+  expanded.value = !expanded.value;
+  emit("toggle", expanded.value);
+};
 
 const onEnter = (el: Element) => {
   const element = el as HTMLElement;

@@ -371,10 +371,10 @@ const unregisterEditor = (item: Editors) => {
 <style>
 .search-option-btn {
   padding: 0.25rem 0.5rem;
-  border: 1px solid #ccc;
   border-radius: 0.25rem;
   color: var(--p-slate-500) !important;
   background: var(--m-slate-150) !important;
+  outline: 1px solid var(--p-slate-300);
   cursor: pointer;
   font-size: 0.85rem;
   transition: all 0.25s ease-in-out;
@@ -382,11 +382,6 @@ const unregisterEditor = (item: Editors) => {
 
 .search-option-btn.active {
   background: var(--p-slate-500) !important;
-  color: #fff !important;
-}
-
-.search-option-btn:hover {
-  background: var(--p-slate-600) !important;
   color: #fff !important;
 }
 </style>

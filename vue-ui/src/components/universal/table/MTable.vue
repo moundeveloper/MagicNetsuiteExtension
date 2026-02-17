@@ -2,61 +2,66 @@
   <div class="m-table" :style="{ height: height }">
     <!-- Header Toolbar -->
     <div v-if="$slots.toolbar || searchable || collapsible" class="m-table-header-toolbar">
-      <!-- Search Input -->
-      <div v-if="searchable" class="m-table-search">
-        <i class="pi pi-search search-icon"></i>
-        <InputText
-          type="text"
-          v-model="searchQuery"
-          :placeholder="searchPlaceholder"
-          class="search-input"
-        />
-        <button
-          v-if="searchQuery"
-          @click="searchQuery = ''"
-          class="search-clear"
-        >
-          <i class="pi pi-times"></i>
-        </button>
-      </div>
+      <!-- Default Items Row -->
+      <div class="m-table-toolbar-defaults">
+        <!-- Search Input -->
+        <div v-if="searchable" class="m-table-search">
+          <i class="pi pi-search search-icon"></i>
+          <InputText
+            type="text"
+            v-model="searchQuery"
+            :placeholder="searchPlaceholder"
+            class="search-input"
+          />
+          <button
+            v-if="searchQuery"
+            @click="searchQuery = ''"
+            class="search-clear"
+          >
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
 
-      <!-- Column Visibility Toggle -->
-      <div v-if="collapsible" class="m-table-column-toggle">
-        <button
-          @click="showColumnControls = !showColumnControls"
-          class="column-toggle-btn"
-          :class="{ active: showColumnControls }"
-          title="Toggle Columns"
-        >
-          <i class="pi pi-table"></i>
-        </button>
-        
-        <div v-if="showColumnControls" class="column-controls-dropdown">
-          <div class="column-controls-header">
-            <span>Columns</span>
-            <button @click="showColumnControls = false" class="close-btn">
-              <i class="pi pi-times"></i>
-            </button>
-          </div>
-          <div class="column-controls-list">
-            <label
-              v-for="(col, index) in columnsWithVisibility"
-              :key="index"
-              class="column-control-item"
-            >
-              <input
-                type="checkbox"
-                :checked="col.visible"
-                @change="toggleColumn(col.field)"
-              />
-              <span>{{ col.label }}</span>
-            </label>
+        <!-- Column Visibility Toggle -->
+        <div v-if="collapsible" class="m-table-column-toggle">
+          <button
+            @click="showColumnControls = !showColumnControls"
+            class="column-toggle-btn"
+            :class="{ active: showColumnControls }"
+            title="Toggle Columns"
+          >
+            <i class="pi pi-table"></i>
+          </button>
+          
+          <div v-if="showColumnControls" class="column-controls-dropdown">
+            <div class="column-controls-header">
+              <span>Columns</span>
+              <button @click="showColumnControls = false" class="close-btn">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <div class="column-controls-list">
+              <label
+                v-for="(col, index) in columnsWithVisibility"
+                :key="index"
+                class="column-control-item"
+              >
+                <input
+                  type="checkbox"
+                  :checked="col.visible"
+                  @change="toggleColumn(col.field)"
+                />
+                <span>{{ col.label }}</span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Custom toolbar slot -->
-      <slot name="toolbar" />
+      <div v-if="$slots.toolbar" class="m-table-toolbar-custom">
+        <slot name="toolbar" />
+      </div>
     </div>
 
     <!-- Header Columns -->
@@ -589,10 +594,25 @@ onUnmounted(() => {
   padding: 12px 16px;
   border-bottom: 1px solid var(--p-slate-300);
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.m-table-toolbar-defaults {
+  display: flex;
   gap: 12px;
   align-items: center;
-  flex-shrink: 0;
   flex-wrap: wrap;
+}
+
+.m-table-toolbar-custom {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--p-slate-200);
 }
 
 .m-table-search {

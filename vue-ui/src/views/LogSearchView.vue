@@ -44,7 +44,7 @@ const loading = ref(false);
 
 /* =======================
    LOOKUP DATA
- ======================= */
+  ======================= */
 
 const scripts = ref<{ id: number; label: string }[]>([]);
 const scriptDeployments = ref<{ id: number; label: string }[]>([]);
@@ -53,7 +53,7 @@ const scriptTypesQuick = ref<{ id: string; label: string }[]>([]);
 
 /* =======================
    FILTER STATE (SINGLE SOURCE)
- ======================= */
+  ======================= */
 
 const filtersState = reactive({
   query: {
@@ -162,7 +162,7 @@ const deploymentContextMenu: ContextMenuItem[] = [
 
 /* =======================
    CLIENT-SIDE FILTERING
- ======================= */
+  ======================= */
 
 const filteredItems = computed(() => {
   let result = [...items.value];
@@ -246,7 +246,7 @@ const formatToLocalDate = (value: string | Date) => {
 
 /* =======================
    API CALLS
- ======================= */
+  ======================= */
 
 const getScriptTypes = async () => {
   const response = (await callApi(RequestRoutes.SCRIPT_TYPES)) || {};
@@ -275,7 +275,10 @@ const getScripts = async () => {
 };
 
 const getDeployments = async () => {
-  console.log("getDeployments called with scriptIds:", filtersState.query.scriptIds);
+  console.log(
+    "getDeployments called with scriptIds:",
+    filtersState.query.scriptIds
+  );
   const response =
     (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
       scriptIds: filtersState.query.scriptIds
@@ -327,7 +330,7 @@ const getLogs = async () => {
 
 /* =======================
    REACTIVE QUERY WATCH
-======================= */
+ ======================= */
 
 watch(
   () => filtersState.query.scriptIds,
@@ -338,7 +341,7 @@ watch(
 
 /* =======================
    LIFECYCLE
-======================= */
+ ======================= */
 
 onMounted(async () => {
   await getScriptTypes();
@@ -367,7 +370,7 @@ onMounted(async () => {
 
   <!-- ===================== QUERY FILTERS ===================== -->
 
-  <MPanel outline toggleable>
+  <MPanel outline toggleable box-shadow>
     <template #header>
       <div class="flex justify-between items-center gap-4 h-full flex-1">
         <span>Query Filters</span>
@@ -446,7 +449,12 @@ onMounted(async () => {
 
   <!-- ===================== QUICK FILTERS ===================== -->
 
-  <MPanel outline header="Quick Filters (Current Results)" toggleable>
+  <MPanel
+    outline
+    header="Quick Filters (Current Results)"
+    toggleable
+    box-shadow
+  >
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
         <label class="font-bold block mb-2">Global Search</label>
@@ -561,6 +569,7 @@ onMounted(async () => {
     direction="column"
     autoHeight
     outlined
+    elevated
     :style="{ height: `${vhOffset}vh` }"
   >
     <template #default="{ contentHeight }">
@@ -574,6 +583,10 @@ onMounted(async () => {
         collapsible-key="log-search-view"
         :auto-row-height="true"
       >
+        <template #toolbar>
+          <Button label="Export" icon="pi pi-download" />
+          <Button label="Add New" icon="pi pi-plus" />
+        </template>
         <MTableColumn label="Date / Time" field="datetime" width="180px">
           <template #default="{ value }">
             {{ formatToLocalDate(value) }}

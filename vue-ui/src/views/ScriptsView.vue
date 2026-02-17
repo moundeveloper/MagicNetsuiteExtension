@@ -1,25 +1,25 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
-import DataTable from "primevue/datatable";
-import Column from "primevue/column";
-import InputGroup from "primevue/inputgroup";
-import InputGroupAddon from "primevue/inputgroupaddon";
-import InputText from "primevue/inputtext";
-import { FilterMatchMode } from "@primevue/core/api";
-import { callApi, closePanel, type ApiResponse } from "../utils/api";
+import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
+import MCard from "../components/universal/card/MCard.vue";
+import MTable from "../components/universal/table/MTable.vue";
+import MTableColumn from "../components/universal/table/MTableColumn.vue";
+import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
-import { MultiSelect, Panel } from "primevue";
+import { MultiSelect } from "primevue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 
 const { formattedRouteName } = useFormattedRouteName();
 
 interface ScriptItem {
+  id: number;
   internalid: number;
   name: string;
   scriptid: string;
   owner: string;
   scriptType: string;
+  scriptfile: string;
   scriptDeployments: any[];
   deploymentsLoading?: boolean;
 }
@@ -28,19 +28,10 @@ const props = defineProps<{
   vhOffset: number;
 }>();
 
-const items = ref<ScriptItem[]>();
+const items = ref<ScriptItem[]>([]);
 const scriptTypes = ref<{ id: string; label: string }[]>([]);
 const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
 const loading = ref(false);
-const dtRef = ref<HTMLElement | null>(null);
-const filters = ref({
-  global: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  internalid: { value: null, matchMode: FilterMatchMode.EQUALS },
-  name: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  scriptid: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  owner: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-  scriptfile: { value: null, matchMode: FilterMatchMode.STARTS_WITH },
-});
 
 const filteredItems = computed(() => {
   let result = items.value || [];
@@ -49,8 +40,6 @@ const filteredItems = computed(() => {
     const selectedIds = scriptTypesSelected.value.map((s) => s.id);
     result = result.filter((item) => selectedIds.includes(item.scriptType));
   }
-
-  // Optionally, apply other column filters manually here if needed
 
   return result;
 });
@@ -67,7 +56,7 @@ const getScriptUrl = async (scriptId: number) => {
 
 const handleScriptClick = async (
   callback: () => string | Promise<string>,
-  e: MouseEvent,
+  e: MouseEvent
 ) => {
   if (e.button !== 0 && e.button !== 1) return;
 
@@ -88,24 +77,19 @@ const getScriptTypes = async () => {
   if (!response) return;
   const { message: scriptTypesFetched } = response as ApiResponse;
 
-  console.log("scriptTypesFetched", scriptTypesFetched);
-
   if (!scriptTypesFetched || !Array.isArray(scriptTypesFetched)) return;
 
   scriptTypes.value = scriptTypesFetched;
 };
 
-const fetchDeployments = async (
-  event: { originalEvent: Event; value: boolean },
-  script: ScriptItem,
-) => {
-  if (event.value) return;
+const fetchDeployments = async (script: ScriptItem) => {
+  if (script.scriptDeployments.length > 0) return;
 
   script.deploymentsLoading = true;
 
   const response =
     (await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, {
-      scriptId: script.internalid,
+      scriptId: script.internalid
     })) || {};
 
   script.scriptDeployments = (response as ApiResponse)?.message || [];
@@ -122,6 +106,7 @@ const getScripts = async () => {
   if (!scripts || !Array.isArray(scripts)) return;
 
   items.value = scripts.map((script: any) => ({
+    id: script.id,
     internalid: script.id,
     name: script.name,
     scriptid: script.scriptid,
@@ -129,16 +114,14 @@ const getScripts = async () => {
     scriptfile: script.scriptfile,
     scriptType: script.scripttype,
     scriptDeployments: [],
-    deploymentsLoading: false,
+    deploymentsLoading: false
   }));
-
-  console.log(items.value);
 };
 
 const getScriptDeploymentUrl = async (deployment: string) => {
   const response =
     (await callApi(RequestRoutes.SCRIPT_DEPLOYMENT_URL, {
-      deployment,
+      deployment
     })) || {};
 
   if (!response) return;
@@ -153,7 +136,7 @@ const openSuitelet = async (script: string, deployment: string) => {
   const response =
     (await callApi(RequestRoutes.SUITELET_URL, {
       script,
-      deployment,
+      deployment
     })) || {};
 
   if (!response) return;
@@ -167,222 +150,174 @@ onMounted(async () => {
   await getScripts();
   await getScriptTypes();
   loading.value = false;
-
-  nextTick(() => {
-    if (dtRef.value) {
-      // @ts-ignore: $el exists on PrimeVue component instance
-      const tableEl = dtRef.value.$el as HTMLElement;
-      tableEl.addEventListener("mousedown", (e: MouseEvent) => {
-        if (e.button === 1) e.preventDefault(); // middle click
-      });
-    }
-  });
 });
 </script>
 
 <template>
   <h1>{{ formattedRouteName }}</h1>
 
-  <DataTable
-    ref="dtRef"
-    data-ignore
-    :style="{ height: `${vhOffset}vh` }"
-    v-model:filters="filters"
-    :value="filteredItems"
-    filterDisplay="row"
-    dataKey="internalid"
-    :globalFilterFields="[
-      'internalid',
-      'name',
-      'scriptid',
-      'owner',
-      'scriptfile',
-    ]"
-    scrollable
-    scrollHeight="flex"
-    :virtualScrollerOptions="{ itemSize: 100 }"
-    class="p-datatable-gridlines table-custom"
-    :loading="loading"
+  <MCard
+    flex
+    direction="column"
+    autoHeight
+    outlined
+    elevated
+    :style="{ height: `${props.vhOffset}vh` }"
   >
-    <!-- Global Search using InputGroup -->
-    <template #header>
-      <div class="flex gap-4">
-        <InputGroup style="max-width: 300px">
-          <InputGroupAddon>
-            <i class="pi pi-search"></i>
-          </InputGroupAddon>
-          <InputText
-            v-model="filters['global'].value"
-            placeholder="Keyword Search"
-            autofocus
+    <template #default="{ contentHeight }">
+      <MTable
+        :rows="filteredItems"
+        :height="`${contentHeight}px`"
+        :loading="loading"
+        :expandable="true"
+        :autoRowHeight="true"
+        searchable
+        search-placeholder="Search scripts..."
+      >
+        <template #toolbar>
+          <MultiSelect
+            v-model="scriptTypesSelected"
+            :options="scriptTypes"
+            optionLabel="label"
+            filter
+            placeholder="Select Script Types"
+            class="w-full md:w-80"
           />
-        </InputGroup>
+        </template>
 
-        <MultiSelect
-          v-model="scriptTypesSelected"
-          :options="scriptTypes"
-          optionLabel="label"
-          filter
-          placeholder="Select Script Types"
-          class="w-full md:w-80"
-        />
-      </div>
-    </template>
-
-    <!-- Columns -->
-
-    <Column field="name" header="Name" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by name"
-        />
-      </template>
-
-      <template #body="{ data }">
-        <div class="flex gap-2 flex-col w-[60rem]">
-          <div
-            class="cursor-pointer p-2 bg-slate-400 color-white rounded-[0.25rem] flex items-center hover:bg-slate-500"
-            @mousedown="
-              (e) => handleScriptClick(() => getScriptUrl(data.internalid), e)
-            "
-          >
-            🔗 {{ data.name }}
-          </div>
-
-          <Panel
+        <template #expand="{ row }">
+          <MPanel
             header="Deployments"
-            toggleable
-            collapsed
-            @toggle="(e) => fetchDeployments(e, data)"
+            :outline="!row.deploymentsLoading"
+            :boxShadow="!row.deploymentsLoading"
+            @vue:mounted="fetchDeployments(row)"
           >
-            <div v-if="data.deploymentsLoading" class="flex justify-center p-4">
+            <div v-if="row.deploymentsLoading" class="flex justify-center p-4">
               <MLoader />
             </div>
-            <DataTable
+            <MTable
               v-else
-              :value="data.scriptDeployments"
-              class="nested-table"
-              size="small"
+              :rows="row.scriptDeployments"
+              :height="'200px'"
+              :rowHeight="36"
+              :autoRowHeight="true"
             >
-              <Column field="id" header="ID" sortable>
-                <template #body="{ data: deploymentData }">
-                  <div class="flex gap-2">
-                    <div
-                      class="cursor-pointer p-2 bg-slate-400 color-white rounded-[0.25rem] flex items-center hover:bg-slate-500 flex-1"
-                      @mousedown="
-                        (e) =>
-                          handleScriptClick(
-                            () =>
-                              getScriptDeploymentUrl(deploymentData.primarykey),
-                            e,
-                          )
-                      "
-                    >
-                      🔗 {{ deploymentData.scriptid }}
-                    </div>
-                    <div
-                      v-if="data.scriptType === 'SCRIPTLET'"
-                      class="cursor-pointer p-2 bg-[#C3BEF7] color-white rounded-[0.25rem] flex items-center hover:bg-[#ADA7F2]"
-                      @click="
-                        openSuitelet(data.scriptid, deploymentData.scriptid)
-                      "
-                    >
-                      🔗 Open Suitelet
-                    </div>
+              <MTableColumn label="ID" field="scriptid" width="1fr">
+                <template #default="{ value, row: deploymentData }">
+                  <div
+                    class="flex gap-2 cursor-pointer hover:underline"
+                    @mousedown="
+                      (e) =>
+                        handleScriptClick(
+                          () =>
+                            getScriptDeploymentUrl(deploymentData.primarykey),
+                          e
+                        )
+                    "
+                  >
+                    <i class="pi pi-link text-[var(--p-slate-600)]"></i>
+                    <span class="text-[var(--p-slate-600)]">{{ value }}</span>
                   </div>
                 </template>
-              </Column>
+              </MTableColumn>
 
-              <Column
-                field="appliesTo"
-                header="Applies To"
-                sortable
-                v-if="['USEREVENT', 'CLIENT'].includes(data.scriptType)"
-              >
-                <template #body="{ data: deploymentData }">
-                  {{ deploymentData.recordtype }}
-                </template>
-              </Column>
+              <MTableColumn
+                v-if="['USEREVENT', 'CLIENT'].includes(row.scriptType)"
+                label="Applies To"
+                field="recordtype"
+                width="1fr"
+              />
 
-              <Column field="isDeployed" header="Deployed?" sortable>
-                <template #body="{ data: deploymentData }">
-                  <span
-                    v-if="deploymentData.isdeployed"
-                    class="text-green-600 font-semibold"
+              <MTableColumn label="Deployed?" field="isdeployed" width="100px">
+                <template #default="{ value }">
+                  <span v-if="value" class="text-green-600 font-semibold"
                     >✅</span
                   >
                   <span v-else class="text-red-600 font-semibold">❌</span>
                 </template>
-              </Column>
+              </MTableColumn>
 
-              <Column field="status" header="Status" sortable>
-                <template #body="{ data: deploymentData }">
-                  {{ deploymentData.status }}
+              <MTableColumn label="Status" field="status" width="120px" />
+
+              <MTableColumn label="Log Level" field="loglevel" width="120px" />
+
+              <MTableColumn
+                v-if="row.scriptType === 'SCRIPTLET'"
+                label="Action"
+                field="scriptid"
+                width="150px"
+              >
+                <template #default="{ row: deploymentData }">
+                  <div
+                    class="flex gap-2 cursor-pointer hover:underline text-[var(--p-purple-600)]"
+                    @click="openSuitelet(row.scriptid, deploymentData.scriptid)"
+                  >
+                    <i
+                      class="pi pi-external-link text-[var(--p-purple-600)]"
+                    ></i>
+                    <span class="text-[var(--p-purple-600)]"
+                      >Open Suitelet</span
+                    >
+                  </div>
                 </template>
-              </Column>
+              </MTableColumn>
+            </MTable>
+          </MPanel>
+        </template>
 
-              <Column field="logLevel" header="Log Level" sortable>
-                <template #body="{ data: deploymentData }">
-                  {{ deploymentData.loglevel }}
-                </template>
-              </Column>
-            </DataTable>
-          </Panel>
-        </div>
-      </template>
-    </Column>
+        <MTableColumn label="Name" field="name" width="1fr" searchable>
+          <template #default="{ value, row }">
+            <div
+              class="flex gap-2 cursor-pointer hover:underline"
+              @mousedown="
+                (e) => handleScriptClick(() => getScriptUrl(row.internalid), e)
+              "
+            >
+              <i class="pi pi-link text-[var(--p-slate-600)]"></i>
+              <span class="text-[var(--p-slate-600)]">
+                {{ value }}
+              </span>
+            </div>
+          </template>
+        </MTableColumn>
 
-    <Column field="scriptfile" header="scriptfile" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Script File"
+        <MTableColumn
+          label="Script File"
+          field="scriptfile"
+          width="1fr"
+          searchable
         />
-      </template>
-    </Column>
 
-    <Column field="owner" header="Owner" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Owner"
+        <MTableColumn label="Owner" field="owner" width="1fr" searchable />
+
+        <MTableColumn
+          label="Script ID"
+          field="scriptid"
+          width="1fr"
+          searchable
         />
-      </template>
-    </Column>
 
-    <Column field="scriptid" header="Script ID" sortable>
-      <template #filter="{ filterModel, filterCallback }">
-        <InputText
-          v-model="filterModel.value"
-          @input="filterCallback()"
-          placeholder="Search by Script ID"
+        <MTableColumn
+          label="Script Type"
+          field="scriptType"
+          width="150px"
+          searchable
         />
-      </template>
-    </Column>
 
-    <Column field="scriptType" header="Script Type" sortable> </Column>
-
-    <template #loading>
-      <div class="flex justify-center">
-        <MLoader />
-      </div>
+        <template #empty>
+          <div class="flex flex-col items-center justify-center p-8 gap-4">
+            <i class="pi pi-inbox text-4xl text-[var(--p-slate-400)]"></i>
+            <p class="text-[var(--p-slate-500)]">No records found.</p>
+          </div>
+        </template>
+      </MTable>
     </template>
-
-    <template #empty>No records found.</template>
-  </DataTable>
+  </MCard>
 </template>
 
 <style scoped>
 h1 {
   font-weight: 600;
   color: var(--text-color);
-}
-
-.table-custom {
-  flex: 1;
 }
 </style>

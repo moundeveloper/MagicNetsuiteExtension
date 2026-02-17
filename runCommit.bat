@@ -24,12 +24,53 @@ echo ====================================
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
 if %ERRORLEVEL% NEQ 0 goto :error
 
+echo.
+echo ====================================
+echo Step 2: Cleaning destination folder
+echo ====================================
+
+set "DEST_FOLDER=C:\Projects\MagicNetsuiteExtensionM"
+
+if exist "%DEST_FOLDER%" (
+    echo Deleting all files in %DEST_FOLDER% ...
+    rmdir /s /q "%DEST_FOLDER%"
+)
+
+mkdir "%DEST_FOLDER%"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to clean destination folder!
+    goto :error
+)
+
 :: =========================
-:: STEP 2
+:: STEP 2.5 - Git Init
 :: =========================
 echo.
 echo ====================================
-echo Step 2: Copying files to production
+echo Step 2.5: Initialising git repo
+echo ====================================
+cd /d "%DEST_FOLDER%"
+
+git init -b main
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: git init failed!
+    goto :error
+)
+
+git remote add origin git@github-account-personal:moundeveloper/MagicNetsuiteExtensionM.git
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: git remote add origin failed!
+    goto :error
+)
+
+echo Git repo initialised and remote set.
+
+:: =========================
+:: STEP 3
+:: =========================
+echo.
+echo ====================================
+echo Step 3: Copying files to production
 echo ====================================
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0moveToProd.ps1" ^
     -SourceFolder "C:\Projects\MagicNetsuiteExtension\src" ^
@@ -38,16 +79,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0moveToProd.ps1" ^
 if %ERRORLEVEL% NEQ 0 goto :error
 
 :: =========================
-:: STEP 3
+:: STEP 4
 :: =========================
 echo.
 echo ====================================
-echo Step 3: Committing and pushing to GitHub
+echo Step 4: Committing and pushing to GitHub
 echo ====================================
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0commitAndPush.ps1" ^
-    -RepoPath "C:\Projects\MagicNetsuiteExtensionM" ^
-    -CommitMessage "Production sync"
-if %ERRORLEVEL% NEQ 0 goto :error
+cd /d "%DEST_FOLDER%"
+
+git add .
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: git add failed!
+    goto :error
+)
+
+git commit -m "Production sync"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: git commit failed!
+    goto :error
+)
+
+git push -u origin main --force
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: git push failed!
+    goto :error
+)
 
 goto :cleanup
 

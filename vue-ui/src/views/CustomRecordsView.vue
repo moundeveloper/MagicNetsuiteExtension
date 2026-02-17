@@ -67,6 +67,7 @@ onMounted(async () => {
     direction="column"
     autoHeight
     outlined
+    elevated
     :style="{ height: `${props.vhOffset}vh` }"
   >
     <template #default="{ contentHeight }">
