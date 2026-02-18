@@ -648,6 +648,8 @@ onBeforeUnmount(() => {
         collapsible-key="log-search-view"
         :auto-row-height="true"
       >
+        <MTableColumn label="Id" field="id" width="1fr" />
+
         <MTableColumn label="Date / Time" field="datetime" width="180px">
           <template #default="{ value }">
             {{ formatToLocalDate(value) }}

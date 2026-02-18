@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { useMContextMenu } from "../../../composables/useMContextMenu";
 
 interface Column {
@@ -89,7 +89,11 @@ onMounted(() => {
   updateHeight();
 });
 
-watch(() => props.expanded, updateHeight);
+watch(() => props.expanded, () => {
+  nextTick(() => {
+    nextTick(updateHeight);
+  });
+});
 watch(() => props.row, updateHeight, { deep: true });
 
 const toggle = () => {

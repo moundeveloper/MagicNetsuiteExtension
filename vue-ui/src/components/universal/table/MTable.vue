@@ -110,7 +110,7 @@
           :expanded="isRowExpanded(row.data)"
           :autoRowHeight="autoRowHeight"
           @toggle-expand="toggleRowExpand(row.data)"
-          @row-height="debouncedRegisterRowHeight"
+          @row-height="registerRowHeight"
         >
           <template #expand="{ row }">
             <slot name="expand" :row="row" />
@@ -144,7 +144,6 @@ import {
   nextTick,
   type VNode
 } from "vue";
-import debounce from "lodash/debounce";
 import { type ContextMenuItem } from "../../../composables/useMContextMenu";
 import MContextMenu from "../contextMenu/MContextMenu.vue";
 import MTableRow from "./MTableRow.vue";
@@ -267,7 +266,16 @@ const updateDropdownPosition = () => {
 const estimatedRowHeight = computed(() => {
   const known = Object.values(rowHeights.value);
   if (known.length === 0) return props.rowHeight;
-  return Math.round(known.reduce((a, b) => a + b, 0) / known.length);
+  
+  // Filter to only include non-expanded rows (within 20% of base height)
+  const nonExpanded = known.filter(h => h <= props.rowHeight * 1.2);
+  if (nonExpanded.length > 0) {
+    return Math.round(nonExpanded.reduce((a, b) => a + b, 0) / nonExpanded.length);
+  }
+  
+  // If all cached rows are expanded, use min height (not max)
+  const min = Math.min(...known);
+  return Math.round(min);
 });
 
 const registerRowHeight = (id: string, height: number) => {
@@ -276,16 +284,14 @@ const registerRowHeight = (id: string, height: number) => {
   }
 };
 
-const debouncedRegisterRowHeight = debounce((id: string, height: number) => {
-  if (props.autoRowHeight && height > 0) {
-    rowHeights.value[id] = height;
-  }
-}, 50);
-
 const handleScroll = (e: Event) => {
   if (rafId) cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(() => {
-    scrollTop.value = (e.target as HTMLElement).scrollTop;
+    const newScrollTop = (e.target as HTMLElement).scrollTop;
+    const scrollDiff = Math.abs(newScrollTop - scrollTop.value);
+    if (scrollDiff > 2 || newScrollTop === 0) {
+      scrollTop.value = newScrollTop;
+    }
   });
 };
 
@@ -399,21 +405,24 @@ const filteredRows = computed(() => {
 
 // Simple visibleRange for fixed height rows
 const visibleRange = computed(() => {
+  const buffer = Math.max(props.buffer, 5);
   const start = Math.max(
     0,
-    Math.floor(scrollTop.value / props.rowHeight) - props.buffer
+    Math.floor(scrollTop.value / props.rowHeight) - buffer
   );
   const end = Math.min(
     filteredRows.value.length,
     Math.ceil(
       (scrollTop.value + (containerHeight.value || 0)) / props.rowHeight
-    ) + props.buffer
+    ) + buffer
   );
   return { startIndex: start, endIndex: end };
 });
 
 // Compute all scroll-related values in one pass to ensure consistency
 const scrollState = computed(() => {
+  const estHeight = estimatedRowHeight.value;
+  
   if (!props.autoRowHeight) {
     const start = visibleRange.value.startIndex;
     const end = visibleRange.value.endIndex;
@@ -428,7 +437,9 @@ const scrollState = computed(() => {
   const scrollPos = scrollTop.value;
   const viewportHeight = containerHeight.value || 0;
   const viewportEnd = scrollPos + viewportHeight;
-  const estHeight = estimatedRowHeight.value; // ← use this
+
+  const minBuffer = Math.max(props.buffer, 5);
+  const bufferPx = minBuffer * estHeight;
 
   let totalHeight = 0;
   let startIndex = 0;
@@ -436,11 +447,10 @@ const scrollState = computed(() => {
   let foundStart = false;
 
   for (let i = 0; i < filteredRows.value.length; i++) {
-    const rowH = rowHeights.value[filteredRows.value[i]?.id] || estHeight; // ← here
+    const rowH = rowHeights.value[filteredRows.value[i]?.id] || estHeight;
     const rowTop = totalHeight;
     const rowBottom = totalHeight + rowH;
 
-    const bufferPx = props.buffer * estHeight; // ← and here
     if (!foundStart && rowBottom > scrollPos - bufferPx) {
       startIndex = i;
       foundStart = true;
@@ -459,7 +469,7 @@ const scrollState = computed(() => {
 
   let offsetTop = 0;
   for (let i = 0; i < startIndex; i++) {
-    offsetTop += rowHeights.value[filteredRows.value[i]?.id] || estHeight; // ← and here
+    offsetTop += rowHeights.value[filteredRows.value[i]?.id] || estHeight;
   }
 
   return { startIndex, endIndex, offsetTop, totalHeight };
@@ -476,10 +486,11 @@ const offsetTop = computed(() => scrollState.value.offsetTop);
 
 const offsetBottom = computed(() => {
   const { startIndex, endIndex, offsetTop, totalHeight } = scrollState.value;
+  const estHeight = estimatedRowHeight.value;
   let renderedHeight = 0;
   for (let i = startIndex; i < endIndex; i++) {
     renderedHeight +=
-      rowHeights.value[filteredRows.value[i]?.id] || props.rowHeight;
+      rowHeights.value[filteredRows.value[i]?.id] || estHeight;
   }
   return Math.max(0, totalHeight - offsetTop - renderedHeight);
 });
@@ -515,13 +526,26 @@ const isRowExpanded = (row: any) => expandedRows.value.has(row.id);
 
 const toggleRowExpand = (row: any) => {
   if (!props.expandable) return;
-  if (expandedRows.value.has(row.id)) expandedRows.value.delete(row.id);
+  const isCollapsing = expandedRows.value.has(row.id);
+  
+  if (isCollapsing) {
+    delete rowHeights.value[row.id];
+  }
+  
+  if (isCollapsing) expandedRows.value.delete(row.id);
   else expandedRows.value.add(row.id);
   expandedRows.value = new Set(expandedRows.value);
-
-  if (props.autoRowHeight) {
+  
+  if (isCollapsing && scrollContainer.value) {
     nextTick(() => {
-      registerRowHeight(row.id, 0);
+      if (scrollContainer.value) {
+        scrollContainer.value.scrollTop += 1;
+        nextTick(() => {
+          if (scrollContainer.value) {
+            scrollContainer.value.scrollTop -= 1;
+          }
+        });
+      }
     });
   }
 };
@@ -540,6 +564,22 @@ watch(filteredRows, () => {
   scrollTop.value = 0;
   if (scrollContainer.value) scrollContainer.value.scrollTop = 0;
 });
+
+let prevExpandedRows = new Set<string>();
+watch(
+  () => expandedRows.value,
+  (newVal) => {
+    if (props.autoRowHeight) {
+      prevExpandedRows.forEach((id) => {
+        if (!newVal.has(id)) {
+          delete rowHeights.value[id];
+        }
+      });
+      prevExpandedRows = new Set(newVal);
+    }
+  },
+  { deep: true }
+);
 
 watch(
   () => props.loading,
@@ -618,7 +658,6 @@ onUnmounted(() => {
     resizeObserver.disconnect();
   }
   if (rafId) cancelAnimationFrame(rafId);
-  debouncedRegisterRowHeight.cancel();
 });
 </script>
 
