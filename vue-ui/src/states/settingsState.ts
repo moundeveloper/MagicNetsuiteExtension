@@ -5,12 +5,14 @@ export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
   openOnCustomizationPage: boolean;
+  preferredFeatures: string[]; // array of route names that are preferred
 }
 
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
-  openOnCustomizationPage: true
+  openOnCustomizationPage: true,
+  preferredFeatures: []
 };
 
 const settings = reactive<ShortcutsSettings>(defaultSettings);

@@ -222,7 +222,6 @@ onMounted(() => {
     });
 
     chrome.storage.local.get("cachedCode", (result) => {
-      console.log("Value:", result.cachedCode);
       code.value = result.cachedCode || defaultCode;
     });
 

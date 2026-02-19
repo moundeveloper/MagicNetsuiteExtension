@@ -11,6 +11,7 @@ import { useSettings } from "../states/settingsState";
 import ModulesConnected from "./ModulesConnected.vue";
 import { Privilege } from "../types/privilege";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
+import MPanel from "../components/universal/panels/MPanel.vue";
 
 const props = defineProps<{
   links: RouteItem[];
@@ -24,7 +25,7 @@ const blackList = ["settings", "modules not found"];
 const mode = import.meta.env.MODE;
 const { settings } = useSettings();
 
-const filteredLinks = computed(() => {
+const allLinks = computed(() => {
   return props.links.filter((link) => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
@@ -34,15 +35,36 @@ const filteredLinks = computed(() => {
   });
 });
 
+const preferredLinks = computed(() => {
+  return allLinks.value.filter((l) =>
+    settings.preferredFeatures.includes(l.route)
+  );
+});
+
+const nonPreferredLinks = computed(() => {
+  return allLinks.value.filter(
+    (l) => !settings.preferredFeatures.includes(l.route)
+  );
+});
+
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
 const canAccess = (link: RouteItem) => {
   if (link.status === RouteStatus.release) return true;
-  return isAdmin.value; // dev routes only for ADMIN
+  return isAdmin.value;
 };
 
 const isDisabled = (link: RouteItem) => {
   return !canAccess(link);
+};
+
+const togglePreferred = (routeName: string) => {
+  const index = settings.preferredFeatures.indexOf(routeName);
+  if (index === -1) {
+    settings.preferredFeatures.push(routeName);
+  } else {
+    settings.preferredFeatures.splice(index, 1);
+  }
 };
 
 const parseShortcut = (shortcut: string) => {
@@ -112,47 +134,114 @@ onBeforeUnmount(() => {
     position="bottom"
     style="height: 70vh"
   >
-    <div class="flex flex-col gap-4 h-full">
+    <div class="flex flex-col gap-4 h-full overflow-y-auto">
       <InputText v-model="search" placeholder="Search" autofocus />
 
-      <div
-        class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-8 p-2 overflow-y-auto"
+      <MPanel
+        v-if="preferredLinks.length > 0"
+        expanded
+        toggleable
+        outline
+        header="Preferred"
       >
-        <router-link
-          v-for="link in filteredLinks"
-          :key="link.route"
-          :to="link.route"
-          custom
-          v-slot="{ navigate }"
-        >
-          <div
-            class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
-            :class="{
-              'feature-development': link.status !== RouteStatus.release,
-              'feature-disabled': isDisabled(link)
-            }"
-            @click="
-              () => {
-                if (canAccess(link)) {
-                  navigate();
-                  closeDrawer(link.status);
-                }
-              }
-            "
+        <div class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2">
+          <router-link
+            v-for="link in preferredLinks"
+            :key="link.route"
+            :to="link.route"
+            custom
+            v-slot="{ navigate }"
           >
             <div
-              v-if="link.status !== RouteStatus.release"
-              class="feature-status"
-              :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+              class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+              :class="{
+                'feature-development': link.status !== RouteStatus.release,
+                'feature-disabled': isDisabled(link)
+              }"
+              @click="
+                () => {
+                  if (canAccess(link)) {
+                    navigate();
+                    closeDrawer(link.status);
+                  }
+                }
+              "
             >
-              {{ link.status }}
-            </div>
+              <button
+                class="preferred-btn active"
+                @click.stop="togglePreferred(link.route)"
+                title="Remove from preferred"
+              >
+                <i class="pi pi-star-fill"></i>
+              </button>
 
-            <i :class="link.icon" />
-            <span class="text-center">{{ link.name }}</span>
-          </div>
-        </router-link>
-      </div>
+              <div
+                v-if="link.status !== RouteStatus.release"
+                class="feature-status"
+                :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+              >
+                {{ link.status }}
+              </div>
+
+              <i :class="link.icon" />
+              <span class="text-center">{{ link.name }}</span>
+            </div>
+          </router-link>
+        </div>
+      </MPanel>
+
+      <MPanel
+        v-if="nonPreferredLinks.length > 0"
+        expanded
+        toggleable
+        outline
+        header="All Features"
+      >
+        <div class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2">
+          <router-link
+            v-for="link in nonPreferredLinks"
+            :key="link.route"
+            :to="link.route"
+            custom
+            v-slot="{ navigate }"
+          >
+            <div
+              class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
+              :class="{
+                'feature-development': link.status !== RouteStatus.release,
+                'feature-disabled': isDisabled(link)
+              }"
+              @click="
+                () => {
+                  if (canAccess(link)) {
+                    navigate();
+                    closeDrawer(link.status);
+                  }
+                }
+              "
+            >
+              <button
+                class="preferred-btn"
+                @click.stop="togglePreferred(link.route)"
+                title="Add to preferred"
+              >
+                <i class="pi pi-star"></i>
+              </button>
+
+              <div
+                v-if="link.status !== RouteStatus.release"
+                class="feature-status"
+                :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+              >
+                {{ link.status }}
+              </div>
+
+              <i :class="link.icon" />
+              <span class="text-center">{{ link.name }}</span>
+            </div>
+          </router-link>
+        </div>
+      </MPanel>
     </div>
   </Drawer>
 </template>
@@ -231,5 +320,28 @@ onBeforeUnmount(() => {
 .feature-development:hover {
   background-color: var(--p-slate-200);
   color: var(--p-slate-400);
+}
+
+.preferred-btn {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0.5rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--p-slate-400);
+  transition: color 0.2s;
+  padding: 0.25rem;
+  z-index: 1;
+}
+
+.preferred-btn:hover {
+  color: var(--p-amber-500);
+}
+
+.preferred-btn.active {
+  color: var(--p-amber-500);
 }
 </style>
