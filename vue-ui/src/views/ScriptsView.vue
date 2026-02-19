@@ -315,9 +315,4 @@ onMounted(async () => {
   </MCard>
 </template>
 
-<style scoped>
-h1 {
-  font-weight: 600;
-  color: var(--text-color);
-}
-</style>
+<style scoped></style>

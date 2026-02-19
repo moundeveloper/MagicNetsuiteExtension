@@ -39,7 +39,7 @@ window.getCurrentRecordIdType = (N) => {
   return currentRecordData;
 };
 
-window.getAllRecords = ({ record, query }) => {
+window.getAllRecordTypes = ({ record, query }) => {
   const recordTypes = record.Type;
   const standardRecords = Object.entries(recordTypes).map(([key, value]) => {
     const keys = key.toLowerCase().split("_");

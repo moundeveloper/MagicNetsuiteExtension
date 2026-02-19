@@ -16,4 +16,5 @@ export enum RequestRoutes {
   LOGS = "LOGS",
   ROOT_FOLDERS = "ROOT_FOLDERS",
   MEDIA_ITEMS = "MEDIA_ITEMS", // Both files and folders
+  GET_ALL_RECORD_TYPES = "GET_ALL_RECORD_TYPES",
 }

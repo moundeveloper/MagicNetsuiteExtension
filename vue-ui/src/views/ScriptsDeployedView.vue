@@ -55,7 +55,7 @@
     </MCard>
 
     <MPanel outline toggleable header="Advanced Filters">
-      <div class="p-3 flex flex-wrap">
+      <div class="p-3 flex flex-wrap gap-4">
         <MPanel outline header="Script Type">
           <div class="p-2 flex gap-2">
             <Button
@@ -92,6 +92,23 @@
             </Button>
           </div>
         </MPanel>
+
+        <MPanel outline header="Record">
+          <div class="p-2">
+            <Select
+              v-model="selectedRecord"
+              :options="availableRecords"
+              filter
+              optionLabel="name"
+              optionValue="id"
+              placeholder="Select a Record"
+              :virtualScrollerOptions="{ itemSize: 44 }"
+              class="w-[25rem]"
+              :loading="recordsLoading"
+              @change="handleRecordChange"
+            />
+          </div>
+        </MPanel>
       </div>
     </MPanel>
   </MCard>
@@ -111,26 +128,33 @@
       v-for="(item, index) in computedEditors"
       :key="item.script?.scriptId"
       outline
-      expanded
+      :expanded="!item.failed"
       class="editor-panel"
     >
       <template #header>
         <span
-          class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none cursor-pointer"
+          class="p-3 bg-slate-300 rounded rounded-tr-none rounded-br-none cursor-pointer flex items-center gap-2"
           @click="goToScript($event, item.script?.id!)"
         >
+          <i v-if="item.failed" class="pi pi-lock"></i>
           {{ item.script?.scriptName }} - {{ item.script?.scriptType }}
+          <span v-if="item.failed" class="text-red-600 text-sm">(Locked)</span>
         </span>
       </template>
 
+      <div v-if="item.failed" class="p-4 text-center text-gray-500">
+        <i class="pi pi-lock text-2xl mb-2"></i>
+        <p>Failed to load script content</p>
+      </div>
       <CodeViewer
+        v-else
         :ref="
           (el) => {
             if (el) registerEditor(el as unknown as CodeViewerAPI, item);
             else unregisterEditor(item);
           }
         "
-        :code="item.code"
+        :code="item.code || ''"
         language="javascript"
         autoHeight
       />
@@ -151,7 +175,7 @@ import {
 import MCard from "../components/universal/card/MCard.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
-import { Button, InputText } from "primevue";
+import { Button, InputText, Select } from "primevue";
 import CodeViewer from "../components/CodeViewer.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
@@ -170,8 +194,9 @@ type DeployedScript = {
 };
 type Editors = {
   editor?: CodeViewerAPI | null;
-  code: string;
+  code: string | null;
   script?: DeployedScript;
+  failed?: boolean;
 };
 
 const { formattedRouteName } = useFormattedRouteName();
@@ -179,9 +204,12 @@ const { formattedRouteName } = useFormattedRouteName();
 const props = defineProps<{ vhOffset: number }>();
 
 const loading = ref(false);
+const recordsLoading = ref(false);
 const searchTerm = ref("");
 const wholeWord = ref(false);
 const caseSensitive = ref(false);
+const selectedRecord = ref<string | null>(null);
+const availableRecords = ref<{ name: string; id: string }[]>([]);
 
 /* New Code Start */
 const {
@@ -301,12 +329,16 @@ watch(
 );
 
 // Fetch scripts
-const getDeployedScripts = async () => {
+const getDeployedScripts = async (recordType?: string) => {
   loading.value = true;
   try {
     if (!isChromeExtension) return;
-    const { message: record } = await callApi(RequestRoutes.CURRENT_REC_TYPE);
-    const { type } = record || {};
+
+    let type = recordType;
+    if (!type) {
+      const { message: record } = await callApi(RequestRoutes.CURRENT_REC_TYPE);
+      type = record?.type;
+    }
     if (!type) return;
 
     const { message: deployedScriptsResponse } = await callApi(
@@ -317,7 +349,11 @@ const getDeployedScripts = async () => {
 
     editors.value.length = 0;
     deployedScripts.forEach((scriptItem) => {
-      editors.value.push({ code: scriptItem.scriptFile, script: scriptItem });
+      editors.value.push({
+        code: scriptItem.scriptFile,
+        script: scriptItem,
+        failed: !scriptItem.scriptFile
+      });
     });
 
     await nextTick(); // wait for v-for to render
@@ -328,7 +364,44 @@ const getDeployedScripts = async () => {
   }
 };
 
-onMounted(() => getDeployedScripts());
+const getAllRecordTypes = async () => {
+  recordsLoading.value = true;
+  try {
+    if (!isChromeExtension) return;
+    const response = await callApi(RequestRoutes.GET_ALL_RECORD_TYPES);
+    const records = response.message as { name: string; id: string }[];
+    availableRecords.value = records || [];
+  } catch (error) {
+    console.error("Error fetching records:", error);
+  } finally {
+    recordsLoading.value = false;
+  }
+};
+
+const handleRecordChange = () => {
+  console.log("Selected record:", selectedRecord.value);
+  if (selectedRecord.value) {
+    getDeployedScripts(selectedRecord.value);
+  }
+};
+
+const initializeSelectedRecord = async () => {
+  if (!isChromeExtension) return;
+  try {
+    const { message: record } = await callApi(RequestRoutes.CURRENT_REC_TYPE);
+    if (record?.type) {
+      selectedRecord.value = record.type;
+    }
+  } catch (error) {
+    console.error("Error getting current record type:", error);
+  }
+};
+
+onMounted(() => {
+  getDeployedScripts();
+  getAllRecordTypes();
+  initializeSelectedRecord();
+});
 
 const goToScript = async (event: MouseEvent, scriptId: string | number) => {
   console.log("scriptId", scriptId);

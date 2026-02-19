@@ -159,8 +159,12 @@ const handlers = {
       csrfToken
     });
   },
+  GET_ALL_RECORD_TYPES: async ({ modules }) => {
+    console.log("Get All Record Types action received");
+    const { record, query } = modules;
+    return window.getAllRecordTypes({ record, query });
+  },
   PING: async ({ modules, payload: { delay } }) => {
-    console.log("Ping action received with delay:", delay);
     return new Promise((resolve) => {
       setTimeout(() => {
         resolve({ pong: true, delay });

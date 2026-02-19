@@ -53,11 +53,11 @@ const testPing = async () => {
 
 <template>
   <h1>{{ formattedRouteName }}</h1>
-  <div class="test-buttons">
+  <!--   <div class="test-buttons">
     <button class="test-ping-btn" @click="testPing">
       Test Temp Tab (30s Ping)
     </button>
-  </div>
+  </div> -->
   <InputText v-model="searchFeatures" placeholder="Search" />
 
   <div
