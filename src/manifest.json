@@ -47,14 +47,14 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "scripts.js",
-        "netsuiteApi.js",
-        "content.js",
-        "customRecords.js",
-        "sandboxCode.js",
-        "exportRecord.js",
-        "logs.js",
-        "mediaItems.js",
+        "netsuiteApi/scripts.js",
+        "netsuiteApi/netsuiteApi.js",
+        "netsuiteApi/content.js",
+        "netsuiteApi/customRecords.js",
+        "netsuiteApi/sandboxCode.js",
+        "netsuiteApi/exportRecord.js",
+        "netsuiteApi/logs.js",
+        "netsuiteApi/mediaItems.js",
         "dist/vue-ui/*",
         "content/content_export.js",
         "content/core/injection/*.js",

@@ -1,9 +1,9 @@
 export const INJECTABLE_SCRIPTS = [
-  "scripts.js",
-  "customRecords.js",
-  "sandboxCode.js",
-  "exportRecord.js",
-  "logs.js",
-  "mediaItems.js",
-  "netsuiteApi.js"
+  "netsuiteApi/scripts.js",
+  "netsuiteApi/customRecords.js",
+  "netsuiteApi/sandboxCode.js",
+  "netsuiteApi/exportRecord.js",
+  "netsuiteApi/logs.js",
+  "netsuiteApi/mediaItems.js",
+  "netsuiteApi/netsuiteApi.js"
 ];
