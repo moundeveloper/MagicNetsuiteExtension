@@ -6,7 +6,7 @@ const exportRecordDetails = (N, config = {}) => {
     whiteListFields = null,
     whiteListSublists = null,
     whiteListSublistFields = null,
-    include = null,
+    include = null
   } = config;
 
   const { record, currentRecord } = N;
@@ -18,7 +18,7 @@ const exportRecordDetails = (N, config = {}) => {
   console.log("Exporting record:", {
     recordId,
     recordType,
-    config,
+    config
   });
 
   if (!recordId || !recordType) {
@@ -31,7 +31,7 @@ const exportRecordDetails = (N, config = {}) => {
   try {
     rec = record.load({
       type: recordType,
-      id: recordId,
+      id: recordId
     });
   } catch (error) {
     console.log("Record not found", error);

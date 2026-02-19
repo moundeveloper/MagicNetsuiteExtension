@@ -38,3 +38,38 @@ window.getCurrentRecordIdType = (N) => {
   console.log("Current Record Data:", currentRecordData);
   return currentRecordData;
 };
+
+window.getAllRecords = ({ record, query }) => {
+  const recordTypes = record.Type;
+  const standardRecords = Object.entries(recordTypes).map(([key, value]) => {
+    const keys = key.toLowerCase().split("_");
+    const formattedKey = keys
+      .map(
+        ([keyToCapitalize, ...rest]) =>
+          keyToCapitalize.toUpperCase() + rest.join("")
+      )
+      .join(" ");
+
+    const formattedValue = value.toLowerCase();
+
+    return {
+      name: formattedKey,
+      id: formattedValue
+    };
+  });
+
+  const customRecords = query
+    .runSuiteQL({
+      query: `SELECT
+	CustomRecordType.name,
+	CustomRecordType.scriptId as id,
+	FROM
+	CustomRecordType
+`
+    })
+    .asMappedResults();
+
+  const records = [...customRecords, ...standardRecords];
+
+  return records;
+};

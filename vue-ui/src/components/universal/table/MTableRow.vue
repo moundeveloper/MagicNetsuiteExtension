@@ -94,6 +94,9 @@ watch(() => props.expanded, () => {
     nextTick(updateHeight);
   });
 });
+watch(() => props.gridTemplateColumns, () => {
+  nextTick(updateHeight);
+});
 watch(() => props.row, updateHeight, { deep: true });
 
 const toggle = () => {

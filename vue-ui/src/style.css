@@ -64,7 +64,6 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  color: var(--p-slate-700);
 }
 
 a {
@@ -72,8 +71,19 @@ a {
 }
 
 h1 {
-  color: var(--p-slate-700);
   font-weight: 800;
+}
+
+a,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span:not(.monaco-editor-container span):not(.terminal span) {
+  color: var(--p-slate-700);
 }
 
 body,

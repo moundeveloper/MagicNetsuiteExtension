@@ -92,7 +92,7 @@ onBeforeUnmount(() => {
       @click="visibleBottom = true"
       class="fixed flex-1"
     >
-      <span class="text-white">{{
+      <span class="!text-white">{{
         `Open Menu(${settings.drawerOpen.toUpperCase()})`
       }}</span>
     </Button>
