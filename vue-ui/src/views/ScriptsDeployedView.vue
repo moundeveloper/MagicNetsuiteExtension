@@ -109,6 +109,19 @@
             />
           </div>
         </MPanel>
+
+        <MPanel outline header="Status">
+          <div class="p-2">
+            <Checkbox
+              v-model="showLockedScripts"
+              :binary="true"
+              inputId="showLockedScripts"
+            />
+            <label for="showLockedScripts" class="ml-2 cursor-pointer"
+              >Show Locked Scripts</label
+            >
+          </div>
+        </MPanel>
       </div>
     </MPanel>
   </MCard>
@@ -175,7 +188,7 @@ import {
 import MCard from "../components/universal/card/MCard.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
-import { Button, InputText, Select } from "primevue";
+import { Button, InputText, Select, Checkbox } from "primevue";
 import CodeViewer from "../components/CodeViewer.vue";
 import { useFormattedRouteName } from "../composables/useFormattedRouteName";
 import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
@@ -209,6 +222,7 @@ const searchTerm = ref("");
 const wholeWord = ref(false);
 const caseSensitive = ref(false);
 const selectedRecord = ref<string | null>(null);
+const showLockedScripts = ref(true);
 const availableRecords = ref<{ name: string; id: string }[]>([]);
 
 /* New Code Start */
@@ -235,10 +249,16 @@ const editors = ref<Editors[]>([]);
 const isNavigating = ref(false);
 
 const computedEditors = computed(() => {
-  if (!client.value && !userevent.value && !workflowaction.value) {
-    return [...editors.value];
+  let filtered = editors.value;
+
+  if (!showLockedScripts.value) {
+    filtered = filtered.filter((editor) => !editor.failed);
   }
-  return editors.value.filter((editor) => {
+
+  if (!client.value && !userevent.value && !workflowaction.value) {
+    return [...filtered];
+  }
+  return filtered.filter((editor) => {
     const type = editor.script?.scriptType?.toLowerCase();
     return (
       (client.value && type === "client") ||
@@ -290,10 +310,10 @@ const handleEnter = (event: KeyboardEvent) => {
 };
 
 watch(
-  [searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction],
+  [searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction, showLockedScripts],
   async (
-    [term, cs, ww, cl, ue, wa],
-    [prevTerm, prevCs, prevWw, prevCl, prevUe, prevWa]
+    [term, cs, ww, cl, ue, wa, locked],
+    [prevTerm, prevCs, prevWw, prevCl, prevUe, prevWa, prevLocked]
   ) => {
     // Do not rebuild index while navigating
     if (isNavigating.value) {
@@ -302,7 +322,7 @@ watch(
     }
 
     // Always rebuild search when filters change
-    const filtersChanged = cl !== prevCl || ue !== prevUe || wa !== prevWa;
+    const filtersChanged = cl !== prevCl || ue !== prevUe || wa !== prevWa || locked !== prevLocked;
 
     // Ignore no-op changes ONLY when both filters and search params unchanged
     if (
