@@ -8,7 +8,6 @@ import {
 } from "../router/routesMap";
 import { Button, Drawer, InputText } from "primevue";
 import { useSettings } from "../states/settingsState";
-import ModulesConnected from "./ModulesConnected.vue";
 import { Privilege } from "../types/privilege";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
@@ -18,10 +17,9 @@ const props = defineProps<{
 }>();
 
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
-const route = useRoute();
 const visibleBottom = ref(false);
 const search = ref("");
-const blackList = ["settings", "modules not found"];
+const blackList = ["settings", "modules not found", "features", "processing"];
 const mode = import.meta.env.MODE;
 const { settings, isSettingsLoaded } = useSettings();
 
@@ -37,16 +35,12 @@ const allLinks = computed(() => {
 
 const preferredLinks = computed(() => {
   const prefs = settings.preferredFeatures || [];
-  return allLinks.value.filter((l) =>
-    prefs.includes(l.route)
-  );
+  return allLinks.value.filter((l) => prefs.includes(l.route));
 });
 
 const nonPreferredLinks = computed(() => {
   const prefs = settings.preferredFeatures || [];
-  return allLinks.value.filter(
-    (l) => !prefs.includes(l.route)
-  );
+  return allLinks.value.filter((l) => !prefs.includes(l.route));
 });
 
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
@@ -113,7 +107,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex p-4 gap-3 z-10">
-    <MagicNetsuiteLogo width="3rem" fill="var(--p-slate-600)" />
+    <RouterLink to="/" class="flex flex-col items-center">
+      <MagicNetsuiteLogo width="3rem" fill="var(--p-slate-600)" />
+    </RouterLink>
     <Button
       icon="pi pi-arrow-up"
       @click="visibleBottom = true"
@@ -139,9 +135,24 @@ onBeforeUnmount(() => {
     position="bottom"
     style="height: 70vh"
   >
-    <div v-if="isSettingsLoaded" class="flex flex-col gap-4 h-full overflow-y-auto">
-      <InputText v-model="search" placeholder="Search" autofocus />
+    <div
+      v-if="isSettingsLoaded"
+      class="flex flex-col gap-4 h-full overflow-y-auto"
+    >
+      <div class="flex gap-4 px-4">
+        <InputText
+          class="flex-1"
+          v-model="search"
+          placeholder="Search"
+          autofocus
+        />
 
+        <RouterLink to="/">
+          <Button class="w-full h-full" @click="visibleBottom = false">
+            <i class="pi pi-home text-white"></i>
+          </Button>
+        </RouterLink>
+      </div>
       <MPanel
         v-if="preferredLinks.length > 0"
         expanded
@@ -149,7 +160,9 @@ onBeforeUnmount(() => {
         outline
         header="Preferred"
       >
-        <div class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2">
+        <div
+          class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2"
+        >
           <router-link
             v-for="link in preferredLinks"
             :key="link.route"
@@ -183,7 +196,9 @@ onBeforeUnmount(() => {
               <div
                 v-if="link.status !== RouteStatus.release"
                 class="feature-status"
-                :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+                :style="{
+                  backgroundColor: RouteStatusColors[link.status] || ''
+                }"
               >
                 {{ link.status }}
               </div>
@@ -202,7 +217,9 @@ onBeforeUnmount(() => {
         outline
         header="All Features"
       >
-        <div class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2">
+        <div
+          class="grid [grid-template-columns:repeat(auto-fit,150px)] gap-4 p-2"
+        >
           <router-link
             v-for="link in nonPreferredLinks"
             :key="link.route"
@@ -236,7 +253,9 @@ onBeforeUnmount(() => {
               <div
                 v-if="link.status !== RouteStatus.release"
                 class="feature-status"
-                :style="{ backgroundColor: RouteStatusColors[link.status] || '' }"
+                :style="{
+                  backgroundColor: RouteStatusColors[link.status] || ''
+                }"
               >
                 {{ link.status }}
               </div>

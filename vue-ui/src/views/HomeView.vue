@@ -24,7 +24,7 @@ const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
-const blackList = ["features", "settings", "modules not found"];
+const blackList = ["features", "settings", "modules not found", "processing"];
 
 const allFeatures = computed(() => {
   return getRouteMap().filter(
@@ -38,16 +38,12 @@ const allFeatures = computed(() => {
 
 const preferredFeatures = computed(() => {
   const prefs = settings.preferredFeatures || [];
-  return allFeatures.value.filter((f) =>
-    prefs.includes(f.route)
-  );
+  return allFeatures.value.filter((f) => prefs.includes(f.route));
 });
 
 const nonPreferredFeatures = computed(() => {
   const prefs = settings.preferredFeatures || [];
-  return allFeatures.value.filter(
-    (f) => !prefs.includes(f.route)
-  );
+  return allFeatures.value.filter((f) => !prefs.includes(f.route));
 });
 
 const canAccess = (feature: (typeof allFeatures.value)[0]) => {
@@ -55,7 +51,8 @@ const canAccess = (feature: (typeof allFeatures.value)[0]) => {
   return isAdmin.value;
 };
 
-const isDisabled = (feature: (typeof allFeatures.value)[0]) => !canAccess(feature);
+const isDisabled = (feature: (typeof allFeatures.value)[0]) =>
+  !canAccess(feature);
 
 const togglePreferred = (route: string) => {
   if (!settings.preferredFeatures) {
@@ -136,7 +133,9 @@ const testPing = async () => {
             <div
               v-if="feature.status !== RouteStatus.release"
               class="feature-status"
-              :style="{ backgroundColor: RouteStatusColors[feature.status] || '' }"
+              :style="{
+                backgroundColor: RouteStatusColors[feature.status] || ''
+              }"
             >
               {{ feature.status }}
             </div>
@@ -188,7 +187,9 @@ const testPing = async () => {
             <div
               v-if="feature.status !== RouteStatus.release"
               class="feature-status"
-              :style="{ backgroundColor: RouteStatusColors[feature.status] || '' }"
+              :style="{
+                backgroundColor: RouteStatusColors[feature.status] || ''
+              }"
             >
               {{ feature.status }}
             </div>
