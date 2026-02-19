@@ -369,3 +369,10 @@ onBeforeUnmount(() => {
   color: var(--p-amber-500);
 }
 </style>
+
+<style>
+.p-drawer-title {
+  color: var(--p-slate-600) !important;
+  font-weight: 700 !important;
+}
+</style>
