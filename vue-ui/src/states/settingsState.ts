@@ -1,5 +1,5 @@
 // settingsState.ts
-import { onMounted, reactive, watch } from "vue";
+import { onMounted, reactive, ref, watch } from "vue";
 
 export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
@@ -15,27 +15,37 @@ const defaultSettings: ShortcutsSettings = {
   preferredFeatures: []
 };
 
-const settings = reactive<ShortcutsSettings>(defaultSettings);
+const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
+const isSettingsLoaded = ref(false);
+let isLoaded = false;
 
 export function useSettings() {
   const loadSettings = async () => {
     try {
-      console.log("[loadSettings]");
       const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+      
       if (result.magic_netsuite_settings) {
-        Object.assign(settings, {
-          ...defaultSettings,
-          ...result.magic_netsuite_settings
-        });
+        const stored = result.magic_netsuite_settings;
+        
+        settings.preferredFeatures = Array.isArray(stored.preferredFeatures)
+          ? [...stored.preferredFeatures]
+          : [];
+        settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
+        settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
       }
+      isLoaded = true;
+      isSettingsLoaded.value = true;
     } catch (error) {
-      console.log("[loadSettings] error", "Storage not available");
+      isLoaded = true;
+      isSettingsLoaded.value = true;
     }
   };
 
   const saveSettings = async () => {
-    console.log("[saveSettings]", settings);
-    await chrome.storage.sync.set({ magic_netsuite_settings: settings });
+    if (!isLoaded) {
+      return;
+    }
+    await chrome.storage.sync.set({ magic_netsuite_settings: JSON.parse(JSON.stringify(settings)) });
   };
 
   watch(
@@ -51,6 +61,7 @@ export function useSettings() {
   });
 
   return {
-    settings: settings
+    settings: settings,
+    isSettingsLoaded
   };
 }

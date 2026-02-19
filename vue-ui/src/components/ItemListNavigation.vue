@@ -23,7 +23,7 @@ const visibleBottom = ref(false);
 const search = ref("");
 const blackList = ["settings", "modules not found"];
 const mode = import.meta.env.MODE;
-const { settings } = useSettings();
+const { settings, isSettingsLoaded } = useSettings();
 
 const allLinks = computed(() => {
   return props.links.filter((link) => {
@@ -36,14 +36,16 @@ const allLinks = computed(() => {
 });
 
 const preferredLinks = computed(() => {
+  const prefs = settings.preferredFeatures || [];
   return allLinks.value.filter((l) =>
-    settings.preferredFeatures.includes(l.route)
+    prefs.includes(l.route)
   );
 });
 
 const nonPreferredLinks = computed(() => {
+  const prefs = settings.preferredFeatures || [];
   return allLinks.value.filter(
-    (l) => !settings.preferredFeatures.includes(l.route)
+    (l) => !prefs.includes(l.route)
   );
 });
 
@@ -59,6 +61,9 @@ const isDisabled = (link: RouteItem) => {
 };
 
 const togglePreferred = (routeName: string) => {
+  if (!settings.preferredFeatures) {
+    settings.preferredFeatures = [];
+  }
   const index = settings.preferredFeatures.indexOf(routeName);
   if (index === -1) {
     settings.preferredFeatures.push(routeName);
@@ -134,7 +139,7 @@ onBeforeUnmount(() => {
     position="bottom"
     style="height: 70vh"
   >
-    <div class="flex flex-col gap-4 h-full overflow-y-auto">
+    <div v-if="isSettingsLoaded" class="flex flex-col gap-4 h-full overflow-y-auto">
       <InputText v-model="search" placeholder="Search" autofocus />
 
       <MPanel

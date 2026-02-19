@@ -13,7 +13,7 @@ import { useSettings } from "../states/settingsState";
 import MPanel from "../components/universal/panels/MPanel.vue";
 
 const { formattedRouteName } = useFormattedRouteName();
-const { settings } = useSettings();
+const { settings, isSettingsLoaded } = useSettings();
 
 const searchFeatures = ref("");
 const props = defineProps<{
@@ -37,14 +37,16 @@ const allFeatures = computed(() => {
 });
 
 const preferredFeatures = computed(() => {
+  const prefs = settings.preferredFeatures || [];
   return allFeatures.value.filter((f) =>
-    settings.preferredFeatures.includes(f.route)
+    prefs.includes(f.route)
   );
 });
 
 const nonPreferredFeatures = computed(() => {
+  const prefs = settings.preferredFeatures || [];
   return allFeatures.value.filter(
-    (f) => !settings.preferredFeatures.includes(f.route)
+    (f) => !prefs.includes(f.route)
   );
 });
 
@@ -56,6 +58,9 @@ const canAccess = (feature: (typeof allFeatures.value)[0]) => {
 const isDisabled = (feature: (typeof allFeatures.value)[0]) => !canAccess(feature);
 
 const togglePreferred = (route: string) => {
+  if (!settings.preferredFeatures) {
+    settings.preferredFeatures = [];
+  }
   const index = settings.preferredFeatures.indexOf(route);
   if (index === -1) {
     settings.preferredFeatures.push(route);
@@ -85,6 +90,7 @@ const testPing = async () => {
   <InputText v-model="searchFeatures" placeholder="Search" />
 
   <div
+    v-if="isSettingsLoaded"
     :style="{ height: `${vhOffset}vh` }"
     data-ignore
     class="flex flex-col gap-4 overflow-y-auto p-2"
