@@ -38,11 +38,6 @@ const { settings } = useSettings();
 </template>
 
 <style scoped>
-h1 {
-  font-weight: 600;
-  color: var(--text-color);
-}
-
 .table-custom {
   flex: 1;
 }
@@ -54,7 +49,6 @@ h1 {
 .settings-section h2 {
   font-size: 1.5rem;
   margin-bottom: 1rem;
-  color: var(--text-color);
 }
 
 .shortcut-item {
@@ -77,7 +71,6 @@ h1 {
 }
 
 .shortcut-item small {
-  color: var(--text-color-secondary);
   font-size: 0.875rem;
 }
 </style>

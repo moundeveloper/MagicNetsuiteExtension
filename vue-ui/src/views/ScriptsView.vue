@@ -98,24 +98,32 @@ const fetchDeployments = async (script: ScriptItem) => {
 };
 
 const getScripts = async () => {
-  const response = (await callApi(RequestRoutes.SCRIPTS)) || {};
+  loading.value = true;
 
-  if (!response) return;
-  const { message: scripts } = response as ApiResponse;
+  try {
+    const response = (await callApi(RequestRoutes.SCRIPTS)) || {};
 
-  if (!scripts || !Array.isArray(scripts)) return;
+    if (!response) return;
+    const { message: scripts } = response as ApiResponse;
 
-  items.value = scripts.map((script: any) => ({
-    id: script.id,
-    internalid: script.id,
-    name: script.name,
-    scriptid: script.scriptid,
-    owner: script.owner,
-    scriptfile: script.scriptfile,
-    scriptType: script.scripttype,
-    scriptDeployments: [],
-    deploymentsLoading: false
-  }));
+    if (!scripts || !Array.isArray(scripts)) return;
+
+    items.value = scripts.map((script: any) => ({
+      id: script.id,
+      internalid: script.id,
+      name: script.name,
+      scriptid: script.scriptid,
+      owner: script.owner,
+      scriptfile: script.scriptfile,
+      scriptType: script.scripttype,
+      scriptDeployments: [],
+      deploymentsLoading: false
+    }));
+  } catch (e) {
+    console.error(e);
+  } finally {
+    loading.value = false;
+  }
 };
 
 const getScriptDeploymentUrl = async (deployment: string) => {
@@ -146,10 +154,8 @@ const openSuitelet = async (script: string, deployment: string) => {
 };
 
 onMounted(async () => {
-  loading.value = true;
   await getScripts();
   await getScriptTypes();
-  loading.value = false;
 });
 </script>
 

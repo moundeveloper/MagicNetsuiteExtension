@@ -25,20 +25,27 @@ const props = defineProps<{
 }>();
 
 const getCustomRecords = async () => {
-  const response = await callApi(RequestRoutes.CUSTOM_RECORDS);
-  if (!response) return;
-  const { message: customRecords } = response as ApiResponse;
+  loading.value = true;
+  try {
+    const response = await callApi(RequestRoutes.CUSTOM_RECORDS);
+    if (!response) return;
+    const { message: customRecords } = response as ApiResponse;
 
-  if (!customRecords || !Array.isArray(customRecords)) return;
+    if (!customRecords || !Array.isArray(customRecords)) return;
 
-  records.value = customRecords.map((record: any) => ({
-    id: record.internalid,
-    internalid: record.internalid,
-    name: record.name,
-    scriptid: record.scriptid,
-    description: record.description,
-    owner: record.owner
-  }));
+    records.value = customRecords.map((record: any) => ({
+      id: record.internalid,
+      internalid: record.internalid,
+      name: record.name,
+      scriptid: record.scriptid,
+      description: record.description,
+      owner: record.owner
+    }));
+  } catch (error) {
+    console.error("getCustomRecords error:", error);
+  } finally {
+    loading.value = false;
+  }
 };
 
 const getCustomRecordUrl = async (recordId: number) => {
@@ -53,9 +60,7 @@ const getCustomRecordUrl = async (recordId: number) => {
 };
 
 onMounted(async () => {
-  loading.value = true;
   await getCustomRecords();
-  loading.value = false;
 });
 </script>
 

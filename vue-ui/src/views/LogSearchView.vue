@@ -424,18 +424,15 @@ onBeforeUnmount(() => {
 
   <!-- ===================== QUERY FILTERS ===================== -->
 
-  <MPanel outline toggleable box-shadow>
+  <MPanel outline toggleable box-shadow header="Query Filters">
     <template #header>
-      <div class="flex justify-between items-center gap-4 h-full flex-1">
-        <span>Query Filters</span>
-        <Button
-          @click="getLogs"
-          class="h-full bg-[var(--p-slate-300)] !rounded-sm"
-        >
-          <i class="pi pi-search text-white"></i>
-          Run Search</Button
-        >
-      </div>
+      <Button
+        @click="getLogs"
+        class="h-full bg-[var(--p-slate-300)] !rounded-sm ml-auto"
+      >
+        <i class="pi pi-search text-white"></i>
+        Run Search</Button
+      >
     </template>
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div>
@@ -506,78 +503,75 @@ onBeforeUnmount(() => {
   <MPanel
     outline
     toggleable
-    expanded
     header="Quick Filters (Current Results)"
     box-shadow
   >
+    <template #header>
+      <InputGroup class="!w-[40rem] ml-8">
+        <InputGroupAddon class="flex-1">
+          <InputText
+            v-model="filtersState.quick.global"
+            placeholder="Search..."
+            class="w-full"
+          />
+        </InputGroupAddon>
+
+        <InputGroupAddon>
+          <div
+            :style="{
+              backgroundColor: filtersState.quickOptions.caseSensitive
+                ? 'var(--p-slate-300)'
+                : 'var(--p-slate-100)'
+            }"
+            @click="
+              filtersState.quickOptions.caseSensitive =
+                !filtersState.quickOptions.caseSensitive
+            "
+            class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+            title="Case Sensitive"
+          >
+            Aa
+          </div>
+        </InputGroupAddon>
+
+        <InputGroupAddon>
+          <div
+            :style="{
+              backgroundColor: filtersState.quickOptions.wholeWord
+                ? 'var(--p-slate-300)'
+                : 'var(--p-slate-100)'
+            }"
+            @click="
+              filtersState.quickOptions.wholeWord =
+                !filtersState.quickOptions.wholeWord
+            "
+            class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+            title="Whole Word"
+          >
+            "W"
+          </div>
+        </InputGroupAddon>
+
+        <InputGroupAddon>
+          <div
+            :style="{
+              backgroundColor: filtersState.quickOptions.regex
+                ? 'var(--p-slate-300)'
+                : 'var(--p-slate-100)'
+            }"
+            @click="
+              filtersState.quickOptions.regex = !filtersState.quickOptions.regex
+            "
+            class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
+            title="Regex"
+          >
+            .*
+          </div>
+        </InputGroupAddon>
+      </InputGroup>
+    </template>
+
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div>
-        <label class="font-bold block mb-2">Global Search</label>
-        <InputGroup>
-          <InputGroupAddon class="flex-1">
-            <InputText
-              v-model="filtersState.quick.global"
-              placeholder="Search..."
-              class="w-full"
-            />
-          </InputGroupAddon>
-
-          <InputGroupAddon>
-            <div
-              :style="{
-                backgroundColor: filtersState.quickOptions.caseSensitive
-                  ? 'var(--p-slate-300)'
-                  : 'var(--p-slate-100)'
-              }"
-              @click="
-                filtersState.quickOptions.caseSensitive =
-                  !filtersState.quickOptions.caseSensitive
-              "
-              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-              title="Case Sensitive"
-            >
-              Aa
-            </div>
-          </InputGroupAddon>
-
-          <InputGroupAddon>
-            <div
-              :style="{
-                backgroundColor: filtersState.quickOptions.wholeWord
-                  ? 'var(--p-slate-300)'
-                  : 'var(--p-slate-100)'
-              }"
-              @click="
-                filtersState.quickOptions.wholeWord =
-                  !filtersState.quickOptions.wholeWord
-              "
-              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-              title="Whole Word"
-            >
-              "W"
-            </div>
-          </InputGroupAddon>
-
-          <InputGroupAddon>
-            <div
-              :style="{
-                backgroundColor: filtersState.quickOptions.regex
-                  ? 'var(--p-slate-300)'
-                  : 'var(--p-slate-100)'
-              }"
-              @click="
-                filtersState.quickOptions.regex =
-                  !filtersState.quickOptions.regex
-              "
-              class="w-full h-full text-color-slate-600 flex items-center justify-center cursor-pointer select-none"
-              title="Regex"
-            >
-              .*
-            </div>
-          </InputGroupAddon>
-        </InputGroup>
-      </div>
-
       <div>
         <label class="font-bold block mb-2">Start Datetime</label>
         <DatePicker
@@ -708,6 +702,10 @@ onBeforeUnmount(() => {
 
 .p-inputgroupaddon {
   padding: 0 !important;
+}
+
+label {
+  color: var(--p-slate-600);
 }
 </style>
 
