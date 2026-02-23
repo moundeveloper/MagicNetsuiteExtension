@@ -178,6 +178,7 @@ onMounted(async () => {
         :expandable="true"
         :autoRowHeight="true"
         searchable
+        filterable
         search-placeholder="Search scripts..."
       >
         <template #toolbar>
@@ -271,7 +272,7 @@ onMounted(async () => {
           </MPanel>
         </template>
 
-        <MTableColumn label="Name" field="name" width="1fr" searchable>
+        <MTableColumn label="Name" field="name" width="1fr" searchable filterable>
           <template #default="{ value, row }">
             <div
               class="flex gap-2 cursor-pointer hover:underline"
@@ -292,15 +293,17 @@ onMounted(async () => {
           field="scriptfile"
           width="1fr"
           searchable
+          filterable
         />
 
-        <MTableColumn label="Owner" field="owner" width="1fr" searchable />
+        <MTableColumn label="Owner" field="owner" width="1fr" searchable filterable />
 
         <MTableColumn
           label="Script ID"
           field="scriptid"
           width="1fr"
           searchable
+          filterable
         />
 
         <MTableColumn
@@ -308,6 +311,7 @@ onMounted(async () => {
           field="scriptType"
           width="150px"
           searchable
+          filterable
         />
 
         <template #empty>

@@ -76,6 +76,29 @@
       </div>
     </div>
 
+    <!-- Header Columns Filter Row -->
+    <div
+      v-if="filterable && hasFilterableColumns"
+      class="m-table-header-filter"
+      :style="{ gridTemplateColumns }"
+    >
+      <div v-if="expandable" class="m-table-expand-cell"></div>
+      <div
+        v-for="(column, index) in visibleColumns"
+        :key="index"
+        class="m-table-filter-cell"
+      >
+        <input
+          v-if="column.filterable"
+          type="text"
+          :value="columnFilters[column.field] || ''"
+          @input="(e) => updateColumnFilter(column.field, (e.target as HTMLInputElement).value)"
+          placeholder="Filter..."
+          class="column-filter-input"
+        />
+      </div>
+    </div>
+
     <!-- Header Columns -->
     <div class="m-table-header" :style="{ gridTemplateColumns }">
       <div v-if="expandable" class="m-table-expand-cell"></div>
@@ -157,6 +180,7 @@ interface Column {
   slotContent?: any;
   contextMenu?: ContextMenuItem[];
   searchable?: boolean;
+  filterable?: boolean;
 }
 
 interface ColumnWithVisibility extends Column {
@@ -181,6 +205,7 @@ const props = withDefaults(
     collapsibleKey?: string;
     autoRowHeight?: boolean;
     loading?: boolean;
+    filterable?: boolean;
   }>(),
   {
     rowHeight: 48,
@@ -191,7 +216,8 @@ const props = withDefaults(
     collapsible: false,
     collapsibleKey: "m-table-columns",
     autoRowHeight: false,
-    loading: false
+    loading: false,
+    filterable: false
   }
 );
 
@@ -212,6 +238,7 @@ const dropdownStyle = ref<{ left: string; top: string }>({
 });
 const columnToggleRef = ref<HTMLElement | null>(null);
 const dropdownRef = ref<HTMLElement | null>(null);
+const columnFilters = ref<Record<string, string>>({});
 
 const updateDropdownPosition = () => {
   if (!columnToggleRef.value || !dropdownRef.value) return;
@@ -359,6 +386,8 @@ const columns = computed<Column[]>(() => {
       const searchableProp = columnProps.searchable;
       const searchable =
         searchableProp === false || searchableProp === "false" ? false : true;
+      const filterableProp = columnProps.filterable;
+      const filterable = filterableProp === true || filterableProp === "true" || filterableProp === "";
 
       return {
         label: columnProps.label || "",
@@ -366,7 +395,8 @@ const columns = computed<Column[]>(() => {
         width: columnProps.width || "1fr",
         slotContent,
         contextMenu,
-        searchable
+        searchable,
+        filterable
       };
     });
 });
@@ -385,22 +415,50 @@ const visibleColumns = computed(() => {
   );
 });
 
+const hasFilterableColumns = computed(() => {
+  return columns.value.some(col => col.filterable);
+});
+
 const toggleColumn = (field: string) => {
   columnVisibility.value[field] = !columnVisibility.value[field];
   saveColumnVisibility();
 };
 
+const updateColumnFilter = (field: string, value: string) => {
+  columnFilters.value[field] = value;
+};
+
 // Filter rows based on search query
 const filteredRows = computed(() => {
-  if (!searchQuery.value.trim()) return props.rows;
-  const query = searchQuery.value.toLowerCase();
-  const searchableCols = columns.value.filter((c) => c.searchable);
-  return props.rows.filter((row) =>
-    searchableCols.some((col) => {
-      const val = row[col.field];
-      return val != null && String(val).toLowerCase().includes(query);
-    })
+  let result = props.rows;
+
+  // Apply global search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    const searchableCols = columns.value.filter((c) => c.searchable);
+    result = result.filter((row) =>
+      searchableCols.some((col) => {
+        const val = row[col.field];
+        return val != null && String(val).toLowerCase().includes(query);
+      })
+    );
+  }
+
+  // Apply column filters
+  const filterColumns = Object.entries(columnFilters.value).filter(
+    ([, value]) => value && value.trim()
   );
+
+  if (filterColumns.length > 0) {
+    result = result.filter((row) => {
+      return filterColumns.every(([field, query]) => {
+        const val = row[field];
+        return val != null && String(val).toLowerCase().includes(query.toLowerCase());
+      });
+    });
+  }
+
+  return result;
 });
 
 // Simple visibleRange for fixed height rows
@@ -840,6 +898,36 @@ onUnmounted(() => {
   min-width: 0;
 }
 
+.m-table-header-filter {
+  display: grid;
+  gap: 1px;
+  background-color: var(--m-slate-200);
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+  border-bottom: 1px solid var(--p-slate-200);
+}
+
+.m-table-filter-cell {
+  padding: 8px 16px;
+  min-width: 0;
+}
+
+.column-filter-input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+  min-width: 0;
+  background: var(--p-slate-100);
+}
+
+.column-filter-input:focus {
+  border-color: var(--p-blue-500);
+}
+
 .m-table-header-cell {
   padding: 12px 16px;
   font-weight: 600;
@@ -850,6 +938,10 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.m-table-header-cell.has-filter {
+  padding-right: 8px;
 }
 
 .m-table-body {

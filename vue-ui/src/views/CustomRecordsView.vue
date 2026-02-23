@@ -81,9 +81,10 @@ onMounted(async () => {
         :height="`${contentHeight}px`"
         :loading="loading"
         searchable
+        filterable
         search-placeholder="Search records..."
       >
-        <MTableColumn label="Name" field="name" width="1fr" searchable>
+        <MTableColumn label="Name" field="name" width="1fr" searchable filterable>
           <template #default="{ value, row }">
             <div
               class="flex gap-2 cursor-pointer hover:underline"
@@ -102,15 +103,17 @@ onMounted(async () => {
           field="scriptid"
           width="1fr"
           searchable
+          filterable
         />
 
-        <MTableColumn label="Owner" field="owner" width="1fr" searchable />
+        <MTableColumn label="Owner" field="owner" width="1fr" searchable filterable />
 
         <MTableColumn
           label="Internal ID"
           field="internalid"
           width="100px"
           searchable
+          filterable
         />
 
         <MTableColumn
@@ -118,6 +121,7 @@ onMounted(async () => {
           field="description"
           width="1fr"
           searchable
+          filterable
         >
           <template #default="{ value }">
             <span class="truncate block max-w-[300px]" :title="value">
