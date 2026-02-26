@@ -310,7 +310,15 @@ const handleEnter = (event: KeyboardEvent) => {
 };
 
 watch(
-  [searchTerm, caseSensitive, wholeWord, client, userevent, workflowaction, showLockedScripts],
+  [
+    searchTerm,
+    caseSensitive,
+    wholeWord,
+    client,
+    userevent,
+    workflowaction,
+    showLockedScripts
+  ],
   async (
     [term, cs, ww, cl, ue, wa, locked],
     [prevTerm, prevCs, prevWw, prevCl, prevUe, prevWa, prevLocked]
@@ -322,7 +330,8 @@ watch(
     }
 
     // Always rebuild search when filters change
-    const filtersChanged = cl !== prevCl || ue !== prevUe || wa !== prevWa || locked !== prevLocked;
+    const filtersChanged =
+      cl !== prevCl || ue !== prevUe || wa !== prevWa || locked !== prevLocked;
 
     // Ignore no-op changes ONLY when both filters and search params unchanged
     if (

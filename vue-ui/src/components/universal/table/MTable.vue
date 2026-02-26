@@ -92,7 +92,13 @@
           v-if="column.filterable"
           type="text"
           :value="columnFilters[column.field] || ''"
-          @input="(e) => updateColumnFilter(column.field, (e.target as HTMLInputElement).value)"
+          @input="
+            (e) =>
+              updateColumnFilter(
+                column.field,
+                (e.target as HTMLInputElement).value
+              )
+          "
           placeholder="Filter..."
           class="column-filter-input"
         />
@@ -293,13 +299,15 @@ const updateDropdownPosition = () => {
 const estimatedRowHeight = computed(() => {
   const known = Object.values(rowHeights.value);
   if (known.length === 0) return props.rowHeight;
-  
+
   // Filter to only include non-expanded rows (within 20% of base height)
-  const nonExpanded = known.filter(h => h <= props.rowHeight * 1.2);
+  const nonExpanded = known.filter((h) => h <= props.rowHeight * 1.2);
   if (nonExpanded.length > 0) {
-    return Math.round(nonExpanded.reduce((a, b) => a + b, 0) / nonExpanded.length);
+    return Math.round(
+      nonExpanded.reduce((a, b) => a + b, 0) / nonExpanded.length
+    );
   }
-  
+
   // If all cached rows are expanded, use min height (not max)
   const min = Math.min(...known);
   return Math.round(min);
@@ -387,7 +395,10 @@ const columns = computed<Column[]>(() => {
       const searchable =
         searchableProp === false || searchableProp === "false" ? false : true;
       const filterableProp = columnProps.filterable;
-      const filterable = filterableProp === true || filterableProp === "true" || filterableProp === "";
+      const filterable =
+        filterableProp === true ||
+        filterableProp === "true" ||
+        filterableProp === "";
 
       return {
         label: columnProps.label || "",
@@ -416,7 +427,7 @@ const visibleColumns = computed(() => {
 });
 
 const hasFilterableColumns = computed(() => {
-  return columns.value.some(col => col.filterable);
+  return columns.value.some((col) => col.filterable);
 });
 
 const toggleColumn = (field: string) => {
@@ -453,7 +464,9 @@ const filteredRows = computed(() => {
     result = result.filter((row) => {
       return filterColumns.every(([field, query]) => {
         const val = row[field];
-        return val != null && String(val).toLowerCase().includes(query.toLowerCase());
+        return (
+          val != null && String(val).toLowerCase().includes(query.toLowerCase())
+        );
       });
     });
   }
@@ -480,7 +493,7 @@ const visibleRange = computed(() => {
 // Compute all scroll-related values in one pass to ensure consistency
 const scrollState = computed(() => {
   const estHeight = estimatedRowHeight.value;
-  
+
   if (!props.autoRowHeight) {
     const start = visibleRange.value.startIndex;
     const end = visibleRange.value.endIndex;
@@ -547,8 +560,7 @@ const offsetBottom = computed(() => {
   const estHeight = estimatedRowHeight.value;
   let renderedHeight = 0;
   for (let i = startIndex; i < endIndex; i++) {
-    renderedHeight +=
-      rowHeights.value[filteredRows.value[i]?.id] || estHeight;
+    renderedHeight += rowHeights.value[filteredRows.value[i]?.id] || estHeight;
   }
   return Math.max(0, totalHeight - offsetTop - renderedHeight);
 });
@@ -585,15 +597,15 @@ const isRowExpanded = (row: any) => expandedRows.value.has(row.id);
 const toggleRowExpand = (row: any) => {
   if (!props.expandable) return;
   const isCollapsing = expandedRows.value.has(row.id);
-  
+
   if (isCollapsing) {
     delete rowHeights.value[row.id];
   }
-  
+
   if (isCollapsing) expandedRows.value.delete(row.id);
   else expandedRows.value.add(row.id);
   expandedRows.value = new Set(expandedRows.value);
-  
+
   if (isCollapsing && scrollContainer.value) {
     nextTick(() => {
       if (scrollContainer.value) {
@@ -922,6 +934,7 @@ onUnmounted(() => {
   outline: none;
   min-width: 0;
   background: var(--p-slate-100);
+  color: var(--p-slate-700);
 }
 
 .column-filter-input:focus {
@@ -932,7 +945,7 @@ onUnmounted(() => {
   padding: 12px 16px;
   font-weight: 600;
   font-size: 0.875rem;
-  color: var(--p-slate-900);
+  color: var(--p-slate-800);
   text-align: left;
   min-width: 0;
   overflow: hidden;

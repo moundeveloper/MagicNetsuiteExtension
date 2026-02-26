@@ -16,7 +16,7 @@ const CONNECT_PORT = { SIDE_PANEL: "sidePanel" };
 /** @type {"Scripts" | "Custom Records"} */
 const UI_VIEWS = {
   SCRIPTS: "Scripts",
-  CUSTOM_RECORDS: "Custom Records",
+  CUSTOM_RECORDS: "Custom Records"
 };
 
 // GLOBALS
@@ -27,7 +27,7 @@ let panelState = PANEL_STATE.CLOSE;
 chrome.runtime.onConnect.addListener((port) => {
   const connectPortMap = {
     [CONNECT_PORT.SIDE_PANEL]: setPanelState,
-    [CONNECT_PORT.DISCONNECT]: disconnectPort,
+    [CONNECT_PORT.DISCONNECT]: disconnectPort
   };
 
   const connectPortHandler = connectPortMap[port.name];
@@ -50,7 +50,7 @@ const setPanelState = ({ port }) => {
   port.onDisconnect.addListener(() => {
     panelState = PANEL_STATE.CLOSE;
     console.log(
-      "[PortListener][setPanelState] Panel state set to CLOSE (panel disconnected)",
+      "[PortListener][setPanelState] Panel state set to CLOSE (panel disconnected)"
     );
   });
 };
@@ -66,7 +66,7 @@ chrome.commands.onCommand.addListener((command) => {
   const commandMap = {
     toggle_extension_ui: togglePanel,
     open_panel_scripts: openCommandView,
-    open_panel_custom_records: openCommandView,
+    open_panel_custom_records: openCommandView
   };
 
   const commandHandler = commandMap[command];
@@ -96,7 +96,7 @@ const togglePanel = () => {
 const openCommandView = ({ command }) => {
   const commandsViewMap = {
     open_panel_scripts: UI_VIEWS.SCRIPTS,
-    open_panel_custom_records: UI_VIEWS.CUSTOM_RECORDS,
+    open_panel_custom_records: UI_VIEWS.CUSTOM_RECORDS
   };
 
   panelState = PANEL_STATE.OPEN;
@@ -125,7 +125,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     OPEN_MAIN_SETUP: createTabOnMainSetup,
     OPEN_NON_ACTIVE_TAB: openNonActiveTab,
     UI_INJECTED: isUIInjectAllowed,
-    UI_SOURCE: setUISource,
+    UI_SOURCE: setUISource
   };
 
   const messageHandler = messageMap[message.type];
@@ -162,7 +162,7 @@ const createTabOnMainSetup = ({ sender }) => {
     console.error(
       "[OnMessage][createTabOnMainSetup] Invalid tab URL:",
       tab.url,
-      err,
+      err
     );
   }
 
@@ -180,7 +180,7 @@ const isUIInjectAllowed = ({ message, sender, sendResponse }) => {
   if (!tab || !tab.url) return;
 
   sendResponse({
-    injectAllowed: tab.url.includes("/app/setup/mainsetup.nl"),
+    injectAllowed: tab.url.includes("/app/setup/mainsetup.nl")
   });
 
   return true; // True to allow Asyncronous message
@@ -199,7 +199,7 @@ const notifyTabChange = (reason, tab) => {
     type: "TAB_CONTEXT_CHANGED",
     reason,
     url: tab.url,
-    tabId: tab.id,
+    tabId: tab.id
   });
 };
 
@@ -226,7 +226,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 });
 
 // Sniff CSV files
-chrome.downloads.onCreated.addListener((downloadItem) => {
+/* chrome.downloads.onCreated.addListener((downloadItem) => {
   if (!downloadItem.finalUrl.includes(".csv")) return;
   console.log("Download detected, cancelling:", downloadItem.filename);
   console.log(downloadItem);
@@ -238,7 +238,7 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
     .then((csv) => {
       console.log(csv);
     });
-});
+}); */
 
 // Sniff requests
 
