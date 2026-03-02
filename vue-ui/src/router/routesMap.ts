@@ -12,6 +12,7 @@ import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 import PlaygroundView from "../views/PlaygroundView.vue";
 import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
 import ProcessingView from "../views/ProcessingView.vue";
+import TemplatesView from "../views/TemplatesView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -130,6 +131,13 @@ export const routes = [
     icon: "pi pi-download",
     component: ExportRecordView,
     status: RouteStatus.fix
+  },
+  {
+    route: "/templates",
+    name: "Templates",
+    icon: "pi pi-file-pdf",
+    component: TemplatesView,
+    status: RouteStatus.release
   },
   {
     route: "/processing",

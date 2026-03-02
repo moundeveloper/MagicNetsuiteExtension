@@ -66,6 +66,10 @@ const handlers = {
     console.log("Custom Records action received");
     return window.getCustomRecords(modules);
   },
+  ADVANCED_PDF_TEMPLATES: async ({ modules }) => {
+    console.log("Advanced PDF Templates action received");
+    return window.getAdvancedPDFTemplates(modules);
+  },
   SCRIPT_URL: async ({ modules, payload: { scriptId } }) => {
     console.log("Script URL action received:", scriptId);
     return window.getScriptUrl(modules, { scriptId });

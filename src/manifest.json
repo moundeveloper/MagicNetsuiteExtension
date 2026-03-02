@@ -55,6 +55,7 @@
         "netsuiteApi/exportRecord.js",
         "netsuiteApi/logs.js",
         "netsuiteApi/mediaItems.js",
+        "netsuiteApi/advancedPdfTemplates.js",
         "dist/vue-ui/*",
         "content/content_export.js",
         "content/core/injection/*.js",

@@ -84,7 +84,13 @@ onMounted(async () => {
         filterable
         search-placeholder="Search records..."
       >
-        <MTableColumn label="Name" field="name" width="1fr" searchable filterable>
+        <MTableColumn
+          label="Name"
+          field="name"
+          width="1fr"
+          searchable
+          filterable
+        >
           <template #default="{ value, row }">
             <div
               class="flex gap-2 cursor-pointer hover:underline"
@@ -106,7 +112,13 @@ onMounted(async () => {
           filterable
         />
 
-        <MTableColumn label="Owner" field="owner" width="1fr" searchable filterable />
+        <MTableColumn
+          label="Owner"
+          field="owner"
+          width="1fr"
+          searchable
+          filterable
+        />
 
         <MTableColumn
           label="Internal ID"
