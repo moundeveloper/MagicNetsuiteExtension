@@ -41,33 +41,57 @@ const callApi = async (
   // STREAM MODE (PORTS)
   // =========================
   if (mode === ApiRequestType.STREAM) {
-    return new Promise((resolve, reject) => {
-      // 🔑 Open a persistent port
-      const port = chrome.tabs.connect(activeTab.id!, {
-        name: "stream-api"
-      });
+    return new Promise(async (resolve, reject) => {
+      const activeTab = await getActiveNetsuiteTab();
 
-      // Receive stream chunks
-      port.onMessage.addListener((message: any) => {
-        if (streamHandler) {
-          streamHandler(message);
-        }
+      const connectAndStream = (tabId: number, isTemp = false): void => {
+        const port = chrome.tabs.connect(tabId, {
+          name: "stream-api"
+        });
 
-        // Resolve when stream completes
-        if (message.isComplete) {
-          port.disconnect();
-          resolve(message);
-        }
-      });
+        port.onMessage.addListener(async (message: any) => {
+          // 🚨 STREAM-SPECIFIC FALLBACK
+          if (message.status === "API_NOT_AVAILABLE" && !isTemp) {
+            console.log("[callApi] Stream API not available — using temp tab");
 
-      port.onDisconnect.addListener(() => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        }
-      });
+            port.disconnect();
 
-      // Send initial request (same payload as before)
-      port.postMessage(messagePayload);
+            try {
+              const tempTab = await createTemporaryTab(activeTab.url!);
+              connectAndStream(tempTab.id!, true);
+            } catch (err) {
+              reject(err);
+            }
+
+            return;
+          }
+
+          if (streamHandler) {
+            streamHandler(message);
+          }
+
+          if (message.isComplete) {
+            port.disconnect();
+
+            if (isTemp) {
+              chrome.tabs.remove(tabId);
+            }
+
+            resolve(message);
+          }
+        });
+
+        port.onDisconnect.addListener(() => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          }
+        });
+
+        port.postMessage(messagePayload);
+      };
+
+      // Initial attempt (active tab)
+      connectAndStream(activeTab.id!);
     });
   }
 
@@ -90,7 +114,7 @@ const getActiveNetsuiteTab = (): Promise<chrome.tabs.Tab> => {
     if (typeof chrome === "undefined" || !chrome.tabs) {
       return reject(new Error("Chrome tabs API not available"));
     }
-    
+
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const currentTab = tabs[0];
 
@@ -125,6 +149,22 @@ const isTemporaryTab = (tab: chrome.tabs.Tab): boolean => {
   } catch {
     return false;
   }
+};
+
+const createTemporaryTab = (currentUrl: string): Promise<chrome.tabs.Tab> => {
+  return new Promise((resolve, reject) => {
+    const url = buildTempTabUrl(currentUrl);
+
+    chrome.tabs.create({ url, active: false }, (tab) => {
+      if (!tab.id) {
+        return reject(new Error("Failed to create temp tab"));
+      }
+
+      waitForTabLoad(tab.id, () => {
+        resolve(tab);
+      });
+    });
+  });
 };
 
 // ============================================================================

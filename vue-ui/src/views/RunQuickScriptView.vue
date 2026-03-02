@@ -157,6 +157,7 @@ const handleStreamingResponse = (message: {
   isComplete: boolean;
   data: any;
 }) => {
+  console.log("[handleStreamingResponse]", message);
   if (message.isComplete) {
     isExecuting.value = false;
 
