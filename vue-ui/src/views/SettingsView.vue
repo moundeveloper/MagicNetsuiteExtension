@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import ViewHeader from "../components/ViewHeader.vue";
 import { useSettings } from "../states/settingsState";
 import { reactive, ref, watch } from "vue";
 import InputText from "primevue/inputtext";
 import Checkbox from "primevue/checkbox";
 
-const { formattedRouteName } = useFormattedRouteName();
 const { settings } = useSettings();
 </script>
 
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
   <div class="settings-section">
     <h2>Shortcuts</h2>
     <div class="shortcut-item">

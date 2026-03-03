@@ -8,9 +8,7 @@ import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import { MultiSelect } from "primevue";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
-
-const { formattedRouteName } = useFormattedRouteName();
+import ViewHeader from "../components/ViewHeader.vue";
 
 interface ScriptItem {
   id: number;
@@ -160,7 +158,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
 
   <MCard
     flex
@@ -272,7 +270,13 @@ onMounted(async () => {
           </MPanel>
         </template>
 
-        <MTableColumn label="Name" field="name" width="1fr" searchable filterable>
+        <MTableColumn
+          label="Name"
+          field="name"
+          width="1fr"
+          searchable
+          filterable
+        >
           <template #default="{ value, row }">
             <div
               class="flex gap-2 cursor-pointer hover:underline"
@@ -296,7 +300,13 @@ onMounted(async () => {
           filterable
         />
 
-        <MTableColumn label="Owner" field="owner" width="1fr" searchable filterable />
+        <MTableColumn
+          label="Owner"
+          field="owner"
+          width="1fr"
+          searchable
+          filterable
+        />
 
         <MTableColumn
           label="Script ID"

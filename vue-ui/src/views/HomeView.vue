@@ -6,13 +6,11 @@ import {
   RouteStatusColors
 } from "../router/routesMap";
 import { InputText } from "primevue";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import ViewHeader from "../components/ViewHeader.vue";
 import { Privilege } from "../types/privilege";
 import { callApi, ApiRequestType } from "../utils/api";
 import { useSettings } from "../states/settingsState";
 import MPanel from "../components/universal/panels/MPanel.vue";
-
-const { formattedRouteName } = useFormattedRouteName();
 const { settings, isSettingsLoaded } = useSettings();
 
 const searchFeatures = ref("");
@@ -78,7 +76,7 @@ const testPing = async () => {
 </script>
 
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
   <!--   <div class="test-buttons">
     <button class="test-ping-btn" @click="testPing">
       Test Temp Tab (30s Ping)

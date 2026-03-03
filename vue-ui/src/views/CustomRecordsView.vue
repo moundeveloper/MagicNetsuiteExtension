@@ -5,9 +5,7 @@ import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
-
-const { formattedRouteName } = useFormattedRouteName();
+import ViewHeader from "../components/ViewHeader.vue";
 
 interface RecordItem {
   internalid: number;
@@ -65,7 +63,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
 
   <MCard
     flex

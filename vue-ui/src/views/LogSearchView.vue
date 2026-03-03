@@ -20,10 +20,8 @@ import MPanel from "../components/universal/panels/MPanel.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import ViewHeader from "../components/ViewHeader.vue";
 import { type ContextMenuItem } from "../composables/useMContextMenu";
-
-const { formattedRouteName } = useFormattedRouteName();
 
 type LogItem = {
   id: string;
@@ -420,7 +418,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
 
   <!-- ===================== QUERY FILTERS ===================== -->
 

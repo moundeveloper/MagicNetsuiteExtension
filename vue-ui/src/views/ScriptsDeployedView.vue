@@ -1,5 +1,5 @@
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
 
   <MCard flex direction="column" gap="1rem" padding="1rem" outlined elevated>
     <MCard flex direction="row" gap="1rem" padding="0">
@@ -190,7 +190,7 @@ import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import { Button, InputText, Select, Checkbox } from "primevue";
 import CodeViewer from "../components/CodeViewer.vue";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
+import ViewHeader from "../components/ViewHeader.vue";
 import { callApi, isChromeExtension, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import {
@@ -211,8 +211,6 @@ type Editors = {
   script?: DeployedScript;
   failed?: boolean;
 };
-
-const { formattedRouteName } = useFormattedRouteName();
 
 const props = defineProps<{ vhOffset: number }>();
 

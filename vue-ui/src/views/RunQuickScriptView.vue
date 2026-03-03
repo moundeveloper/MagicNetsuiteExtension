@@ -1,5 +1,5 @@
 <template>
-  <h1>{{ formattedRouteName }}</h1>
+  <ViewHeader />
   <div class="flex items-center gap-2">
     <Button @click="runCode" :disabled="isExecuting">
       {{ isExecuting ? "Running..." : "Run" }}
@@ -63,9 +63,7 @@ import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
-import { useFormattedRouteName } from "../composables/useFormattedRouteName";
-
-const { formattedRouteName } = useFormattedRouteName();
+import ViewHeader from "../components/ViewHeader.vue";
 
 type Log = {
   type: "log" | "warn" | "error";
