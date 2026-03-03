@@ -82,7 +82,7 @@ const testPing = async () => {
       Test Temp Tab (30s Ping)
     </button>
   </div> -->
-  <InputText v-model="searchFeatures" placeholder="Search" />
+  <InputText v-model="searchFeatures" placeholder="Search" class="mx-2" />
 
   <div
     v-if="isSettingsLoaded"

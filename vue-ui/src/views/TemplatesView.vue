@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import ViewHeader from "../components/ViewHeader.vue";
+
+const router = useRouter();
 
 interface RecordItem {
   id: number;
@@ -20,8 +23,17 @@ interface RecordItem {
   savedSearch: string;
 }
 
-const records = ref<RecordItem[]>();
+const records = ref<RecordItem[]>([]);
 const loading = ref(false);
+
+const navigateToTemplate = (template: RecordItem) => {
+  router.push({
+    path: `/templates/${template.id}`,
+    query: {
+      data: JSON.stringify(template)
+    }
+  });
+};
 
 const props = defineProps<{
   vhOffset: number;
@@ -57,6 +69,19 @@ const getAdvancedPdfTemplates = async () => {
 
 onMounted(async () => {
   await getAdvancedPdfTemplates();
+
+  records.value.push({
+    id: 411,
+    name: "Testing Invoice",
+    scriptId: "CUSTTMPL_TESTING_INVOICE",
+    printType: "TRANSACTION",
+    preferred: true,
+    inactive: true,
+    tranType: "CustInvc",
+    customRecordType: "",
+    customTransactionType: "",
+    savedSearch: ""
+  });
 });
 </script>
 
@@ -89,7 +114,18 @@ onMounted(async () => {
           width="1fr"
           searchable
           filterable
-        />
+          clickable
+        >
+          <template #default="{ value, row }">
+            <div
+              @click="navigateToTemplate(row)"
+              class="group flex items-center gap-4 cursor-pointer text-left"
+            >
+              <i class="pi pi-eye text-sm"></i>
+              <span class="group-hover:underline">{{ value }}</span>
+            </div>
+          </template>
+        </MTableColumn>
 
         <MTableColumn
           label="Script ID"

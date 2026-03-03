@@ -91,11 +91,11 @@ onMounted(async () => {
         >
           <template #default="{ value, row }">
             <div
-              class="flex gap-2 cursor-pointer hover:underline"
+              class="group flex gap-4 cursor-pointer"
               @click="getCustomRecordUrl(row.internalid)"
             >
               <i class="pi pi-link text-[var(--p-slate-600)]"></i>
-              <span class="text-[var(--p-slate-600)]">
+              <span class="text-[var(--p-slate-600)] group-hover:underline">
                 {{ value }}
               </span>
             </div>

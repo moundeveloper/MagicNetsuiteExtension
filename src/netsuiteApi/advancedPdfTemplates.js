@@ -17,6 +17,7 @@ LEFT JOIN CustomRecordType
     ON AdvancedPdfTemplate.customrecordtype = CustomRecordType.internalid
 LEFT JOIN CustomTransactionType
     ON AdvancedPdfTemplate.customtransactiontype = CustomTransactionType.id
+WHERE AdvancedPdfTemplate.scriptId NOT LIKE 'STDTMPL%'
 `;
 
   const queryConfig = { query: sql };

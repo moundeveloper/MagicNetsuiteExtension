@@ -80,8 +80,13 @@ h2,
 h3,
 h4,
 h5,
-h6 {
+h6,
+p {
   color: var(--p-slate-700);
+}
+
+.monaco-editor p {
+  color: inherit;
 }
 
 body,
