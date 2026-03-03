@@ -17,15 +17,21 @@ echo ====================================
 set "DEST_FOLDER=C:\Projects\MagicNetsuiteExtensionM"
 
 if exist "%DEST_FOLDER%" (
-    echo Deleting all files in %DEST_FOLDER% ...
-    rmdir /s /q "%DEST_FOLDER%"
-)
-
-mkdir "%DEST_FOLDER%"
-
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Failed to clean destination folder!
-    exit /b 1
+    echo Deleting all files and folders in %DEST_FOLDER% except .git ...
+    for /f "delims=" %%F in ('dir /b /a-d "%DEST_FOLDER%"') do (
+        del /f /q "%DEST_FOLDER%\%%F"
+    )
+    for /d %%D in ("%DEST_FOLDER%\*") do (
+        if /i not "%%~nxD"==".git" (
+            rmdir /s /q "%%D"
+        )
+    )
+) else (
+    mkdir "%DEST_FOLDER%"
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: Failed to create destination folder!
+        exit /b 1
+    )
 )
 
 echo.
