@@ -32,14 +32,21 @@ echo ====================================
 set "DEST_FOLDER=C:\Projects\MagicNetsuiteExtensionM"
 
 if exist "%DEST_FOLDER%" (
-    echo Deleting all files in %DEST_FOLDER% ...
-    rmdir /s /q "%DEST_FOLDER%"
-)
-
-mkdir "%DEST_FOLDER%"
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Failed to clean destination folder!
-    goto :error
+    echo Deleting all files and folders in %DEST_FOLDER% except .git ...
+    for /f "delims=" %%F in ('dir /b /a-d "%DEST_FOLDER%"') do (
+        del /f /q "%DEST_FOLDER%\%%F"
+    )
+    for /d %%D in ("%DEST_FOLDER%\*") do (
+        if /i not "%%~nxD"==".git" (
+            rmdir /s /q "%%D"
+        )
+    )
+) else (
+    mkdir "%DEST_FOLDER%"
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: Failed to create destination folder!
+        goto :error
+    )
 )
 
 :: =========================
@@ -51,19 +58,23 @@ echo Step 2.5: Initialising git repo
 echo ====================================
 cd /d "%DEST_FOLDER%"
 
-git init -b main
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: git init failed!
-    goto :error
-)
+if not exist ".git" (
+    git init -b main
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: git init failed!
+        goto :error
+    )
 
-git remote add origin git@github-account-personal:moundeveloper/MagicNetsuiteExtensionM.git
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: git remote add origin failed!
-    goto :error
-)
+    git remote add origin git@github-account-personal:moundeveloper/MagicNetsuiteExtensionM.git
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: git remote add origin failed!
+        goto :error
+    )
 
-echo Git repo initialised and remote set.
+    echo Git repo initialised and remote set.
+) else (
+    echo Git repo already exists, skipping init.
+)
 
 :: =========================
 :: STEP 3
@@ -125,4 +136,4 @@ if "%ERRORLEVEL%"=="0" (
 )
 
 endlocal
-exit /b
+exit

@@ -137,7 +137,7 @@ export const routes = [
     name: "Templates",
     icon: "pi pi-file-pdf",
     component: TemplatesView,
-    status: RouteStatus.release
+    status: RouteStatus.development
   },
   {
     route: "/processing",
