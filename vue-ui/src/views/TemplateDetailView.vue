@@ -5,6 +5,8 @@ import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
+import ExpandableSidebar from "../components/universal/sidebar/ExpandableSidebar.vue";
+import MTabs from "../components/universal/tabs/MTabs.vue";
 
 interface RecordItem {
   id: number;
@@ -45,6 +47,28 @@ const getTemplate = async () => {
     : null;
 };
 
+const tabs = ref([
+  { id: "details", label: "Details" },
+  { id: "config", label: "Configuration" },
+  { id: "preview", label: "Preview" }
+]);
+
+const tabHeaders = computed(() =>
+  tabs.value.map((tab) => ({
+    name: tab.id,
+    label: tab.label
+  }))
+);
+
+const handleDeleteTab = ({ tabId }: { tabId: string }) => {
+  tabs.value = tabs.value.filter((tab) => tab.id !== tabId);
+};
+
+const handleAddTab = () => {
+  const newId = `tab-${Date.now()}`;
+  tabs.value = [...tabs.value, { id: newId, label: "New Tab" }];
+};
+
 onMounted(async () => {
   await getTemplate();
 });
@@ -56,18 +80,54 @@ onMounted(async () => {
   <MCard
     v-if="template"
     flex
-    direction="column"
-    gap="1rem"
-    padding="1rem"
+    autoHeight
+    direction="row"
+    gap="0.5"
+    padding=""
     outlined
     elevated
-    :style="{ height: `${props.vhOffset}vh` }"
+    :style="{ height: `${vhOffset}vh` }"
   >
-    <template #default="{ contentHeight }">
-      <div class="flex" :style="{ height: `${contentHeight}px` }">
-        <!-- HERE IS WHERE THE EXPANDABLE SIDEBAR GOES -->
+    <template #default>
+      <ExpandableSidebar>
+        <template #default>
+          <div class="sidebar-section">
+            <h4>Section 1</h4>
+            <p>Content for section 1</p>
+          </div>
+          <div class="sidebar-section">
+            <h4>Section 2</h4>
+            <p>Content for section 2</p>
+          </div>
+          <div class="sidebar-section">
+            <h4>Section 3</h4>
+            <p>Content for section 3</p>
+          </div>
+          <div class="sidebar-section">
+            <h4>Section 4</h4>
+            <p>Content for section 4</p>
+          </div>
+        </template>
+      </ExpandableSidebar>
 
-        <div>ciao</div>
+      <div class="h-full w-full p-2">
+        <MTabs class="w-full" :tabs="tabHeaders">
+          <template #details="{ contentHeight }">
+            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <p>Details content here</p>
+            </div>
+          </template>
+          <template #config="{ contentHeight }">
+            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <p>Configuration content here</p>
+            </div>
+          </template>
+          <template #preview="{ contentHeight }">
+            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <p>Preview content here</p>
+            </div>
+          </template>
+        </MTabs>
       </div>
     </template>
   </MCard>
@@ -80,3 +140,26 @@ onMounted(async () => {
     <p>Template not found.</p>
   </div>
 </template>
+
+<style scoped>
+.sidebar-section {
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--p-slate-100);
+  border-radius: 4px;
+  border: 1px solid var(--p-slate-200);
+}
+
+.sidebar-section h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.sidebar-section p {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--p-slate-600);
+}
+</style>

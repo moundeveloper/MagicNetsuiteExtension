@@ -94,7 +94,7 @@ onMounted(async () => {
     autoHeight
     outlined
     elevated
-    :style="{ height: `${props.vhOffset}vh` }"
+    :style="{ height: `${vhOffset}vh` }"
   >
     <template #default="{ contentHeight }">
       <MTable
