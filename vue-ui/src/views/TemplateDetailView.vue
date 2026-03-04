@@ -7,6 +7,9 @@ import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/ExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
+import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import dummmytemplate from "../assets/template_dummy.ftl?raw";
+import MonacoEditorDiff from "../components/MonacoEditorDiff.vue";
 
 interface RecordItem {
   id: number;
@@ -26,20 +29,9 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
-const router = useRouter();
-
+const code = ref<string>(dummmytemplate);
 const template = ref<RecordItem | null>(null);
 const loading = ref(false);
-
-const percent = ref(50);
-const limitedPercent = computed({
-  get() {
-    return percent.value;
-  },
-  set(val) {
-    percent.value = Math.max(15, Math.min(20, val));
-  }
-});
 
 const getTemplate = async () => {
   template.value = route.query.data
@@ -48,8 +40,8 @@ const getTemplate = async () => {
 };
 
 const tabs = ref([
-  { id: "details", label: "Details" },
-  { id: "config", label: "Configuration" },
+  { id: "editor", label: "Editor" },
+  { id: "compare", label: "Comapare Versions" },
   { id: "preview", label: "Preview" }
 ]);
 
@@ -60,13 +52,28 @@ const tabHeaders = computed(() =>
   }))
 );
 
-const handleDeleteTab = ({ tabId }: { tabId: string }) => {
-  tabs.value = tabs.value.filter((tab) => tab.id !== tabId);
+const originalCode = ref(`
+function sum(a, b) {
+  return a + b;
+}
+`);
+
+const modifiedCode = ref(`
+function sum(a, b) {
+  return a - b;
+}
+`);
+
+const handleChange = (val: string) => {
+  console.log("Modified changed:", val);
 };
 
-const handleAddTab = () => {
-  const newId = `tab-${Date.now()}`;
-  tabs.value = [...tabs.value, { id: newId, label: "New Tab" }];
+const onFocus = () => {
+  console.log("Editor focused");
+};
+
+const onBlur = () => {
+  console.log("Editor blurred");
 };
 
 onMounted(async () => {
@@ -110,16 +117,24 @@ onMounted(async () => {
         </template>
       </ExpandableSidebar>
 
-      <div class="h-full w-full p-2">
+      <div class="h-full flex-1 p-2" style="min-width: 0">
         <MTabs class="w-full" :tabs="tabHeaders">
-          <template #details="{ contentHeight }">
+          <template #editor="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
-              <p>Details content here</p>
+              <MonacoCodeEditor v-model="code" language="xml" />
             </div>
           </template>
-          <template #config="{ contentHeight }">
+          <template #compare="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
-              <p>Configuration content here</p>
+              <MonacoEditorDiff
+                :originalValue="originalCode"
+                v-model:modifiedValue="modifiedCode"
+                language="javascript"
+                theme="vs-dark"
+                @change="handleChange"
+                @focus="onFocus"
+                @blur="onBlur"
+              />
             </div>
           </template>
           <template #preview="{ contentHeight }">

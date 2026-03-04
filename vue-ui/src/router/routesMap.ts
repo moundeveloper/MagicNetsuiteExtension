@@ -49,7 +49,18 @@ export type Route = {
   }>;
 };
 
-export const routes = [
+type FullRoute = RouteItem & {
+  component: any;
+  children?: Array<{
+    route: string;
+    name: string;
+    component: any;
+    breadcrumb?: string;
+    breadcrumbParents?: Array<{ label: string; route: string }>;
+  }>;
+};
+
+export const routes: FullRoute[] = [
   {
     route: "/",
     name: "Features",
@@ -144,8 +155,7 @@ export const routes = [
     icon: "pi pi-list",
     component: ScriptsDeployedView,
     status: RouteStatus.release,
-    breadcrumb: "Scripts Deployed",
-    breadcrumbParents: [{ label: "Scripts", route: "/scripts" }]
+    breadcrumb: "Scripts Deployed"
   },
 
   {
@@ -196,16 +206,16 @@ export const getRouteMap = (): RouteItem[] => {
 
 export const getRoutes = () => {
   const result: any[] = [];
-  
+
   for (const route of routes) {
     const baseRoute = {
       path: route.route,
       name: route.name,
       component: route.component
     };
-    
+
     result.push(baseRoute);
-    
+
     if (route.children) {
       for (const child of route.children) {
         result.push({
@@ -216,6 +226,6 @@ export const getRoutes = () => {
       }
     }
   }
-  
+
   return result;
 };

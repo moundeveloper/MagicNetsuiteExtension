@@ -47,6 +47,7 @@
 
           <!-- Close button -->
           <button
+            v-if="isDynamic"
             class="p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-2 hover:bg-slate-200"
             @click.stop="emitDeleteEvent(tab.name)"
           >
@@ -59,6 +60,7 @@
 
         <!-- Add Tab Button -->
         <button
+          v-if="isDynamic"
           key="add-tab-button"
           class="tab-header px-3 py-2 flex items-center justify-center rounded transition-all duration-200 ease-in-out hover:bg-slate-200 overflow-hidden"
           style="
@@ -99,7 +101,10 @@ interface Tab {
 
 const props = defineProps<{
   tabs: Tab[];
+  dynamic?: boolean;
 }>();
+
+const isDynamic = computed(() => props.dynamic ?? false);
 
 const emit = defineEmits<{
   (

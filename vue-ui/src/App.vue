@@ -72,13 +72,28 @@ onBeforeUnmount(() => {
     :fill="'var(--p-slate-200)'"
     width="30%"
   />
-  <main ref="container" :class="{ 'full-screen': isProcessingRoute }">
-    <RouterView :vhOffset="vhOffset" />
-  </main>
+
+  <RouterView v-slot="{ Component, route }">
+    <transition name="subtle-fade" mode="out-in">
+      <main
+        ref="container"
+        :class="{ 'full-screen': isProcessingRoute }"
+        :key="route.fullPath"
+      >
+        <component :is="Component" :vhOffset="vhOffset" />
+      </main>
+    </transition>
+  </RouterView>
+
   <GridPattern v-if="!isProcessingRoute" class="pattern-decoration" />
 </template>
 
 <style scoped>
+.route-wrapper {
+  height: 100%;
+  width: 100%;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;
@@ -116,5 +131,52 @@ main.full-screen {
   right: 50%;
   transform: translate(50%, -50%);
   z-index: 0;
+}
+
+/* Transition animation */
+.subtle-fade-enter-active {
+  transition:
+    transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.subtle-fade-enter-from {
+  transform: translateX(-20px);
+  opacity: 0;
+}
+
+.subtle-fade-enter-to {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* Leave transition can be simple fade */
+.subtle-fade-enter-active {
+  transition:
+    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.subtle-fade-enter-from {
+  transform: translateX(-20px);
+  opacity: 0;
+}
+
+.subtle-fade-enter-to {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* Leave transition: simple fade */
+.subtle-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.subtle-fade-leave-from {
+  opacity: 1;
+}
+
+.subtle-fade-leave-to {
+  opacity: 0;
 }
 </style>

@@ -10,7 +10,7 @@
         @click="toggleSidebar"
         :title="isExpanded ? 'Minimize' : 'Expand'"
       >
-        <i :class="isExpanded ? 'pi pi-angle-right' : 'pi pi-angle-left'"></i>
+        <i :class="isExpanded ? 'pi pi-angle-left' : 'pi pi-angle-right'"></i>
       </button>
     </div>
     <div class="sidebar-content" :class="{ 'is-hidden': !isExpanded }">
@@ -30,7 +30,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   expandedWidth: "300px",
-  collapsedWidth: "50px",
+  collapsedWidth: "3rem",
   defaultExpanded: true
 });
 
@@ -50,6 +50,7 @@ const sidebarStyles = computed(() => ({
 .expandable-sidebar {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   background: var(--p-slate-50);
   border-right: 1px solid var(--p-slate-300);
   transition:
@@ -63,10 +64,10 @@ const sidebarStyles = computed(() => ({
   display: flex;
   padding: 0.5rem;
   border-bottom: 1px solid var(--p-slate-200);
+  justify-content: flex-end;
 }
 
 .toggle-btn {
-  margin-left: auto;
   display: flex;
   align-items: center;
   justify-content: center;

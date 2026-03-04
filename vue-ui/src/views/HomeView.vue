@@ -201,13 +201,6 @@ const testPing = async () => {
 </template>
 
 <style scoped>
-.wraper {
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
 .test-buttons {
   display: flex;
   gap: 1rem;

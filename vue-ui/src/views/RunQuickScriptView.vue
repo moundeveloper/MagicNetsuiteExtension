@@ -41,7 +41,6 @@
   >
     <template #top-pane>
       <MonacoCodeEditor
-        ref="editorRef"
         v-model="code"
         :readonly="isExecuting"
         :completion-items="completionItems"

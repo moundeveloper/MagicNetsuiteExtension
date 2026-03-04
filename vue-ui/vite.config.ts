@@ -13,5 +13,6 @@ export default defineConfig({
   build: {
     outDir: "../src/dist/vue-ui",
     emptyOutDir: true
-  }
+  },
+  assetsInclude: ["**/*.ftl"]
 });

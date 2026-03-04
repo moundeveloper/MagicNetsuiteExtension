@@ -14,6 +14,7 @@ import parserBabel from "prettier/plugins/babel";
 import prettierPluginEstree from "prettier/plugins/estree";
 import { editor, type IDisposable } from "monaco-editor";
 import themeJson from "../assets/themes/theme.json";
+import { formatFtl } from "../utils/ftlFormatter";
 
 // Configure Monaco workers
 self.MonacoEnvironment = {
@@ -65,7 +66,7 @@ self.MonacoEnvironment = {
           { type: "module" }
         );
     }
-  },
+  }
 };
 
 interface CompletionItem {
@@ -107,8 +108,8 @@ const props = withDefaults(defineProps<MonacoEditorProps>(), {
     autoSizing: true,
     defocusScroll: false,
     minimap: true,
-    disableAutoScrollOnFocus: false,
-  }),
+    disableAutoScrollOnFocus: false
+  })
 });
 
 const emit = defineEmits<{
@@ -121,6 +122,28 @@ const emit = defineEmits<{
 const editorContainer: Ref<HTMLElement | null> = ref(null);
 let editorInstance: editor.IStandaloneCodeEditor | null = null;
 let completionProvider: IDisposable | null = null;
+let resizeObserver: ResizeObserver | null = null;
+
+const setupResizeObserver = () => {
+  if (!editorContainer.value || !editorInstance) return;
+
+  resizeObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const { width, height } = entry.contentRect;
+      editorInstance?.layout();
+    }
+  });
+
+  resizeObserver.observe(editorContainer.value, { box: "content-box" });
+
+  const layoutOnTransition = () => {
+    editorInstance?.layout();
+  };
+
+  document.querySelectorAll(".expandable-sidebar").forEach((el) => {
+    el.addEventListener("transitionend", layoutOnTransition);
+  });
+};
 
 onMounted(async () => {
   if (!editorContainer.value) return;
@@ -128,16 +151,22 @@ onMounted(async () => {
   monaco.editor.defineTheme("monokai", themeJson as any);
   monaco.editor.setTheme("monokai");
 
-  const formatted = await prettier.format(props.modelValue, {
-    parser: "babel",
-    plugins: [parserBabel, prettierPluginEstree],
-    semi: true,
-    singleQuote: true,
-    tabWidth: 2,
-  });
+  let formatted = props.modelValue;
+
+  if (props.language === "javascript" || props.language === "typescript") {
+    formatted = await prettier.format(props.modelValue, {
+      parser: "babel",
+      plugins: [parserBabel, prettierPluginEstree],
+      semi: true,
+      singleQuote: true,
+      tabWidth: 2
+    });
+  } else if (props.language === "xml") {
+    formatted = formatFtl(props.modelValue);
+  }
 
   const editorOptions: editor.IStandaloneEditorConstructionOptions = {
-    find: { addExtraSpaceOnTop: false },
+    find: { addExtraSpaceOnTop: true },
     value: formatted,
     language: props.language,
     readOnly: props.readonly,
@@ -148,19 +177,22 @@ onMounted(async () => {
     lineNumbers: "on",
     renderWhitespace: "selection",
     tabSize: 2,
-    cursorSmoothCaretAnimation: "off",
+    cursorSmoothCaretAnimation: "off"
   };
 
   if (props.config?.defocusScroll) {
     editorOptions.scrollbar = {
       vertical: "hidden",
       alwaysConsumeMouseWheel: false,
-      handleMouseWheel: false,
+      handleMouseWheel: false
     };
   }
 
   // Create editor
   editorInstance = monaco.editor.create(editorContainer.value, editorOptions);
+
+  // Setup resize observer to handle container size changes
+  setupResizeObserver();
 
   editorInstance?.getDomNode()!.addEventListener("focusin", (e) => {
     // Temporarily prevent scrolling
@@ -280,6 +312,18 @@ onBeforeUnmount(() => {
   if (completionProvider) {
     completionProvider.dispose();
   }
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+
+  const layoutOnTransition = () => {
+    editorInstance?.layout();
+  };
+  document.querySelectorAll(".expandable-sidebar").forEach((el) => {
+    el.removeEventListener("transitionend", layoutOnTransition);
+  });
+
   if (editorInstance) {
     editorInstance.dispose();
   }
@@ -352,7 +396,7 @@ function registerCompletions() {
           startLineNumber: position.lineNumber,
           endLineNumber: position.lineNumber,
           startColumn: word.startColumn,
-          endColumn: word.endColumn,
+          endColumn: word.endColumn
         };
 
         const suggestions = props.completionItems.map((item) => ({
@@ -366,11 +410,11 @@ function registerCompletions() {
             : undefined,
           documentation: item.documentation || "",
           detail: item.detail || "",
-          range: range,
+          range: range
         }));
 
         return { suggestions };
-      },
+      }
     }
   );
 }
@@ -387,16 +431,24 @@ defineExpose({
     editorInstance?.setPosition(position),
   revealLine: (line: number): void => editorInstance?.revealLine(line),
   triggerSuggest: (payload: any): void =>
-    editorInstance?.trigger("", "editor.action.triggerSuggest", payload),
+    editorInstance?.trigger("", "editor.action.triggerSuggest", payload)
 });
 </script>
 
 <style scoped>
 .monaco-editor-container {
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .full-height {
   height: 100%;
+}
+</style>
+
+<style>
+.context-view.monaco-component {
+  display: none !important;
 }
 </style>
