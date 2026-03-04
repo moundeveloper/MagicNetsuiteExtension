@@ -8,6 +8,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/ExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import MLoader from "../components/universal/patterns/MLoader.vue";
 import dummmytemplate from "../assets/template_dummy.ftl?raw";
 import MonacoEditorDiff from "../components/MonacoEditorDiff.vue";
 
@@ -29,19 +30,46 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
-const code = ref<string>(dummmytemplate);
+const code = ref<string>("");
 const template = ref<RecordItem | null>(null);
 const loading = ref(false);
+const versions = ref<number[]>([]);
 
 const getTemplate = async () => {
-  template.value = route.query.data
+  const templateData = route.query.data
     ? JSON.parse(route.query.data as string)
     : null;
+
+  if (!templateData) return;
+
+  template.value = templateData;
+  loading.value = true;
+
+  try {
+    const { message: templateResponse } = await callApi(
+      RequestRoutes.GET_TEMPLATES_CONTENT,
+      {
+        templateId: templateData.id,
+        printType: templateData.printType,
+        transactionType: templateData.tranType,
+        customRecordType: templateData.customRecordTypeScriptId
+      }
+    );
+
+    const { templateContent, currentVersion } = templateResponse;
+
+    code.value = templateContent;
+    versions.value = Array.from({ length: currentVersion }, (_, i) => i + 1);
+  } catch (error) {
+    console.error("Error fetching template content:", error);
+  } finally {
+    loading.value = false;
+  }
 };
 
 const tabs = ref([
   { id: "editor", label: "Editor" },
-  { id: "compare", label: "Comapare Versions" },
+  { id: "compare", label: "Compare Versions" },
   { id: "preview", label: "Preview" }
 ]);
 
@@ -121,7 +149,13 @@ onMounted(async () => {
         <MTabs class="w-full" :tabs="tabHeaders">
           <template #editor="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
-              <MonacoCodeEditor v-model="code" language="xml" />
+              <div
+                v-if="loading"
+                class="flex items-center justify-center h-full"
+              >
+                <MLoader />
+              </div>
+              <MonacoCodeEditor v-else v-model="code" language="xml" />
             </div>
           </template>
           <template #compare="{ contentHeight }">

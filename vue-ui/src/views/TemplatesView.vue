@@ -21,6 +21,7 @@ interface RecordItem {
   customTransactionType: string;
   tranType: string;
   savedSearch: string;
+  customRecordTypeScriptId: string;
 }
 
 const records = ref<RecordItem[]>([]);
@@ -58,7 +59,8 @@ const getAdvancedPdfTemplates = async () => {
       customRecordType: record.customrecordtype,
       customTransactionType: record.customtransactiontype,
       tranType: record.trantype,
-      savedSearch: record.savedsearch
+      savedSearch: record.savedsearch,
+      customRecordTypeScriptId: record.customrecordtypescriptid
     }));
   } catch (error) {
     console.error("getAdvancedPdfTemplates error:", error);
@@ -80,7 +82,8 @@ onMounted(async () => {
     tranType: "CustInvc",
     customRecordType: "",
     customTransactionType: "",
-    savedSearch: ""
+    savedSearch: "",
+    customRecordTypeScriptId: ""
   });
 });
 </script>

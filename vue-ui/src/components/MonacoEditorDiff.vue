@@ -10,6 +10,7 @@
 import { ref, onMounted, onBeforeUnmount, watch, type Ref } from "vue";
 import * as monaco from "monaco-editor";
 import { editor } from "monaco-editor";
+import themeJson from "../assets/themes/theme.json";
 
 interface EditorConfig {
   autoSizing?: boolean;
@@ -90,7 +91,8 @@ onMounted(() => {
     modified: modifiedModel
   });
 
-  monaco.editor.setTheme(props.theme);
+  monaco.editor.defineTheme("monokai", themeJson as any);
+  monaco.editor.setTheme("monokai");
 
   setupResizeObserver();
 
@@ -115,14 +117,19 @@ onMounted(() => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
 
+  // Must clear the diff editor's model BEFORE disposing the text models,
+  // otherwise Monaco fires "TextModel got disposed before DiffEditorWidget
+  // model got reset" during its own internal teardown.
+  if (diffEditor) {
+    diffEditor.setModel(null);
+    diffEditor.dispose();
+  }
+
   originalModel?.dispose();
   modifiedModel?.dispose();
-
-  diffEditor?.dispose();
 });
 
 // Watchers
-
 watch(
   () => props.originalValue,
   (newValue) => {

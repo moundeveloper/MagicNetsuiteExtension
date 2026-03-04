@@ -11,7 +11,8 @@ SELECT
     AdvancedPdfTemplate.printType,
     AdvancedPdfTemplate.savedSearch,
     AdvancedPdfTemplate.scriptId,
-    AdvancedPdfTemplate.tranType
+    AdvancedPdfTemplate.tranType,
+    CustomRecordType.scriptid as customrecordtypescriptid
 FROM AdvancedPdfTemplate
 LEFT JOIN CustomRecordType
     ON AdvancedPdfTemplate.customrecordtype = CustomRecordType.internalid
@@ -32,25 +33,26 @@ WHERE AdvancedPdfTemplate.scriptId NOT LIKE 'STDTMPL%'
 
 window.getAdvancedPDFTemplatesContent = async (
   N,
-  { templateId, printType, transactionType }
+  { templateId, printType, transactionType, customRecordType, version }
 ) => {
-  const latestTemplate = await getTemplateContent(
+  const latestTemplate = await getTemplateContent({
     templateId,
     printType,
-    transactionType
-  );
-
-  console.log("Latest Template: ", latestTemplate);
+    transactionType,
+    customRecordType,
+    version
+  });
 
   return latestTemplate;
 };
 
-const getTemplateContent = async (
+const getTemplateContent = async ({
   templateId,
   printType,
   transactionType,
+  customRecordType = null,
   version = null
-) => {
+}) => {
   // Construct URL with parameters
   const url = new URL(
     "https://1964539.app.netsuite.com/app/common/custom/advancedprint/pdftemplate.nl"
@@ -58,12 +60,28 @@ const getTemplateContent = async (
   url.searchParams.set("id", templateId);
   url.searchParams.set("nl", "F");
   url.searchParams.set("pt", printType);
-  url.searchParams.set("tt", transactionType);
+
+  if (printType === "CUSTOMRECORD") {
+    url.searchParams.set("tt", "Custom");
+  } else {
+    url.searchParams.set("tt", transactionType);
+  }
+
   url.searchParams.set("source", "T");
-  url.searchParams.set("rt", "");
+
+  if (customRecordType) url.searchParams.set("rt", customRecordType);
+
   url.searchParams.set("e", "T");
   url.searchParams.set("sc", "-90");
   if (version) url.searchParams.set("version", version);
+
+  console.log("url.searchParams", {
+    templateId,
+    printType,
+    transactionType,
+    customRecordType,
+    version
+  });
 
   // Perform the GET request
   const response = await fetch(url.toString(), {
@@ -94,7 +112,18 @@ const getTemplateContent = async (
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlText, "text/html");
 
+  // Get version number
+  const versionSpan = doc.querySelector("#pdftemplate-version-number");
+  const currentVersion = versionSpan
+    ? parseInt(versionSpan.textContent.trim(), 10)
+    : 0;
+
   // Get the textarea with id and name "template"
   const textarea = doc.querySelector('textarea#template[name="template"]');
-  return textarea ? textarea.value : null;
+  const templateContent = textarea ? textarea.value : null;
+
+  return {
+    templateContent,
+    version: currentVersion
+  };
 };

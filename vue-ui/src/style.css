@@ -89,6 +89,10 @@ p {
   color: inherit;
 }
 
+.diffOverview {
+  background-color: rgb(18, 28, 46) !important;
+}
+
 body,
 html,
 #app {
