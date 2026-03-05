@@ -11,6 +11,7 @@ import { ref, onMounted, onBeforeUnmount, watch, type Ref } from "vue";
 import * as monaco from "monaco-editor";
 import { editor } from "monaco-editor";
 import themeJson from "../assets/themes/theme.json";
+import { formatFtl } from "../utils/ftlFormatter";
 
 interface EditorConfig {
   autoSizing?: boolean;
@@ -54,6 +55,13 @@ let originalModel: editor.ITextModel | null = null;
 let modifiedModel: editor.ITextModel | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
+const formatValue = (value: string): string => {
+  if (props.language === "xml") {
+    return formatFtl(value);
+  }
+  return value;
+};
+
 const setupResizeObserver = () => {
   if (!editorContainer.value || !diffEditor) return;
 
@@ -77,12 +85,12 @@ onMounted(() => {
   });
 
   originalModel = monaco.editor.createModel(
-    props.originalValue,
+    formatValue(props.originalValue),
     props.language
   );
 
   modifiedModel = monaco.editor.createModel(
-    props.modifiedValue,
+    formatValue(props.modifiedValue),
     props.language
   );
 
@@ -134,7 +142,7 @@ watch(
   () => props.originalValue,
   (newValue) => {
     if (originalModel && originalModel.getValue() !== newValue) {
-      originalModel.setValue(newValue);
+      originalModel.setValue(formatValue(newValue));
     }
   }
 );
@@ -143,7 +151,7 @@ watch(
   () => props.modifiedValue,
   (newValue) => {
     if (modifiedModel && modifiedModel.getValue() !== newValue) {
-      modifiedModel.setValue(newValue);
+      modifiedModel.setValue(formatValue(newValue));
     }
   }
 );

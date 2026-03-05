@@ -1,8 +1,31 @@
 <template>
-  <div class="loader"></div>
+  <div class="loader-container">
+    <p v-if="text" class="loader-text">{{ text }}</p>
+    <div class="loader"></div>
+  </div>
 </template>
 
+<script setup lang="ts">
+defineProps({
+  text: {
+    type: String,
+    default: ""
+  }
+});
+</script>
+
 <style scoped>
+.loader-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+.loader-text {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--p-slate-600);
+}
 .loader {
   width: 2.5rem;
   aspect-ratio: 1;

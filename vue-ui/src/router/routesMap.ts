@@ -144,7 +144,7 @@ export const routes: FullRoute[] = [
   {
     route: "/run-quick-script",
     name: "Run Quick Script",
-    icon: "pi pi-file",
+    icon: "pi pi-file-export",
     component: RunQuickScriptView,
     status: RouteStatus.release,
     breadcrumb: "Run Quick Script"

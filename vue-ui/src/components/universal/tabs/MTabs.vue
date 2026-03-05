@@ -78,6 +78,15 @@
     </div>
 
     <!-- Active tab content with transition -->
+    <!-- Toolbar (if present) -->
+    <div
+      v-if="$slots[`${activeTab}-toolbar`]"
+      class="tab-toolbar"
+    >
+      <slot :name="`${activeTab}-toolbar`"></slot>
+    </div>
+
+    <!-- Tab body -->
     <div
       ref="tabContentRef"
       class="tab-content h-full relative overflow-hidden"
@@ -92,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
 
 interface Tab {
   name: string;
@@ -140,9 +149,12 @@ const switchTab = (name: string) => {
   if (name !== activeTab.value && !isTransitioning.value) {
     isTransitioning.value = true;
     activeTab.value = name;
-    setTimeout(() => {
-      isTransitioning.value = false;
-    }, 200);
+    nextTick(() => {
+      setTimeout(() => {
+        isTransitioning.value = false;
+        updateContentHeight();
+      }, 200);
+    });
   }
 };
 
@@ -172,6 +184,12 @@ const emitAddEvent = () => {
 .tab-content {
   outline: 1px solid var(--p-slate-300);
   border-radius: 0.25rem;
+}
+
+.tab-toolbar {
+  outline: 1px solid var(--p-slate-300);
+  border-radius: 0.25rem;
+  margin-bottom: 0;
 }
 
 .tab-header {

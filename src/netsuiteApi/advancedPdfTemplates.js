@@ -33,24 +33,29 @@ WHERE AdvancedPdfTemplate.scriptId NOT LIKE 'STDTMPL%'
   console.log("PDF Template Links: ", allLinks);
 
   // Example: exclude savedsearchid = -1
-  const filtered = filterPdfTemplateLinks(allLinks, {
-    excludeSavedSearchId: ["-1"]
-  });
+  const allLinksById = new Map();
 
-  const linksBySearchId = new Map();
-  filtered.forEach((link) => {
-    const key = String(link.savedsearchid);
-    if (!linksBySearchId.has(key)) {
-      linksBySearchId.set(key, { tt: link.tt, recordType: link.recordType });
+  // First, build a map by ID from allLinks
+  allLinks.forEach((link) => {
+    // Using id if exists, or savedsearchid as fallback
+    const key = String(link.id ?? link.savedsearchid);
+
+    if (!allLinksById.has(key)) {
+      allLinksById.set(key, { tt: link.tt, recordType: link.recordType });
     }
   });
 
+  // Now iterate results and fill missing trantype/recordtype
   results.forEach((result) => {
-    const key = String(result.savedsearch);
-    if (linksBySearchId.has(key)) {
-      const { tt, recordType } = linksBySearchId.get(key);
-      result.trantype = tt;
-      result.recordtype = recordType;
+    if (!result.trantype) {
+      // Use id or savedsearch to match with allLinks
+      const key = String(result.id ?? result.savedsearch);
+
+      if (allLinksById.has(key)) {
+        const { tt, recordType } = allLinksById.get(key);
+        result.trantype = tt;
+        result.recordtype = recordType;
+      }
     }
   });
 
@@ -204,7 +209,7 @@ const getPdfTemplateLinks = async () => {
       }
 
       return {
-        href: fullUrl.href,
+        id: fullUrl.searchParams.get("id"),
         tt: fullUrl.searchParams.get("tt"),
         savedsearchid: fullUrl.searchParams.get("savedsearchid"),
         recordType
@@ -213,29 +218,101 @@ const getPdfTemplateLinks = async () => {
     .filter(Boolean);
 };
 
-const filterPdfTemplateLinks = (links, options = {}) => {
-  const {
-    excludeSavedSearchId = [],
-    includeSavedSearchId = null,
-    tt = null
-  } = options;
+window.savePdfTemplate = async (N, data) => {
+  return updatePdfTemplate(data);
+};
 
-  return links.filter((link) => {
-    if (
-      includeSavedSearchId &&
-      !includeSavedSearchId.includes(link.savedsearchid)
-    ) {
-      return false;
+/**
+ * Update a NetSuite Advanced PDF/HTML template via fetch
+ */
+const updatePdfTemplate = async ({
+  templateId,
+  printType,
+  tranType,
+  savedSearch,
+  name,
+  fromVersion,
+  recordType,
+  templateScriptId,
+  xmlBody
+}) => {
+  if (!templateId || !xmlBody || !printType || !name || !fromVersion) {
+    console.error(
+      "Missing templateId, xmlBody, printType, name or fromVersion",
+      JSON.stringify({ templateId, xmlBody, printType, name, fromVersion })
+    );
+    return;
+  }
+
+  const baseUrl = window.location.origin;
+
+  if (printType === "CUSTOMRECORD") {
+    tranType = "Custom";
+  }
+
+  if (!tranType) {
+    console.error("Missing tranType");
+    return;
+  }
+
+  console.log("TranType [savePdfTemplate]: ", tranType);
+  const params = {
+    action: "SAVE_EDIT",
+    templateId: templateId,
+    displaySource: "T",
+    tranType: tranType,
+    printType: printType,
+    recordType: recordType || "",
+    createdFromCompId: "NL",
+    createdFromId: printType === "SEARCH" ? "0" : "2",
+    createdFromVersion: printType === "SEARCH" ? "3" : "6",
+    name: name,
+    description: "",
+    savedSearchId: savedSearch || "-1",
+    returnToSavedSearchDef: "F",
+    showAppIdField: "F",
+    scriptId:
+      "_" + templateScriptId.toLowerCase().split("_").slice(1).join("_"),
+    orientation: "p",
+    size: "Letter",
+    top: "0",
+    right: "0",
+    bottom: "0.5",
+    left: "0",
+    size: "in",
+    template: xmlBody
+  };
+
+  console.log("Params [savePdfTemplate]: ", params);
+
+  const urlParams = new URLSearchParams(params);
+
+  const response = await fetch(
+    `${baseUrl}/app/common/custom/advancedprint/pdftemplate.nl`,
+    {
+      method: "POST",
+      headers: {
+        accept: "text/plain, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest"
+      },
+      body: urlParams
     }
+  );
+  console.log("Template updated?:", response);
 
-    if (excludeSavedSearchId.includes(link.savedsearchid)) {
-      return false;
-    }
+  if (!response.ok) {
+    throw new Error(
+      `Failed to update template: ${response.status} ${response.statusText}`
+    );
+  }
 
-    if (tt && link.tt !== tt) {
-      return false;
-    }
+  const raw = await response.text();
 
-    return true;
-  });
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.log("Error Parsing Template Response:", error);
+    return;
+  }
 };
