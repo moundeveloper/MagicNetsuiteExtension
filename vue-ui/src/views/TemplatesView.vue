@@ -22,6 +22,7 @@ interface RecordItem {
   tranType: string;
   savedSearch: string;
   customRecordTypeScriptId: string;
+  recordType: string;
 }
 
 const records = ref<RecordItem[]>([]);
@@ -60,7 +61,8 @@ const getAdvancedPdfTemplates = async () => {
       customTransactionType: record.customtransactiontype,
       tranType: record.trantype,
       savedSearch: record.savedsearch,
-      customRecordTypeScriptId: record.customrecordtypescriptid
+      customRecordTypeScriptId: record.customrecordtypescriptid,
+      recordType: record.recordtype
     }));
   } catch (error) {
     console.error("getAdvancedPdfTemplates error:", error);
@@ -72,7 +74,7 @@ const getAdvancedPdfTemplates = async () => {
 onMounted(async () => {
   await getAdvancedPdfTemplates();
 
-  records.value.push({
+  /*   records.value.push({
     id: 411,
     name: "Testing Invoice",
     scriptId: "CUSTTMPL_TESTING_INVOICE",
@@ -84,7 +86,7 @@ onMounted(async () => {
     customTransactionType: "",
     savedSearch: "",
     customRecordTypeScriptId: ""
-  });
+  }); */
 });
 </script>
 
@@ -188,7 +190,7 @@ onMounted(async () => {
 
         <MTableColumn
           label="Saved Search"
-          field="savedSearch"
+          field="recordType"
           width="1fr"
           searchable
           filterable

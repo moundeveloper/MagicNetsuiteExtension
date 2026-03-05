@@ -28,18 +28,52 @@ WHERE AdvancedPdfTemplate.scriptId NOT LIKE 'STDTMPL%'
 
   console.log("Advanced PDF Templates: ", results.length);
 
+  const allLinks = await getPdfTemplateLinks();
+
+  console.log("PDF Template Links: ", allLinks);
+
+  // Example: exclude savedsearchid = -1
+  const filtered = filterPdfTemplateLinks(allLinks, {
+    excludeSavedSearchId: ["-1"]
+  });
+
+  const linksBySearchId = new Map();
+  filtered.forEach((link) => {
+    const key = String(link.savedsearchid);
+    if (!linksBySearchId.has(key)) {
+      linksBySearchId.set(key, { tt: link.tt, recordType: link.recordType });
+    }
+  });
+
+  results.forEach((result) => {
+    const key = String(result.savedsearch);
+    if (linksBySearchId.has(key)) {
+      const { tt, recordType } = linksBySearchId.get(key);
+      result.trantype = tt;
+      result.recordtype = recordType;
+    }
+  });
+
   return results;
 };
 
 window.getAdvancedPDFTemplatesContent = async (
   N,
-  { templateId, printType, transactionType, customRecordType, version }
+  {
+    templateId,
+    printType,
+    transactionType,
+    customRecordType,
+    savedSearch,
+    version
+  }
 ) => {
   const latestTemplate = await getTemplateContent({
     templateId,
     printType,
     transactionType,
     customRecordType,
+    savedSearch,
     version
   });
 
@@ -51,11 +85,13 @@ const getTemplateContent = async ({
   printType,
   transactionType,
   customRecordType = null,
+  savedSearch = null,
   version = null
 }) => {
   // Construct URL with parameters
+  const baseUrl = window.location.origin;
   const url = new URL(
-    "https://1964539.app.netsuite.com/app/common/custom/advancedprint/pdftemplate.nl"
+    `${baseUrl}/app/common/custom/advancedprint/pdftemplate.nl`
   );
   url.searchParams.set("id", templateId);
   url.searchParams.set("nl", "F");
@@ -75,11 +111,14 @@ const getTemplateContent = async ({
   url.searchParams.set("sc", "-90");
   if (version) url.searchParams.set("version", version);
 
+  if (savedSearch) url.searchParams.set("savedsearchid", savedSearch);
+
   console.log("url.searchParams", {
     templateId,
     printType,
     transactionType,
     customRecordType,
+    savedSearch,
     version
   });
 
@@ -99,8 +138,7 @@ const getTemplateContent = async ({
       "sec-gpc": "1",
       "upgrade-insecure-requests": "1"
     },
-    referrer:
-      "https://1964539.app.netsuite.com/app/common/custom/pdftemplates.nl",
+    referrer: `${baseUrl}/app/common/custom/pdftemplates.nl`,
     method: "GET",
     credentials: "include"
   });
@@ -124,6 +162,80 @@ const getTemplateContent = async ({
 
   return {
     templateContent,
-    version: currentVersion
+    currentVersion
   };
+};
+
+const getPdfTemplateLinks = async () => {
+  const baseUrl = window.location.origin;
+  const url = `${baseUrl}/app/common/custom/pdftemplates.nl`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const html = await response.text();
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  const links = [
+    ...doc.querySelectorAll("td.listtext.uir-list-row-cell a.dottedlink")
+  ];
+
+  return links
+    .map((link) => {
+      const href = link.getAttribute("href");
+      if (!href) return null;
+
+      const fullUrl = new URL(href, baseUrl);
+
+      // Navigate to the parent row
+      const tr = link.closest("tr");
+      let recordType = null;
+
+      if (tr) {
+        const tds = tr.querySelectorAll("td");
+        // 4th column = index 3
+        if (tds[3]) {
+          recordType = tds[3].textContent.trim();
+        }
+      }
+
+      return {
+        href: fullUrl.href,
+        tt: fullUrl.searchParams.get("tt"),
+        savedsearchid: fullUrl.searchParams.get("savedsearchid"),
+        recordType
+      };
+    })
+    .filter(Boolean);
+};
+
+const filterPdfTemplateLinks = (links, options = {}) => {
+  const {
+    excludeSavedSearchId = [],
+    includeSavedSearchId = null,
+    tt = null
+  } = options;
+
+  return links.filter((link) => {
+    if (
+      includeSavedSearchId &&
+      !includeSavedSearchId.includes(link.savedsearchid)
+    ) {
+      return false;
+    }
+
+    if (excludeSavedSearchId.includes(link.savedsearchid)) {
+      return false;
+    }
+
+    if (tt && link.tt !== tt) {
+      return false;
+    }
+
+    return true;
+  });
 };

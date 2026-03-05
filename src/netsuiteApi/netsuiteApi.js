@@ -70,24 +70,9 @@ const handlers = {
     console.log("Advanced PDF Templates action received");
     return window.getAdvancedPDFTemplates(modules);
   },
-  GET_TEMPLATES_CONTENT: async ({
-    modules,
-    payload: {
-      templateId,
-      printType,
-      transactionType,
-      customRecordType,
-      version
-    }
-  }) => {
-    console.log("Get Templates Content action received:", templateId);
-    return window.getAdvancedPDFTemplatesContent(modules, {
-      templateId,
-      printType,
-      transactionType,
-      customRecordType,
-      version
-    });
+  GET_TEMPLATES_CONTENT: async ({ modules, payload }) => {
+    console.log("Get Templates Content action received:", payload.templateId);
+    return window.getAdvancedPDFTemplatesContent(modules, payload);
   },
   SCRIPT_URL: async ({ modules, payload: { scriptId } }) => {
     console.log("Script URL action received:", scriptId);

@@ -9,8 +9,8 @@ import ExpandableSidebar from "../components/universal/sidebar/ExpandableSidebar
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
-import dummmytemplate from "../assets/template_dummy.ftl?raw";
 import MonacoEditorDiff from "../components/MonacoEditorDiff.vue";
+import { Select } from "primevue";
 
 interface RecordItem {
   id: number;
@@ -23,6 +23,7 @@ interface RecordItem {
   customTransactionType: string;
   tranType: string;
   savedSearch: string;
+  recordType: string;
 }
 
 const props = defineProps<{
@@ -34,8 +35,14 @@ const code = ref<string>("");
 const template = ref<RecordItem | null>(null);
 const loading = ref(false);
 const versions = ref<number[]>([]);
+const selectedVersion = ref<number | null>(null);
+const compareVersionLeft = ref<number | null>(null);
+const compareVersionRight = ref<number | null>(null);
+const leftCode = ref("");
+const rightCode = ref("");
+const loadingDiff = ref(false);
 
-const getTemplate = async () => {
+const getTemplate = async (version?: number | null) => {
   const templateData = route.query.data
     ? JSON.parse(route.query.data as string)
     : null;
@@ -52,7 +59,10 @@ const getTemplate = async () => {
         templateId: templateData.id,
         printType: templateData.printType,
         transactionType: templateData.tranType,
-        customRecordType: templateData.customRecordTypeScriptId
+        customRecordType: templateData.customRecordTypeScriptId,
+        savedSearch: templateData.savedSearch,
+
+        version: version ?? undefined
       }
     );
 
@@ -60,6 +70,7 @@ const getTemplate = async () => {
 
     code.value = templateContent;
     versions.value = Array.from({ length: currentVersion }, (_, i) => i + 1);
+    selectedVersion.value = currentVersion;
   } catch (error) {
     console.error("Error fetching template content:", error);
   } finally {
@@ -67,10 +78,55 @@ const getTemplate = async () => {
   }
 };
 
+const handleVersionChange = () => {
+  getTemplate(selectedVersion.value);
+};
+
+const fetchCompareVersion = async (version: number | null, isLeft: boolean) => {
+  const templateData = route.query.data
+    ? JSON.parse(route.query.data as string)
+    : null;
+
+  if (!templateData || version === null) return;
+
+  loadingDiff.value = true;
+  try {
+    const { message: templateResponse } = await callApi(
+      RequestRoutes.GET_TEMPLATES_CONTENT,
+      {
+        templateId: templateData.id,
+        printType: templateData.printType,
+        transactionType: templateData.tranType,
+        customRecordType: templateData.customRecordTypeScriptId,
+        version
+      }
+    );
+
+    const { templateContent } = templateResponse;
+
+    if (isLeft) {
+      leftCode.value = templateContent;
+    } else {
+      rightCode.value = templateContent;
+    }
+  } catch (error) {
+    console.error("Error fetching compare version:", error);
+  } finally {
+    loadingDiff.value = false;
+  }
+};
+
+const handleCompareVersionLeftChange = () => {
+  fetchCompareVersion(compareVersionLeft.value, true);
+};
+
+const handleCompareVersionRightChange = () => {
+  fetchCompareVersion(compareVersionRight.value, false);
+};
+
 const tabs = ref([
   { id: "editor", label: "Editor" },
-  { id: "compare", label: "Compare Versions" },
-  { id: "preview", label: "Preview" }
+  { id: "compare", label: "Compare Versions" }
 ]);
 
 const tabHeaders = computed(() =>
@@ -79,18 +135,6 @@ const tabHeaders = computed(() =>
     label: tab.label
   }))
 );
-
-const originalCode = ref(`
-function sum(a, b) {
-  return a + b;
-}
-`);
-
-const modifiedCode = ref(`
-function sum(a, b) {
-  return a - b;
-}
-`);
 
 const handleChange = (val: string) => {
   console.log("Modified changed:", val);
@@ -105,7 +149,7 @@ const onBlur = () => {
 };
 
 onMounted(async () => {
-  await getTemplate();
+  await getTemplate(null);
 });
 </script>
 
@@ -127,20 +171,112 @@ onMounted(async () => {
       <ExpandableSidebar>
         <template #default>
           <div class="sidebar-section">
-            <h4>Section 1</h4>
-            <p>Content for section 1</p>
+            <h4 class="font-bold">{{ template.name }}</h4>
+            <p>Script ID: {{ template.scriptId }}</p>
+            <p v-if="template.printType">
+              Print Type: {{ template.printType }}
+            </p>
+            <p v-if="template.tranType">
+              Transaction Type: {{ template.tranType }}
+            </p>
+            <p v-if="template.customRecordType">
+              Custom Record Type: {{ template.customRecordType }}
+            </p>
+            <p v-if="template.customTransactionType">
+              Custom Transaction Type: {{ template.customTransactionType }}
+            </p>
+            <p v-if="template.savedSearch">
+              Saved Search: {{ template.recordType }}
+            </p>
           </div>
           <div class="sidebar-section">
-            <h4>Section 2</h4>
-            <p>Content for section 2</p>
+            <h4>Version</h4>
+            <Select
+              v-model="selectedVersion"
+              :options="versions"
+              placeholder="Select Version"
+              class="w-full"
+              @change="handleVersionChange"
+            >
+              <template #value="slotProps">
+                <span class="flex items-center gap-2">
+                  <span v-if="!slotProps.value">{{
+                    slotProps.placeholder
+                  }}</span>
+                  <span v-else-if="Math.max(...versions) === slotProps.value"
+                    >{{ slotProps.value }} Latest</span
+                  >
+                  <span v-else>{{ slotProps.value }}</span>
+                </span>
+              </template>
+              <template #option="slotProps">
+                <span class="flex items-center gap-2">
+                  <span v-if="Math.max(...versions) === slotProps.option"
+                    >{{ slotProps.option }} Latest</span
+                  >
+                  <span v-else>{{ slotProps.option }}</span>
+                </span>
+              </template>
+            </Select>
           </div>
           <div class="sidebar-section">
-            <h4>Section 3</h4>
-            <p>Content for section 3</p>
-          </div>
-          <div class="sidebar-section">
-            <h4>Section 4</h4>
-            <p>Content for section 4</p>
+            <h4>Compare Versions</h4>
+            <div class="flex flex-col gap-2">
+              <Select
+                v-model="compareVersionLeft"
+                :options="versions"
+                placeholder="Left Version"
+                class="w-full"
+                @change="handleCompareVersionLeftChange"
+              >
+                <template #value="slotProps">
+                  <span class="flex items-center gap-2">
+                    <span v-if="!slotProps.value">{{
+                      slotProps.placeholder
+                    }}</span>
+                    <span v-else-if="Math.max(...versions) === slotProps.value"
+                      >{{ slotProps.value }} Latest</span
+                    >
+                    <span v-else>{{ slotProps.value }}</span>
+                  </span>
+                </template>
+                <template #option="slotProps">
+                  <span class="flex items-center gap-2">
+                    <span v-if="Math.max(...versions) === slotProps.option"
+                      >{{ slotProps.option }} Latest</span
+                    >
+                    <span v-else>{{ slotProps.option }}</span>
+                  </span>
+                </template>
+              </Select>
+              <Select
+                v-model="compareVersionRight"
+                :options="versions"
+                placeholder="Right Version"
+                class="w-full"
+                @change="handleCompareVersionRightChange"
+              >
+                <template #value="slotProps">
+                  <span class="flex items-center gap-2">
+                    <span v-if="!slotProps.value">{{
+                      slotProps.placeholder
+                    }}</span>
+                    <span v-else-if="Math.max(...versions) === slotProps.value"
+                      >{{ slotProps.value }} Latest</span
+                    >
+                    <span v-else>{{ slotProps.value }}</span>
+                  </span>
+                </template>
+                <template #option="slotProps">
+                  <span class="flex items-center gap-2">
+                    <span v-if="Math.max(...versions) === slotProps.option"
+                      >{{ slotProps.option }} Latest</span
+                    >
+                    <span v-else>{{ slotProps.option }}</span>
+                  </span>
+                </template>
+              </Select>
+            </div>
           </div>
         </template>
       </ExpandableSidebar>
@@ -160,20 +296,22 @@ onMounted(async () => {
           </template>
           <template #compare="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <div
+                v-if="loadingDiff"
+                class="flex items-center justify-center h-full"
+              >
+                <MLoader />
+              </div>
               <MonacoEditorDiff
-                :originalValue="originalCode"
-                v-model:modifiedValue="modifiedCode"
-                language="javascript"
+                v-else
+                :originalValue="leftCode"
+                v-model:modifiedValue="rightCode"
+                language="xml"
                 theme="vs-dark"
                 @change="handleChange"
                 @focus="onFocus"
                 @blur="onBlur"
               />
-            </div>
-          </template>
-          <template #preview="{ contentHeight }">
-            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
-              <p>Preview content here</p>
             </div>
           </template>
         </MTabs>

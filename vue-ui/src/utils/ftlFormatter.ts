@@ -20,6 +20,13 @@ const SELF_CLOSING_TAGS = new Set([
   "totalpages"
 ]);
 
+const SELF_CLOSING_FTL = new Set([
+  "assign",
+  "setting",
+  "outputformat",
+  "autoesc"
+]);
+
 const HTML_BLOCK_TAGS = new Set([
   "html",
   "head",
@@ -210,7 +217,11 @@ export function formatFtl(input: string): string {
 
     // ── FTL opening directive ──
     if (FTL_BLOCK_OPEN.test(t)) {
-      depth++;
+      const tag = t.match(/^<#([a-zA-Z]+)/)?.[1]; // extract directive name
+      // Only increase depth if not self-closing
+      if (!t.endsWith("/>") && !(tag && SELF_CLOSING_FTL.has(tag))) {
+        depth++;
+      }
       continue;
     }
 
