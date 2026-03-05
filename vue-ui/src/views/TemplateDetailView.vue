@@ -37,8 +37,8 @@ const template = ref<RecordItem | null>(null);
 const loading = ref(false);
 const versions = ref<number[]>([]);
 const selectedVersion = ref<number | null>(null);
-const compareVersionLeft = ref<number | null>(null);
-const compareVersionRight = ref<number | null>(null);
+const compareVersionLeft = ref<number | "currentCode" | null>(null);
+const compareVersionRight = ref<number | "currentCode" | null>(null);
 const leftCode = ref("");
 const rightCode = ref("");
 const loadingDiff = ref(false);
@@ -46,6 +46,14 @@ const loaderText = ref("");
 const errorHtml = ref("");
 const toast = useToast();
 let originalCode = "";
+
+const leftCodeComputed = computed(() => {
+  return compareVersionLeft.value === "currentCode" ? code.value : leftCode.value;
+});
+
+const rightCodeComputed = computed(() => {
+  return compareVersionRight.value === "currentCode" ? code.value : rightCode.value;
+});
 
 const parsedError = computed(() => parseErrorHtml(errorHtml.value));
 
@@ -70,6 +78,7 @@ const parseErrorHtml = (raw: string) => {
 
   return { message, detail };
 };
+
 const getTemplate = async (version?: number | null) => {
   const templateData = route.query.data
     ? JSON.parse(route.query.data as string)
@@ -113,7 +122,19 @@ const handleVersionChange = () => {
   getTemplate(selectedVersion.value);
 };
 
-const fetchCompareVersion = async (version: number | null, isLeft: boolean) => {
+const fetchCompareVersion = async (
+  version: number | "currentCode" | null,
+  isLeft: boolean
+) => {
+  if (version === "currentCode") {
+    if (isLeft) {
+      leftCode.value = code.value;
+    } else {
+      rightCode.value = code.value;
+    }
+    return;
+  }
+
   const templateData = route.query.data
     ? JSON.parse(route.query.data as string)
     : null;
@@ -162,6 +183,10 @@ const tabs = ref([
   { id: "compare", label: "Compare Versions" }
 ]);
 
+const versionOptions = computed(() => {
+  return [...versions.value, "currentCode"];
+});
+
 const tabHeaders = computed(() =>
   tabs.value.map((tab) => ({
     name: tab.id,
@@ -170,7 +195,7 @@ const tabHeaders = computed(() =>
 );
 
 const handleChange = (val: string) => {
-  console.log("Modified changed:", val);
+  console.log("Modified changed");
 };
 
 const onFocus = () => {
@@ -330,7 +355,7 @@ onMounted(async () => {
             <div class="flex flex-col gap-2">
               <Select
                 v-model="compareVersionLeft"
-                :options="versions"
+                :options="versionOptions"
                 placeholder="Left Version"
                 class="w-full"
                 @change="handleCompareVersionLeftChange"
@@ -340,6 +365,9 @@ onMounted(async () => {
                     <span v-if="!slotProps.value">{{
                       slotProps.placeholder
                     }}</span>
+                    <span v-else-if="slotProps.value === 'currentCode'"
+                      >Current (Unsaved)</span
+                    >
                     <span v-else-if="Math.max(...versions) === slotProps.value"
                       >{{ slotProps.value }} Latest</span
                     >
@@ -348,7 +376,10 @@ onMounted(async () => {
                 </template>
                 <template #option="slotProps">
                   <span class="flex items-center gap-2">
-                    <span v-if="Math.max(...versions) === slotProps.option"
+                    <span v-if="slotProps.option === 'currentCode'"
+                      >Current (Unsaved)</span
+                    >
+                    <span v-else-if="Math.max(...versions) === slotProps.option"
                       >{{ slotProps.option }} Latest</span
                     >
                     <span v-else>{{ slotProps.option }}</span>
@@ -357,7 +388,7 @@ onMounted(async () => {
               </Select>
               <Select
                 v-model="compareVersionRight"
-                :options="versions"
+                :options="versionOptions"
                 placeholder="Right Version"
                 class="w-full"
                 @change="handleCompareVersionRightChange"
@@ -367,6 +398,9 @@ onMounted(async () => {
                     <span v-if="!slotProps.value">{{
                       slotProps.placeholder
                     }}</span>
+                    <span v-else-if="slotProps.value === 'currentCode'"
+                      >Current (Unsaved)</span
+                    >
                     <span v-else-if="Math.max(...versions) === slotProps.value"
                       >{{ slotProps.value }} Latest</span
                     >
@@ -375,7 +409,10 @@ onMounted(async () => {
                 </template>
                 <template #option="slotProps">
                   <span class="flex items-center gap-2">
-                    <span v-if="Math.max(...versions) === slotProps.option"
+                    <span v-if="slotProps.option === 'currentCode'"
+                      >Current (Unsaved)</span
+                    >
+                    <span v-else-if="Math.max(...versions) === slotProps.option"
                       >{{ slotProps.option }} Latest</span
                     >
                     <span v-else>{{ slotProps.option }}</span>
@@ -422,8 +459,8 @@ onMounted(async () => {
               </div>
               <MonacoEditorDiff
                 v-else
-                :originalValue="leftCode"
-                v-model:modifiedValue="rightCode"
+                :originalValue="leftCodeComputed"
+                v-model:modifiedValue="rightCodeComputed"
                 language="xml"
                 theme="vs-dark"
                 @change="handleChange"
