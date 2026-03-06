@@ -14,7 +14,7 @@ import parserBabel from "prettier/plugins/babel";
 import prettierPluginEstree from "prettier/plugins/estree";
 import { editor, type IDisposable } from "monaco-editor";
 import themeJson from "../assets/themes/theme.json";
-import { formatFtl } from "../utils/ftlFormatter";
+import { formatFtl, validateFtlXml, type ValidationError } from "../utils/ftlFormatter";
 
 // Configure Monaco workers
 self.MonacoEnvironment = {
@@ -84,6 +84,7 @@ interface EditorConfig {
   defocusScroll?: boolean;
   minimap?: boolean;
   disableAutoScrollOnFocus?: boolean;
+  validateTags?: boolean;
 }
 
 interface MonacoEditorProps {
@@ -103,12 +104,13 @@ const props = withDefaults(defineProps<MonacoEditorProps>(), {
   readonly: false,
   options: () => ({}),
   completionItems: () => [],
-  config: () => ({
+config: () => ({
     suppressNativeFind: false,
     autoSizing: true,
     defocusScroll: false,
     minimap: true,
-    disableAutoScrollOnFocus: false
+    disableAutoScrollOnFocus: false,
+    validateTags: true
   })
 });
 
@@ -259,8 +261,11 @@ onMounted(async () => {
     disableAutoScrollOnFocus();
   }
 
-  // Register custom completions
+// Register custom completions
   registerCompletions();
+
+  // Initial validation
+  validateContent();
 
   // Listen to content changes
   editorInstance.onDidChangeModelContent(() => {
@@ -268,6 +273,7 @@ onMounted(async () => {
     const value = editorInstance.getValue();
     emit("update:modelValue", value);
     emit("change", value);
+    validateContent();
     if (props.config?.autoSizing) return;
 
     updateEditorHeight();
@@ -417,6 +423,33 @@ function registerCompletions() {
       }
     }
   );
+}
+
+function validateContent() {
+  if (!editorInstance) return;
+
+  const model = editorInstance.getModel();
+  if (!model) return;
+
+  if (props.config?.validateTags && (props.language === "xml" || props.language === "html")) {
+    const content = editorInstance.getValue();
+    const validationErrors = validateFtlXml(content);
+
+    const markers = validationErrors.map((error: ValidationError) => ({
+      severity: error.severity === "error"
+        ? monaco.MarkerSeverity.Error
+        : monaco.MarkerSeverity.Warning,
+      startLineNumber: error.line,
+      startColumn: error.column,
+      endLineNumber: error.line,
+      endColumn: error.column + 1,
+      message: error.message
+    }));
+
+    monaco.editor.setModelMarkers(model, "ftl-validator", markers);
+  } else {
+    monaco.editor.setModelMarkers(model, "ftl-validator", []);
+  }
 }
 
 // Expose editor instance and helper methods

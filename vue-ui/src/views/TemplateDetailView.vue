@@ -5,7 +5,7 @@ import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
-import ExpandableSidebar from "../components/universal/sidebar/ExpandableSidebar.vue";
+import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
