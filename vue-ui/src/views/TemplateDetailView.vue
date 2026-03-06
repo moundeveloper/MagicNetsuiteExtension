@@ -48,11 +48,15 @@ const toast = useToast();
 let originalCode = "";
 
 const leftCodeComputed = computed(() => {
-  return compareVersionLeft.value === "currentCode" ? code.value : leftCode.value;
+  return compareVersionLeft.value === "currentCode"
+    ? code.value
+    : leftCode.value;
 });
 
 const rightCodeComputed = computed(() => {
-  return compareVersionRight.value === "currentCode" ? code.value : rightCode.value;
+  return compareVersionRight.value === "currentCode"
+    ? code.value
+    : rightCode.value;
 });
 
 const parsedError = computed(() => parseErrorHtml(errorHtml.value));
