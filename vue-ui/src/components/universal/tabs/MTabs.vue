@@ -1,110 +1,65 @@
 <!-- MTabs.vue -->
 <template>
-  <div class="flex flex-col gap-4 h-full">
-    <!-- Tab headers -->
-    <div class="flex gap-2">
-      <TransitionGroup name="tab-transition" tag="div" class="flex gap-2">
-        <button
-          class="tab-header px-3 py-2 flex gap-2.5 items-center rounded group relative overflow-hidden"
-          :style="{
-            backgroundColor:
-              tab.name === activeTab
-                ? 'var(--m-slate-250)'
-                : 'var(--m-slate-150)',
-            color:
-              tab.name === activeTab
-                ? 'var(--p-slate-900)'
-                : 'var(--p-slate-600)',
-            outlineColor:
-              tab.name === activeTab
-                ? 'var(--p-slate-400)'
-                : 'var(--p-slate-300)'
-          }"
-          v-for="tab in tabs"
-          :key="tab.name"
-          @click="switchTab(tab.name)"
-        >
-          <!-- Active indicator -->
-          <div
-            class="w-1 h-full rounded-full origin-left"
-            :class="{ 'animate-bounce-in': tab.name === activeTab }"
-            :style="{
-              backgroundColor:
-                tab.name === activeTab
-                  ? 'var(--p-slate-500)'
-                  : 'var(--p-slate-300)',
-              opacity: tab.name === activeTab ? '1' : '0.4',
-              transform:
-                tab.name === activeTab
-                  ? 'translateX(0) scaleX(1)'
-                  : 'translateX(-4px) scaleX(0.5)',
-              transition: tab.name === activeTab ? 'none' : 'all 0.3s ease-out'
-            }"
-          ></div>
-
-          <!-- Tab label -->
-          <span class="font-medium text-sm select-none">{{ tab.label }}</span>
-
-          <!-- Close button -->
+  <div class="flex flex-col gap-2 h-full min-w-0">
+    <!-- Tab headers row: scroll area + fixed add button -->
+    <div class="tabs-header-row">
+      <!-- Scroll container (tabs only) -->
+      <div
+        ref="scrollRef"
+        class="tabs-scroll-container"
+        @wheel.prevent="onWheel"
+      >
+        <TransitionGroup name="tab-transition" tag="div" class="tabs-inner">
           <button
-            v-if="isDynamic"
-            class="p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-2 hover:bg-slate-200"
-            @click.stop="emitDeleteEvent(tab.name)"
+            v-for="tab in tabs"
+            :key="tab.name"
+            class="tab-header group"
+            :class="{ 'tab-header--active': tab.name === activeTab }"
+            @click="switchTab(tab.name)"
+            @mousedown.middle.prevent="isDynamic && emitDeleteEvent(tab.name)"
           >
-            <i
-              class="pi pi-times"
-              style="font-size: 0.7rem; color: var(--p-slate-500)"
-            ></i>
+            <div
+              class="tab-indicator"
+              :class="{ 'tab-indicator--active': tab.name === activeTab }"
+            ></div>
+            <span class="tab-label">{{ tab.label }}</span>
+            <button
+              v-if="isDynamic"
+              class="tab-close"
+              @click.stop="emitDeleteEvent(tab.name)"
+            >
+              <i class="pi pi-times" style="font-size: 0.7rem"></i>
+            </button>
           </button>
-        </button>
+        </TransitionGroup>
+      </div>
 
-        <!-- Add Tab Button -->
-        <button
-          v-if="isDynamic"
-          key="add-tab-button"
-          class="tab-header px-3 py-2 flex items-center justify-center rounded transition-all duration-200 ease-in-out hover:bg-slate-200 overflow-hidden"
-          style="
-            outline: 1px solid var(--p-slate-300);
-            background-color: var(--m-slate-150);
-          "
-          @click="emitAddEvent"
-        >
-          <i
-            class="pi pi-plus"
-            style="font-size: 0.8rem; color: var(--p-slate-600)"
-          ></i>
-        </button>
-      </TransitionGroup>
+      <!-- Add button: pinned right after scroll area, never scrolls -->
+      <button v-if="isDynamic" class="tab-add" @click="emitAddEvent">
+        <i
+          class="pi pi-plus"
+          style="font-size: 0.8rem; color: var(--p-slate-600)"
+        ></i>
+      </button>
     </div>
 
-    <!-- Active tab content with transition -->
-    <!-- Toolbar (if present) -->
+    <!-- Toolbar slot -->
     <div v-if="$slots[`${activeTab}-toolbar`]" class="tab-toolbar">
       <slot :name="`${activeTab}-toolbar`"></slot>
     </div>
 
-    <!-- Dynamic content slot - provides activeTab name for parent to render -->
-    <div
-      v-else-if="$slots['tab-content']"
-      ref="tabContentRef"
-      class="tab-content h-full relative overflow-hidden"
-    >
-      <slot
-        name="tab-content"
-        :activeTab="activeTab"
-        :contentHeight="contentHeight"
-      ></slot>
-    </div>
-
-    <!-- Tab body (legacy static slot mode) -->
-    <div
-      v-else
-      ref="tabContentRef"
-      class="tab-content h-full relative overflow-hidden"
-    >
-      <Transition name="tab-fade" mode="out-in">
+    <!-- Always render tab content below -->
+    <div ref="tabContentRef" class="tab-content">
+      <div v-if="$slots['tab-content']">
+        <slot
+          name="tab-content"
+          :activeTab="activeTab"
+          :contentHeight="contentHeight"
+        />
+      </div>
+      <Transition v-else name="tab-fade" mode="out-in">
         <div :key="activeTab!" class="h-full">
-          <slot :name="activeTab" :contentHeight="contentHeight"></slot>
+          <slot :name="activeTab" :contentHeight="contentHeight" />
         </div>
       </Transition>
     </div>
@@ -136,7 +91,16 @@ const emit = defineEmits<{
 const activeTab = ref(props.modelValue ?? props.tabs[0]?.name ?? null);
 const isTransitioning = ref(false);
 const tabContentRef = ref<HTMLElement | null>(null);
+const scrollRef = ref<HTMLElement | null>(null);
 const contentHeight = ref(0);
+
+// Scroll wheel → horizontal scroll, just like VS Code
+const onWheel = (e: WheelEvent) => {
+  if (scrollRef.value) {
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    scrollRef.value.scrollLeft += delta;
+  }
+};
 
 const updateContentHeight = () => {
   if (tabContentRef.value) {
@@ -177,8 +141,6 @@ const emitDeleteEvent = (tabId: string) => {
     } else if (tabIndex < props.tabs.length - 1) {
       nextTabId = props.tabs[tabIndex + 1]!.name;
     }
-
-    // Optimistically update local state
     activeTab.value = nextTabId;
     if (nextTabId) emit("update:modelValue", nextTabId);
   }
@@ -214,7 +176,133 @@ watch(
 </script>
 
 <style scoped>
+/* ── Header row: scroll area fills available space, add button is fixed ── */
+.tabs-header-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* ── Scroll container: shrinks to tabs, but can't exceed remaining space ── */
+.tabs-scroll-container {
+  flex: 0 1 max-content;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 0.25rem;
+}
+
+.tabs-scroll-container::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Inner flex row: sizes to content so scroll works ── */
+.tabs-inner {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 0.5rem;
+  padding-bottom: 2px;
+  position: relative;
+  min-width: max-content;
+}
+
+/* ── Tab button ── */
+.tab-header {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.25rem;
+  outline: 1px solid var(--p-slate-300);
+  background-color: var(--m-slate-150);
+  color: var(--p-slate-600);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+
+.tab-header--active {
+  background-color: var(--m-slate-250);
+  color: var(--p-slate-900);
+  outline-color: var(--p-slate-400);
+}
+
+/* ── Active indicator bar ── */
+.tab-indicator {
+  width: 0.25rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background-color: var(--p-slate-300);
+  opacity: 0.4;
+  transform: translateX(-4px) scaleX(0.5);
+  transition: all 0.3s ease-out;
+  transform-origin: left;
+}
+
+.tab-indicator--active {
+  background-color: var(--p-slate-500);
+  opacity: 1;
+  transform: translateX(0) scaleX(1);
+  animation: bounce-in 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+.tab-label {
+  font-weight: 500;
+  font-size: 0.875rem;
+  user-select: none;
+}
+
+/* ── Close button ── */
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem;
+  border-radius: 0.25rem;
+  margin-left: 0.5rem;
+  opacity: 0;
+  color: var(--p-slate-500);
+  transition:
+    opacity 0.15s,
+    background-color 0.15s;
+}
+
+.tab-header:hover .tab-close {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background-color: rgb(226 232 240);
+}
+
+/* ── Add button: never scrolls, always visible ── */
+.tab-add {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.75rem 0.75rem;
+  border-radius: 0.25rem;
+  outline: 1px solid var(--p-slate-300);
+  background-color: var(--m-slate-150);
+  transition: background-color 0.2s;
+}
+
+.tab-add:hover {
+  background-color: rgb(226 232 240);
+}
+
+/* ── Content areas ── */
 .tab-content {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
   outline: 1px solid var(--p-slate-300);
   border-radius: 0.25rem;
 }
@@ -222,14 +310,9 @@ watch(
 .tab-toolbar {
   outline: 1px solid var(--p-slate-300);
   border-radius: 0.25rem;
-  margin-bottom: 0;
 }
 
-.tab-header {
-  outline: 1px solid;
-}
-
-/* Tab content transition */
+/* ── Tab content fade ── */
 .tab-fade-enter-active,
 .tab-fade-leave-active {
   transition: all 0.2s ease-in-out;
@@ -251,7 +334,7 @@ watch(
   transform: translateY(0);
 }
 
-/* Tab transition animations */
+/* ── Tab enter/leave ── */
 .tab-transition-enter-active {
   transition: all 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
@@ -282,7 +365,6 @@ watch(
   transition: transform 0.3s ease;
 }
 
-/* Bounce in animation - more subtle */
 @keyframes bounce-in {
   0% {
     transform: translateX(-6px) scaleX(0.5);
@@ -293,9 +375,5 @@ watch(
   100% {
     transform: translateX(0) scaleX(1);
   }
-}
-
-.animate-bounce-in {
-  animation: bounce-in 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
 </style>
