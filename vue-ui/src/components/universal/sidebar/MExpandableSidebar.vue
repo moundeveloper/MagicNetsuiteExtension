@@ -13,6 +13,12 @@
         <i :class="isExpanded ? 'pi pi-angle-left' : 'pi pi-angle-right'"></i>
       </button>
     </div>
+
+    <!-- Collapsed icon actions — only visible when collapsed -->
+    <div v-if="!isExpanded" class="collapsed-content">
+      <slot name="collapsed"></slot>
+    </div>
+
     <div class="sidebar-content" :class="{ 'is-hidden': !isExpanded }">
       <slot></slot>
     </div>
@@ -96,5 +102,13 @@ const sidebarStyles = computed(() => ({
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+}
+
+.collapsed-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
 }
 </style>

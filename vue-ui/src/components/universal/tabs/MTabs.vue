@@ -79,15 +79,26 @@
 
     <!-- Active tab content with transition -->
     <!-- Toolbar (if present) -->
-    <div
-      v-if="$slots[`${activeTab}-toolbar`]"
-      class="tab-toolbar"
-    >
+    <div v-if="$slots[`${activeTab}-toolbar`]" class="tab-toolbar">
       <slot :name="`${activeTab}-toolbar`"></slot>
     </div>
 
-    <!-- Tab body -->
+    <!-- Dynamic content slot - provides activeTab name for parent to render -->
     <div
+      v-else-if="$slots['tab-content']"
+      ref="tabContentRef"
+      class="tab-content h-full relative overflow-hidden"
+    >
+      <slot
+        name="tab-content"
+        :activeTab="activeTab"
+        :contentHeight="contentHeight"
+      ></slot>
+    </div>
+
+    <!-- Tab body (legacy static slot mode) -->
+    <div
+      v-else
       ref="tabContentRef"
       class="tab-content h-full relative overflow-hidden"
     >
@@ -101,7 +112,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, computed, nextTick, watch } from "vue";
 
 interface Tab {
   name: string;
@@ -111,21 +122,18 @@ interface Tab {
 const props = defineProps<{
   tabs: Tab[];
   dynamic?: boolean;
+  modelValue?: string;
 }>();
 
 const isDynamic = computed(() => props.dynamic ?? false);
 
 const emit = defineEmits<{
-  (
-    e: "delete-tab",
-    payload: {
-      tabId: string;
-    }
-  ): void;
+  (e: "delete-tab", payload: { tabId: string; nextTabId: string | null }): void;
   (e: "add-tab"): void;
+  (e: "update:modelValue", value: string): void;
 }>();
 
-const activeTab = ref(props.tabs[0]?.name || null);
+const activeTab = ref(props.modelValue ?? props.tabs[0]?.name ?? null);
 const isTransitioning = ref(false);
 const tabContentRef = ref<HTMLElement | null>(null);
 const contentHeight = ref(0);
@@ -149,6 +157,7 @@ const switchTab = (name: string) => {
   if (name !== activeTab.value && !isTransitioning.value) {
     isTransitioning.value = true;
     activeTab.value = name;
+    emit("update:modelValue", name);
     nextTick(() => {
       setTimeout(() => {
         isTransitioning.value = false;
@@ -159,25 +168,49 @@ const switchTab = (name: string) => {
 };
 
 const emitDeleteEvent = (tabId: string) => {
-  // If the deleted tab is currently active
+  let nextTabId: string | null = null;
+
   if (activeTab.value === tabId) {
     const tabIndex = props.tabs.findIndex((t) => t.name === tabId);
-    // Try to switch to the previous tab, else next tab
     if (tabIndex > 0) {
-      activeTab.value = props.tabs[tabIndex - 1]!.name;
+      nextTabId = props.tabs[tabIndex - 1]!.name;
     } else if (tabIndex < props.tabs.length - 1) {
-      activeTab.value = props.tabs[tabIndex + 1]!.name;
-    } else {
-      activeTab.value = null; // no tabs left
+      nextTabId = props.tabs[tabIndex + 1]!.name;
     }
+
+    // Optimistically update local state
+    activeTab.value = nextTabId;
+    if (nextTabId) emit("update:modelValue", nextTabId);
   }
 
-  emit("delete-tab", { tabId });
+  emit("delete-tab", { tabId, nextTabId });
 };
 
 const emitAddEvent = () => {
   emit("add-tab");
 };
+
+watch(
+  () => props.modelValue,
+  (newVal) => {
+    if (newVal && newVal !== activeTab.value) {
+      activeTab.value = newVal;
+    }
+  }
+);
+
+watch(
+  () => props.tabs,
+  (newTabs) => {
+    if (
+      newTabs.length > 0 &&
+      (!activeTab.value || !newTabs.find((t) => t.name === activeTab.value))
+    ) {
+      activeTab.value = props.modelValue ?? newTabs[0]?.name ?? null;
+      if (activeTab.value) emit("update:modelValue", activeTab.value);
+    }
+  }
+);
 </script>
 
 <style scoped>

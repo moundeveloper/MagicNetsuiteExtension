@@ -13,32 +13,29 @@
   >
     <template #default>
       <ExpandableSidebar>
+          <template #collapsed>
+    <button
+      class="p-2 rounded bg-slate-600 hover:opacity-100 hover:bg-slate-500 transition-opacity duration-150 text-[var(--p-slate-50)]"
+      @click="runCurrentFile"
+      :disabled="currentFile?.isExecuting"
+      :title="currentFile?.isExecuting ? 'Running...' : 'Run'"
+      size="small"
+    >
+      <i class="pi pi-play text-sm"></i>
+    </button>
+  </template>
         <template #default>
-          <div class="sidebar-section">
-            <h4>Quick Script</h4>
-            <div class="flex flex-col gap-2">
-              <p>Run and test SuiteScript 2.1 code directly.</p>
-            </div>
-          </div>
-          <div class="sidebar-section">
+                    <div class="sidebar-section">
             <h4>Actions</h4>
             <div class="flex flex-col gap-2">
-              <Button @click="runCode" :disabled="isExecuting" class="w-full">
-                <i class="pi pi-play font-medium"></i>
-                {{ isExecuting ? "Running..." : "Run" }}
-              </Button>
-
-              <!-- Progress Bar for Streaming -->
-              <div
-                v-if="isExecuting && progress.total > 0"
-                class="flex flex-col gap-1"
+              <Button
+                @click="runCurrentFile"
+                :disabled="currentFile?.isExecuting"
+                class="w-full"
               >
-                <ProgressBar :value="progress.percentage" :showValue="true" />
-                <span class="text-xs text-gray-600">
-                  {{ progress.current }}/{{ progress.total }}
-                </span>
-              </div>
-
+                <i class="pi pi-play font-medium"></i>
+                {{ currentFile?.isExecuting ? "Running..." : "Run" }}
+              </Button>
               <div class="text-xs text-gray-500">
                 <span v-if="saveStatus === 'saving'" class="text-yellow-500">
                   Syncing…
@@ -53,76 +50,140 @@
             </div>
           </div>
           <div class="sidebar-section">
+            <h4>Files</h4>
+            <InputText
+              v-model="fileSearchTerm"
+              type="text"
+              placeholder="Search files..."
+              size="small"
+              class="w-full mb-2"
+            />
+            <div class="flex flex-col gap-1 max-h-32 overflow-y-auto pr-2" >
+              <div
+                v-for="file in filteredFiles"
+                :key="file.id"
+                class="file-item flex items-center gap-2 py-2 px-4 rounded cursor-pointer hover:bg-slate-200 transition-colors group"
+                :class="{ 'bg-slate-200': activeFileId === file.id }"
+                @click="openFileInTab(file.id)"
+              >
+                <i class="pi pi-file text-sm" style="color: var(--p-slate-600)"></i>
+                <MInput
+                  v-model="file.name"
+                  outlined
+                  item-dynamic
+                  class="flex-1 text-ellipsis overflow-hidden"
+                />
+                <button
+                  class="ml-auto p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-slate-300"
+                  @click.stop="removeFile(file.id)"
+                >
+                  <i class="pi pi-times text-xs"></i>
+                </button>
+              </div>
+            </div>
+            <Button size="small" text class="mt-2 w-full" @click="addNewFile">
+              <i class="pi pi-plus text-sm mr-1"></i>
+              New File
+            </Button>
+          </div>
+
+          <div class="sidebar-section">
             <h4>Available Commands</h4>
-            <div class="flex flex-col gap-1 text-xs">
-              <p><code>clear</code> - Clear terminal</p>
-              <p><code>help</code> - Show available commands</p>
-              <p><code>echo [text]</code> - Print text</p>
-              <p><code>modules</code> - List available modules</p>
+            <InputText
+              v-model="commandSearchTerm"
+              type="text"
+              placeholder="Search commands..."
+              size="small"
+              class="w-full mb-2"
+            />
+            <div class="flex flex-col gap-1 text-xs max-h-32 overflow-y-auto">
+              <p v-for="cmd in filteredCommands" :key="cmd.name">
+                <code>{{ cmd.name }}</code> - {{ cmd.description }}
+              </p>
             </div>
           </div>
         </template>
       </ExpandableSidebar>
 
-      <div class="flex-1 flex flex-col" style="min-width: 0">
-        <div class="flex items-center gap-2 p-2 bg-slate-100">
-          <Button @click="runCode" :disabled="isExecuting">
-            {{ isExecuting ? "Running..." : "Run" }}
-          </Button>
+      <div class="flex-1 flex flex-col p-2" style="min-width: 0">
+       <MTabs
+  v-if="openTabs.length > 0"
+  :tabs="tabs"
+  :dynamic="true"
+  v-model="activeFileId"
+  @add-tab="addNewFile"
+  @delete-tab="removeFileByTab"
+>
+          <template #[`'${activeFileId}-toolbar'`]>
+            <div class="flex items-center gap-2 p-2 bg-slate-100">
+              <Button @click="runCurrentFile" :disabled="currentFile?.isExecuting">
+                {{ currentFile?.isExecuting ? "Running..." : "Run" }}
+              </Button>
+            </div>
+          </template>
 
-          <!-- Progress Bar for Streaming -->
-          <div
-            v-if="isExecuting && progress.total > 0"
-            class="flex items-center gap-2"
-          >
-            <ProgressBar
-              :value="progress.percentage"
-              :showValue="true"
-              class="w-32"
-            />
-            <span class="text-xs text-gray-600">
-              {{ progress.current }}/{{ progress.total }}
-            </span>
+          <template #tab-content="{ activeTab: activeTabName, contentHeight }">
+            <div
+              v-for="file in files"
+              :key="file.id"
+              v-show="activeTabName === file.id"
+              class="h-full"
+              :style="{ height: `${contentHeight}px` }"
+            >
+              <vue-splitter is-horizontal data-ignore class="h-full">
+                <template #top-pane>
+                  <MonacoCodeEditor
+                    v-model="file.code"
+                    :readonly="file.isExecuting"
+                    :completion-items="completionItems"
+                  />
+                </template>
+                <template #bottom-pane>
+                  <TerminalLogs
+                    :logs="file.logs"
+                    @command="(input) => handleCommand(input, file.id)"
+                  />
+                </template>
+              </vue-splitter>
+            </div>
+          </template>
+        </MTabs>
+
+        <div
+          v-if="openTabs.length === 0 && files.length > 0"
+          class="flex-1 flex items-center justify-center text-gray-500"
+        >
+          <div class="text-center">
+            <i class="pi pi-folder-open text-4xl mb-2"></i>
+            <p>No tabs open</p>
+            <p class="text-sm">Click a file in the sidebar to open it</p>
           </div>
-
-          <span v-if="saveStatus === 'saving'" class="text-xs text-yellow-500">
-            Syncing…
-          </span>
-
-          <span
-            v-else-if="saveStatus === 'saved'"
-            class="text-xs text-green-500"
-          >
-            ✓ Saved
-          </span>
-
-          <span v-else-if="saveStatus === 'error'" class="text-xs text-red-500">
-            Save failed
-          </span>
         </div>
 
-        <vue-splitter is-horizontal data-ignore class="flex-1 m-2">
-          <template #top-pane>
-            <MonacoCodeEditor
-              v-model="code"
-              :readonly="isExecuting"
-              :completion-items="completionItems"
-            />
-          </template>
-          <template #bottom-pane>
-            <TerminalLogs :logs="logs" @command="handleCommand" />
-          </template>
-        </vue-splitter>
+        <div
+          v-else-if="files.length === 0"
+          class="flex-1 flex items-center justify-center text-gray-500"
+        >
+          <div class="text-center">
+            <i class="pi pi-file text-4xl mb-2"></i>
+            <p>No files open</p>
+            <Button size="small" class="mt-2" @click="addNewFile">
+              <i class="pi pi-plus mr-1"></i>
+              New File
+            </Button>
+          </div>
+        </div>
       </div>
     </template>
   </MCard>
 </template>
 
 <script lang="ts" setup>
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch, computed, nextTick } from "vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, ProgressBar } from "primevue";
+import { Button } from "primevue";
+import { InputText } from "primevue";
 import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
@@ -131,74 +192,171 @@ import { completionItems } from "../utils/codeEditorJSCompletion";
 import ViewHeader from "../components/ViewHeader.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
+import MTabs from "../components/universal/tabs/MTabs.vue";
+import MInput from "../components/universal/input/MInput.vue";
+import { generateId } from "../utils/utilities";
 
 type Log = {
   type: "log" | "warn" | "error";
   values: string[];
 };
 
-// State
-const codeEditorElement = ref<HTMLDivElement | null>(null);
-const panelHeight = ref(0);
-const logs = ref<Log[]>([]);
-const code = ref<string>(defaultCode);
-const localHeight = ref(0);
-const isExecuting = ref(false);
-let streamPort: chrome.runtime.Port | null = null;
-
-// Progress tracking
-const progress = ref({
-  current: 0,
-  total: 0,
-  percentage: 0,
-  message: ""
-});
+interface ScriptFile {
+  id: string;
+  name: string;
+  code: string;
+  logs: Log[];
+  isExecuting: boolean;
+}
 
 const props = defineProps<{
   vhOffset: number;
 }>();
 
-type CommandHandler = (args: string[]) => void;
+const files = ref<ScriptFile[]>([]);
+const openTabs = ref<string[]>([]);
+const activeFileId = ref("");
+const fileSearchTerm = ref("");
+const commandSearchTerm = ref("");
 
-const commands: Record<string, CommandHandler> = {
-  clear() {
-    logs.value = [];
-  },
+const tabs = computed(() =>
+  openTabs.value
+    .map((id) => {
+      const file = files.value.find((f) => f.id === id);
+      return file ? { name: file.id, label: file.name } : null;
+    })
+    .filter((t): t is { name: string; label: string } => t !== null)
+);
 
-  help() {
-    logs.value.push({
-      type: "log",
-      values: ["Available commands: " + Object.keys(commands).join(", ")]
-    });
-  },
+const filteredFiles = computed(() => {
+  const searchTerm = fileSearchTerm.value.toLowerCase();
+  if (!searchTerm) return files.value;
+  return files.value.filter((file) =>
+    file.name.toLowerCase().includes(searchTerm)
+  );
+});
 
-  echo(args) {
-    logs.value.push({
-      type: "log",
-      values: [args.join(" ")]
-    });
-  },
+interface CommandInfo {
+  name: string;
+  description: string;
+}
 
-  modules: async () => {
-    const modules = await getModules();
-    logs.value.push({
-      type: "log",
-      values: [`Available modules: ${modules.join(", ")}`]
-    });
+const availableCommands = ref<CommandInfo[]>([
+  { name: "clear", description: "Clear terminal" },
+  { name: "help", description: "Show available commands" },
+  { name: "echo [text]", description: "Print text" },
+  { name: "modules", description: "List available modules" }
+]);
+
+const filteredCommands = computed(() => {
+  const searchTerm = commandSearchTerm.value.toLowerCase();
+  if (!searchTerm) return availableCommands.value;
+  return availableCommands.value.filter((cmd) =>
+    cmd.name.toLowerCase().includes(searchTerm) ||
+    cmd.description.toLowerCase().includes(searchTerm)
+  );
+});
+
+const currentFile = computed(() =>
+  files.value.find((f) => f.id === activeFileId.value)
+);
+
+const addNewFile = () => {
+  const newId = generateId();
+  files.value.push({
+    id: newId,
+    name: `script${newId}`,
+    code: "",
+    logs: [],
+    isExecuting: false
+  });
+  openTabs.value.push(newId);
+  activeFileId.value = newId;
+};
+
+const openFileInTab = (fileId: string) => {
+  if (!openTabs.value.includes(fileId)) {
+    openTabs.value.push(fileId);
+  }
+  activeFileId.value = fileId;
+};
+
+const removeFile = (fileId: string) => {
+  openTabs.value = openTabs.value.filter((id) => id !== fileId);
+  
+  const index = files.value.findIndex((f) => f.id === fileId);
+  if (index > -1) {
+    files.value.splice(index, 1);
+  }
+  
+  if (activeFileId.value === fileId) {
+    activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
   }
 };
 
-const handleCommand = (input: string) => {
-  logs.value.push({ type: "log", values: [`$ ${input}`] });
+const removeFileByTab = ({ tabId, nextTabId }: { tabId: string; nextTabId: string | null }) => {
+  openTabs.value = openTabs.value.filter((id) => id !== tabId);
+  
+  if (activeFileId.value === tabId) {
+    activeFileId.value = nextTabId || openTabs.value[0] || files.value[0]?.id || "";
+  }
+};
+
+type CommandHandler = (args: string[]) => void;
+
+const getCommands = (fileId: string): Record<string, CommandHandler> => ({
+  clear() {
+    const file = files.value.find((f) => f.id === fileId);
+    if (file) file.logs = [];
+  },
+
+  help() {
+    const file = files.value.find((f) => f.id === fileId);
+    if (file) {
+      file.logs.push({
+        type: "log",
+        values: [`Available commands: ${availableCommands.value.map((c) => c.name).join(", ")}`]
+      });
+    }
+  },
+
+  echo(args) {
+    const file = files.value.find((f) => f.id === fileId);
+    if (file) {
+      file.logs.push({
+        type: "log",
+        values: [args.join(" ")]
+      });
+    }
+  },
+
+  modules: async () => {
+    const file = files.value.find((f) => f.id === fileId);
+    if (file) {
+      const modules = await getModules();
+      file.logs.push({
+        type: "log",
+        values: [`Available modules: ${modules.join(", ")}`]
+      });
+    }
+  }
+});
+
+const handleCommand = (input: string, fileId: string) => {
+  const file = files.value.find((f) => f.id === fileId);
+  if (!file) return;
+
+  file.logs.push({ type: "log", values: [`$ ${input}`] });
 
   const [command, ...args] = input.trim().split(/\s+/);
 
   if (!command) return;
 
+  const commands = getCommands(fileId);
   const handler = commands[command];
 
   if (!handler) {
-    logs.value.push({
+    file.logs.push({
       type: "error",
       values: [`Command not found: ${command}`]
     });
@@ -211,21 +369,19 @@ const handleCommand = (input: string) => {
 const getModules = async () => {
   const response = await callApi(RequestRoutes.AVAILABLE_MODULES);
   const { message: modules } = response as ApiResponse;
-
   return modules || [];
 };
 
-// ============================================================================
-// Streaming Response Handler
-// ============================================================================
-const handleStreamingResponse = (message: {
-  isComplete: boolean;
-  data: any;
-}) => {
+const handleStreamingResponse = (
+  message: { isComplete: boolean; data: any },
+  fileId: string
+) => {
+  const file = files.value.find((f) => f.id === fileId);
+  if (!file) return;
+
   console.log("[handleStreamingResponse]", message);
   if (message.isComplete) {
-    isExecuting.value = false;
-
+    file.isExecuting = false;
     return;
   }
 
@@ -235,89 +391,59 @@ const handleStreamingResponse = (message: {
   const allowedTypes = ["log", "warn", "error"];
 
   if (allowedTypes.includes(type)) {
-    logs.value.push(data);
+    file.logs.push(data);
   }
 };
 
-// ============================================================================
-// Run Code with Streaming
-// ============================================================================
+const runFile = async (fileId: string) => {
+  const file = files.value.find((f) => f.id === fileId);
+  if (!file) return;
 
-const runCode = async () => {
-  isExecuting.value = true;
-
-  // Reset state
-  logs.value = [];
+  file.isExecuting = true;
+  file.logs = [];
 
   try {
-    // Call API with streaming mode
     await callApi(
       RequestRoutes.RUN_QUICK_SCRIPT,
       {
-        code: code.value
+        code: file.code
       },
       ApiRequestType.STREAM,
       (message: any) => {
         try {
-          handleStreamingResponse(message);
+          handleStreamingResponse(message, fileId);
         } catch (error) {
-          isExecuting.value = false;
+          if (file) file.isExecuting = false;
         }
       }
     );
-
-    // Note: The streaming handler in content script will call handleStreamingResponse
-    // via the message listener setup below
   } catch (error) {
     console.error("Execution error:", error);
-    logs.value.push({
-      type: "error",
-      values: [`Execution failed: ${error}`]
-    });
-    isExecuting.value = false;
+    if (file) {
+      file.logs.push({
+        type: "error",
+        values: [`Execution failed: ${error}`]
+      });
+      file.isExecuting = false;
+    }
   } finally {
-    isExecuting.value = false;
+    if (file) file.isExecuting = false;
   }
 };
 
-onMounted(() => {
-  try {
-    logs.value.push({
-      type: "log",
-      values: ["Available commands: " + Object.keys(commands).join(", ")]
-    });
-
-    chrome.storage.local.get("cachedCode", (result) => {
-      code.value = result.cachedCode || defaultCode;
-    });
-
-    localHeight.value = props.vhOffset;
-
-    if (codeEditorElement.value) {
-      panelHeight.value = codeEditorElement.value.clientHeight;
-
-      resizeObserver = new ResizeObserver(() => {
-        if (codeEditorElement.value) {
-          panelHeight.value = codeEditorElement.value.clientHeight;
-        }
-      });
-
-      resizeObserver.observe(codeEditorElement.value);
-    }
-  } catch (error) {
-    console.error(error);
+const runCurrentFile = () => {
+  if (activeFileId.value) {
+    runFile(activeFileId.value);
   }
-});
-
-// ============================================================================
-// Auto-save
-// ============================================================================
+};
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
-watch(code, (newCode) => {
+const saveAllFiles = () => {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+
   saveStatus.value = "saving";
 
   if (saveTimeout) {
@@ -325,32 +451,106 @@ watch(code, (newCode) => {
   }
 
   saveTimeout = window.setTimeout(() => {
-    chrome.storage.local.set({ cachedCode: newCode }, () => {
+    const filesData = files.value.map((f) => ({
+      id: f.id,
+      name: f.name,
+      code: f.code
+    }));
+    chrome.storage.local.set({ 
+      cachedFiles: filesData,
+      cachedOpenTabs: openTabs.value,        // ← add this
+      cachedActiveTab: activeFileId.value     // ← add this
+    }, () => {
       if (chrome.runtime.lastError) {
         saveStatus.value = "error";
         return;
       }
-
       saveStatus.value = "saved";
-
       setTimeout(() => {
-        if (saveStatus.value === "saved") {
-          saveStatus.value = "idle";
-        }
+        if (saveStatus.value === "saved") saveStatus.value = "idle";
       }, 1500);
     });
   }, 2000);
-});
+};
 
-let resizeObserver: ResizeObserver;
+watch(activeFileId, () => saveAllFiles());
+watch(openTabs, () => saveAllFiles(), { deep: true });
+
+watch(
+  () => files.value.map((f) => f.code),
+  () => saveAllFiles(),
+  { deep: true }
+);
+
+watch(
+  () => files.value.map((f) => ({ id: f.id, name: f.name })),
+  () => saveAllFiles(),
+  { deep: true }
+);
+
+onMounted(() => {
+  const file = currentFile.value;
+  if (file) {
+    file.logs.push({
+      type: "log",
+      values: [`Available commands: ${availableCommands.value.map((c) => c.name).join(", ")}`]
+    });
+  }
+
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    chrome.storage.local.get(["cachedFiles", "cachedOpenTabs", "cachedActiveTab"], async (result) => {
+      if (result.cachedFiles?.length > 0) {
+        files.value = result.cachedFiles.map((f: any) => ({
+          id: f.id || generateId(),
+          name: f.name || "script.js",
+          code: f.code || defaultCode,
+          logs: [],
+          isExecuting: false
+        }));
+
+        // Wait for Vue to render the new files first
+        await nextTick();
+
+        // Restore open tabs
+        if (result.cachedOpenTabs?.length > 0) {
+          openTabs.value = result.cachedOpenTabs.filter((id: string) =>
+            files.value.some((f) => f.id === id)
+          );
+        }
+
+        // Ensure we have at least one tab open
+        if (openTabs.value.length === 0) {
+          openTabs.value = files.value.map((f) => f.id);
+        }
+
+        // Restore active tab (selected tab) - this is the key fix
+        const storedActiveTab = result.cachedActiveTab;
+        if (storedActiveTab && files.value.some((f) => f.id === storedActiveTab)) {
+          activeFileId.value = storedActiveTab;
+        } else {
+          activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
+        }
+      }
+    });
+  }
+});
 
 onBeforeUnmount(() => {
   try {
-    chrome.storage.local.set({ cachedCode: code.value }, () => {
-      console.log("Saved!");
-    });
-
-    resizeObserver?.disconnect();
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      const filesData = files.value.map((f) => ({
+        id: f.id,
+        name: f.name,
+        code: f.code
+      }));
+      chrome.storage.local.set({ 
+        cachedFiles: filesData,
+        cachedOpenTabs: openTabs.value,
+        cachedActiveTab: activeFileId.value
+      }, () => {
+        console.log("Saved!");
+      });
+    }
   } catch (error) {
     console.error(error);
   }
@@ -364,6 +564,9 @@ onBeforeUnmount(() => {
   background: var(--p-slate-100);
   border-radius: 4px;
   border: 1px solid var(--p-slate-200);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .sidebar-section h4 {
@@ -384,5 +587,21 @@ onBeforeUnmount(() => {
   padding: 0.125rem 0.25rem;
   border-radius: 2px;
   font-size: 0.7rem;
+}
+
+.file-item {
+  font-size: 0.875rem;
+}
+
+.file-item:hover .opacity-0 {
+  opacity: 1;
+}
+
+.sidebar-section :deep(.p-inputtext) {
+  font-size: 0.75rem;
+}
+
+.sidebar-section :deep(.max-h-32) {
+  max-height: 8rem;
 }
 </style>
