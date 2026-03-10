@@ -184,7 +184,9 @@ const handleCompareVersionRightChange = () => {
 
 const tabs = ref([
   { id: "editor", label: "Editor" },
-  { id: "compare", label: "Compare Versions" }
+  { id: "compare", label: "Compare Versions" },
+  { id: "preview", label: "Preview" },
+  { id: "renderTemplate", label: "Render Template" }
 ]);
 
 const versionOptions = computed(() => {
@@ -281,6 +283,18 @@ const saveTemplate = async () => {
   }
 };
 
+const handleCompareVersionSwap = () => {
+  // swap versions
+  const versionTemp = compareVersionLeft.value;
+  compareVersionLeft.value = compareVersionRight.value;
+  compareVersionRight.value = versionTemp;
+
+  // swap code
+  const codeTemp = leftCode.value;
+  leftCode.value = rightCode.value;
+  rightCode.value = codeTemp;
+};
+
 onMounted(async () => {
   await getTemplate(null);
 });
@@ -302,6 +316,13 @@ onMounted(async () => {
   >
     <template #default>
       <ExpandableSidebar>
+        <template #collapsed>
+          <div class="flex flex-col gap-2">
+            <Button @click="saveTemplate" size="small" class="!p-2">
+              <i class="pi pi-save font-medium"></i>
+            </Button>
+          </div>
+        </template>
         <template #default>
           <div class="sidebar-section">
             <h4>{{ template.name }}</h4>
@@ -322,6 +343,15 @@ onMounted(async () => {
               <p v-if="template.savedSearch">
                 Saved Search: {{ template.recordType }}
               </p>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <h4>Actions</h4>
+            <div class="flex flex-col gap-2">
+              <Button @click="saveTemplate">
+                <i class="pi pi-save font-medium"></i>
+                Save
+              </Button>
             </div>
           </div>
           <div class="sidebar-section">
@@ -355,7 +385,18 @@ onMounted(async () => {
             </Select>
           </div>
           <div class="sidebar-section">
-            <h4>Compare Versions</h4>
+            <div class="flex justify-between items-center mb-2">
+              <h4>Compare Versions</h4>
+
+              <!-- swap icon -->
+              <div
+                class="p-2 hover:bg-[var(--p-slate-200)] rounded-full cursor-pointer"
+                @click="handleCompareVersionSwap"
+              >
+                <i class="pi pi-arrows-v text-[var(--p-slate-600)]"></i>
+              </div>
+            </div>
+
             <div class="flex flex-col gap-2">
               <Select
                 v-model="compareVersionLeft"
@@ -434,14 +475,6 @@ onMounted(async () => {
 
       <div class="h-full flex-1 p-2" style="min-width: 0">
         <MTabs class="w-full" :tabs="tabHeaders">
-          <template #editor-toolbar>
-            <div class="flex items-center gap-4 p-2">
-              <Button @click="saveTemplate">
-                <i class="pi pi-save font-medium"></i>
-                Save
-              </Button>
-            </div>
-          </template>
           <template #editor="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
               <div
@@ -471,6 +504,16 @@ onMounted(async () => {
                 @focus="onFocus"
                 @blur="onBlur"
               />
+            </div>
+          </template>
+          <template #preview="{ contentHeight }">
+            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <p>Preview tab content - coming soon</p>
+            </div>
+          </template>
+          <template #renderTemplate="{ contentHeight }">
+            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
+              <p>Render Template tab content - coming soon</p>
             </div>
           </template>
         </MTabs>

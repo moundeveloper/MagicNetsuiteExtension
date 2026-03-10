@@ -78,9 +78,9 @@ const HTML_BLOCK_TAGS = new Set([
 ]);
 
 const FTL_BLOCK_OPEN =
-  /^<#(if|list|items|sep|noparse|attempt|recover|compress|escape|noescape|switch|macro|function|transform|visit|recurse|fallback|assign|local|global|setting|outputformat|autoesc)\b/;
+  /^<#(if|list|items|sep|noparse|attempt|recover|compress|escape|noescape|switch|macro|const|transform|visit|recurse|fallback|assign|local|global|setting|outputformat|autoesc)\b/;
 const FTL_BLOCK_CLOSE =
-  /^<\/#(if|list|items|noparse|attempt|compress|escape|noescape|switch|macro|function|transform|outputformat|autoesc)>/;
+  /^<\/#(if|list|items|noparse|attempt|compress|escape|noescape|switch|macro|const|transform|outputformat|autoesc)>/;
 const FTL_BLOCK_MID = /^<#(elseif|else|case|default|sep|recover)\b/;
 
 export interface ValidationError {
@@ -96,7 +96,7 @@ interface TokenWithPos {
   line: number;
 }
 
-function tokenizeWithPos(input: string): TokenWithPos[] {
+const tokenizeWithPos = (input: string): TokenWithPos[] => {
   const tokens: TokenWithPos[] = [];
   let i = 0;
   const len = input.length;
@@ -205,22 +205,22 @@ function tokenizeWithPos(input: string): TokenWithPos[] {
   }
 
   return tokens;
-}
+};
 
-function getTagName(token: string): string {
+const getTagName = (token: string): string => {
   const match = token.match(/^<[/#@]?([a-zA-Z][a-zA-Z0-9._-]*)/);
   return match ? match[1]!.toLowerCase() : "";
-}
+};
 
-function isHtmlClose(token: string): boolean {
+const isHtmlClose = (token: string): boolean => {
   return token.startsWith("</");
-}
+};
 
-function isSelfClosing(token: string): boolean {
+const isSelfClosing = (token: string): boolean => {
   return token.endsWith("/>") || SELF_CLOSING_TAGS.has(getTagName(token));
-}
+};
 
-export function validateFtlXml(input: string): ValidationError[] {
+export const validateFtlXml = (input: string): ValidationError[] => {
   const errors: ValidationError[] = [];
   const tokens = tokenizeWithPos(input);
   const tagStack: { name: string; line: number }[] = [];
@@ -338,9 +338,9 @@ export function validateFtlXml(input: string): ValidationError[] {
   }
 
   return errors;
-}
+};
 
-export function formatFtl(input: string): string {
+export const formatFtl = (input: string): string => {
   const tokens = tokenizeWithPos(input.trim());
   const lines: string[] = [];
   let depth = 0;
@@ -387,4 +387,4 @@ export function formatFtl(input: string): string {
   }
 
   return lines.join("\n");
-}
+};

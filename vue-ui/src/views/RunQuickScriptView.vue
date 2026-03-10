@@ -218,6 +218,17 @@ const openTabs = ref<string[]>([]);
 const activeFileId = ref("");
 const fileSearchTerm = ref("");
 const commandSearchTerm = ref("");
+const isRestoring = ref(true);
+
+const persistedState = computed(() => ({
+  files: files.value.map(f => ({
+    id: f.id,
+    name: f.name,
+    code: f.code
+  })),
+  openTabs: openTabs.value,
+  activeTab: activeFileId.value
+}));
 
 const tabs = computed(() =>
   openTabs.value
@@ -441,99 +452,114 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
-const saveAllFiles = () => {
+const saveAllFiles = (state: any) => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) return;
 
   saveStatus.value = "saving";
 
-  if (saveTimeout) {
-    clearTimeout(saveTimeout);
-  }
+  if (saveTimeout) clearTimeout(saveTimeout);
 
   saveTimeout = window.setTimeout(() => {
-    const filesData = files.value.map((f) => ({
-      id: f.id,
-      name: f.name,
-      code: f.code
-    }));
-    chrome.storage.local.set({ 
-      cachedFiles: filesData,
-      cachedOpenTabs: openTabs.value,        // ← add this
-      cachedActiveTab: activeFileId.value     // ← add this
-    }, () => {
-      if (chrome.runtime.lastError) {
-        saveStatus.value = "error";
-        return;
+    chrome.storage.local.set(
+      {
+        cachedFiles: state.files,
+        cachedOpenTabs: state.openTabs,
+        cachedActiveTab: state.activeTab
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          saveStatus.value = "error";
+          return;
+        }
+
+        saveStatus.value = "saved";
+
+        setTimeout(() => {
+          if (saveStatus.value === "saved") saveStatus.value = "idle";
+        }, 1500);
       }
-      saveStatus.value = "saved";
-      setTimeout(() => {
-        if (saveStatus.value === "saved") saveStatus.value = "idle";
-      }, 1500);
-    });
-  }, 2000);
+    );
+  }, 1000);
 };
 
-watch(activeFileId, () => saveAllFiles());
-watch(openTabs, () => saveAllFiles(), { deep: true });
-
 watch(
-  () => files.value.map((f) => f.code),
-  () => saveAllFiles(),
-  { deep: true }
-);
-
-watch(
-  () => files.value.map((f) => ({ id: f.id, name: f.name })),
-  () => saveAllFiles(),
+  persistedState,
+  (state) => {
+    if (isRestoring.value) return;
+    saveAllFiles(state);
+  },
   { deep: true }
 );
 
 onMounted(() => {
-  const file = currentFile.value;
-  if (file) {
-    file.logs.push({
-      type: "log",
-      values: [`Available commands: ${availableCommands.value.map((c) => c.name).join(", ")}`]
-    });
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    isRestoring.value = false;
+    return;
   }
 
-  if (typeof chrome !== "undefined" && chrome.storage?.local) {
-    chrome.storage.local.get(["cachedFiles", "cachedOpenTabs", "cachedActiveTab"], async (result) => {
-      if (result.cachedFiles?.length > 0) {
-        files.value = result.cachedFiles.map((f: any) => ({
-          id: f.id || generateId(),
-          name: f.name || "script.js",
-          code: f.code || defaultCode,
-          logs: [],
-          isExecuting: false
-        }));
+  chrome.storage.local.get(
+    ["cachedFiles", "cachedOpenTabs", "cachedActiveTab"],
+    (result) => {
 
-        // Wait for Vue to render the new files first
-        await nextTick();
+      try {
+        const restoredFiles = Array.isArray(result.cachedFiles)
+          ? result.cachedFiles.map((f: any) => ({
+              id: f.id || generateId(),
+              name: f.name || "script.js",
+              code: f.code || "",
+              logs: [],
+              isExecuting: false
+            }))
+          : [];
 
-        // Restore open tabs
-        if (result.cachedOpenTabs?.length > 0) {
-          openTabs.value = result.cachedOpenTabs.filter((id: string) =>
-            files.value.some((f) => f.id === id)
-          );
+        files.value = restoredFiles;
+
+        let cachedTabs: string[] = [];
+
+        // Validate cachedOpenTabs
+        if (Array.isArray(result.cachedOpenTabs)) {
+          cachedTabs = result.cachedOpenTabs;
+        } else if (
+          result.cachedOpenTabs &&
+          typeof result.cachedOpenTabs === "object"
+        ) {
+          // Handle legacy object format
+          cachedTabs = Object.values(result.cachedOpenTabs);
+        } else if (result.cachedOpenTabs !== undefined) {
+          // Invalid format → clear it from storage
+          chrome.storage.local.remove("cachedOpenTabs");
         }
 
-        // Ensure we have at least one tab open
-        if (openTabs.value.length === 0) {
-          openTabs.value = files.value.map((f) => f.id);
-        }
+        // Only keep tabs that still have a valid file
+        const validTabs = cachedTabs.filter((id: string) =>
+          restoredFiles.some((file: ScriptFile) => file.id === id)
+        );
 
-        // Restore active tab (selected tab) - this is the key fix
-        const storedActiveTab = result.cachedActiveTab;
-        if (storedActiveTab && files.value.some((f) => f.id === storedActiveTab)) {
-          activeFileId.value = storedActiveTab;
-        } else {
-          activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
-        }
+        // 🚨 DO NOT auto-open files if storage had none
+        openTabs.value = validTabs;
+
+        const active = result.cachedActiveTab;
+
+        activeFileId.value =
+          typeof active === "string" && openTabs.value.includes(active)
+            ? active
+            : openTabs.value[0] || "";
+
+      } catch (error) {
+        console.error("Restore failed, resetting tabs:", error);
+
+        // Reset corrupted tab state
+        openTabs.value = [];
+        activeFileId.value = "";
+
+        chrome.storage.local.remove(["cachedOpenTabs", "cachedActiveTab"]);
       }
-    });
-  }
+
+      isRestoring.value = false;
+    }
+  );
 });
+
 
 onBeforeUnmount(() => {
   try {
