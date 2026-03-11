@@ -10,7 +10,7 @@ import ViewHeader from "../components/ViewHeader.vue";
 
 const router = useRouter();
 
-interface RecordItem {
+type RecordItem = {
   id: number;
   name: string;
   scriptId: string;
@@ -23,7 +23,7 @@ interface RecordItem {
   savedSearch: string;
   customRecordTypeScriptId: string;
   recordType: string;
-}
+};
 
 const records = ref<RecordItem[]>([]);
 const loading = ref(false);
@@ -74,7 +74,7 @@ const getAdvancedPdfTemplates = async () => {
 onMounted(async () => {
   await getAdvancedPdfTemplates();
 
-  /*   records.value.push({
+  records.value.push({
     id: 411,
     name: "Testing Invoice",
     scriptId: "CUSTTMPL_TESTING_INVOICE",
@@ -85,8 +85,9 @@ onMounted(async () => {
     customRecordType: "",
     customTransactionType: "",
     savedSearch: "",
-    customRecordTypeScriptId: ""
-  }); */
+    customRecordTypeScriptId: "",
+    recordType: "transaction"
+  });
 });
 </script>
 

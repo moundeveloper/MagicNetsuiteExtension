@@ -220,6 +220,103 @@ window.savePdfTemplate = async (N, data) => {
   return updatePdfTemplate(data);
 };
 
+window.previewPdfTemplate = async (
+  N,
+  {
+    templateId,
+    tranType,
+    printType,
+    recordType,
+    savedSearch,
+    templateScriptId,
+    template
+  }
+) => {
+  // TODO: Implement preview functionality
+  console.log("Preview function called with data:", {
+    templateId,
+    tranType,
+    printType,
+    recordType,
+    savedSearch,
+    templateScriptId,
+    template
+  });
+
+  if (printType === "CUSTOMRECORD") {
+    tranType = "Custom";
+  }
+
+  if (!tranType) {
+    console.error("Missing tranType");
+    return;
+  }
+
+  const baseUrl = window.location.origin;
+  const url = `${baseUrl}/app/common/custom/advancedprint/pdftemplate.nl?id=${templateId}&nl=F&tt=${tranType}&pt=${printType}&source=T&savedsearchid=${savedSearch || "-1"}&rt=&e=T&sc=-90`;
+  const body = new URLSearchParams({
+    action: "PREVIEW",
+    templateId,
+    displaySource: "T",
+    tranType,
+    printType: printType,
+    recordType: recordType || "",
+    createdFromCompId: "NL",
+    createdFromId: printType === "SEARCH" ? "0" : "2",
+    createdFromVersion: printType === "SEARCH" ? "3" : "6",
+    preferred: "F",
+    inactive: "F",
+    description: "F",
+    savedSearchId: savedSearch || "-1",
+    returnToSavedSearchDef: "F",
+    showAppIdField: "F",
+    scriptId:
+      "_" + templateScriptId.toLowerCase().split("_").slice(1).join("_"),
+    orientation: "p",
+    size: "Letter",
+    top: 0,
+    right: 0,
+    bottom: 0.5,
+    left: 0,
+    size: "in",
+    "nsutils-pdf-versions-select": 12,
+    template: template
+  });
+
+  // Fetch the PDF preview
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "accept-language": "it-IT,it;q=0.6",
+      "cache-control": "max-age=0",
+      "content-type": "application/x-www-form-urlencoded",
+      "sec-ch-ua": '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sec-gpc": "1",
+      "upgrade-insecure-requests": "1"
+    },
+    body,
+    mode: "cors",
+    credentials: "include",
+    referrer: url
+  });
+
+  // Convert to PDF and show in popup
+  const pdfData = await response.arrayBuffer();
+  const pdfBlob = new Blob([pdfData], { type: "application/pdf" });
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+
+  console.log("PDF URL:", pdfUrl);
+
+  return pdfUrl;
+};
+
 /**
  * Update a NetSuite Advanced PDF/HTML template via fetch
  */

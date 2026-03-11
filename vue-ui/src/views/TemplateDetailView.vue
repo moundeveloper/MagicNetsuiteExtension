@@ -44,19 +44,24 @@ const rightCode = ref("");
 const loadingDiff = ref(false);
 const loaderText = ref("");
 const errorHtml = ref("");
+const previewPDF = ref("");
 const toast = useToast();
+const loadingPreview = ref(false);
+const monacoEditorDiff = ref();
 let originalCode = "";
 
+const safeCode = (val: string) => val || "\n";
+
 const leftCodeComputed = computed(() => {
-  return compareVersionLeft.value === "currentCode"
-    ? code.value
-    : leftCode.value;
+  const raw =
+    compareVersionLeft.value === "currentCode" ? code.value : leftCode.value;
+  return safeCode(raw);
 });
 
 const rightCodeComputed = computed(() => {
-  return compareVersionRight.value === "currentCode"
-    ? code.value
-    : rightCode.value;
+  const raw =
+    compareVersionRight.value === "currentCode" ? code.value : rightCode.value;
+  return safeCode(raw);
 });
 
 const parsedError = computed(() => parseErrorHtml(errorHtml.value));
@@ -182,11 +187,18 @@ const handleCompareVersionRightChange = () => {
   fetchCompareVersion(compareVersionRight.value, false);
 };
 
+enum Tabs {
+  Editor = "editor",
+  CompareVersions = "compare",
+  Preview = "preview",
+  RenderTemplate = "renderTemplate"
+}
+
 const tabs = ref([
-  { id: "editor", label: "Editor" },
-  { id: "compare", label: "Compare Versions" },
-  { id: "preview", label: "Preview" },
-  { id: "renderTemplate", label: "Render Template" }
+  { id: Tabs.Editor, label: "Editor" },
+  { id: Tabs.CompareVersions, label: "Compare Versions" },
+  { id: Tabs.Preview, label: "Preview" },
+  { id: Tabs.RenderTemplate, label: "Render Template" }
 ]);
 
 const versionOptions = computed(() => {
@@ -200,16 +212,50 @@ const tabHeaders = computed(() =>
   }))
 );
 
+const handleTabChange = (tab: string) => {
+  const tabHanlders = {
+    [Tabs.Editor]: () => console.log("Editor"),
+    [Tabs.CompareVersions]: () => console.log("Compare Versions"),
+    [Tabs.Preview]: previewHandler,
+    [Tabs.RenderTemplate]: renderTemplateHandler
+  };
+
+  const handler = tabHanlders[tab as Tabs] || (() => {});
+
+  if (!handler) return;
+
+  handler();
+};
+
+const previewHandler = async () => {
+  loadingPreview.value = true;
+  loaderText.value = "Rendering Preview";
+  if (!template.value) return;
+  const { message: templatePreview } = await callApi(RequestRoutes.PREVIEW, {
+    templateId: template.value.id,
+    printType: template.value.printType,
+    tranType: template.value.tranType,
+    recordType: template.value.customRecordTypeScriptId,
+    templateScriptId: template.value.scriptId,
+    savedSearch: template.value.savedSearch,
+    template: code.value
+  });
+
+  if (!templatePreview) {
+    loadingPreview.value = false;
+    loaderText.value = "";
+  }
+
+  previewPDF.value = templatePreview;
+
+  loadingPreview.value = false;
+  loaderText.value = "";
+};
+
+const renderTemplateHandler = () => {};
+
 const handleChange = (val: string) => {
   console.log("Modified changed");
-};
-
-const onFocus = () => {
-  console.log("Editor focused");
-};
-
-const onBlur = () => {
-  console.log("Editor blurred");
 };
 
 const saveTemplate = async () => {
@@ -283,16 +329,22 @@ const saveTemplate = async () => {
   }
 };
 
+const diffEditorRef = ref<InstanceType<typeof MonacoEditorDiff> | null>(null);
+
 const handleCompareVersionSwap = () => {
-  // swap versions
+  const codeLeft = leftCodeComputed.value; // use computed, not raw
+  const codeRight = rightCodeComputed.value; // use computed, not raw
+
+  // Swap the version selectors
   const versionTemp = compareVersionLeft.value;
   compareVersionLeft.value = compareVersionRight.value;
   compareVersionRight.value = versionTemp;
 
-  // swap code
-  const codeTemp = leftCode.value;
-  leftCode.value = rightCode.value;
-  rightCode.value = codeTemp;
+  // Swap the raw codes to match
+  /*   leftCode.value = codeRight === "\n" ? "" : codeRight;
+  rightCode.value = codeLeft === "\n" ? "" : codeLeft; */
+
+  monacoEditorDiff.value.swap();
 };
 
 onMounted(async () => {
@@ -474,7 +526,11 @@ onMounted(async () => {
       </ExpandableSidebar>
 
       <div class="h-full flex-1 p-2" style="min-width: 0">
-        <MTabs class="w-full" :tabs="tabHeaders">
+        <MTabs
+          class="w-full"
+          :tabs="tabHeaders"
+          @update:modelValue="handleTabChange"
+        >
           <template #editor="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
               <div
@@ -495,25 +551,38 @@ onMounted(async () => {
                 <MLoader :text="loaderText" />
               </div>
               <MonacoEditorDiff
-                v-else
-                :originalValue="leftCodeComputed"
-                v-model:modifiedValue="rightCodeComputed"
+                class="h-full"
+                v-show="!loadingDiff"
+                ref="monacoEditorDiff"
+                :original="leftCodeComputed"
+                :modified="rightCodeComputed"
                 language="xml"
-                theme="vs-dark"
-                @change="handleChange"
-                @focus="onFocus"
-                @blur="onBlur"
               />
             </div>
           </template>
           <template #preview="{ contentHeight }">
-            <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
-              <p>Preview tab content - coming soon</p>
+            <div
+              :style="{ height: `${contentHeight}px`, padding: '1rem' }"
+              class="grid place-items-center"
+            >
+              <MLoader v-if="loadingPreview" :text="loaderText" />
+              <iframe
+                v-else
+                :src="previewPDF"
+                width="100%"
+                height="100%"
+                style="border: none"
+              ></iframe>
             </div>
           </template>
           <template #renderTemplate="{ contentHeight }">
             <div :style="{ height: `${contentHeight}px`, padding: '1rem' }">
               <p>Render Template tab content - coming soon</p>
+            </div>
+          </template>
+          <template #renderTemplate-toolbar>
+            <div class="flex gap-2 p-2">
+              <Button size="small">Render</Button>
             </div>
           </template>
         </MTabs>

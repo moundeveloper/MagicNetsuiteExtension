@@ -226,9 +226,12 @@ export const validateFtlXml = (input: string): ValidationError[] => {
   const tagStack: { name: string; line: number }[] = [];
 
   const getLineStart = (lineNum: number): number => {
+    const lines = input.split(/\r?\n/);
+    if (lineNum < 1) lineNum = 1;
+    if (lineNum > lines.length) lineNum = lines.length;
     let pos = 0;
-    for (let i = 1; i < lineNum && pos < input.length; pos++) {
-      if (input[pos] === "\n") i++;
+    for (let i = 1; i < lineNum; i++) {
+      pos += lines[i - 1]!.length + 1; // +1 for \n
     }
     return pos;
   };

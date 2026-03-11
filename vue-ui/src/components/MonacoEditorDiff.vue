@@ -1,59 +1,25 @@
-<template>
-  <div
-    ref="editorContainer"
-    class="monaco-editor-container"
-    :class="config.autoSizing ? 'full-height' : ''"
-  ></div>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, type Ref } from "vue";
 import * as monaco from "monaco-editor";
-import { editor } from "monaco-editor";
+import { ref, onMounted, onBeforeUnmount, watch } from "vue";
 import themeJson from "../assets/themes/theme.json";
 import { formatFtl } from "../utils/ftlFormatter";
 
-interface EditorConfig {
-  autoSizing?: boolean;
-  minimap?: boolean;
-}
-
-interface MonacoDiffEditorProps {
-  originalValue?: string;
-  modifiedValue?: string;
+interface Props {
+  original?: string;
+  modified?: string;
   language?: string;
-  theme?: string;
-  readonly?: boolean;
-  options?: editor.IDiffEditorConstructionOptions;
-  config?: EditorConfig;
+  readOnly?: boolean;
 }
 
-const props = withDefaults(defineProps<MonacoDiffEditorProps>(), {
-  originalValue: "",
-  modifiedValue: "",
-  language: "javascript",
-  theme: "vs-dark",
-  readonly: false,
-  options: () => ({}),
-  config: () => ({
-    autoSizing: true,
-    minimap: true
-  })
+const props = withDefaults(defineProps<Props>(), {
+  original: "",
+  modified: "",
+  language: "plaintext",
+  readOnly: false
 });
 
-const emit = defineEmits<{
-  "update:modifiedValue": [value: string];
-  change: [value: string];
-  focus: [];
-  blur: [];
-}>();
-
-const editorContainer: Ref<HTMLElement | null> = ref(null);
-
-let diffEditor: editor.IStandaloneDiffEditor | null = null;
-let originalModel: editor.ITextModel | null = null;
-let modifiedModel: editor.ITextModel | null = null;
-let resizeObserver: ResizeObserver | null = null;
+const containerRef = ref<HTMLDivElement | null>(null);
+let diffEditor: monaco.editor.IStandaloneDiffEditor | null = null;
 
 const formatValue = (value: string): string => {
   if (props.language === "xml") {
@@ -62,144 +28,91 @@ const formatValue = (value: string): string => {
   return value;
 };
 
-const setupResizeObserver = () => {
-  if (!editorContainer.value || !diffEditor) return;
-
-  resizeObserver = new ResizeObserver(() => {
-    diffEditor?.layout();
-  });
-
-  resizeObserver.observe(editorContainer.value, { box: "content-box" });
-};
-
 onMounted(() => {
-  if (!editorContainer.value) return;
+  if (!containerRef.value) return;
 
-  diffEditor = monaco.editor.createDiffEditor(editorContainer.value, {
-    automaticLayout: true,
-    readOnly: props.readonly,
-    minimap: { enabled: props.config.minimap },
-    scrollBeyondLastLine: false,
-    fontSize: 14,
-    ...props.options
+  diffEditor = monaco.editor.createDiffEditor(containerRef.value, {
+    readOnly: props.readOnly,
+    automaticLayout: true
   });
-
-  originalModel = monaco.editor.createModel(
-    formatValue(props.originalValue),
-    props.language
-  );
-
-  modifiedModel = monaco.editor.createModel(
-    formatValue(props.modifiedValue),
-    props.language
-  );
 
   diffEditor.setModel({
-    original: originalModel,
-    modified: modifiedModel
+    original: monaco.editor.createModel(
+      formatValue(props.original),
+      props.language
+    ),
+    modified: monaco.editor.createModel(
+      formatValue(props.modified),
+      props.language
+    )
   });
 
   monaco.editor.defineTheme("monokai", themeJson as any);
   monaco.editor.setTheme("monokai");
-
-  setupResizeObserver();
-
-  // Listen only to modified side changes
-  diffEditor.getModifiedEditor().onDidChangeModelContent(() => {
-    if (!modifiedModel) return;
-    const value = modifiedModel.getValue();
-    emit("update:modifiedValue", value);
-    emit("change", value);
-  });
-
-  // Focus / blur
-  diffEditor.getModifiedEditor().onDidFocusEditorText(() => {
-    emit("focus");
-  });
-
-  diffEditor.getModifiedEditor().onDidBlurEditorText(() => {
-    emit("blur");
-  });
 });
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-
-  // Must clear the diff editor's model BEFORE disposing the text models,
-  // otherwise Monaco fires "TextModel got disposed before DiffEditorWidget
-  // model got reset" during its own internal teardown.
-  if (diffEditor) {
-    diffEditor.setModel(null);
-    diffEditor.dispose();
-  }
-
-  originalModel?.dispose();
-  modifiedModel?.dispose();
+  const model = diffEditor?.getModel();
+  diffEditor?.setModel(null);
+  diffEditor?.dispose();
+  model?.original.dispose();
+  model?.modified.dispose();
+  diffEditor = null;
 });
 
-// Watchers
 watch(
-  () => props.originalValue,
-  (newValue) => {
-    if (originalModel && originalModel.getValue() !== newValue) {
-      originalModel.setValue(formatValue(newValue));
+  () => props.original,
+  (val) => {
+    const model = diffEditor?.getModel();
+    if (model && model.original.getValue() !== val) {
+      model.original.setValue(formatValue(val));
     }
   }
 );
 
 watch(
-  () => props.modifiedValue,
-  (newValue) => {
-    if (modifiedModel && modifiedModel.getValue() !== newValue) {
-      modifiedModel.setValue(formatValue(newValue));
+  () => props.modified,
+  (val) => {
+    const model = diffEditor?.getModel();
+    if (model && model.modified.getValue() !== val) {
+      model.modified.setValue(formatValue(val));
     }
   }
 );
 
 watch(
   () => props.language,
-  (newLanguage) => {
-    if (originalModel) {
-      monaco.editor.setModelLanguage(originalModel, newLanguage);
-    }
-    if (modifiedModel) {
-      monaco.editor.setModelLanguage(modifiedModel, newLanguage);
-    }
+  (val) => {
+    const model = diffEditor?.getModel();
+    if (!model) return;
+    monaco.editor.setModelLanguage(model.original, val);
+    monaco.editor.setModelLanguage(model.modified, val);
   }
 );
 
-watch(
-  () => props.theme,
-  (newTheme) => {
-    monaco.editor.setTheme(newTheme);
-  }
-);
+function swap(): void {
+  const model = diffEditor?.getModel();
+  if (!model) return;
 
-watch(
-  () => props.readonly,
-  (newReadonly) => {
-    diffEditor?.updateOptions({ readOnly: newReadonly });
-  }
-);
+  const originalValue = model.original.getValue();
+  const modifiedValue = model.modified.getValue();
+  const lang = model.original.getLanguageId();
 
-// Expose API
-defineExpose({
-  getEditor: (): editor.IStandaloneDiffEditor | null => diffEditor,
-  getModifiedEditor: () => diffEditor?.getModifiedEditor() ?? null,
-  getOriginalEditor: () => diffEditor?.getOriginalEditor() ?? null,
-  getModifiedValue: (): string => modifiedModel?.getValue() ?? "",
-  focus: (): void => diffEditor?.getModifiedEditor().focus()
-});
+  const oldOriginal = model.original;
+  const oldModified = model.modified;
+
+  const newOriginal = monaco.editor.createModel(modifiedValue, lang);
+  const newModified = monaco.editor.createModel(originalValue, lang);
+
+  diffEditor!.setModel({ original: newOriginal, modified: newModified });
+
+  oldOriginal.dispose();
+  oldModified.dispose();
+}
+
+defineExpose({ swap });
 </script>
 
-<style scoped>
-.monaco-editor-container {
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.full-height {
-  height: 100%;
-}
-</style>
+<template>
+  <div ref="containerRef" style="width: 100%; height: 100%" />
+</template>

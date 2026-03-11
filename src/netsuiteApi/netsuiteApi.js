@@ -79,6 +79,10 @@ const handlers = {
     console.log("payload", payload);
     return window.savePdfTemplate(modules, payload);
   },
+  PREVIEW: async ({ modules, payload }) => {
+    console.log("Preview action received:", payload.templateId);
+    return window.previewPdfTemplate(modules, payload);
+  },
   SCRIPT_URL: async ({ modules, payload: { scriptId } }) => {
     console.log("Script URL action received:", scriptId);
     return window.getScriptUrl(modules, { scriptId });

@@ -14,7 +14,11 @@ import parserBabel from "prettier/plugins/babel";
 import prettierPluginEstree from "prettier/plugins/estree";
 import { editor, type IDisposable } from "monaco-editor";
 import themeJson from "../assets/themes/theme.json";
-import { formatFtl, validateFtlXml, type ValidationError } from "../utils/ftlFormatter";
+import {
+  formatFtl,
+  validateFtlXml,
+  type ValidationError
+} from "../utils/ftlFormatter";
 
 // Configure Monaco workers
 self.MonacoEnvironment = {
@@ -104,7 +108,7 @@ const props = withDefaults(defineProps<MonacoEditorProps>(), {
   readonly: false,
   options: () => ({}),
   completionItems: () => [],
-config: () => ({
+  config: () => ({
     suppressNativeFind: false,
     autoSizing: true,
     defocusScroll: false,
@@ -261,7 +265,7 @@ onMounted(async () => {
     disableAutoScrollOnFocus();
   }
 
-// Register custom completions
+  // Register custom completions
   registerCompletions();
 
   // Initial validation
@@ -301,15 +305,12 @@ onMounted(async () => {
 
   // Listen to focus/blur
   editorInstance.onDidFocusEditorText((e) => {
-    console.log("focus");
+    /* console.log("focus"); */
     emit("focus");
   });
 
   editorInstance.onDidBlurEditorText(() => {
-    console.log("blur");
-    /* 
-    editorInstance?.focus(); */
-
+    /* console.log("blur"); */
     emit("blur");
   });
 });
@@ -431,14 +432,18 @@ function validateContent() {
   const model = editorInstance.getModel();
   if (!model) return;
 
-  if (props.config?.validateTags && (props.language === "xml" || props.language === "html")) {
+  if (
+    props.config?.validateTags &&
+    (props.language === "xml" || props.language === "html")
+  ) {
     const content = editorInstance.getValue();
     const validationErrors = validateFtlXml(content);
 
     const markers = validationErrors.map((error: ValidationError) => ({
-      severity: error.severity === "error"
-        ? monaco.MarkerSeverity.Error
-        : monaco.MarkerSeverity.Warning,
+      severity:
+        error.severity === "error"
+          ? monaco.MarkerSeverity.Error
+          : monaco.MarkerSeverity.Warning,
       startLineNumber: error.line,
       startColumn: error.column,
       endLineNumber: error.line,
