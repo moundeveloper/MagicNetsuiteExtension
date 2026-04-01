@@ -483,6 +483,15 @@ async function sendMessage() {
   transition: border-color 0.15s;
   line-height: 1.5;
 }
+
+.chat-input {
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.chat-input::-webkit-scrollbar {
+  display: none;
+}
 .chat-input:focus {
   border-color: var(--p-blue-400);
   background: #fff;
