@@ -279,7 +279,6 @@ window.previewPdfTemplate = async (
     bottom: 0.5,
     left: 0,
     size: "in",
-    "nsutils-pdf-versions-select": 12,
     template: template
   });
 
