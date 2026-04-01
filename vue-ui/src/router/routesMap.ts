@@ -14,6 +14,7 @@ import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
 import ProcessingView from "../views/ProcessingView.vue";
 import TemplatesView from "../views/TemplatesView.vue";
 import TemplateDetailView from "../views/TemplateDetailView.vue";
+import AiAssistantView from "../views/AiAssistantView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -190,6 +191,14 @@ export const routes: FullRoute[] = [
     component: ProcessingView,
     status: RouteStatus.draft,
     breadcrumb: "Processing"
+  },
+  {
+    route: "/ai-assistant",
+    name: "AI Assistant",
+    icon: "pi pi-comments",
+    component: AiAssistantView,
+    status: RouteStatus.release,
+    breadcrumb: "AI Assistant"
   }
 ];
 
