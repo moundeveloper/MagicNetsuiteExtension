@@ -4,36 +4,125 @@
 
     <MCard
       flex
-      direction="column"
+      direction="row"
+      gap="0"
       autoHeight
       outlined
       elevated
+      padding=""
       :style="{ height: `${vhOffset}vh` }"
     >
-      <!-- Message area -->
-      <div class="message-area">
-        <div v-if="messages.length === 0" class="empty-state">
-          <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-            <circle cx="18" cy="18" r="18" fill="var(--p-slate-100)" />
-            <path
-              d="M11 18c0-3.866 3.134-7 7-7s7 3.134 7 7"
-              stroke="var(--p-slate-400)"
-              stroke-width="1.5"
-              stroke-linecap="round"
-            />
-            <circle cx="18" cy="18" r="2.5" fill="var(--p-slate-400)" />
-          </svg>
-          <p class="empty-title">How can I help you?</p>
-          <p class="empty-sub">Type a message below to start.</p>
-        </div>
-
-        <div v-else class="message-list" ref="messageListRef">
-          <template v-for="msg in messages" :key="msg.id">
-            <div v-if="msg.role === 'user'" class="row row-user">
-              <div class="bubble bubble-user">{{ msg.content }}</div>
+      <template #default>
+        <ExpandableSidebar
+          :default-expanded="true"
+          expanded-width="280px"
+          collapsed-width="3rem"
+        >
+          <template #collapsed>
+            <Button
+              class="p-2!"
+              size="small"
+              @click="createNewChat"
+              title="New Chat"
+            >
+              <i class="pi pi-plus"></i>
+            </Button>
+          </template>
+          <template #default>
+            <div class="sidebar-header">
+              <h3>Chat History</h3>
+              <Button class="p-2!" size="small" @click="createNewChat">
+                <i class="pi pi-plus"></i>
+                New Chat
+              </Button>
             </div>
+            <div class="chat-list">
+              <div
+                v-for="chat in chatHistory"
+                :key="chat.id"
+                class="chat-item"
+                :class="{ active: activeChatId === chat.id }"
+                @click="loadChat(chat.id)"
+              >
+                <div class="chat-item-content">
+                  <span class="chat-title">{{ chat.title }}</span>
+                  <span class="chat-date">{{
+                    formatDate(chat.updatedAt)
+                  }}</span>
+                </div>
+                <button
+                  class="chat-delete-btn"
+                  @click.stop="deleteChat(chat.id)"
+                  title="Delete chat"
+                >
+                  <i class="pi pi-trash"></i>
+                </button>
+              </div>
+              <div v-if="chatHistory.length === 0" class="no-chats">
+                No chat history yet
+              </div>
+            </div>
+          </template>
+        </ExpandableSidebar>
 
-            <div v-else-if="msg.role === 'assistant'" class="row row-assistant">
+        <div class="chat-area">
+          <div v-if="messages.length === 0" class="empty-state">
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+              <circle cx="18" cy="18" r="18" fill="var(--p-slate-100)" />
+              <path
+                d="M11 18c0-3.866 3.134-7 7-7s7 3.134 7 7"
+                stroke="var(--p-slate-400)"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              />
+              <circle cx="18" cy="18" r="2.5" fill="var(--p-slate-400)" />
+            </svg>
+            <p class="empty-title">How can I help you?</p>
+            <p class="empty-sub">Type a message below to start.</p>
+          </div>
+
+          <div v-else class="message-list" ref="messageListRef">
+            <template v-for="msg in messages" :key="msg.id">
+              <div v-if="msg.role === 'user'" class="row row-user">
+                <div class="bubble bubble-user">{{ msg.content }}</div>
+              </div>
+
+              <div
+                v-else-if="msg.role === 'assistant'"
+                class="row row-assistant"
+              >
+                <div class="avatar">
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                    <circle cx="9" cy="9" r="9" fill="var(--p-blue-100)" />
+                    <circle cx="9" cy="9" r="3.5" fill="var(--p-blue-500)" />
+                  </svg>
+                </div>
+                <div class="bubble bubble-assistant">
+                  <span v-if="msg.isStreaming && !msg.content" class="dots">
+                    <span /><span /><span />
+                  </span>
+                  <span v-else v-html="renderMarkdown(msg.content)" />
+                </div>
+              </div>
+
+              <div v-else-if="msg.role === 'tool'" class="row row-tool">
+                <div class="tool-pill">
+                  <i class="pi pi-cog" style="font-size: 11px" />
+                  <span class="tool-name">{{ msg.toolName }}</span>
+                  <span class="tool-sep">›</span>
+                  <span class="tool-result">{{
+                    truncate(msg.content, 80)
+                  }}</span>
+                </div>
+              </div>
+            </template>
+
+            <div
+              v-if="
+                loading && messages[messages.length - 1]?.role !== 'assistant'
+              "
+              class="row row-assistant"
+            >
               <div class="avatar">
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                   <circle cx="9" cy="9" r="9" fill="var(--p-blue-100)" />
@@ -41,85 +130,75 @@
                 </svg>
               </div>
               <div class="bubble bubble-assistant">
-                <span v-if="msg.isStreaming && !msg.content" class="dots">
-                  <span /><span /><span />
-                </span>
-                <span v-else v-html="renderMarkdown(msg.content)" />
+                <span class="dots"><span /><span /><span /></span>
               </div>
-            </div>
-
-            <div v-else-if="msg.role === 'tool'" class="row row-tool">
-              <div class="tool-pill">
-                <i class="pi pi-cog" style="font-size: 11px" />
-                <span class="tool-name">{{ msg.toolName }}</span>
-                <span class="tool-sep">›</span>
-                <span class="tool-result">{{ truncate(msg.content, 80) }}</span>
-              </div>
-            </div>
-          </template>
-
-          <div
-            v-if="
-              loading && messages[messages.length - 1]?.role !== 'assistant'
-            "
-            class="row row-assistant"
-          >
-            <div class="avatar">
-              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                <circle cx="9" cy="9" r="9" fill="var(--p-blue-100)" />
-                <circle cx="9" cy="9" r="3.5" fill="var(--p-blue-500)" />
-              </svg>
-            </div>
-            <div class="bubble bubble-assistant">
-              <span class="dots"><span /><span /><span /></span>
             </div>
           </div>
-        </div>
 
-        <!-- Error banner -->
-        <div v-if="agent.error.value" class="error-banner">
-          <i class="pi pi-exclamation-circle" />
-          {{ String(agent.error.value) }}
-        </div>
+          <!-- Error banner -->
+          <div v-if="agent.error.value" class="error-banner">
+            <i class="pi pi-exclamation-circle" />
+            {{ String(agent.error.value) }}
+          </div>
 
-        <!-- Active tool status -->
-        <div v-if="activeTools.length" class="tool-status">
-          <i class="pi pi-spin pi-spinner" style="font-size: 12px" />
-          Running tool: <strong>{{ activeTools.join(", ") }}</strong>
-        </div>
+          <!-- Active tool status -->
+          <div v-if="activeTools.length" class="tool-status">
+            <i class="pi pi-spin pi-spinner" style="font-size: 12px" />
+            Running tool: <strong>{{ activeTools.join(", ") }}</strong>
+          </div>
 
-        <!-- Input row -->
-        <div class="input-row">
-          <textarea
-            ref="textareaRef"
-            v-model="prompt"
-            placeholder="Message…"
-            rows="1"
-            class="chat-input"
-            :disabled="loading"
-            @keydown.enter.exact.prevent="sendMessage"
-            @input="autoResize"
-          />
-          <Button
-            icon="pi pi-send"
-            :loading="loading"
-            :disabled="!prompt.trim() || loading"
-            @click="sendMessage"
-            label=""
-            class="send-btn"
-          />
+          <!-- Input row -->
+          <div class="input-row">
+            <textarea
+              ref="textareaRef"
+              v-model="prompt"
+              placeholder="Message…"
+              rows="1"
+              class="chat-input"
+              :disabled="loading"
+              @keydown.enter.exact.prevent="sendMessage"
+              @input="autoResize"
+            />
+            <Button
+              icon="pi pi-send"
+              :loading="loading"
+              :disabled="!prompt.trim() || loading"
+              @click="sendMessage"
+              label=""
+              class="send-btn"
+            />
+          </div>
         </div>
-      </div>
+      </template>
     </MCard>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch } from "vue";
+import { ref, nextTick, watch, onMounted } from "vue";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent } from "../composables/useAgent";
+import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
+
+const STORAGE_KEY = "aiAssistantChatHistory";
+
+interface ChatMessage {
+  id: number;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  toolName?: string;
+  isStreaming?: boolean;
+}
+
+interface Chat {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+}
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -140,9 +219,12 @@ const agent = useAgent({
       },
       execute: (input: Record<string, unknown>) => {
         try {
-          const result = Function(
-            `"use strict"; return (${input.expression})`
-          )();
+          const expr = String(input.expression)
+            .replace(/×/g, "*")
+            .replace(/÷/g, "/")
+            .replace(/−/g, "-") // Unicode minus sign U+2212
+            .replace(/\^/g, "**"); // optional: support ^ as power operator
+          const result = Function(`"use strict"; return (${expr})`)();
           return { result };
         } catch {
           return { error: "Invalid expression" };
@@ -160,19 +242,226 @@ const agent = useAgent({
 
 const { loading } = agent;
 
-interface ChatMessage {
-  id: number;
-  role: "user" | "assistant" | "tool";
-  content: string;
-  toolName?: string;
-  isStreaming?: boolean;
-}
-
 const messages = ref<ChatMessage[]>([]);
 const prompt = ref("");
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const messageListRef = ref<HTMLElement | null>(null);
 const activeTools = ref<string[]>([]);
+
+const chatHistory = ref<Chat[]>([]);
+const activeChatId = ref<string>("");
+const isRestoring = ref(true);
+
+function generateChatId() {
+  return "chat_" + Date.now();
+}
+
+function getFirstUserMessage(msgs: ChatMessage[]) {
+  const firstUser = msgs.find((m) => m.role === "user");
+  return firstUser ? firstUser.content.slice(0, 50) : "New Chat";
+}
+
+function saveChatHistory() {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+
+  const historyToSave = chatHistory.value;
+
+  chrome.storage.local.set(
+    {
+      [STORAGE_KEY]: historyToSave
+    },
+    () => {
+      if (chrome.runtime.lastError) {
+        console.error("Failed to save chat history:", chrome.runtime.lastError);
+      }
+    }
+  );
+}
+
+function saveActiveChatId() {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+
+  chrome.storage.local.set({
+    aiAssistantActiveChatId: activeChatId.value
+  });
+}
+
+function loadChatHistory() {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) {
+    isRestoring.value = false;
+    return;
+  }
+
+  chrome.storage.local.get(
+    [STORAGE_KEY, "aiAssistantActiveChatId"],
+    (result) => {
+      try {
+        let history: Chat[] = [];
+
+        const rawHistory = result[STORAGE_KEY];
+
+        if (Array.isArray(rawHistory)) {
+          history = rawHistory;
+        } else if (rawHistory && typeof rawHistory === "object") {
+          history = Object.values(rawHistory);
+        }
+
+        chatHistory.value = history.map((chat) => ({
+          ...chat,
+          messages: Array.isArray(chat.messages)
+            ? chat.messages
+            : Object.values(chat.messages || {})
+        }));
+
+        const activeId = result.aiAssistantActiveChatId;
+        if (typeof activeId === "string" && activeId) {
+          const chat = chatHistory.value.find((c) => c.id === activeId);
+          if (chat) {
+            activeChatId.value = activeId;
+            messages.value = chat.messages;
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load chat history:", error);
+        chatHistory.value = [];
+      }
+
+      isRestoring.value = false;
+    }
+  );
+}
+
+function createNewChat() {
+  if (messages.value.length > 0) {
+    const firstUserMsg = getFirstUserMessage(messages.value);
+    const existingChat = chatHistory.value.find(
+      (c) => c.id === activeChatId.value
+    );
+
+    if (existingChat) {
+      existingChat.messages = normalizeMessages(messages.value);
+      existingChat.updatedAt = new Date().toISOString();
+      if (!existingChat.title || existingChat.title === "New Chat") {
+        existingChat.title = firstUserMsg;
+      }
+    } else {
+      const newChat: Chat = {
+        id: generateChatId(),
+        title: firstUserMsg,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: [...messages.value]
+      };
+      chatHistory.value.unshift(newChat);
+      activeChatId.value = newChat.id;
+    }
+
+    saveChatHistory();
+    saveActiveChatId();
+  }
+
+  messages.value = [];
+  activeChatId.value = "";
+  scrollToBottom();
+}
+
+const normalizeMessages = (msgs: unknown): ChatMessage[] => {
+  if (Array.isArray(msgs)) return msgs;
+  if (msgs && typeof msgs === "object") return Object.values(msgs);
+  return [];
+};
+
+function loadChat(chatId: string) {
+  if (messages.value.length > 0 && activeChatId.value) {
+    const existingChat = chatHistory.value.find(
+      (c) => c.id === activeChatId.value
+    );
+    if (existingChat) {
+      existingChat.messages = normalizeMessages(messages.value);
+      existingChat.updatedAt = new Date().toISOString();
+    } else if (messages.value.length > 0) {
+      const newChat: Chat = {
+        id: generateChatId(),
+        title: getFirstUserMessage(messages.value),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: [...messages.value]
+      };
+      chatHistory.value.unshift(newChat);
+    }
+    saveChatHistory();
+  }
+
+  const chat = chatHistory.value.find((c) => c.id === chatId);
+  if (chat) {
+    activeChatId.value = chatId;
+    messages.value = Array.isArray(chat.messages)
+      ? [...chat.messages]
+      : Object.values(chat.messages || {});
+    saveActiveChatId();
+    scrollToBottom();
+  }
+}
+
+function deleteChat(chatId: string) {
+  chatHistory.value = chatHistory.value.filter((c) => c.id !== chatId);
+
+  if (activeChatId.value === chatId) {
+    messages.value = [];
+    activeChatId.value = "";
+  }
+
+  saveChatHistory();
+  saveActiveChatId();
+}
+
+function autoSaveCurrentChat() {
+  if (messages.value.length === 0) return;
+
+  if (activeChatId.value) {
+    const chat = chatHistory.value.find((c) => c.id === activeChatId.value);
+    if (chat) {
+      chat.messages = [...messages.value];
+      chat.updatedAt = new Date().toISOString();
+      saveChatHistory();
+      return;
+    }
+  }
+
+  const firstUserMsg = getFirstUserMessage(messages.value);
+  const newChat: Chat = {
+    id: generateChatId(),
+    title: firstUserMsg,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    messages: [...messages.value]
+  };
+  chatHistory.value.unshift(newChat);
+  activeChatId.value = newChat.id;
+  saveChatHistory();
+  saveActiveChatId();
+}
+
+function formatDate(dateStr: string) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } else if (diffDays === 1) {
+    return "Yesterday";
+  } else if (diffDays < 7) {
+    return date.toLocaleDateString([], { weekday: "short" });
+  } else {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+}
+
+onMounted(() => {
+  loadChatHistory();
+});
 
 function truncate(str: string, n: number) {
   return str.length > n ? str.slice(0, n) + "…" : str;
@@ -253,6 +542,8 @@ async function sendMessage() {
     assistantMsg.content = finalText;
     assistantMsg.isStreaming = false;
     messages.value = [...messages.value];
+
+    autoSaveCurrentChat();
   } catch (e) {
     assistantMsg.content = "An error occurred. Check the console for details.";
     assistantMsg.isStreaming = false;
@@ -509,5 +800,113 @@ async function sendMessage() {
   height: 2.25rem !important;
   width: 2.25rem !important;
   padding: 0 !important;
+}
+
+/* ── Chat Area ── */
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ── Sidebar ── */
+.sidebar-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--p-slate-200);
+}
+
+.sidebar-header h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.chat-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.chat-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.chat-item:hover {
+  background: var(--p-slate-200);
+}
+
+.chat-item.active {
+  background: var(--p-blue-50);
+  border: 1px solid var(--p-blue-200);
+}
+
+.chat-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--p-slate-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-date {
+  font-size: 0.6875rem;
+  color: var(--p-slate-500);
+}
+
+.chat-delete-btn {
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.chat-item:hover .chat-delete-btn {
+  opacity: 1;
+}
+
+.chat-delete-btn:hover {
+  background: var(--p-red-100);
+  color: var(--p-red-600);
+}
+
+.no-chats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  color: var(--p-slate-500);
+  font-size: 0.8125rem;
+  text-align: center;
 }
 </style>

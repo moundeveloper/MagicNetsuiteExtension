@@ -57,6 +57,17 @@ const getCustomRecordUrl = async (recordId: number) => {
   closePanel();
 };
 
+const getCustomRecordListUrl = async (recordId: number) => {
+  const response = await callApi(RequestRoutes.CUSTOM_RECORD_LIST_URL, {
+    recordId
+  });
+  if (!response) return;
+  const { message: url } = response as ApiResponse;
+
+  window.open(url, "_blank");
+  closePanel();
+};
+
 onMounted(async () => {
   await getCustomRecords();
 });
@@ -90,14 +101,23 @@ onMounted(async () => {
           filterable
         >
           <template #default="{ value, row }">
-            <div
-              class="group flex gap-4 cursor-pointer"
-              @click="getCustomRecordUrl(row.internalid)"
-            >
-              <i class="pi pi-link text-[var(--p-slate-600)]"></i>
-              <span class="text-[var(--p-slate-600)] group-hover:underline">
-                {{ value }}
-              </span>
+            <div class="flex gap-4 items-center">
+              <div
+                class="cursor-pointer"
+                @click="getCustomRecordListUrl(row.internalid)"
+              >
+                <i class="pi pi-book text-[var(--p-slate-600)]"></i>
+              </div>
+
+              <div
+                class="group flex gap-4 cursor-pointer items-center"
+                @click="getCustomRecordUrl(row.internalid)"
+              >
+                <i class="pi pi-link text-[var(--p-slate-600)]"></i>
+                <span class="text-[var(--p-slate-600)] group-hover:underline">
+                  {{ value }}
+                </span>
+              </div>
             </div>
           </template>
         </MTableColumn>

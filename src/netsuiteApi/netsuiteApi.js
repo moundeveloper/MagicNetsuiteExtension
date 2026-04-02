@@ -91,6 +91,10 @@ const handlers = {
     console.log("Custom Record URL action received:", recordId);
     return window.getCustomRecordUrl(modules, { recordId });
   },
+  CUSTOM_RECORD_LIST_URL: async ({ modules, payload: { recordId } }) => {
+    console.log("Custom Record URL action received:", recordId);
+    return window.getCustomRecordListUrl(modules, { recordId });
+  },
   RUN_QUICK_SCRIPT: async ({ modules, payload: { code, requestId, mode } }) => {
     console.log("Run Quick Script action received", { mode });
     try {

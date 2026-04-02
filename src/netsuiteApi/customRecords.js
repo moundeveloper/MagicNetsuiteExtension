@@ -31,6 +31,14 @@ window.getCustomRecordUrl = (N, { recordId }) => {
   return customRecordUrl;
 };
 
+window.getCustomRecordListUrl = (N, { recordId }) => {
+  const { url } = N;
+
+  const customRecordListUrl = `https://${url.resolveDomain({ hostType: url.HostType.APPLICATION })}/app/common/custom/custrecordentrylist.nl?rectype=${recordId}`;
+
+  return customRecordListUrl;
+};
+
 window.getCurrentRecordIdType = (N) => {
   const { currentRecord } = N;
   const currentRec = currentRecord.get();

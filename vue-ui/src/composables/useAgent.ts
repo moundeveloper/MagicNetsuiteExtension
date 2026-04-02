@@ -44,6 +44,8 @@ export interface AgentMessage {
   content: string;
   toolName?: string;
   toolCallId?: string;
+  // Stored so we can replay them in the next API call
+  toolCalls?: ToolCall[];
   timestamp: Date;
 }
 
@@ -174,7 +176,6 @@ export const useAgent = (options: AgentOptions = {}) => {
     results.forEach((r, i) => {
       if (r.status === "fulfilled") {
         r.value.forEach((t) => toolRegistry.value.set(t.name, t));
-
         console.log(
           `[useAgent] MCP "${mcpServers[i]!.name}" — ${r.value.length} tool(s) loaded`
         );
@@ -200,16 +201,51 @@ export const useAgent = (options: AgentOptions = {}) => {
     history.value = [];
   };
 
-  const buildMessages = (systemPrompt: string) => [
-    { role: "system", content: systemPrompt },
-    ...(keepHistory ? history.value : history.value.slice(-1))
-      // 🚨 CRITICAL FIX: exclude tool messages from API
-      .filter((m) => m.role !== "tool")
-      .map((m) => ({
-        role: m.role,
-        content: m.content
-      }))
-  ];
+  /**
+   * Build the messages array for the API call.
+   *
+   * The OpenAI-compatible format requires:
+   *   1. An assistant message that includes `tool_calls` when it requested tools.
+   *   2. Immediately after, one `tool` message per call, each with a matching
+   *      `tool_call_id` and the result in `content`.
+   *
+   * Previously this function filtered out role:"tool" messages entirely, which
+   * meant the model never saw its own tool results and kept looping.
+   */
+  const buildMessages = (systemPrompt: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msgs: any[] = [{ role: "system", content: systemPrompt }];
+
+    const source = keepHistory ? history.value : history.value.slice(-20);
+
+    for (const m of source) {
+      if (m.role === "assistant") {
+        // If this assistant turn requested tool calls, include them so the
+        // model knows what it asked for when it reads the tool results below.
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          msgs.push({
+            role: "assistant",
+            content: m.content ?? "",
+            tool_calls: m.toolCalls
+          });
+        } else {
+          msgs.push({ role: "assistant", content: m.content });
+        }
+      } else if (m.role === "tool") {
+        // Pass the tool result back with the matching id so the model can
+        // correlate it with the tool_call it emitted.
+        msgs.push({
+          role: "tool",
+          tool_call_id: m.toolCallId,
+          content: m.content
+        });
+      } else {
+        msgs.push({ role: m.role, content: m.content });
+      }
+    }
+
+    return msgs;
+  };
 
   // ── Agentic run loop ────────────────────────
   const run = async (
@@ -249,8 +285,6 @@ export const useAgent = (options: AgentOptions = {}) => {
           JSON.stringify(messages, null, 2)
         );
 
-        // puter.ai.chat(messages, options)
-        // tools MUST be in the options object (2nd arg)
         const chatOptions: Record<string, unknown> = {};
         if (allTools.length > 0) {
           chatOptions.tools = allTools;
@@ -289,16 +323,23 @@ export const useAgent = (options: AgentOptions = {}) => {
         if (toolCalls.length === 0) {
           pushMessage({
             role: "assistant",
-            content: assistantText || "[calling tools]"
+            content: assistantText || "[no response]"
           });
           currentResponse.value = assistantText;
           console.log("[useAgent] ✓ Final answer returned");
           return assistantText;
         }
 
-        // ── Execute tool calls ──────────────────
-        pushMessage({ role: "assistant", content: assistantText || "" });
+        // ── Push assistant message WITH tool_calls so buildMessages can
+        //    replay them correctly on the next iteration. ─────────────
+        history.value.push({
+          role: "assistant",
+          content: assistantText || "",
+          toolCalls, // ← key fix: stored for replay
+          timestamp: new Date()
+        });
 
+        // ── Execute tool calls ──────────────────
         await Promise.all(
           toolCalls.map(async (call) => {
             const toolName = call.function.name;
@@ -342,11 +383,13 @@ export const useAgent = (options: AgentOptions = {}) => {
               }
             }
 
+            // Push with toolCallId so buildMessages can match it to the
+            // tool_call that requested it.
             pushMessage({
               role: "tool",
               content: resultContent,
               toolName,
-              toolCallId: call.id
+              toolCallId: call.id // ← key fix: was already stored, now actually used
             });
           })
         );
