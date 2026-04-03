@@ -1,5 +1,6 @@
 // toolManager.ts
 import type { ToolDefinition } from "../composables/useAgent";
+import { Parser } from "expr-eval";
 
 export const tools: ToolDefinition[] = [
   {
@@ -11,8 +12,7 @@ export const tools: ToolDefinition[] = [
       properties: {
         expression: {
           type: "string",
-          description:
-            "A JS-safe math expression, e.g. '2 + 2' or '10 * (3 + 4)'"
+          description: "A math expression, e.g. '2 + 2' or '10 * (3 + 4)'"
         }
       },
       required: ["expression"]
@@ -24,10 +24,11 @@ export const tools: ToolDefinition[] = [
           .replace(/÷/g, "/")
           .replace(/−/g, "-")
           .replace(/\^/g, "**");
-        const result = Function(`"use strict"; return (${expr})`)();
+
+        const result = Parser.evaluate(expr);
         return { result };
-      } catch {
-        return { error: "Invalid expression" };
+      } catch (err) {
+        return { error: `Invalid expression: ${String(err)}` };
       }
     }
   },
@@ -58,23 +59,27 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "fetch_url",
-    description: "Fetches the text content of a public URL.",
+    description:
+      "Fetches the text content of a public URL, including JavaScript-rendered pages.",
     parameters: {
       type: "object",
       properties: {
         url: {
           type: "string",
-          description:
-            "The full URL to fetch, e.g. 'https://example.com/api/data'"
+          description: "The full URL to fetch"
         }
       },
       required: ["url"]
     },
     execute: async (input) => {
       try {
-        const res = await fetch(String(input.url));
+        // r.jina.ai renders JS and returns clean markdown text
+        const readerUrl = `https://r.jina.ai/${encodeURIComponent(String(input.url))}`;
+        const res = await fetch(readerUrl, {
+          headers: { Accept: "text/plain" }
+        });
         const text = await res.text();
-        return { status: res.status, body: text.slice(0, 2000) }; // trim large responses
+        return { status: res.status, body: text.slice(0, 5000) };
       } catch (err) {
         return { error: String(err) };
       }

@@ -729,6 +729,7 @@ const sendMessage = async () => {
 /* ── Rows ── */
 .row {
   display: flex;
+  width: 100%;
   gap: 0.625rem;
   align-items: flex-start;
 }
@@ -751,7 +752,7 @@ const sendMessage = async () => {
 
 /* ── Bubbles ── */
 .bubble {
-  max-width: 72%;
+  width: 100%;
   padding: 0.5rem 0.875rem;
   font-size: 0.9rem;
   line-height: 1.65;
@@ -763,6 +764,7 @@ const sendMessage = async () => {
   border: 1px solid var(--p-blue-100);
   color: var(--p-slate-800);
   border-bottom-right-radius: 4px;
+  text-align: right;
 }
 .bubble-assistant {
   background: var(--p-slate-50);
