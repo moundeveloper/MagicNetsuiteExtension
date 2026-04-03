@@ -122,7 +122,8 @@
 
             <div
               v-if="
-                loading && messages[messages.length - 1]?.role !== 'assistant'
+                loading &&
+                messages[messages.length - 1]?.role === 'user'
               "
               class="row row-assistant"
             >
