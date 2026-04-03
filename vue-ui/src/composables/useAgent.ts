@@ -60,6 +60,7 @@ export interface AgentOptions {
   systemPrompt?: string;
   keepHistory?: boolean;
   onToolCall?: (name: string, input: unknown) => void;
+  onToolStart?: (name: string, input: unknown) => void;
   onToolResult?: (name: string, result: unknown) => void;
 }
 
@@ -150,6 +151,7 @@ export const useAgent = (options: AgentOptions = {}) => {
     systemPrompt: defaultSystemPrompt = "You are a helpful AI assistant.",
     keepHistory = true,
     onToolCall,
+    onToolStart,
     onToolResult
   } = options;
 
@@ -370,6 +372,7 @@ export const useAgent = (options: AgentOptions = {}) => {
 
             console.log(`[useAgent] → Calling tool "${toolName}"`, toolInput);
             onToolCall?.(toolName, toolInput);
+            onToolStart?.(toolName, toolInput);
 
             const tool = toolRegistry.value.get(toolName);
             let resultContent: string;

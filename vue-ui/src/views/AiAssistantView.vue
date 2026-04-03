@@ -105,17 +105,48 @@
                     v-else
                     :content="msg.content"
                   />
-                </div>
-              </div>
 
-              <div v-else-if="msg.role === 'tool'" class="row row-tool">
-                <div class="tool-pill">
-                  <i class="pi pi-cog" style="font-size: 11px" />
-                  <span class="tool-name">{{ msg.toolName }}</span>
-                  <span class="tool-sep">›</span>
-                  <span class="tool-result">{{
-                    truncate(msg.content, 80)
-                  }}</span>
+                  <!-- Grouped tool executions -->
+                  <template v-if="getToolMessagesForAssistant(msg.id).length > 0 || (msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0)">
+                    <details class="tool-execution" :open="activeTools.length > 0 || inProgressTools.filter(t => t.status === 'running').length > 0">
+                      <summary class="tool-execution-summary">
+                        <i :class="activeTools.length > 0 || inProgressTools.filter(t => t.status === 'running').length > 0 ? 'pi pi-spin pi-spinner' : 'pi pi-check-circle'" />
+                        <span>
+                          <template v-if="msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0">Running {{ inProgressTools.filter(t => t.status === 'running').length }} tool{{ inProgressTools.filter(t => t.status === 'running').length > 1 ? "s" : "" }}...</template>
+                          <template v-else>Tool{{ getToolMessagesForAssistant(msg.id).length > 1 ? "s" : "" }}: {{ getToolMessagesForAssistant(msg.id).map(m => m.toolName).join(", ") }}</template>
+                        </span>
+                      </summary>
+                      <div class="tool-results">
+                        <!-- While streaming: show only running tools -->
+                        <template v-if="msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0">
+                          <div
+                            v-for="tm in inProgressTools.filter(t => t.status === 'running')"
+                            :key="'running-' + tm.name"
+                            class="tool-result-item"
+                          >
+                            <span class="tool-name">{{ tm.name }}</span>
+                            <span class="tool-sep">›</span>
+                            <span class="tool-result tool-running">
+                              <i class="pi pi-spin pi-spinner" style="font-size: 10px" />
+                              Running...
+                            </span>
+                          </div>
+                        </template>
+                        <!-- After streaming: show completed tools -->
+                        <template v-else>
+                          <div
+                            v-for="tm in getToolMessagesForAssistant(msg.id)"
+                            :key="tm.id"
+                            class="tool-result-item"
+                          >
+                            <span class="tool-name">{{ tm.toolName }}</span>
+                            <span class="tool-sep">›</span>
+                            <span class="tool-result">{{ tm.content }}</span>
+                          </div>
+                        </template>
+                      </div>
+                    </details>
+                  </template>
                 </div>
               </div>
             </template>
@@ -143,12 +174,6 @@
           <div v-if="agent.error.value" class="error-banner">
             <i class="pi pi-exclamation-circle" />
             {{ String(agent.error.value) }}
-          </div>
-
-          <!-- Active tool status -->
-          <div v-if="activeTools.length" class="tool-status">
-            <i class="pi pi-spin pi-spinner" style="font-size: 12px" />
-            Running tool: <strong>{{ activeTools.join(", ") }}</strong>
           </div>
 
           <!-- Input row -->
@@ -196,6 +221,7 @@ interface ChatMessage {
   content: string;
   toolName?: string;
   isStreaming?: boolean;
+  isRunning?: boolean;
 }
 
 interface Chat {
@@ -264,8 +290,21 @@ Keep responses concise but well-structured. Use these elements to organize compl
   onToolCall(name) {
     activeTools.value.push(name);
   },
-  onToolResult(name) {
+  onToolStart(name, input) {
+    inProgressTools.value.push({
+      name,
+      input,
+      status: "running",
+      timestamp: Date.now()
+    });
+    scrollToBottom();
+  },
+  onToolResult(name, result) {
     activeTools.value = activeTools.value.filter((t) => t !== name);
+    const toolIndex = inProgressTools.value.findIndex((t) => t.name === name);
+    if (toolIndex !== -1) {
+      inProgressTools.value.splice(toolIndex, 1);
+    }
   }
 });
 
@@ -276,6 +315,17 @@ const prompt = ref("");
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const messageListRef = ref<HTMLElement | null>(null);
 const activeTools = ref<string[]>([]);
+
+interface InProgressTool {
+  name: string;
+  input: unknown;
+  status: "running" | "done";
+  result?: string;
+  timestamp: number;
+}
+
+const inProgressTools = ref<InProgressTool[]>([]);
+const currentAssistantMsgId = ref<number>(0);
 
 const chatHistory = ref<Chat[]>([]);
 const activeChatId = ref<string>("");
@@ -346,8 +396,13 @@ const loadChatHistory = () => {
           if (chat) {
             activeChatId.value = activeId;
             messages.value = chat.messages;
+            rebuildToolMessageMap();
           }
         }
+
+        inProgressTools.value = [];
+        activeTools.value = [];
+        currentAssistantMsgId.value = 0;
       } catch (error) {
         console.error("Failed to load chat history:", error);
         chatHistory.value = [];
@@ -507,7 +562,33 @@ const scrollToBottom = async () => {
   });
 };
 
-// Watch for new tool messages and append them after the last assistant message
+// Map tool messages to their parent assistant message
+const toolMessageToAssistant = ref<Map<number, number>>(new Map());
+
+const rebuildToolMessageMap = () => {
+  toolMessageToAssistant.value.clear();
+  let lastAssistantId: number | null = null;
+  
+  for (const msg of messages.value) {
+    if (msg.role === "assistant") {
+      lastAssistantId = msg.id;
+    } else if (msg.role === "tool" && lastAssistantId) {
+      toolMessageToAssistant.value.set(msg.id, lastAssistantId);
+    }
+  }
+};
+
+const getToolMessagesForAssistant = (assistantId: number) => {
+  const toolIds = Array.from(toolMessageToAssistant.value.entries())
+    .filter(([, assocId]) => assocId === assistantId)
+    .map(([toolMsgId]) => toolMsgId);
+
+  return messages.value.filter(
+    (m) => m.role === "tool" && toolIds.includes(m.id)
+  );
+};
+
+// Watch for new tool messages and link them to the last assistant message
 watch(
   agent.history,
   () => {
@@ -520,12 +601,25 @@ watch(
           m.content === tm.content
       );
       if (!exists) {
-        messages.value.push({
+        // Find the last assistant message to link this tool to
+        const lastAssistant = messages.value
+          .slice()
+          .reverse()
+          .find((m) => m.role === "assistant");
+
+        const newToolMsg: ChatMessage = {
           id: Date.now() + Math.random(),
           role: "tool",
           content: tm.content,
           toolName: tm.toolName
-        });
+        };
+
+        messages.value.push(newToolMsg);
+
+        if (lastAssistant) {
+          toolMessageToAssistant.value.set(newToolMsg.id, lastAssistant.id);
+        }
+
         scrollToBottom();
       }
     }
@@ -537,6 +631,7 @@ const sendMessage = async () => {
   const text = prompt.value.trim();
   if (!text || loading.value) return;
 
+  inProgressTools.value = [];
   prompt.value = "";
   if (textareaRef.value) textareaRef.value.style.height = "auto";
 
@@ -555,6 +650,8 @@ const sendMessage = async () => {
     isStreaming: true
   };
   messages.value.push(assistantMsg);
+  currentAssistantMsgId.value = assistantMsg.id;
+  inProgressTools.value = [];
   await scrollToBottom();
 
   try {
@@ -565,6 +662,10 @@ const sendMessage = async () => {
         : JSON.stringify(finalText, null, 2);
     assistantMsg.isStreaming = false;
     messages.value = [...messages.value];
+
+    inProgressTools.value = [];
+    activeTools.value = [];
+    currentAssistantMsgId.value = 0;
 
     autoSaveCurrentChat();
   } catch (e) {
@@ -760,6 +861,79 @@ const sendMessage = async () => {
 }
 .tool-status strong {
   color: var(--p-slate-700);
+}
+
+/* ── In-progress tools ── */
+.in-progress-tools {
+  border-top: 1px solid var(--p-slate-100);
+}
+
+/* ── Grouped tool execution ── */
+.bubble-assistant :deep(.tool-execution) {
+  margin-top: 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.bubble-assistant :deep(.tool-execution-summary) {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--p-slate-100);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--p-slate-700);
+}
+
+.bubble-assistant :deep(.tool-execution-summary:hover) {
+  background: var(--p-slate-200);
+}
+
+.bubble-assistant :deep(.tool-execution-summary i) {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.bubble-assistant :deep(.tool-results) {
+  padding: 0.5rem 0.75rem;
+  background: var(--p-slate-50);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bubble-assistant :deep(.tool-result-item) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.bubble-assistant :deep(.tool-result-item .tool-name) {
+  font-weight: 600;
+  color: var(--p-slate-700);
+  white-space: nowrap;
+}
+
+.bubble-assistant :deep(.tool-result-item .tool-sep) {
+  opacity: 0.4;
+}
+
+.bubble-assistant :deep(.tool-result-item .tool-result) {
+  color: var(--p-slate-600);
+  word-break: break-word;
+}
+
+.bubble-assistant :deep(.tool-result-item .tool-result.tool-running) {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--p-blue-600);
+  font-style: italic;
 }
 
 /* ── Input row ── */
