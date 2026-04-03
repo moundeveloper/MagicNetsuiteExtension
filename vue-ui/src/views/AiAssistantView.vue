@@ -101,7 +101,10 @@
                   <span v-if="msg.isStreaming && !msg.content" class="dots">
                     <span /><span /><span />
                   </span>
-                  <span v-else v-html="renderMarkdown(msg.content)" />
+                  <MessageContentRenderer
+                    v-else
+                    :content="msg.content"
+                  />
                 </div>
               </div>
 
@@ -181,6 +184,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent } from "../composables/useAgent";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
+import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import { tools } from "../utils/toolManager";
 
 const STORAGE_KEY = "aiAssistantChatHistory";
@@ -205,7 +209,56 @@ const props = defineProps<{ vhOffset: number }>();
 
 const agent = useAgent({
   systemPrompt:
-    "You are a helpful, concise assistant. Use markdown for code and lists where appropriate.",
+    `You are a helpful assistant that provides well-structured, expressive responses.
+
+Use the following markdown features to make your responses more expressive:
+
+1. **Callout Boxes**: Use for warnings, tips, notes, errors:
+\`\`\`
+:::tip
+ful tip here
+:::
+
+:::warning Warning message
+:::
+
+:::error
+Error details
+:::
+
+:::info Info message
+:::
+
+:::note Custom Title
+Note content
+:::
+
+2. **Collapsible Sections**: Use ??? for expandable content
+\`\`\`
+??? Details Title
+Hidden content here
+???
+\`\`\`
+
+3. **Tables**: Use proper markdown tables
+\`\`\`
+| Header 1 | Header 2 |
+|----------|----------|
+| Cell 1   | Cell 2   |
+\`\`\`
+
+4. **Checkboxes**: Use for lists with checkboxes
+\`\`\`
+- [x] Completed item
+- [ ] Pending item
+\`\`\`
+
+5. **Code Blocks**: Use fenced code blocks with language
+\`\`\`javascript
+const example = "code";
+\`\`\`
+
+Keep responses concise but well-structured. Use these elements to organize complex information.`,
   tools,
   onToolCall(name) {
     activeTools.value.push(name);
@@ -439,17 +492,6 @@ onMounted(() => {
 const truncate = (str: string, n: number) => {
   return str.length > n ? str.slice(0, n) + "…" : str;
 };
-const renderMarkdown = (text: unknown) => {
-  const safeText =
-    typeof text === "string" ? text : JSON.stringify(text ?? "", null, 2);
-
-  return safeText
-    .replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\n/g, "<br/>");
-};
-
 const autoResize = () => {
   const el = textareaRef.value;
   if (!el) return;
@@ -625,16 +667,6 @@ const sendMessage = async () => {
   border: 1px solid var(--p-slate-200);
   color: var(--p-slate-800);
   border-bottom-left-radius: 4px;
-}
-.bubble-assistant :deep(pre) {
-  background: var(--p-slate-100);
-  border: 1px solid var(--p-slate-200);
-  border-radius: 0.4rem;
-  padding: 0.5rem 0.75rem;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 0.8rem;
-  overflow-x: auto;
-  margin: 0.4rem 0;
 }
 .bubble-assistant :deep(code) {
   font-family: "JetBrains Mono", monospace;
@@ -888,5 +920,247 @@ const sendMessage = async () => {
   color: var(--p-slate-500);
   font-size: 0.8125rem;
   text-align: center;
+}
+
+/* ── Markdown typography ── */
+.bubble-assistant :deep(p) {
+  margin: 0 0 0.6rem;
+  line-height: 1.7;
+}
+.bubble-assistant :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.bubble-assistant :deep(h1),
+.bubble-assistant :deep(h2),
+.bubble-assistant :deep(h3) {
+  font-weight: 600;
+  color: var(--p-slate-900);
+  margin: 0.75rem 0 0.35rem;
+  line-height: 1.3;
+}
+.bubble-assistant :deep(h1) {
+  font-size: 1.1rem;
+}
+.bubble-assistant :deep(h2) {
+  font-size: 1rem;
+}
+.bubble-assistant :deep(h3) {
+  font-size: 0.9375rem;
+}
+
+.bubble-assistant :deep(ul),
+.bubble-assistant :deep(ol) {
+  margin: 0.4rem 0 0.6rem;
+  padding-left: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.bubble-assistant :deep(li) {
+  line-height: 1.65;
+  color: var(--p-slate-700);
+}
+.bubble-assistant :deep(ul > li) {
+  list-style-type: disc;
+}
+.bubble-assistant :deep(ol > li) {
+  list-style-type: decimal;
+}
+
+/* Nested list indent */
+.bubble-assistant :deep(li > ul),
+.bubble-assistant :deep(li > ol) {
+  margin: 0.2rem 0 0;
+  padding-left: 1.1rem;
+}
+.bubble-assistant :deep(li > ul > li) {
+  list-style-type: circle;
+  color: var(--p-slate-500);
+}
+
+.bubble-assistant :deep(strong) {
+  font-weight: 600;
+  color: var(--p-slate-900);
+}
+.bubble-assistant :deep(em) {
+  font-style: italic;
+  color: var(--p-slate-600);
+}
+.bubble-assistant :deep(blockquote) {
+  border-left: 3px solid var(--p-blue-200);
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.75rem;
+  color: var(--p-slate-500);
+  font-style: italic;
+}
+.bubble-assistant :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--p-slate-200);
+  margin: 0.75rem 0;
+}
+
+/* Callout boxes */
+.bubble-assistant :deep(.callout) {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  margin: 0.6rem 0;
+  border-radius: 0.5rem;
+  background: var(--callout-bg);
+  border: 1px solid var(--callout-color);
+  border-left-width: 4px;
+}
+
+.bubble-assistant :deep(.callout-icon) {
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+.bubble-assistant :deep(.callout-content) {
+  flex: 1;
+}
+
+.bubble-assistant :deep(.callout-title) {
+  font-weight: 600;
+  color: var(--callout-color);
+  margin-bottom: 0.25rem;
+}
+
+/* Collapsible sections */
+.bubble-assistant :deep(details.collapsible) {
+  margin: 0.6rem 0;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+.bubble-assistant :deep(details.collapsible summary) {
+  padding: 0.6rem 1rem;
+  background: var(--p-slate-100);
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--p-slate-700);
+  list-style: none;
+}
+
+.bubble-assistant :deep(details.collapsible summary::-webkit-details-marker) {
+  display: none;
+}
+
+.bubble-assistant :deep(details.collapsible summary::before) {
+  content: "▶";
+  display: inline-block;
+  margin-right: 0.5rem;
+  font-size: 0.7rem;
+  transition: transform 0.2s;
+}
+
+.bubble-assistant :deep(details.collapsible[open] summary::before) {
+  transform: rotate(90deg);
+}
+
+.bubble-assistant :deep(.collapsible-content) {
+  padding: 0.75rem 1rem;
+  background: #fff;
+  border-top: 1px solid var(--p-slate-100);
+}
+
+/* Tables */
+.bubble-assistant :deep(.md-table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+
+.bubble-assistant :deep(.md-table th),
+.bubble-assistant :deep(.md-table td) {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  text-align: left;
+}
+
+.bubble-assistant :deep(.md-table th) {
+  background: var(--p-slate-100);
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.bubble-assistant :deep(.md-table tr:nth-child(even) td) {
+  background: var(--p-slate-50);
+}
+
+/* Checkboxes */
+.bubble-assistant :deep(.checkbox-wrapper) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.25rem 0;
+  cursor: default;
+}
+
+.bubble-assistant :deep(.checkbox-wrapper input) {
+  margin-top: 0.3rem;
+  accent-color: var(--p-blue-500);
+}
+
+.bubble-assistant :deep(.checkbox-label) {
+  line-height: 1.5;
+  color: var(--p-slate-700);
+}
+
+/* Enhanced code blocks */
+.bubble-assistant :deep(.code-block) {
+  margin: 0.6rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid var(--p-slate-200);
+}
+
+.bubble-assistant :deep(.code-header) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  background: var(--p-slate-100);
+  border-bottom: 1px solid var(--p-slate-200);
+}
+
+.bubble-assistant :deep(.code-lang) {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--p-slate-500);
+  letter-spacing: 0.5px;
+}
+
+.bubble-assistant :deep(.code-copy) {
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  background: var(--p-slate-200);
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  color: var(--p-slate-600);
+  transition: background 0.15s;
+}
+
+.bubble-assistant :deep(.code-copy:hover) {
+  background: var(--p-slate-300);
+}
+
+.bubble-assistant :deep(.code-block pre) {
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--p-slate-900);
+  overflow-x: auto;
+}
+
+.bubble-assistant :deep(.code-block code) {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  color: #e2e8f0;
+  background: transparent !important;
+  padding: 0;
 }
 </style>
