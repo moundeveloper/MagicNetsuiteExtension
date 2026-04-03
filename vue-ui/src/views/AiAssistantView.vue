@@ -181,6 +181,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent } from "../composables/useAgent";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
+import { tools } from "../utils/toolManager";
 
 const STORAGE_KEY = "aiAssistantChatHistory";
 
@@ -205,33 +206,7 @@ const props = defineProps<{ vhOffset: number }>();
 const agent = useAgent({
   systemPrompt:
     "You are a helpful, concise assistant. Use markdown for code and lists where appropriate.",
-  tools: [
-    {
-      name: "calculate",
-      description:
-        "Evaluates a safe mathematical expression and returns the result.",
-      parameters: {
-        type: "object",
-        properties: {
-          expression: { type: "string", description: "JS-safe math expression" }
-        },
-        required: ["expression"]
-      },
-      execute: (input: Record<string, unknown>) => {
-        try {
-          const expr = String(input.expression)
-            .replace(/×/g, "*")
-            .replace(/÷/g, "/")
-            .replace(/−/g, "-") // Unicode minus sign U+2212
-            .replace(/\^/g, "**"); // optional: support ^ as power operator
-          const result = Function(`"use strict"; return (${expr})`)();
-          return { result };
-        } catch {
-          return { error: "Invalid expression" };
-        }
-      }
-    }
-  ],
+  tools,
   onToolCall(name) {
     activeTools.value.push(name);
   },
@@ -252,16 +227,14 @@ const chatHistory = ref<Chat[]>([]);
 const activeChatId = ref<string>("");
 const isRestoring = ref(true);
 
-function generateChatId() {
-  return "chat_" + Date.now();
-}
+const generateChatId = () => "chat_" + Date.now();
 
-function getFirstUserMessage(msgs: ChatMessage[]) {
+const getFirstUserMessage = (msgs: ChatMessage[]) => {
   const firstUser = msgs.find((m) => m.role === "user");
   return firstUser ? firstUser.content.slice(0, 50) : "New Chat";
-}
+};
 
-function saveChatHistory() {
+const saveChatHistory = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) return;
 
   const historyToSave = chatHistory.value;
@@ -276,17 +249,17 @@ function saveChatHistory() {
       }
     }
   );
-}
+};
 
-function saveActiveChatId() {
+const saveActiveChatId = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) return;
 
   chrome.storage.local.set({
     aiAssistantActiveChatId: activeChatId.value
   });
-}
+};
 
-function loadChatHistory() {
+const loadChatHistory = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) {
     isRestoring.value = false;
     return;
@@ -329,9 +302,9 @@ function loadChatHistory() {
       isRestoring.value = false;
     }
   );
-}
+};
 
-function createNewChat() {
+const createNewChat = () => {
   if (messages.value.length > 0) {
     const firstUserMsg = getFirstUserMessage(messages.value);
     const existingChat = chatHistory.value.find(
@@ -363,7 +336,7 @@ function createNewChat() {
   messages.value = [];
   activeChatId.value = "";
   scrollToBottom();
-}
+};
 
 const normalizeMessages = (msgs: unknown): ChatMessage[] => {
   if (Array.isArray(msgs)) return msgs;
@@ -371,7 +344,7 @@ const normalizeMessages = (msgs: unknown): ChatMessage[] => {
   return [];
 };
 
-function loadChat(chatId: string) {
+const loadChat = (chatId: string) => {
   if (messages.value.length > 0 && activeChatId.value) {
     const existingChat = chatHistory.value.find(
       (c) => c.id === activeChatId.value
@@ -401,9 +374,9 @@ function loadChat(chatId: string) {
     saveActiveChatId();
     scrollToBottom();
   }
-}
+};
 
-function deleteChat(chatId: string) {
+const deleteChat = (chatId: string) => {
   chatHistory.value = chatHistory.value.filter((c) => c.id !== chatId);
 
   if (activeChatId.value === chatId) {
@@ -413,9 +386,9 @@ function deleteChat(chatId: string) {
 
   saveChatHistory();
   saveActiveChatId();
-}
+};
 
-function autoSaveCurrentChat() {
+const autoSaveCurrentChat = () => {
   if (messages.value.length === 0) return;
 
   if (activeChatId.value) {
@@ -440,9 +413,9 @@ function autoSaveCurrentChat() {
   activeChatId.value = newChat.id;
   saveChatHistory();
   saveActiveChatId();
-}
+};
 
-function formatDate(dateStr: string) {
+const formatDate = (dateStr: string) => {
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -457,35 +430,39 @@ function formatDate(dateStr: string) {
   } else {
     return date.toLocaleDateString([], { month: "short", day: "numeric" });
   }
-}
+};
 
 onMounted(() => {
   loadChatHistory();
 });
 
-function truncate(str: string, n: number) {
+const truncate = (str: string, n: number) => {
   return str.length > n ? str.slice(0, n) + "…" : str;
-}
-function renderMarkdown(text: string) {
-  return text
+};
+const renderMarkdown = (text: unknown) => {
+  const safeText =
+    typeof text === "string" ? text : JSON.stringify(text ?? "", null, 2);
+
+  return safeText
     .replace(/```([\s\S]*?)```/g, "<pre><code>$1</code></pre>")
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\n/g, "<br/>");
-}
-function autoResize() {
+};
+
+const autoResize = () => {
   const el = textareaRef.value;
   if (!el) return;
   el.style.height = "auto";
   el.style.height = Math.min(el.scrollHeight, 160) + "px";
-}
-async function scrollToBottom() {
+};
+const scrollToBottom = async () => {
   await nextTick();
   requestAnimationFrame(() => {
     const el = messageListRef.value;
     if (el) el.scrollTop = el.scrollHeight;
   });
-}
+};
 
 // Watch for new tool messages and append them after the last assistant message
 watch(
@@ -513,7 +490,7 @@ watch(
   { deep: true }
 );
 
-async function sendMessage() {
+const sendMessage = async () => {
   const text = prompt.value.trim();
   if (!text || loading.value) return;
 
@@ -539,7 +516,10 @@ async function sendMessage() {
 
   try {
     const finalText = await agent.run(text, { maxIterations: 6 });
-    assistantMsg.content = finalText;
+    assistantMsg.content =
+      typeof finalText === "string"
+        ? finalText
+        : JSON.stringify(finalText, null, 2);
     assistantMsg.isStreaming = false;
     messages.value = [...messages.value];
 
@@ -551,7 +531,7 @@ async function sendMessage() {
   } finally {
     await scrollToBottom();
   }
-}
+};
 </script>
 
 <style scoped>

@@ -311,7 +311,22 @@ export const useAgent = (options: AgentOptions = {}) => {
           )?.message ??
           (response as { content?: string | null; tool_calls?: ToolCall[] });
 
-        const assistantText: string = msg?.content ?? "";
+        const normalizeContent = (content: unknown): string => {
+          if (typeof content === "string") return content;
+
+          if (Array.isArray(content)) {
+            return content
+              .map((c: any) => {
+                if (c?.type === "text") return c.text ?? "";
+                return "";
+              })
+              .join("\n");
+          }
+
+          return JSON.stringify(content ?? "", null, 2);
+        };
+
+        const assistantText = normalizeContent(msg?.content);
         const toolCalls: ToolCall[] =
           (msg as { tool_calls?: ToolCall[] })?.tool_calls ?? [];
 
