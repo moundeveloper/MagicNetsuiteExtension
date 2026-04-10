@@ -101,33 +101,99 @@
                   <span v-if="msg.isStreaming && !msg.content" class="dots">
                     <span /><span /><span />
                   </span>
-                  <MessageContentRenderer
-                    v-else
-                    :content="msg.content"
-                  />
+                  <MessageContentRenderer v-else :content="msg.content" />
 
                   <!-- Grouped tool executions -->
-                  <template v-if="getToolMessagesForAssistant(msg.id).length > 0 || (msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0)">
-                    <details class="tool-execution" :open="activeTools.length > 0 || inProgressTools.filter(t => t.status === 'running').length > 0">
+                  <template
+                    v-if="
+                      getToolMessagesForAssistant(msg.id).length > 0 ||
+                      (msg.isStreaming &&
+                        msg.id === currentAssistantMsgId &&
+                        inProgressTools.filter((t) => t.status === 'running')
+                          .length > 0)
+                    "
+                  >
+                    <details
+                      class="tool-execution"
+                      :open="
+                        activeTools.length > 0 ||
+                        inProgressTools.filter((t) => t.status === 'running')
+                          .length > 0
+                      "
+                    >
                       <summary class="tool-execution-summary">
-                        <i :class="activeTools.length > 0 || inProgressTools.filter(t => t.status === 'running').length > 0 ? 'pi pi-spin pi-spinner' : 'pi pi-check-circle'" />
+                        <i
+                          :class="
+                            activeTools.length > 0 ||
+                            inProgressTools.filter(
+                              (t) => t.status === 'running'
+                            ).length > 0
+                              ? 'pi pi-spin pi-spinner'
+                              : 'pi pi-check-circle'
+                          "
+                        />
                         <span>
-                          <template v-if="msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0">Running {{ inProgressTools.filter(t => t.status === 'running').length }} tool{{ inProgressTools.filter(t => t.status === 'running').length > 1 ? "s" : "" }}...</template>
-                          <template v-else>Tool{{ getToolMessagesForAssistant(msg.id).length > 1 ? "s" : "" }}: {{ getToolMessagesForAssistant(msg.id).map(m => m.toolName).join(", ") }}</template>
+                          <template
+                            v-if="
+                              msg.isStreaming &&
+                              msg.id === currentAssistantMsgId &&
+                              inProgressTools.filter(
+                                (t) => t.status === 'running'
+                              ).length > 0
+                            "
+                            >Running
+                            {{
+                              inProgressTools.filter(
+                                (t) => t.status === "running"
+                              ).length
+                            }}
+                            tool{{
+                              inProgressTools.filter(
+                                (t) => t.status === "running"
+                              ).length > 1
+                                ? "s"
+                                : ""
+                            }}...</template
+                          >
+                          <template v-else
+                            >Tool{{
+                              getToolMessagesForAssistant(msg.id).length > 1
+                                ? "s"
+                                : ""
+                            }}:
+                            {{
+                              getToolMessagesForAssistant(msg.id)
+                                .map((m) => m.toolName)
+                                .join(", ")
+                            }}</template
+                          >
                         </span>
                       </summary>
                       <div class="tool-results">
                         <!-- While streaming: show only running tools -->
-                        <template v-if="msg.isStreaming && msg.id === currentAssistantMsgId && inProgressTools.filter(t => t.status === 'running').length > 0">
+                        <template
+                          v-if="
+                            msg.isStreaming &&
+                            msg.id === currentAssistantMsgId &&
+                            inProgressTools.filter(
+                              (t) => t.status === 'running'
+                            ).length > 0
+                          "
+                        >
                           <div
-                            v-for="tm in inProgressTools.filter(t => t.status === 'running')"
+                            v-for="tm in inProgressTools.filter(
+                              (t) => t.status === 'running'
+                            )"
                             :key="'running-' + tm.name"
                             class="tool-result-item"
                           >
                             <span class="tool-name">{{ tm.name }}</span>
                             <span class="tool-sep">›</span>
                             <span class="tool-result tool-running">
-                              <i class="pi pi-spin pi-spinner" style="font-size: 10px" />
+                              <i
+                                class="pi pi-spin pi-spinner"
+                                style="font-size: 10px"
+                              />
                               Running...
                             </span>
                           </div>
@@ -152,10 +218,7 @@
             </template>
 
             <div
-              v-if="
-                loading &&
-                messages[messages.length - 1]?.role === 'user'
-              "
+              v-if="loading && messages[messages.length - 1]?.role === 'user'"
               class="row row-assistant"
             >
               <div class="avatar">
@@ -235,9 +298,9 @@ interface Chat {
 const props = defineProps<{ vhOffset: number }>();
 
 const agent = useAgent({
-  systemPrompt:
-    `You are a helpful assistant that provides well-structured, expressive responses.
-
+  systemPrompt: `You are a helpful assistant that provides well-structured, expressive responses.
+If the task is complex or requires multiple steps, break it down into smaller, more manageable tasks.
+Before commiting to answer and using tools, make a plan of the tools you need to use and only use the tools you need to answer the question.
 Use the following markdown features to make your responses more expressive:
 
 1. **Callout Boxes**: Use for warnings, tips, notes, errors:
@@ -568,7 +631,7 @@ const toolMessageToAssistant = ref<Map<number, number>>(new Map());
 const rebuildToolMessageMap = () => {
   toolMessageToAssistant.value.clear();
   let lastAssistantId: number | null = null;
-  
+
   for (const msg of messages.value) {
     if (msg.role === "assistant") {
       lastAssistantId = msg.id;
