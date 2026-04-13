@@ -118,6 +118,10 @@ const handlers = {
     console.log("Scripts Deployed action received");
     return window.getDeployedScriptFiles(modules, { recordType });
   },
+  SCRIPT_FILES: async ({ modules, payload: { scriptIds } }) => {
+    console.log("Script Files action received", { scriptIds });
+    return window.getScriptFiles(modules, { scriptIds });
+  },
   CURRENT_REC_TYPE: async ({ modules }) => {
     console.log("Current Record Type action received");
     return window.getCurrentRecordIdType(modules);
@@ -148,6 +152,10 @@ const handlers = {
   },
   SUITELET_URL: async ({ modules, payload: { script, deployment } }) => {
     console.log("Open Suitelet action received");
+    return window.getSuiteletUrl(modules, { script, deployment });
+  },
+  OPEN_DEPLOYMENT_SUITELET: async ({ modules, payload: { script, deployment } }) => {
+    console.log("Open Deployment Suitelet action received", { script, deployment });
     return window.getSuiteletUrl(modules, { script, deployment });
   },
   LOGS: async ({

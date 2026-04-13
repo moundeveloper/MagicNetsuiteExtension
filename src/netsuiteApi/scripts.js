@@ -62,6 +62,90 @@ window.getScriptUrl = (N, { scriptId }) => {
   return scriptUrl;
 };
 
+window.getScriptFiles = async ({ query, url }, { scriptIds }) => {
+  console.log("getScriptFiles - Script IDs:", scriptIds);
+
+  if (!scriptIds || !Array.isArray(scriptIds) || scriptIds.length === 0) {
+    return [];
+  }
+
+  try {
+    const placeholders = scriptIds.map(() => "?").join(", ");
+
+    const sql = `
+    SELECT
+        script.scriptfile,
+        script.name,
+        script.scripttype,
+        script.id,
+        script.scriptid,
+        file.url
+    FROM
+        script
+        INNER JOIN file ON script.scriptfile = file.id
+    WHERE
+        script.id IN (${placeholders})
+    `;
+
+    const queryConfig = {
+      query: sql,
+      params: scriptIds
+    };
+
+    const resultSet = await query.runSuiteQL.promise(queryConfig);
+    const results = resultSet.asMappedResults();
+
+    console.log(`Found ${results.length} scripts for IDs: ${scriptIds.join(", ")}`);
+
+    const domain = url.resolveDomain({
+      hostType: url.HostType.APPLICATION
+    });
+
+    const fetchPromises = results.map(async (result) => {
+      const fileUrl = `https://${domain}${result.url}`;
+      try {
+        const response = await fetch(fileUrl);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch ${result.name}: ${response.statusText}`
+          );
+        }
+        const body = await response.text();
+        console.log(`Fetched ${result.name} (${result.scripttype})`);
+        return {
+          scriptName: result.name,
+          scriptType: result.scripttype,
+          scriptId: result.scriptid,
+          id: result.id,
+          scriptFile: body
+        };
+      } catch (err) {
+        console.error(err);
+        return {
+          scriptName: result.name,
+          scriptType: result.scripttype,
+          scriptId: result.scriptid,
+          id: result.id,
+          scriptFile: null
+        };
+      }
+    });
+
+    const fetchedResults = await Promise.all(fetchPromises);
+
+    console.log(
+      `Fetched ${
+        fetchedResults.filter((f) => f.scriptFile).length
+      } script files successfully.`
+    );
+
+    return fetchedResults;
+  } catch (error) {
+    console.error("getScriptFiles error:", error);
+    return [];
+  }
+};
+
 window.getDeployedScriptFiles = async ({ query, url }, { recordType }) => {
   console.log("Record Type:", recordType);
   if (!recordType || typeof recordType !== "string") {

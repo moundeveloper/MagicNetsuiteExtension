@@ -91,13 +91,19 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_scripts",
     description:
-      "Get all scripts from NetSuite, optionally filtered by script ID.",
+      "Search and list scripts from NetSuite. Returns an array of objects with fields: scriptid (string ID like 'customscript_xxx'), id (internal numeric ID), name, scripttype, owner, scriptfile. Use 'search' for a fuzzy keyword search across name, scriptid, owner, and scriptfile. Use 'scriptId' only when you know the exact script ID string. Call with no parameters to list all scripts.",
     parameters: {
       type: "object",
       properties: {
         scriptId: {
           type: "string",
-          description: "Optional script ID to filter by"
+          description:
+            "Exact script ID string for precise match (e.g. 'customscript_my_suitelet'). Only use when you know the full exact ID."
+        },
+        search: {
+          type: "string",
+          description:
+            "Fuzzy search keyword to filter results by name, scriptid, owner, or scriptfile (case-insensitive). Use this when looking for scripts by partial name or keyword."
         }
       },
       required: []
@@ -106,13 +112,37 @@ export const tools: ToolDefinition[] = [
       const response = await callApi(RequestRoutes.SCRIPTS, {
         scriptId: input.scriptId
       });
-      return response.message;
+      let results = response.message;
+      if (
+        input.search &&
+        !input.scriptId &&
+        Array.isArray(results)
+      ) {
+        const term = String(input.search).toLowerCase();
+        results = results.filter(
+          (s: Record<string, unknown>) =>
+            String(s.name ?? "")
+              .toLowerCase()
+              .includes(term) ||
+            String(s.scriptid ?? "")
+              .toLowerCase()
+              .includes(term) ||
+            String(s.owner ?? "")
+              .toLowerCase()
+              .includes(term) ||
+            String(s.scriptfile ?? "")
+              .toLowerCase()
+              .includes(term)
+        );
+      }
+      return results;
     }
   },
 
   {
     name: "netsuite_get_script_types",
-    description: "Get all script types available in NetSuite.",
+    description:
+      "Get all script types available in NetSuite. Returns an array of objects with fields: label (type name) and id (internal numeric ID).",
     parameters: {
       type: "object",
       properties: {},
@@ -126,13 +156,15 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_script_url",
-    description: "Get the URL to open a script in NetSuite by script ID.",
+    description:
+      "Get the URL to open a script record page in NetSuite. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts), NOT the string scriptid.",
     parameters: {
       type: "object",
       properties: {
         scriptId: {
           type: "string",
-          description: "The script ID"
+          description:
+            "The script's internal numeric ID (e.g. '523'). This is the 'id' field from netsuite_get_scripts results."
         }
       },
       required: ["scriptId"]
@@ -147,14 +179,15 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_deployed_scripts",
-    description: "Get deployed scripts for a specific record type in NetSuite.",
+    description:
+      "Get all deployed scripts attached to a specific record type. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code). Use this to inspect what scripts run on a given record type.",
     parameters: {
       type: "object",
       properties: {
         recordType: {
           type: "string",
           description:
-            "The record type (e.g., 'salesorder', 'customer', 'itemfulfillment')"
+            "The record type ID in lowercase (e.g. 'salesorder', 'customer', 'itemfulfillment', 'invoice'). Will be uppercased automatically."
         }
       },
       required: ["recordType"]
@@ -168,19 +201,51 @@ export const tools: ToolDefinition[] = [
   },
 
   {
+    name: "netsuite_get_script_files",
+    description:
+      "Fetch the source code files for one or more scripts by their internal numeric IDs (the 'id' field from netsuite_get_scripts). Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code, or null on error). Use this when you need to read the actual code of specific scripts.",
+    parameters: {
+      type: "object",
+      properties: {
+        scriptIds: {
+          type: "array",
+          items: { type: "number" },
+          description:
+            "One or more internal numeric script IDs (the 'id' field from netsuite_get_scripts, e.g. [523] or [523, 841, 102])."
+        }
+      },
+      required: ["scriptIds"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.SCRIPT_FILES, {
+        scriptIds: input.scriptIds
+      });
+      return response.message;
+    }
+  },
+
+  {
     name: "netsuite_get_script_deployments",
-    description: "Get deployments for one or more scripts in NetSuite.",
+    description:
+      "Get deployment records for one or more scripts. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts), NOT the string scriptid. Returns an array of objects with: scriptid (deployment string ID like 'customdeploy_xxx'), recordtype, isdeployed ('T'/'F'), status, loglevel, primarykey (deployment internal ID), id (script internal ID), scriptname. Use 'search' to filter results by keyword.",
     parameters: {
       type: "object",
       properties: {
         scriptId: {
           type: "string",
-          description: "Single script ID"
+          description:
+            "A single script internal numeric ID (the 'id' field from netsuite_get_scripts, e.g. '523'). Do NOT pass the string scriptid here."
         },
         scriptIds: {
           type: "array",
           items: { type: "string" },
-          description: "Multiple script IDs"
+          description:
+            "Multiple script internal numeric IDs. Use this to fetch deployments for several scripts at once."
+        },
+        search: {
+          type: "string",
+          description:
+            "Fuzzy search keyword to filter deployment results by scriptid (deployment ID), scriptname, or recordtype (case-insensitive)."
         }
       },
       required: []
@@ -190,7 +255,23 @@ export const tools: ToolDefinition[] = [
         scriptId: input.scriptId,
         scriptIds: input.scriptIds
       });
-      return response.message;
+      let results = response.message;
+      if (input.search && Array.isArray(results)) {
+        const term = String(input.search).toLowerCase();
+        results = results.filter(
+          (d: Record<string, unknown>) =>
+            String(d.scriptid ?? "")
+              .toLowerCase()
+              .includes(term) ||
+            String(d.scriptname ?? "")
+              .toLowerCase()
+              .includes(term) ||
+            String(d.recordtype ?? "")
+              .toLowerCase()
+              .includes(term)
+        );
+      }
+      return results;
     }
   },
 
@@ -238,6 +319,37 @@ export const tools: ToolDefinition[] = [
         deployment: input.deployment
       });
       return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_open_deployment_suitelet",
+    description:
+      "Generate the Suitelet URL for a given script ID and deployment ID, then open it in a new browser tab. Returns the generated URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        script: {
+          type: "string",
+          description: "The script ID (e.g. 'customscript_my_suitelet')"
+        },
+        deployment: {
+          type: "string",
+          description: "The deployment ID (e.g. 'customdeploy_my_suitelet')"
+        }
+      },
+      required: ["script", "deployment"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.OPEN_DEPLOYMENT_SUITELET, {
+        script: input.script,
+        deployment: input.deployment
+      });
+      const url = response.message;
+      if (url) {
+        window.open(url, "_blank");
+      }
+      return url || "Failed to generate Suitelet URL";
     }
   },
 
