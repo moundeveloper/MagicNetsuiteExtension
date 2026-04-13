@@ -91,7 +91,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_scripts",
     description:
-      "Search and list scripts from NetSuite. Returns an array of objects with fields: scriptid (string ID like 'customscript_xxx'), id (internal numeric ID), name, scripttype, owner, scriptfile. Use 'search' for a fuzzy keyword search across name, scriptid, owner, and scriptfile. Use 'scriptId' only when you know the exact script ID string. Call with no parameters to list all scripts.",
+      "Search and list scripts from NetSuite. Returns an array of objects with fields: scriptid (string ID like 'customscript_xxx'), id (internal numeric ID), name, scripttype, owner, scriptfile. Use 'search' for a fuzzy keyword search across name, scriptid, owner, and scriptfile. Use 'scriptId' only when you know the exact script ID string. Call with no parameters to list all scripts. To read the actual source code of scripts found here, pass the numeric 'id' values to netsuite_get_script_files — do NOT call this tool again for that purpose.",
     parameters: {
       type: "object",
       properties: {
@@ -180,7 +180,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_deployed_scripts",
     description:
-      "Get all deployed scripts attached to a specific record type. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code). Use this to inspect what scripts run on a given record type.",
+      "Get all deployed scripts attached to a specific record type, including their full source code. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code). Use this to inspect what scripts run on a given record type. If you already know specific script numeric IDs and just need their source code, use netsuite_get_script_files instead.",
     parameters: {
       type: "object",
       properties: {
@@ -203,7 +203,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_script_files",
     description:
-      "Fetch the source code files for one or more scripts by their internal numeric IDs (the 'id' field from netsuite_get_scripts). Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code, or null on error). Use this when you need to read the actual code of specific scripts.",
+      "Fetch the source code files for one or more scripts by their internal numeric IDs. This is the follow-up tool after netsuite_get_scripts: first search scripts to get their numeric 'id' values, then pass those IDs here to retrieve the actual source code. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code, or null on error). Accepts a single ID like [523] or multiple IDs like [523, 841, 102].",
     parameters: {
       type: "object",
       properties: {
