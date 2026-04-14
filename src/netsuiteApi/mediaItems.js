@@ -5,12 +5,11 @@ window.getRootFolders = async ({ query }) => {
         SELECT id, name
         FROM MediaItemFolder
         WHERE IsTopLevel = 'T'
-        `,
+        `
     })
     .asMappedResults();
   return rootFolders;
 };
-
 window.createFolder = async ({}, { folderName, parentFolderId, csrfToken }) => {
   const baseUrl =
     "https://1964539.app.netsuite.com/app/common/media/mediaitemfolder.nl";
@@ -38,23 +37,59 @@ window.createFolder = async ({}, { folderName, parentFolderId, csrfToken }) => {
         "sec-fetch-mode": "navigate",
         "sec-fetch-site": "same-origin",
         "sec-fetch-user": "?1",
-        "upgrade-insecure-requests": "1",
+        "upgrade-insecure-requests": "1"
       },
       referrer: `https://1964539.app.netsuite.com/app/common/media/mediaitemfolder.nl?parent=${parentFolderId}`,
       body: body,
       credentials: "include",
-      mode: "cors",
+      mode: "cors"
     });
 
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    const result = await response.text();
-    console.log("Folder created successfully", result);
-    return result;
+    const resultHtml = await response.text();
+
+    // Extract folder ID from HTML
+    const folderId = extractFolderIdFromHtml(resultHtml);
+
+    console.log(
+      "Folder created. ID:",
+      folderId,
+      "HTML length:",
+      resultHtml.length
+    );
+
+    // Return id
+    return { folderId };
   } catch (error) {
     console.error("Error creating folder:", error);
     throw error;
   }
 };
+
+// Helper: try common extraction points
+function extractFolderIdFromHtml(html) {
+  // 1) hidden input named "id"
+  const idInput = new DOMParser()
+    .parseFromString(html, "text/html")
+    .querySelector('input[name="id"]');
+  if (idInput && idInput.value) return idInput.value;
+
+  // 2) anchor with mediaitemfolder.nl?parent=...
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const anchors = Array.from(
+    doc.querySelectorAll('a[href*="mediaitemfolder.nl?parent="]')
+  );
+  for (const a of anchors) {
+    const m = a.href.match(/parent=(\d+)/);
+    if (m) return m[1];
+  }
+
+  // 3) a plain text match like "...mediaitemfolder.nl?parent=1234"
+  const m2 = html.match(/mediaitemfolder\.nl\?parent=(\d+)/);
+  if (m2) return m2[1];
+
+  return null;
+}

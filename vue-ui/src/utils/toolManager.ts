@@ -657,6 +657,35 @@ export const tools: ToolDefinition[] = [
     }
   },
 
+  {
+    name: "netsuite_create_folder",
+    description:
+      "Create a new folder in the NetSuite File Cabinet. Use this when asked to create a folder for uploading scripts or organizing files. Defaults to the SuiteScripts folder (ID -15) if no parent is specified. Returns the created folder id from NetSuite on success.",
+    destructive: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "The name of the folder to create."
+        },
+        parentFolderId: {
+          type: "number",
+          description:
+            "Internal ID of the parent folder. Defaults to -15 (SuiteScripts folder) if not provided."
+        }
+      },
+      required: ["name"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.CREATE_FOLDER, {
+        name: input.name,
+        parentFolder: input.parentFolderId ?? -15
+      });
+      return response.message;
+    }
+  },
+
   // ========== NetSuite Export ==========
   {
     name: "netsuite_export_record",
