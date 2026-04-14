@@ -101,7 +101,8 @@
                   <summary class="compaction-summary">
                     <i class="pi pi-bolt compaction-icon" />
                     <span>
-                      Context compacted — {{ msg.compactedCount }} earlier messages summarized
+                      Context compacted — {{ msg.compactedCount }} earlier
+                      messages summarized
                     </span>
                     <i class="pi pi-chevron-down compaction-chevron" />
                   </summary>
@@ -117,7 +118,10 @@
               </div>
 
               <!-- Assistant message -->
-              <div v-else-if="msg.role === 'assistant'" class="msg msg-assistant">
+              <div
+                v-else-if="msg.role === 'assistant'"
+                class="msg msg-assistant"
+              >
                 <!-- Skill usage (shown above tools with distinct styling) -->
                 <div
                   v-if="
@@ -162,9 +166,15 @@
                         <i class="pi pi-book skill-icon" />
                         <span>
                           Used
-                          {{ getSkillMessagesForAssistant(msg.id).filter(m => m.toolName === 'load_skill').length }}
+                          {{
+                            getSkillMessagesForAssistant(msg.id).filter(
+                              (m) => m.toolName === "load_skill"
+                            ).length
+                          }}
                           skill{{
-                            getSkillMessagesForAssistant(msg.id).filter(m => m.toolName === 'load_skill').length > 1
+                            getSkillMessagesForAssistant(msg.id).filter(
+                              (m) => m.toolName === "load_skill"
+                            ).length > 1
                               ? "s"
                               : ""
                           }}
@@ -303,30 +313,30 @@
           <div class="input-wrapper">
             <div class="chat-toolbar">
               <span v-if="tokenCounterLabel" :class="tokenCounterClass">
-                <i class="pi pi-database" style="font-size:0.6rem" />
-                {{ tokenCounterLabel }} tokens
+                <i class="pi pi-database" style="font-size: 0.6rem" />
+                {{ tokenCounterLabel }} tokens (Context-Window)
               </span>
             </div>
             <div class="input-row">
               <textarea
-              ref="textareaRef"
-              v-model="prompt"
-              placeholder="Message..."
-              rows="1"
-              class="chat-input"
-              :disabled="loading"
-              @keydown.enter.exact.prevent="sendMessage"
-              @input="autoResize"
-            />
-            <button
-              class="send-btn"
-              :disabled="!prompt.trim() || loading"
-              @click="sendMessage"
-            >
-              <i v-if="loading" class="pi pi-spin pi-spinner" />
-              <i v-else class="pi pi-arrow-up" />
-            </button>
-          </div>
+                ref="textareaRef"
+                v-model="prompt"
+                placeholder="Message..."
+                rows="1"
+                class="chat-input"
+                :disabled="loading"
+                @keydown.enter.exact.prevent="sendMessage"
+                @input="autoResize"
+              />
+              <button
+                class="send-btn"
+                :disabled="!prompt.trim() || loading"
+                @click="sendMessage"
+              >
+                <i v-if="loading" class="pi pi-spin pi-spinner" />
+                <i v-else class="pi pi-arrow-up" />
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -350,20 +360,27 @@
       </div>
       <div class="compaction-dialog-body">
         <p>
-          The conversation context is getting large
-          (<strong>~{{ (compactionApprovalTokens / 1000).toFixed(1) }}k</strong> /
-          {{ (compactionApprovalThreshold / 1000).toFixed(0) }}k tokens).
+          The conversation context is getting large (<strong
+            >~{{ (compactionApprovalTokens / 1000).toFixed(1) }}k</strong
+          >
+          / {{ (compactionApprovalThreshold / 1000).toFixed(0) }}k tokens).
         </p>
         <p>
-          Compact earlier messages into a summary to free up context space?
-          The summary will be kept in the conversation.
+          Compact earlier messages into a summary to free up context space? The
+          summary will be kept in the conversation.
         </p>
       </div>
       <div class="compaction-dialog-actions">
-        <button class="compaction-btn compaction-btn--skip" @click="handleCompactionReject">
+        <button
+          class="compaction-btn compaction-btn--skip"
+          @click="handleCompactionReject"
+        >
           Skip
         </button>
-        <button class="compaction-btn compaction-btn--compact" @click="handleCompactionApprove">
+        <button
+          class="compaction-btn compaction-btn--compact"
+          @click="handleCompactionApprove"
+        >
           <i class="pi pi-bolt" />
           Compact
         </button>
@@ -415,7 +432,10 @@ const approvalToolName = ref("");
 const approvalToolInput = ref<unknown>(null);
 let approvalResolve: ((approved: boolean) => void) | null = null;
 
-const requestToolApproval = (name: string, input: unknown): Promise<boolean> => {
+const requestToolApproval = (
+  name: string,
+  input: unknown
+): Promise<boolean> => {
   approvalToolName.value = name;
   approvalToolInput.value = input;
   approvalVisible.value = true;
@@ -442,7 +462,10 @@ const compactionApprovalTokens = ref(0);
 const compactionApprovalThreshold = ref(0);
 let compactionApprovalResolve: ((approved: boolean) => void) | null = null;
 
-const requestCompactionApproval = (tokenEstimate: number, threshold: number): Promise<boolean> => {
+const requestCompactionApproval = (
+  tokenEstimate: number,
+  threshold: number
+): Promise<boolean> => {
   compactionApprovalTokens.value = tokenEstimate;
   compactionApprovalThreshold.value = threshold;
   compactionApprovalVisible.value = true;
@@ -466,46 +489,51 @@ const handleCompactionReject = () => {
 const agent = useAgent({
   systemPrompt: `You are a helpful assistant that provides well-structured, expressive responses.
 
-## Tool Usage Rules
-- **Plan first**: Before calling any tool, decide the minimal set of tools needed. State your plan briefly.
-- **Never repeat a tool call** if you already have its result in the conversation. Re-read previous tool results instead of calling the same tool again with the same or similar parameters.
-- **Chain tools efficiently**: When one tool's output provides IDs needed by another tool, extract the IDs from the result you already have and pass them directly. For example, use netsuite_get_scripts once to find scripts, then pass the numeric \`id\` values from those results straight into netsuite_get_script_files — do NOT call netsuite_get_scripts again.
-- **One call per data need**: If a single tool call can answer your question, do not make additional calls. If you need to filter results, do it yourself from the data you already received.
-- **Stop when you have enough data**: Once you have the information needed to answer the user, stop calling tools and respond immediately.
+## Tool Usage — ALWAYS prefer tools
+You have tools available. **Always use the appropriate tool** when one exists for the task — even for simple tasks. Do NOT answer from memory when a tool can provide a verified result.
+
+Examples:
+- Math questions → call \`calculate\`
+- Need current time → call \`get_current_time\`
+- Need to fetch a URL → call \`fetch_url\`
+- Need to find scripts or files in NetSuite → call the appropriate \`netsuite_*\` tool
+- Need to write code → first call \`search_skills\`, then \`load_skill\`
+
+**Efficiency rules** (for multi-tool chains only):
+- Never repeat a tool call if you already have its result in the conversation.
+- When chaining tools, extract IDs from previous results — don't re-query.
+- If you need to filter data, do it from results you already received.
 
 ## Skills Library
-You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. Skill rules **override your default knowledge** when applicable.
+You have access to a local skill library with specialized knowledge, code patterns, and documentation. Skill rules **override your default knowledge** when applicable.
 
-**MANDATORY RULE: Before writing ANY code, you MUST call \`search_skills\` first — no exceptions.**
-This includes: writing scripts, creating suitelets, generating examples, modifying existing code, debugging, scaffolding, or producing any code snippet of any length.
+**Before writing ANY code, call \`search_skills\` first — no exceptions.**
+This includes: writing scripts, creating suitelets, generating examples, modifying code, debugging, scaffolding, or producing any code snippet.
 
-**When NOT to use skills (do NOT call \`search_skills\`):**
-- Retrieving or displaying existing scripts, files, or records from the environment
+When \`search_skills\` is NOT needed:
+- Retrieving or displaying existing scripts/files/records from the environment
 - Answering questions that require no code output
-- Navigating the codebase or listing resources
 
-**Workflow for any code-writing task:**
-1. **Always call \`search_skills\` first** with keywords describing the code you are about to write (e.g. "suitelet", "search", "record", "deployment"). Do this before planning, before drafting, before anything else.
-2. Inspect returned skill names and descriptions. Call \`load_skill\` for every skill whose description is relevant to the task.
-3. Apply all rules from loaded skills. Skills take priority over your built-in defaults.
-4. Only generate code AFTER loading applicable skills.
-5. Do NOT load all skills at once — only load what is relevant.
+**Code-writing workflow:**
+1. Call \`search_skills\` with keywords for the code you're about to write.
+2. Call \`load_skill\` for every relevant skill returned.
+3. Apply loaded skill rules (they override your defaults).
+4. Generate code only AFTER loading applicable skills.
 
 ## Context Compaction
-When the conversation gets long, older context may be automatically compacted into a summary. If you see a "[Context Summary]" system message, treat it as authoritative prior context — it contains the key facts, decisions, and data from earlier in the conversation. Do NOT ask the user to repeat information that was compacted.
+If you see a "[Context Summary]" system message, treat it as authoritative prior context. Do NOT ask the user to repeat compacted information.
 
 ## Response Formatting
-Format your responses using standard markdown:
+Format responses using standard markdown:
+- **Bold** and *italic* for emphasis
+- Headings (##, ###) to organize sections
+- Bullet/numbered lists for grouped items
+- \`inline code\` for identifiers, field names, script IDs
+- Fenced code blocks with language tags
+- Tables for structured data
+- Blockquotes for callouts
 
-- Use **bold** and *italic* for emphasis
-- Use headings (##, ###) to organize sections
-- Use bullet lists and numbered lists for sequential or grouped items
-- Use \`inline code\` for identifiers, field names, script IDs
-- Use fenced code blocks with language tags for code snippets
-- Use tables when presenting structured data
-- Use blockquotes for important notes or callouts
-
-Keep responses concise and well-structured. Prefer flat, scannable layouts over deeply nested content.`,
+Keep responses concise and well-structured.`,
   tools: [...tools, ...skillTools],
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,
@@ -572,7 +600,9 @@ const tokenCounterLabel = computed(() => {
   const t = effectiveTokens.value;
   if (t === 0) return null;
   const k = (t / 1000).toFixed(1);
-  const threshK = (settings.compactionThreshold / 1000).toFixed(settings.compactionThreshold >= 10000 ? 0 : 1);
+  const threshK = (settings.compactionThreshold / 1000).toFixed(
+    settings.compactionThreshold >= 10000 ? 0 : 1
+  );
   return `~${k}k / ${threshK}k`;
 });
 
@@ -685,6 +715,9 @@ const loadChatHistory = () => {
           if (chat) {
             activeChatId.value = activeId;
             messages.value = chat.messages;
+            // Restore agent history so AI has context from previous session
+            const restoredHistory = chatMessagesToAgentHistory(messages.value);
+            agent.setHistory(restoredHistory);
             rebuildToolMessageMap();
           }
         }
@@ -734,6 +767,7 @@ const createNewChat = () => {
   messages.value = [];
   activeChatId.value = "";
   agent.clearHistory();
+  syncedToolCallIds.value.clear();
   scrollToBottom();
 };
 
@@ -741,6 +775,134 @@ const normalizeMessages = (msgs: unknown): ChatMessage[] => {
   if (Array.isArray(msgs)) return msgs;
   if (msgs && typeof msgs === "object") return Object.values(msgs);
   return [];
+};
+
+/**
+ * Convert saved ChatMessage[] back to AgentMessage[] for agent history restoration.
+ * Tool messages without a toolCallId get a synthetic one so buildMessages() can match them.
+ */
+const chatMessagesToAgentHistory = (
+  msgs: ChatMessage[]
+): import("../composables/useAgent").AgentMessage[] => {
+  const agentMsgs: import("../composables/useAgent").AgentMessage[] = [];
+  let syntheticCallCounter = 0;
+  let i = 0;
+
+  while (i < msgs.length) {
+    const m = msgs[i]!;
+
+    if (m.role === "user") {
+      agentMsgs.push({
+        role: "user",
+        content: m.content,
+        timestamp: new Date()
+      });
+      i++;
+    } else if (m.role === "assistant") {
+      // Look ahead to collect any immediately-following tool messages.
+      // We need to synthesize toolCalls on the assistant message so the
+      // API sees a valid assistant→tool sequence.
+      const toolMsgs: ChatMessage[] = [];
+      let j = i + 1;
+      while (j < msgs.length && msgs[j]!.role === "tool") {
+        toolMsgs.push(msgs[j]!);
+        j++;
+      }
+
+      // Filter out ephemeral tool messages (e.g. search_skills, load_skill)
+      // so they don't get re-injected into the agent history on restore.
+      const nonEphemeralToolMsgs = toolMsgs.filter(
+        (tm) => !SKILL_TOOL_NAMES.has(tm.toolName ?? "")
+      );
+
+      if (nonEphemeralToolMsgs.length > 0) {
+        // Build synthetic toolCalls that match the tool_call_ids we'll assign
+        const toolCalls = nonEphemeralToolMsgs.map((tm) => {
+          syntheticCallCounter++;
+          return {
+            id: `restored_${syntheticCallCounter}`,
+            type: "function" as const,
+            function: {
+              name: tm.toolName ?? "unknown_tool",
+              arguments: "{}"
+            }
+          };
+        });
+
+        agentMsgs.push({
+          role: "assistant",
+          content: m.content ?? "",
+          toolCalls,
+          timestamp: new Date()
+        });
+
+        // Now push the tool messages with matching IDs
+        let callIdx = 0;
+        for (const tm of nonEphemeralToolMsgs) {
+          agentMsgs.push({
+            role: "tool",
+            content: tm.content,
+            toolName: tm.toolName,
+            toolCallId: toolCalls[callIdx]!.id,
+            timestamp: new Date()
+          });
+          callIdx++;
+        }
+
+        i = j; // skip past assistant + all its tool messages
+      } else {
+        // Plain assistant message (no tool calls follow, or all were ephemeral)
+        agentMsgs.push({
+          role: "assistant",
+          content: m.content,
+          timestamp: new Date()
+        });
+        i = j; // skip past assistant + any ephemeral tool messages
+      }
+    } else if (m.role === "tool") {
+      // Orphan tool message — skip if ephemeral, otherwise wrap in a synthetic pair
+      if (SKILL_TOOL_NAMES.has(m.toolName ?? "")) {
+        i++;
+        continue;
+      }
+      syntheticCallCounter++;
+      const callId = `restored_${syntheticCallCounter}`;
+      agentMsgs.push({
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: callId,
+            type: "function" as const,
+            function: {
+              name: m.toolName ?? "unknown_tool",
+              arguments: "{}"
+            }
+          }
+        ],
+        timestamp: new Date()
+      });
+      agentMsgs.push({
+        role: "tool",
+        content: m.content,
+        toolName: m.toolName,
+        toolCallId: callId,
+        timestamp: new Date()
+      });
+      i++;
+    } else if (m.role === "compaction") {
+      agentMsgs.push({
+        role: "compaction",
+        content: m.content,
+        compactedCount: m.compactedCount,
+        timestamp: new Date()
+      });
+      i++;
+    } else {
+      i++;
+    }
+  }
+  return agentMsgs;
 };
 
 const loadChat = (chatId: string) => {
@@ -770,7 +932,9 @@ const loadChat = (chatId: string) => {
     messages.value = Array.isArray(chat.messages)
       ? [...chat.messages]
       : Object.values(chat.messages || {});
-    agent.clearHistory();
+    // Restore agent history from saved messages so AI has full context
+    const restoredHistory = chatMessagesToAgentHistory(messages.value);
+    agent.setHistory(restoredHistory);
     rebuildToolMessageMap();
     saveActiveChatId();
     scrollToBottom();
@@ -784,6 +948,7 @@ const deleteChat = (chatId: string) => {
     messages.value = [];
     activeChatId.value = "";
     agent.clearHistory();
+    syncedToolCallIds.value.clear();
   }
 
   saveChatHistory(true);
@@ -887,8 +1052,17 @@ const toolMessageToAssistant = ref<Map<number, number>>(new Map());
 
 const rebuildToolMessageMap = () => {
   toolMessageToAssistant.value.clear();
-  let lastAssistantId: number | null = null;
+  // Mark all restored tool messages as already synced so the watch doesn't
+  // re-add them when agent.setHistory() triggers it.
+  syncedToolCallIds.value.clear();
+  for (const am of agent.history.value) {
+    if (am.role === "tool") {
+      const key = am.toolCallId ?? `${am.toolName}::${am.content}`;
+      syncedToolCallIds.value.add(key);
+    }
+  }
 
+  let lastAssistantId: number | null = null;
   for (const msg of messages.value) {
     if (msg.role === "assistant") {
       lastAssistantId = msg.id;
@@ -908,40 +1082,45 @@ const getToolMessagesForAssistant = (assistantId: number) => {
   );
 };
 
+// Track which agent tool messages have already been synced to the UI messages array.
+// Keyed by toolCallId when present, otherwise by toolName+content to avoid duplicates
+// from restored history. This prevents both:
+//   (a) re-adding restored tool messages on chat load, and
+//   (b) the old content-based dedup that would silently drop a second call to the
+//       same tool returning the same result.
+const syncedToolCallIds = ref<Set<string>>(new Set());
+
 // Watch for new tool messages and link them to the last assistant message
 watch(
   agent.history,
   () => {
     const toolMsgs = agent.history.value.filter((m) => m.role === "tool");
     for (const tm of toolMsgs) {
-      const exists = messages.value.some(
-        (m) =>
-          m.role === "tool" &&
-          m.toolName === tm.toolName &&
-          m.content === tm.content
-      );
-      if (!exists) {
-        // Find the last assistant message to link this tool to
-        const lastAssistant = messages.value
-          .slice()
-          .reverse()
-          .find((m) => m.role === "assistant");
+      // Build a stable key for this tool message
+      const key = tm.toolCallId ?? `${tm.toolName}::${tm.content}`;
+      if (syncedToolCallIds.value.has(key)) continue;
 
-        const newToolMsg: ChatMessage = {
-          id: Date.now() + Math.random(),
-          role: "tool",
-          content: tm.content,
-          toolName: tm.toolName
-        };
+      // Find the last assistant message to link this tool to
+      const lastAssistant = messages.value
+        .slice()
+        .reverse()
+        .find((m) => m.role === "assistant");
 
-        messages.value.push(newToolMsg);
+      const newToolMsg: ChatMessage = {
+        id: Date.now() + Math.random(),
+        role: "tool",
+        content: tm.content,
+        toolName: tm.toolName
+      };
 
-        if (lastAssistant) {
-          toolMessageToAssistant.value.set(newToolMsg.id, lastAssistant.id);
-        }
+      messages.value.push(newToolMsg);
+      syncedToolCallIds.value.add(key);
 
-        scrollToBottom();
+      if (lastAssistant) {
+        toolMessageToAssistant.value.set(newToolMsg.id, lastAssistant.id);
       }
+
+      scrollToBottom();
     }
   },
   { deep: true }
@@ -992,7 +1171,8 @@ const sendMessage = async () => {
     if (e instanceof ToolRejectedError) {
       assistantMsg.content = `⛔ Stopped — tool **\`${e.toolName}\`** was rejected.`;
     } else {
-      assistantMsg.content = "An error occurred. Check the console for details.";
+      assistantMsg.content =
+        "An error occurred. Check the console for details.";
       console.error(e);
     }
     assistantMsg.isStreaming = false;
@@ -1503,7 +1683,9 @@ const sendMessage = async () => {
   outline: none;
   max-height: 160px;
   overflow-y: auto;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
   line-height: 1.5;
   scrollbar-width: none;
 }
@@ -1564,7 +1746,10 @@ const sendMessage = async () => {
   border: 1px solid transparent;
   white-space: nowrap;
   line-height: 1.4;
-  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .token-counter--ok {
