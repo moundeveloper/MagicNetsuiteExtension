@@ -29,6 +29,8 @@ export interface ToolDefinition {
     properties: Record<string, ToolParameter>;
     required?: string[];
   };
+  /** When true, the agent will pause and request user approval before executing */
+  destructive?: boolean;
   execute: (input: Record<string, unknown>) => Promise<unknown> | unknown;
 }
 
@@ -62,6 +64,12 @@ export interface AgentOptions {
   onToolCall?: (name: string, input: unknown) => void;
   onToolStart?: (name: string, input: unknown) => void;
   onToolResult?: (name: string, result: unknown) => void;
+  /**
+   * Called before executing any tool marked as `destructive: true`.
+   * Must return a Promise<boolean> — true to approve, false to reject.
+   * If rejected, the agent run stops immediately.
+   */
+  onToolApprovalRequest?: (name: string, input: unknown) => Promise<boolean>;
 }
 
 // ─────────────────────────────────────────────
@@ -117,6 +125,20 @@ async function fetchMCPTools(server: MCPServer): Promise<ToolDefinition[]> {
 }
 
 // ─────────────────────────────────────────────
+// Errors
+// ─────────────────────────────────────────────
+
+/** Thrown when the user rejects a destructive tool call — stops the agent run */
+export class ToolRejectedError extends Error {
+  readonly toolName: string;
+  constructor(toolName: string) {
+    super(`Tool "${toolName}" was rejected by the user.`);
+    this.name = "ToolRejectedError";
+    this.toolName = toolName;
+  }
+}
+
+// ─────────────────────────────────────────────
 // Puter tool format
 // ─────────────────────────────────────────────
 
@@ -152,7 +174,8 @@ export const useAgent = (options: AgentOptions = {}) => {
     keepHistory = true,
     onToolCall,
     onToolStart,
-    onToolResult
+    onToolResult,
+    onToolApprovalRequest
   } = options;
 
   const loading = ref(false);
@@ -372,9 +395,19 @@ export const useAgent = (options: AgentOptions = {}) => {
 
             console.log(`[useAgent] → Calling tool "${toolName}"`, toolInput);
             onToolCall?.(toolName, toolInput);
+
+            // ── Approval gate for destructive tools ──
+            const tool = toolRegistry.value.get(toolName);
+
+            if (tool?.destructive && onToolApprovalRequest) {
+              const approved = await onToolApprovalRequest(toolName, toolInput);
+              if (!approved) {
+                throw new ToolRejectedError(toolName);
+              }
+            }
+
             onToolStart?.(toolName, toolInput);
 
-            const tool = toolRegistry.value.get(toolName);
             let resultContent: string;
 
             if (!tool) {
@@ -422,6 +455,10 @@ export const useAgent = (options: AgentOptions = {}) => {
     } catch (err) {
       error.value = err;
       console.error("[useAgent] run() fatal error:", err);
+      // Re-throw ToolRejectedError so callers can detect rejection vs other errors
+      if (err instanceof ToolRejectedError) {
+        throw err;
+      }
       return "";
     } finally {
       loading.value = false;

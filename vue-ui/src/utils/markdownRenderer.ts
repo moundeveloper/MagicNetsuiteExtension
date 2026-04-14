@@ -181,6 +181,12 @@ export const processLists = (html: string): string => {
   type ListType = "ul" | "ol";
   const stack: { type: ListType; depth: number }[] = [];
 
+  // Track whether we are currently inside a list so we can emit blank lines
+  // around the list block. This ensures processParagraphs (which splits on
+  // \n{2,}) sees the list HTML as its own block and never injects <br> tags
+  // between <ul>/<ol>/<li> elements.
+  let inList = false;
+
   const closeUntil = (depth: number) => {
     while (stack.length > 0 && stack[stack.length - 1]!.depth >= depth) {
       const top = stack.pop()!;
@@ -188,15 +194,24 @@ export const processLists = (html: string): string => {
     }
   };
 
+  const closeAllLists = () => {
+    if (stack.length > 0) {
+      closeUntil(-1);
+      // Blank line after list block so processParagraphs splits here
+      result.push("");
+      inList = false;
+    }
+  };
+
   for (const line of lines) {
-    // Unordered: - or * (don't match lines that start with HTML tags)
+    // Unordered: - or * at any indent level
     const ulMatch = line.match(/^(\s*)[-*]\s+(.+)$/);
-    // Ordered: 1. 2. etc.
+    // Ordered: 1. 2. etc. at any indent level
     const olMatch = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
 
-    // Skip if the content starts with [ ] (checkbox) or an HTML tag
+    // Skip if the content starts with [ ] (checkbox)
     if (ulMatch && /^\[[ xX]\]/.test(ulMatch[2]!)) {
-      closeUntil(-1);
+      closeAllLists();
       result.push(line);
       continue;
     }
@@ -206,40 +221,53 @@ export const processLists = (html: string): string => {
       const content = ulMatch[2]!;
       const top = stack[stack.length - 1];
 
+      if (!inList) {
+        // Blank line before list block so processParagraphs splits here
+        result.push("");
+        inList = true;
+      }
+
       if (!top || depth > top.depth) {
         stack.push({ type: "ul", depth });
         result.push("<ul>");
       } else if (depth < top.depth) {
         closeUntil(depth);
-        if (stack.length === 0 || stack[stack.length - 1]?.type !== "ul") {
+        // After closing deeper levels, open a new ul if none at this depth
+        if (stack.length === 0 || stack[stack.length - 1]!.depth !== depth) {
           stack.push({ type: "ul", depth });
           result.push("<ul>");
         }
       }
+      // depth === top.depth: same level, just emit <li>
       result.push(`<li>${content}</li>`);
     } else if (olMatch) {
       const depth = olMatch[1]!.length;
       const content = olMatch[3]!;
       const top = stack[stack.length - 1];
 
+      if (!inList) {
+        result.push("");
+        inList = true;
+      }
+
       if (!top || depth > top.depth) {
         stack.push({ type: "ol", depth });
         result.push("<ol>");
       } else if (depth < top.depth) {
         closeUntil(depth);
-        if (stack.length === 0 || stack[stack.length - 1]?.type !== "ol") {
+        if (stack.length === 0 || stack[stack.length - 1]!.depth !== depth) {
           stack.push({ type: "ol", depth });
           result.push("<ol>");
         }
       }
       result.push(`<li>${content}</li>`);
     } else {
-      closeUntil(-1);
+      closeAllLists();
       result.push(line);
     }
   }
 
-  closeUntil(-1);
+  closeAllLists();
   return result.join("\n");
 };
 
@@ -286,7 +314,7 @@ export const processInlineElements = (text: string): string => {
 // ── Paragraphs ───────────────────────────────────────────────────────────────
 
 const BLOCK_ELEMENTS =
-  /^<(h[1-6]|ul|ol|pre|blockquote|hr|details|table|label|div|code|p|a\s)/;
+  /^<(h[1-6]|ul|ol|li|pre|blockquote|hr|details|table|label|div|code|p|a\s)/;
 
 export const processParagraphs = (text: string): string => {
   return text
@@ -294,8 +322,12 @@ export const processParagraphs = (text: string): string => {
     .map((block) => {
       const trimmed = block.trim();
       if (!trimmed) return "";
-      // Don't wrap blocks that already start with a block-level HTML element
-      if (BLOCK_ELEMENTS.test(trimmed)) return trimmed;
+      // Don't wrap or add <br> if ANY line in the segment is a block-level
+      // HTML element. This prevents <br> injection inside <ul>/<ol> trees.
+      const hasBlockElement = trimmed
+        .split("\n")
+        .some((line) => BLOCK_ELEMENTS.test(line.trim()));
+      if (hasBlockElement) return trimmed;
       // Convert single newlines within a paragraph to <br> for line breaks
       return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
     })

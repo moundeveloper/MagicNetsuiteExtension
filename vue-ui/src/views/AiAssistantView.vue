@@ -308,6 +308,14 @@
       </template>
     </MCard>
   </div>
+
+  <ToolApprovalDialog
+    :visible="approvalVisible"
+    :tool-name="approvalToolName"
+    :tool-input="approvalToolInput"
+    @approve="handleApprove"
+    @reject="handleReject"
+  />
 </template>
 
 <script setup lang="ts">
@@ -315,9 +323,10 @@ import { ref, nextTick, watch, onMounted } from "vue";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
-import { useAgent } from "../composables/useAgent";
+import { useAgent, ToolRejectedError } from "../composables/useAgent";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
+import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import { tools } from "../utils/toolManager";
 import { skillTools } from "../utils/skillSearchTools";
 
@@ -342,6 +351,33 @@ interface Chat {
 
 const props = defineProps<{ vhOffset: number }>();
 
+// ── Tool approval state ──
+const approvalVisible = ref(false);
+const approvalToolName = ref("");
+const approvalToolInput = ref<unknown>(null);
+let approvalResolve: ((approved: boolean) => void) | null = null;
+
+const requestToolApproval = (name: string, input: unknown): Promise<boolean> => {
+  approvalToolName.value = name;
+  approvalToolInput.value = input;
+  approvalVisible.value = true;
+  return new Promise<boolean>((resolve) => {
+    approvalResolve = resolve;
+  });
+};
+
+const handleApprove = () => {
+  approvalVisible.value = false;
+  approvalResolve?.(true);
+  approvalResolve = null;
+};
+
+const handleReject = () => {
+  approvalVisible.value = false;
+  approvalResolve?.(false);
+  approvalResolve = null;
+};
+
 const agent = useAgent({
   systemPrompt: `You are a helpful assistant that provides well-structured, expressive responses.
 
@@ -353,27 +389,22 @@ const agent = useAgent({
 - **Stop when you have enough data**: Once you have the information needed to answer the user, stop calling tools and respond immediately.
 
 ## Skills Library
-You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. Skills are **only relevant when you need to generate, write, or modify code**. Skill rules override your default knowledge when applicable.
+You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. Skill rules **override your default knowledge** when applicable.
 
-**When to use skills:**
-- Writing new code or scripts
-- Modifying or refactoring existing code
-- Generating code examples or templates
-- Debugging code where you need to suggest fixes
+**MANDATORY RULE: Before writing ANY code, you MUST call \`search_skills\` first — no exceptions.**
+This includes: writing scripts, creating suitelets, generating examples, modifying existing code, debugging, scaffolding, or producing any code snippet of any length.
 
 **When NOT to use skills (do NOT call \`search_skills\`):**
-- Viewing, reading, or showing existing code from the environment
-- Retrieving or displaying scripts, files, or records
-- Answering general questions or explaining concepts
+- Retrieving or displaying existing scripts, files, or records from the environment
+- Answering questions that require no code output
 - Navigating the codebase or listing resources
-- Any read-only or exploratory request
 
-**Workflow (only when generating/modifying code):**
-1. Call \`search_skills\` with relevant keywords related to the code task.
-2. Inspect the returned skill names and descriptions. **Only call \`load_skill\`** for skills whose description clearly matches the task. If no results are relevant, skip loading and proceed with your best knowledge.
-3. Follow all rules, patterns, and standards defined in loaded skills. Skill instructions take priority over your built-in defaults.
-4. Only generate your response AFTER loading applicable skills.
-5. Do NOT load all skills at once — only load what is relevant to the current question.
+**Workflow for any code-writing task:**
+1. **Always call \`search_skills\` first** with keywords describing the code you are about to write (e.g. "suitelet", "search", "record", "deployment"). Do this before planning, before drafting, before anything else.
+2. Inspect returned skill names and descriptions. Call \`load_skill\` for every skill whose description is relevant to the task.
+3. Apply all rules from loaded skills. Skills take priority over your built-in defaults.
+4. Only generate code AFTER loading applicable skills.
+5. Do NOT load all skills at once — only load what is relevant.
 
 ## Response Formatting
 Format your responses using standard markdown:
@@ -388,6 +419,7 @@ Format your responses using standard markdown:
 
 Keep responses concise and well-structured. Prefer flat, scannable layouts over deeply nested content.`,
   tools: [...tools, ...skillTools],
+  onToolApprovalRequest: requestToolApproval,
   onToolCall(name) {
     activeTools.value.push(name);
   },
@@ -581,6 +613,7 @@ const loadChat = (chatId: string) => {
     messages.value = Array.isArray(chat.messages)
       ? [...chat.messages]
       : Object.values(chat.messages || {});
+    rebuildToolMessageMap();
     saveActiveChatId();
     scrollToBottom();
   }
@@ -797,9 +830,20 @@ const sendMessage = async () => {
 
     autoSaveCurrentChat();
   } catch (e) {
-    assistantMsg.content = "An error occurred. Check the console for details.";
+    if (e instanceof ToolRejectedError) {
+      assistantMsg.content = `⛔ Stopped — tool **\`${e.toolName}\`** was rejected.`;
+    } else {
+      assistantMsg.content = "An error occurred. Check the console for details.";
+      console.error(e);
+    }
     assistantMsg.isStreaming = false;
-    console.error(e);
+    messages.value = [...messages.value];
+
+    inProgressTools.value = [];
+    activeTools.value = [];
+    currentAssistantMsgId.value = 0;
+
+    autoSaveCurrentChat();
   } finally {
     await scrollToBottom();
   }

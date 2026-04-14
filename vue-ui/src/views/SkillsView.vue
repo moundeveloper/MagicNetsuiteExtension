@@ -71,7 +71,7 @@
               v-for="skill in filteredSkills"
               :key="skill.id"
               class="skill-card"
-              :class="{ active: selectedSkillId === skill.id }"
+              :class="{ active: selectedSkillId === skill.id, disabled: skill.enabled === false }"
               @click="selectSkill(skill.id!)"
             >
               <div class="skill-card-header">
@@ -80,6 +80,13 @@
                   <span class="skill-description">{{ skill.description }}</span>
                 </div>
                 <div class="skill-actions">
+                  <ToggleSwitch
+                    :modelValue="skill.enabled !== false"
+                    class="skill-toggle"
+                    title="Enable / disable skill"
+                    @click.stop
+                    @update:modelValue="toggleSkillEnabled(skill)"
+                  />
                   <button
                     class="action-btn"
                     title="Edit"
@@ -219,6 +226,7 @@ import Button from "primevue/button";
 import InputText from "primevue/inputtext";
 import Textarea from "primevue/textarea";
 import Dialog from "primevue/dialog";
+import ToggleSwitch from "primevue/toggleswitch";
 import {
   getAllSkills,
   addSkill,
@@ -303,7 +311,7 @@ const saveSkill = async () => {
   if (isEditing.value && editingId.value !== null) {
     await updateSkill(editingId.value, { name, description, tags, content });
   } else {
-    await addSkill({ name, description, tags, content });
+    await addSkill({ name, description, tags, content, enabled: true });
   }
 
   dialogVisible.value = false;
@@ -312,6 +320,11 @@ const saveSkill = async () => {
 
 const selectSkill = (id: number) => {
   selectedSkillId.value = selectedSkillId.value === id ? null : id;
+};
+
+const toggleSkillEnabled = async (skill: Skill) => {
+  await updateSkill(skill.id!, { enabled: !skill.enabled });
+  await refreshSkills();
 };
 
 const confirmDelete = (skill: Skill) => {
@@ -369,7 +382,8 @@ const onFileSelected = async (event: Event) => {
           name,
           description: `Imported from ${file.name}`,
           tags: "",
-          content: text
+          content: text,
+          enabled: true
         });
       }
     } catch (err) {
@@ -578,6 +592,7 @@ const formatSize = (chars: number): string => {
 
 .skill-actions {
   display: flex;
+  align-items: center;
   gap: 0.25rem;
   opacity: 0;
   transition: opacity 0.15s ease;
@@ -585,6 +600,15 @@ const formatSize = (chars: number): string => {
 
 .skill-card:hover .skill-actions {
   opacity: 1;
+}
+
+.skill-toggle {
+  transform: scale(0.75);
+  transform-origin: center;
+}
+
+.skill-card.disabled {
+  opacity: 0.5;
 }
 
 .action-btn {

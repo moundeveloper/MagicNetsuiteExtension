@@ -13,6 +13,8 @@ export interface Skill {
   tags: string;
   /** The full skill content (instructions, code, docs, etc.) */
   content: string;
+  /** Whether this skill is active and visible to the AI agent. Defaults to true. */
+  enabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,6 +39,16 @@ db.version(1).stores({
   skills: "++id, name, tags, description"
 });
 
+db.version(2).stores({
+  skills: "++id, name, tags, description, enabled"
+}).upgrade((tx) => {
+  return tx.table("skills").toCollection().modify((skill) => {
+    if (skill.enabled === undefined) {
+      skill.enabled = true;
+    }
+  });
+});
+
 // ─────────────────────────────────────────────
 // CRUD operations
 // ─────────────────────────────────────────────
@@ -47,6 +59,7 @@ export const addSkill = async (
   const now = new Date().toISOString();
   const id = await db.skills.add({
     ...skill,
+    enabled: skill.enabled ?? true,
     createdAt: now,
     updatedAt: now
   });
@@ -76,7 +89,7 @@ export const getAllSkills = async (): Promise<Skill[]> => {
 };
 
 export const getSkillCount = async (): Promise<number> => {
-  return db.skills.count();
+  return db.skills.filter((s) => s.enabled !== false).count();
 };
 
 // ─────────────────────────────────────────────
@@ -88,7 +101,7 @@ export const searchSkills = async (
 ): Promise<SkillSearchResult[]> => {
   const term = query.toLowerCase().trim();
 
-  const all = await db.skills.toArray();
+  const all = await db.skills.filter((s) => s.enabled !== false).toArray();
 
   if (!term) {
     // Return all skills (metadata only)
@@ -167,6 +180,7 @@ export const importSkills = async (
     description: s.description,
     tags: s.tags,
     content: s.content,
+    enabled: true,
     createdAt: now,
     updatedAt: now
   }));

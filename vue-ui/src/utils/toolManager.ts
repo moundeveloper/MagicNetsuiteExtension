@@ -322,6 +322,7 @@ export const tools: ToolDefinition[] = [
     name: "netsuite_open_deployment_suitelet",
     description:
       "Generate the Suitelet URL for a given script ID and deployment ID, then open it in a new browser tab. Returns the generated URL.",
+    destructive: true,
     parameters: {
       type: "object",
       properties: {
@@ -497,6 +498,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_save_template",
     description: "Save changes to an Advanced PDF/HTML template.",
+    destructive: true,
     parameters: {
       type: "object",
       properties: {
@@ -563,6 +565,7 @@ export const tools: ToolDefinition[] = [
     name: "netsuite_run_script",
     description:
       "Execute arbitrary SuiteScript 2.0 code in NetSuite. Returns logs and results.",
+    destructive: true,
     parameters: {
       type: "object",
       properties: {
