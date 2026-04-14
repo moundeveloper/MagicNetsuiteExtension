@@ -14,6 +14,11 @@ const providerOptions = [
   { label: "Ollama (local)", value: "ollama" }
 ];
 
+const compactionModeOptions = [
+  { label: "Auto (compact automatically)", value: "auto" },
+  { label: "Ask me first", value: "ask" }
+];
+
 // ── Ollama model fetching ──
 
 interface OllamaModel {
@@ -125,6 +130,30 @@ const modelLabel = (m: OllamaModel) => {
         option-value="value"
         placeholder="Select provider"
         class="provider-select"
+      />
+    </div>
+
+    <div class="shortcut-item">
+      <label for="compaction-mode">Context Compaction:</label>
+      <Select
+        id="compaction-mode"
+        v-model="settings.compactionMode"
+        :options="compactionModeOptions"
+        option-label="label"
+        option-value="value"
+        placeholder="Select mode"
+        class="provider-select"
+      />
+    </div>
+
+    <div class="shortcut-item">
+      <label for="compaction-threshold">Compaction Threshold (tokens):</label>
+      <InputText
+        id="compaction-threshold"
+        :model-value="String(settings.compactionThreshold)"
+        @update:model-value="(v: string | undefined) => { const n = parseInt(v ?? '', 10); if (!isNaN(n) && n > 0) settings.compactionThreshold = n; }"
+        placeholder="e.g., 80000"
+        class="threshold-input"
       />
     </div>
 
@@ -255,6 +284,10 @@ const modelLabel = (m: OllamaModel) => {
 .url-input {
   flex: 1;
   max-width: 360px;
+}
+
+.threshold-input {
+  max-width: 140px;
 }
 
 .model-select {

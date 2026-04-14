@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref, watch } from "vue";
 
 export type AiProvider = "puter" | "ollama";
+export type CompactionMode = "auto" | "ask";
 
 export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
@@ -12,6 +13,10 @@ export interface ShortcutsSettings {
   aiProvider: AiProvider;
   ollamaBaseUrl: string;
   ollamaModel: string;
+  /** Whether to auto-compact or ask the user first when context limit nears */
+  compactionMode: CompactionMode;
+  /** Token threshold at which context compaction triggers */
+  compactionThreshold: number;
 }
 
 const defaultSettings: ShortcutsSettings = {
@@ -21,7 +26,9 @@ const defaultSettings: ShortcutsSettings = {
   preferredFeatures: [],
   aiProvider: "puter",
   ollamaBaseUrl: "http://localhost:11434",
-  ollamaModel: "llama3.2"
+  ollamaModel: "llama3.2",
+  compactionMode: "auto",
+  compactionThreshold: 80000
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -44,6 +51,8 @@ export function useSettings() {
         settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
         settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
         settings.ollamaModel = stored.ollamaModel || defaultSettings.ollamaModel;
+        settings.compactionMode = stored.compactionMode ?? defaultSettings.compactionMode;
+        settings.compactionThreshold = stored.compactionThreshold ?? defaultSettings.compactionThreshold;
       }
       isLoaded = true;
       isSettingsLoaded.value = true;
