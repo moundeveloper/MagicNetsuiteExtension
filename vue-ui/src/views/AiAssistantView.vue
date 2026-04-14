@@ -95,8 +95,24 @@
           <!-- Message thread -->
           <div v-else class="message-list" ref="messageListRef">
             <template v-for="msg in messages" :key="msg.id">
+              <!-- Compaction indicator -->
+              <div v-if="msg.role === 'compaction'" class="msg msg-compaction">
+                <details class="compaction-details">
+                  <summary class="compaction-summary">
+                    <i class="pi pi-bolt compaction-icon" />
+                    <span>
+                      Context compacted — {{ msg.compactedCount }} earlier messages summarized
+                    </span>
+                    <i class="pi pi-chevron-down compaction-chevron" />
+                  </summary>
+                  <div class="compaction-content">
+                    <MessageContentRenderer :content="msg.content" />
+                  </div>
+                </details>
+              </div>
+
               <!-- User message -->
-              <div v-if="msg.role === 'user'" class="msg msg-user">
+              <div v-else-if="msg.role === 'user'" class="msg msg-user">
                 <div class="msg-user-content">{{ msg.content }}</div>
               </div>
 
@@ -283,9 +299,16 @@
             <span>{{ String(agent.error.value) }}</span>
           </div>
 
-          <!-- Input row -->
-          <div class="input-row">
-            <textarea
+          <!-- Input wrapper (bg + border) -->
+          <div class="input-wrapper">
+            <div class="chat-toolbar">
+              <span v-if="tokenCounterLabel" :class="tokenCounterClass">
+                <i class="pi pi-database" style="font-size:0.6rem" />
+                {{ tokenCounterLabel }} tokens
+              </span>
+            </div>
+            <div class="input-row">
+              <textarea
               ref="textareaRef"
               v-model="prompt"
               placeholder="Message..."
@@ -304,6 +327,7 @@
               <i v-else class="pi pi-arrow-up" />
             </button>
           </div>
+          </div>
         </div>
       </template>
     </MCard>
@@ -316,10 +340,40 @@
     @approve="handleApprove"
     @reject="handleReject"
   />
+
+  <!-- Compaction approval dialog -->
+  <div v-if="compactionApprovalVisible" class="compaction-dialog-overlay">
+    <div class="compaction-dialog">
+      <div class="compaction-dialog-header">
+        <i class="pi pi-bolt compaction-dialog-icon" />
+        <span>Context Compaction</span>
+      </div>
+      <div class="compaction-dialog-body">
+        <p>
+          The conversation context is getting large
+          (<strong>~{{ (compactionApprovalTokens / 1000).toFixed(1) }}k</strong> /
+          {{ (compactionApprovalThreshold / 1000).toFixed(0) }}k tokens).
+        </p>
+        <p>
+          Compact earlier messages into a summary to free up context space?
+          The summary will be kept in the conversation.
+        </p>
+      </div>
+      <div class="compaction-dialog-actions">
+        <button class="compaction-btn compaction-btn--skip" @click="handleCompactionReject">
+          Skip
+        </button>
+        <button class="compaction-btn compaction-btn--compact" @click="handleCompactionApprove">
+          <i class="pi pi-bolt" />
+          Compact
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted } from "vue";
+import { ref, nextTick, watch, onMounted, computed } from "vue";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -329,16 +383,20 @@ import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import { tools } from "../utils/toolManager";
 import { skillTools } from "../utils/skillSearchTools";
+import { useSettings } from "../states/settingsState";
 
 const STORAGE_KEY = "aiAssistantChatHistory";
 
+const { settings } = useSettings();
+
 interface ChatMessage {
   id: number;
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "tool" | "compaction";
   content: string;
   toolName?: string;
   isStreaming?: boolean;
   isRunning?: boolean;
+  compactedCount?: number;
 }
 
 interface Chat {
@@ -378,6 +436,33 @@ const handleReject = () => {
   approvalResolve = null;
 };
 
+// ── Compaction approval state ──
+const compactionApprovalVisible = ref(false);
+const compactionApprovalTokens = ref(0);
+const compactionApprovalThreshold = ref(0);
+let compactionApprovalResolve: ((approved: boolean) => void) | null = null;
+
+const requestCompactionApproval = (tokenEstimate: number, threshold: number): Promise<boolean> => {
+  compactionApprovalTokens.value = tokenEstimate;
+  compactionApprovalThreshold.value = threshold;
+  compactionApprovalVisible.value = true;
+  return new Promise<boolean>((resolve) => {
+    compactionApprovalResolve = resolve;
+  });
+};
+
+const handleCompactionApprove = () => {
+  compactionApprovalVisible.value = false;
+  compactionApprovalResolve?.(true);
+  compactionApprovalResolve = null;
+};
+
+const handleCompactionReject = () => {
+  compactionApprovalVisible.value = false;
+  compactionApprovalResolve?.(false);
+  compactionApprovalResolve = null;
+};
+
 const agent = useAgent({
   systemPrompt: `You are a helpful assistant that provides well-structured, expressive responses.
 
@@ -406,6 +491,9 @@ This includes: writing scripts, creating suitelets, generating examples, modifyi
 4. Only generate code AFTER loading applicable skills.
 5. Do NOT load all skills at once — only load what is relevant.
 
+## Context Compaction
+When the conversation gets long, older context may be automatically compacted into a summary. If you see a "[Context Summary]" system message, treat it as authoritative prior context — it contains the key facts, decisions, and data from earlier in the conversation. Do NOT ask the user to repeat information that was compacted.
+
 ## Response Formatting
 Format your responses using standard markdown:
 
@@ -419,7 +507,27 @@ Format your responses using standard markdown:
 
 Keep responses concise and well-structured. Prefer flat, scannable layouts over deeply nested content.`,
   tools: [...tools, ...skillTools],
+  ephemeralTools: ["search_skills", "load_skill"],
+  compactionThreshold: () => settings.compactionThreshold,
   onToolApprovalRequest: requestToolApproval,
+  onCompactionRequest(tokenEstimate, threshold) {
+    // Only intercept when mode is "ask"; "auto" proceeds without prompting
+    if (settings.compactionMode === "ask") {
+      return requestCompactionApproval(tokenEstimate, threshold);
+    }
+    return Promise.resolve(true);
+  },
+  onCompaction(summary, compactedCount) {
+    // Insert a compaction message into the UI messages
+    const compactionMsg: ChatMessage = {
+      id: Date.now() + Math.random(),
+      role: "compaction",
+      content: summary,
+      compactedCount
+    };
+    messages.value.push(compactionMsg);
+    scrollToBottom();
+  },
   onToolCall(name) {
     activeTools.value.push(name);
   },
@@ -442,6 +550,38 @@ Keep responses concise and well-structured. Prefer flat, scannable layouts over 
 });
 
 const { loading } = agent;
+const contextTokens = agent.contextTokens;
+
+/** Estimate tokens from UI messages (used as fallback when agent history is empty, e.g. after chat load) */
+const estimateUiTokens = (): number => {
+  let total = 0;
+  for (const m of messages.value) {
+    total += Math.ceil((m.content?.length ?? 0) / 4);
+  }
+  return total;
+};
+
+const effectiveTokens = computed(() => {
+  const agentTokens = contextTokens.value;
+  // If agent has token count (active run or after messages), use it.
+  // Otherwise fall back to estimating from UI messages (e.g. after chat load).
+  return agentTokens > 0 ? agentTokens : estimateUiTokens();
+});
+
+const tokenCounterLabel = computed(() => {
+  const t = effectiveTokens.value;
+  if (t === 0) return null;
+  const k = (t / 1000).toFixed(1);
+  const threshK = (settings.compactionThreshold / 1000).toFixed(settings.compactionThreshold >= 10000 ? 0 : 1);
+  return `~${k}k / ${threshK}k`;
+});
+
+const tokenCounterClass = computed(() => {
+  const ratio = effectiveTokens.value / settings.compactionThreshold;
+  if (ratio >= 0.85) return "token-counter token-counter--danger";
+  if (ratio >= 0.6) return "token-counter token-counter--warn";
+  return "token-counter token-counter--ok";
+});
 
 const messages = ref<ChatMessage[]>([]);
 const prompt = ref("");
@@ -471,7 +611,9 @@ const getFirstUserMessage = (msgs: ChatMessage[]) => {
   return firstUser ? firstUser.content.slice(0, 50) : "New Chat";
 };
 
-const saveChatHistory = () => {
+let saveChatDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+const saveChatHistoryImmediate = () => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) return;
 
   const historyToSave = chatHistory.value;
@@ -486,6 +628,20 @@ const saveChatHistory = () => {
       }
     }
   );
+};
+
+const saveChatHistory = (immediate = false) => {
+  if (saveChatDebounceTimer) {
+    clearTimeout(saveChatDebounceTimer);
+    saveChatDebounceTimer = null;
+  }
+
+  if (immediate) {
+    saveChatHistoryImmediate();
+    return;
+  }
+
+  saveChatDebounceTimer = setTimeout(saveChatHistoryImmediate, 1000);
 };
 
 const saveActiveChatId = () => {
@@ -577,6 +733,7 @@ const createNewChat = () => {
 
   messages.value = [];
   activeChatId.value = "";
+  agent.clearHistory();
   scrollToBottom();
 };
 
@@ -613,6 +770,7 @@ const loadChat = (chatId: string) => {
     messages.value = Array.isArray(chat.messages)
       ? [...chat.messages]
       : Object.values(chat.messages || {});
+    agent.clearHistory();
     rebuildToolMessageMap();
     saveActiveChatId();
     scrollToBottom();
@@ -625,9 +783,10 @@ const deleteChat = (chatId: string) => {
   if (activeChatId.value === chatId) {
     messages.value = [];
     activeChatId.value = "";
+    agent.clearHistory();
   }
 
-  saveChatHistory();
+  saveChatHistory(true);
   saveActiveChatId();
 };
 
@@ -952,6 +1111,68 @@ const sendMessage = async () => {
   margin-bottom: 0.5rem;
 }
 
+/* ── Compaction Indicator ── */
+.msg-compaction {
+  padding: 0.5rem 0;
+}
+
+.compaction-details {
+  border: 1px solid var(--p-amber-200, #fde68a);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+}
+
+.compaction-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--p-amber-50, #fffbeb);
+  cursor: pointer;
+  color: var(--p-amber-700, #b45309);
+  font-size: 0.75rem;
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.compaction-summary::-webkit-details-marker {
+  display: none;
+}
+
+.compaction-summary:hover {
+  background: var(--p-amber-100, #fef3c7);
+}
+
+.compaction-icon {
+  font-size: 0.7rem;
+  color: var(--p-amber-500, #f59e0b);
+}
+
+.compaction-chevron {
+  font-size: 0.55rem;
+  margin-left: auto;
+  color: var(--p-amber-400, #fbbf24);
+  transition: transform 0.2s ease;
+}
+
+.compaction-details[open] .compaction-chevron {
+  transform: rotate(180deg);
+}
+
+.compaction-content {
+  border-top: 1px solid var(--p-amber-200, #fde68a);
+  padding: 0.65rem;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--p-amber-800, #92400e);
+  background: var(--p-amber-50, #fffbeb);
+}
+
 /* Running skill indicator */
 .skill-item {
   display: flex;
@@ -1243,14 +1464,30 @@ const sendMessage = async () => {
   font-size: 0.85rem;
 }
 
+/* ── Input Wrapper ── */
+.input-wrapper {
+  border-top: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+}
+
+/* ── Chat Toolbar ── */
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0.35rem 0.875rem;
+  border-bottom: 1px solid var(--p-slate-100);
+  background: transparent;
+  min-height: 2rem;
+}
+
 /* ── Input Row ── */
 .input-row {
   display: flex;
   gap: 0.5rem;
-  align-items: flex-end;
-  padding: 0.75rem 1rem;
-  border-top: 1px solid var(--p-slate-200);
-  background: var(--p-slate-50);
+  align-items: center;
+  padding: 0.5rem 0.875rem;
+  background: transparent;
 }
 
 .chat-input {
@@ -1312,6 +1549,40 @@ const sendMessage = async () => {
 .send-btn:disabled {
   background: var(--p-slate-300);
   cursor: not-allowed;
+}
+
+/* ── Token Counter styles ── */
+.token-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.65rem;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 500;
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.25rem;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.4;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.token-counter--ok {
+  background: var(--p-slate-100);
+  border-color: var(--p-slate-200);
+  color: var(--p-slate-400);
+}
+
+.token-counter--warn {
+  background: var(--p-amber-50, #fffbeb);
+  border-color: var(--p-amber-200, #fde68a);
+  color: var(--p-amber-600, #d97706);
+}
+
+.token-counter--danger {
+  background: var(--p-red-50);
+  border-color: var(--p-red-200);
+  color: var(--p-red-600);
 }
 
 /* ── Sidebar ── */
@@ -1533,5 +1804,98 @@ const sendMessage = async () => {
   border: none;
   border-top: 1px solid var(--p-slate-200);
   margin: 0.75rem 0;
+}
+
+/* ── Compaction Approval Dialog ── */
+.compaction-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.compaction-dialog {
+  background: white;
+  border-radius: 0.75rem;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  width: 360px;
+  max-width: 92vw;
+  overflow: hidden;
+}
+
+.compaction-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1rem 0.625rem;
+  background: var(--p-amber-50, #fffbeb);
+  border-bottom: 1px solid var(--p-amber-200, #fde68a);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--p-amber-800, #92400e);
+}
+
+.compaction-dialog-icon {
+  color: var(--p-amber-500, #f59e0b);
+  font-size: 0.85rem;
+}
+
+.compaction-dialog-body {
+  padding: 1rem;
+  font-size: 0.825rem;
+  color: var(--p-slate-600);
+  line-height: 1.6;
+}
+
+.compaction-dialog-body p {
+  margin: 0 0 0.5rem;
+}
+
+.compaction-dialog-body p:last-child {
+  margin-bottom: 0;
+}
+
+.compaction-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--p-slate-100);
+}
+
+.compaction-btn {
+  padding: 0.4rem 0.875rem;
+  border-radius: 0.4rem;
+  border: 1px solid transparent;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.compaction-btn--skip {
+  background: var(--p-slate-100);
+  border-color: var(--p-slate-200);
+  color: var(--p-slate-600);
+}
+
+.compaction-btn--skip:hover {
+  background: var(--p-slate-200);
+}
+
+.compaction-btn--compact {
+  background: var(--p-amber-500, #f59e0b);
+  border-color: var(--p-amber-600, #d97706);
+  color: white;
+}
+
+.compaction-btn--compact:hover {
+  background: var(--p-amber-600, #d97706);
 }
 </style>
