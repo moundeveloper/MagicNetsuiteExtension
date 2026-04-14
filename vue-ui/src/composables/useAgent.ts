@@ -1,5 +1,5 @@
 import { ref, readonly } from "vue";
-import { puter } from "@heyputer/puter.js";
+import { useAiProvider } from "./useAiProvider";
 
 // ─────────────────────────────────────────────
 // Types
@@ -178,6 +178,8 @@ export const useAgent = (options: AgentOptions = {}) => {
     onToolApprovalRequest
   } = options;
 
+  const { chatCompletion } = useAiProvider();
+
   const loading = ref(false);
   const error = ref<unknown>(null);
   const history = ref<AgentMessage[]>([]);
@@ -315,45 +317,21 @@ export const useAgent = (options: AgentOptions = {}) => {
           chatOptions.tools = allTools;
         }
 
-        let response: unknown;
+        let response: { content: string | null; tool_calls: ToolCall[] };
         try {
-          response = await puter.ai.chat(messages, chatOptions);
+          response = await chatCompletion(messages, { tools: allTools.length > 0 ? allTools : undefined });
           console.log(
-            "[useAgent] Puter response:",
+            "[useAgent] Provider response:",
             JSON.stringify(response, null, 2)
           );
-        } catch (puterErr) {
-          console.error("[useAgent] puter.ai.chat threw:", puterErr);
-          throw puterErr;
+        } catch (providerErr) {
+          console.error("[useAgent] chatCompletion threw:", providerErr);
+          throw providerErr;
         }
 
-        // Normalise: puter may wrap in { message: {...} } or return the message directly
-        const msg =
-          (
-            response as {
-              message?: { content?: string | null; tool_calls?: ToolCall[] };
-            }
-          )?.message ??
-          (response as { content?: string | null; tool_calls?: ToolCall[] });
-
-        const normalizeContent = (content: unknown): string => {
-          if (typeof content === "string") return content;
-
-          if (Array.isArray(content)) {
-            return content
-              .map((c: any) => {
-                if (c?.type === "text") return c.text ?? "";
-                return "";
-              })
-              .join("\n");
-          }
-
-          return JSON.stringify(content ?? "", null, 2);
-        };
-
-        const assistantText = normalizeContent(msg?.content);
-        const toolCalls: ToolCall[] =
-          (msg as { tool_calls?: ToolCall[] })?.tool_calls ?? [];
+        // Response is already normalised by the provider adapter
+        const assistantText = response.content ?? "";
+        const toolCalls: ToolCall[] = response.tool_calls;
 
         console.log(
           `[useAgent] assistantText="${assistantText}" | toolCalls=${toolCalls.length}`
@@ -474,14 +452,11 @@ export const useAgent = (options: AgentOptions = {}) => {
     error.value = null;
     console.log("[useAgent] chat() →", prompt);
     try {
-      const response = await puter.ai.chat([
+      const response = await chatCompletion([
         { role: "system", content: systemPrompt },
         { role: "user", content: prompt }
       ]);
-      const text: string =
-        (response as { message?: { content?: string } })?.message?.content ??
-        (response as { content?: string })?.content ??
-        String(response);
+      const text = response.content ?? "";
       console.log("[useAgent] chat() ←", text);
       return text;
     } catch (err) {

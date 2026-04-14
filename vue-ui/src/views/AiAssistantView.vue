@@ -146,9 +146,9 @@
                         <i class="pi pi-book skill-icon" />
                         <span>
                           Used
-                          {{ getSkillMessagesForAssistant(msg.id).length }}
+                          {{ getSkillMessagesForAssistant(msg.id).filter(m => m.toolName === 'load_skill').length }}
                           skill{{
-                            getSkillMessagesForAssistant(msg.id).length > 1
+                            getSkillMessagesForAssistant(msg.id).filter(m => m.toolName === 'load_skill').length > 1
                               ? "s"
                               : ""
                           }}

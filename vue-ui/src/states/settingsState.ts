@@ -1,18 +1,27 @@
 // settingsState.ts
 import { onMounted, reactive, ref, watch } from "vue";
 
+export type AiProvider = "puter" | "ollama";
+
 export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
   openOnCustomizationPage: boolean;
   preferredFeatures: string[]; // array of route names that are preferred
+  // AI provider settings
+  aiProvider: AiProvider;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
 }
 
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
   openOnCustomizationPage: true,
-  preferredFeatures: []
+  preferredFeatures: [],
+  aiProvider: "puter",
+  ollamaBaseUrl: "http://localhost:11434",
+  ollamaModel: "llama3.2"
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -32,6 +41,9 @@ export function useSettings() {
           : [];
         settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
+        settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
+        settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
+        settings.ollamaModel = stored.ollamaModel || defaultSettings.ollamaModel;
       }
       isLoaded = true;
       isSettingsLoaded.value = true;
