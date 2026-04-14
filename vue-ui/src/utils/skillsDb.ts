@@ -128,15 +128,10 @@ export const searchSkills = async (
     }));
   }
 
-  // Fallback: no matches at all — return ALL skills so the agent can
-  // inspect metadata and decide what to load. This prevents the agent
-  // from concluding no skills exist just because the query was too specific.
-  return all.map(({ id, name, description, tags }) => ({
-    id: id!,
-    name,
-    description,
-    tags
-  }));
+  // No matches — return empty array so the agent knows nothing is relevant
+  // and proceeds without loading skills. Returning all skills as a fallback
+  // caused the agent to load irrelevant skills for unrelated tasks.
+  return [];
 };
 
 /**

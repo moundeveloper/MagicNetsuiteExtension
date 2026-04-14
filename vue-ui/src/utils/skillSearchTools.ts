@@ -21,7 +21,7 @@ export const skillTools: ToolDefinition[] = [
   {
     name: "search_skills",
     description:
-      "Search through available skills (knowledge, instructions, code patterns, documentation) stored in the local skill library. Returns an array of matching skills with id, name, description, and tags — but NOT the full content. Use 'load_skill' with the skill's id to retrieve its full content. Uses OR-based matching ranked by relevance. If no matches are found for the query, returns ALL available skills as a fallback so you can inspect them. Call with an empty query to list all skills.",
+      "Search through available skills (knowledge, instructions, code patterns, documentation) stored in the local skill library. Returns an array of matching skills with id, name, description, and tags — but NOT the full content. Use 'load_skill' with the skill's id to retrieve its full content. Uses OR-based matching ranked by relevance. Returns an empty array if no skills match the query. Only use this tool when you need to generate, write, or modify code — NOT for viewing, reading, or exploring existing code.",
     parameters: {
       type: "object",
       properties: {

@@ -326,7 +326,7 @@ window.getSuiteletUrl = async (N, { script, deployment }) => {
   return suiteletUrl;
 };
 
-const saveScriptlet = async ({
+window.saveScriptlet = async ({
   name,
   scriptId,
   scriptFile,
@@ -378,13 +378,20 @@ const saveScriptlet = async ({
   );
 };
 
-const res = await saveScriptlet({
-  name: "Testing 5 test",
-  scriptId: "_testing_5_test",
-  scriptFile: "17077",
-  ownerId: "56",
-  ownerName: "Abdelmounaim Sabri",
-  description: "",
-  apiVersion: "2.1",
-  csrf: "zxrRSQN4x1sFYqwrEqXlycAKxQjLzJieuxF_inCkKA1im3rKkXl-pLsBTa1OADfmKScWerUgHOYOJa0NJSQ47bT9k29yFKkjDgjvlTdel3iftBKfFJ_BVVo9B10MC5cXYyZ6uy_P5NuH53d98aHRdu1ogouonZMyJ5ubLkoM9pU%3D"
-});
+window.createScript = async (N, { name, scriptFile }, csrfToken) => {
+  /* Get current user */
+  /* Create a temp folder for magic netsuite scripts */
+  /* Create the script file in the temp folder */
+  const fileId = "17077";
+  /* Create a script */
+  const res = await saveScriptlet({
+    name: "Testing 5 test",
+    scriptId: "_testing_5_test",
+    scriptFile: "17077",
+    ownerId: "56",
+    ownerName: "Abdelmounaim Sabri",
+    description: "",
+    apiVersion: "2.1",
+    csrf: csrfToken
+  });
+};

@@ -352,17 +352,28 @@ const agent = useAgent({
 - **One call per data need**: If a single tool call can answer your question, do not make additional calls. If you need to filter results, do it yourself from the data you already received.
 - **Stop when you have enough data**: Once you have the information needed to answer the user, stop calling tools and respond immediately.
 
-## Skills Library (MANDATORY)
-You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. **You MUST search skills BEFORE generating any code, writing scripts, or providing technical guidance — regardless of the topic.** This is not optional — skill rules override your default knowledge.
+## Skills Library
+You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. Skills are **only relevant when you need to generate, write, or modify code**. Skill rules override your default knowledge when applicable.
 
-**Mandatory workflow:**
-1. **ALWAYS call \`search_skills\` FIRST** for every user request that involves writing code, generating scripts, explaining implementation patterns, debugging, or providing technical guidance — on any topic, not just SuiteScript or NetSuite. Search with relevant keywords related to the task.
-2. If \`search_skills\` returns results (it will always return available skills, even as a fallback), **inspect the returned skill names and descriptions** and **call \`load_skill\`** for any that could be relevant to the current task.
-3. **Follow all rules, patterns, and standards defined in loaded skills.** Skill instructions take priority over your built-in defaults. For example, if a skill says to use \`const\`/\`let\` instead of \`var\`, you MUST comply.
-4. Only generate your response AFTER you have searched and loaded applicable skills.
+**When to use skills:**
+- Writing new code or scripts
+- Modifying or refactoring existing code
+- Generating code examples or templates
+- Debugging code where you need to suggest fixes
+
+**When NOT to use skills (do NOT call \`search_skills\`):**
+- Viewing, reading, or showing existing code from the environment
+- Retrieving or displaying scripts, files, or records
+- Answering general questions or explaining concepts
+- Navigating the codebase or listing resources
+- Any read-only or exploratory request
+
+**Workflow (only when generating/modifying code):**
+1. Call \`search_skills\` with relevant keywords related to the code task.
+2. Inspect the returned skill names and descriptions. **Only call \`load_skill\`** for skills whose description clearly matches the task. If no results are relevant, skip loading and proceed with your best knowledge.
+3. Follow all rules, patterns, and standards defined in loaded skills. Skill instructions take priority over your built-in defaults.
+4. Only generate your response AFTER loading applicable skills.
 5. Do NOT load all skills at once — only load what is relevant to the current question.
-
-If no skills seem relevant after inspecting the search results, proceed with your best knowledge, but the search step is still required.
 
 ## Response Formatting
 Format your responses using standard markdown:
