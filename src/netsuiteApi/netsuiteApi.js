@@ -43,7 +43,10 @@ window.addEventListener("message", async (event) => {
       return;
     }
 
-    const result = (await handler({ modules, payload })) || null;
+    const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
+
+    const result =
+      (await handler({ modules, payload, csrfToken: csrfToken })) || null;
 
     sendToExtension({ requestId, status: "ok", message: result });
   } catch (err) {
@@ -154,8 +157,14 @@ const handlers = {
     console.log("Open Suitelet action received");
     return window.getSuiteletUrl(modules, { script, deployment });
   },
-  OPEN_DEPLOYMENT_SUITELET: async ({ modules, payload: { script, deployment } }) => {
-    console.log("Open Deployment Suitelet action received", { script, deployment });
+  OPEN_DEPLOYMENT_SUITELET: async ({
+    modules,
+    payload: { script, deployment }
+  }) => {
+    console.log("Open Deployment Suitelet action received", {
+      script,
+      deployment
+    });
     return window.getSuiteletUrl(modules, { script, deployment });
   },
   LOGS: async ({
@@ -179,9 +188,13 @@ const handlers = {
     console.log("Root Folders action received");
     return window.getRootFolders(modules);
   },
-  CREATE_FOLDER: async ({ modules, payload: { name, parentFolder } }) => {
+  CREATE_FOLDER: async ({
+    modules,
+    payload: { name, parentFolder },
+    csrfToken
+  }) => {
     console.log("Create Folder action received");
-    const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
+
     return await window.createFolder(modules, {
       folderName: name,
       parentFolderId: parentFolder,

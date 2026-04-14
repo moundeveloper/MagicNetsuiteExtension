@@ -102,14 +102,86 @@
 
               <!-- Assistant message -->
               <div v-else-if="msg.role === 'assistant'" class="msg msg-assistant">
-                <!-- Tool executions (shown above the response text) -->
+                <!-- Skill usage (shown above tools with distinct styling) -->
                 <div
                   v-if="
-                    getToolMessagesForAssistant(msg.id).length > 0 ||
+                    getSkillMessagesForAssistant(msg.id).length > 0 ||
                     (msg.isStreaming &&
                       msg.id === currentAssistantMsgId &&
-                      inProgressTools.filter((t) => t.status === 'running')
-                        .length > 0)
+                      inProgressTools.filter(
+                        (t) => t.status === 'running' && isSkillTool(t.name)
+                      ).length > 0)
+                  "
+                  class="skill-group"
+                >
+                  <!-- While streaming: show running skills -->
+                  <template
+                    v-if="
+                      msg.isStreaming &&
+                      msg.id === currentAssistantMsgId &&
+                      inProgressTools.filter(
+                        (t) => t.status === 'running' && isSkillTool(t.name)
+                      ).length > 0
+                    "
+                  >
+                    <div
+                      v-for="tm in inProgressTools.filter(
+                        (t) => t.status === 'running' && isSkillTool(t.name)
+                      )"
+                      :key="'skill-running-' + tm.name"
+                      class="skill-item skill-item-running"
+                    >
+                      <div class="skill-indicator">
+                        <span class="skill-spinner" />
+                      </div>
+                      <span class="skill-label">{{
+                        getSkillDisplayName(tm.name)
+                      }}</span>
+                    </div>
+                  </template>
+                  <!-- Completed skills -->
+                  <template v-else>
+                    <details class="skill-details">
+                      <summary class="skill-summary">
+                        <i class="pi pi-book skill-icon" />
+                        <span>
+                          Used
+                          {{ getSkillMessagesForAssistant(msg.id).length }}
+                          skill{{
+                            getSkillMessagesForAssistant(msg.id).length > 1
+                              ? "s"
+                              : ""
+                          }}
+                        </span>
+                        <i class="pi pi-chevron-down skill-chevron" />
+                      </summary>
+                      <div class="skill-results-list">
+                        <div
+                          v-for="tm in getSkillMessagesForAssistant(msg.id)"
+                          :key="tm.id"
+                          class="skill-result-row"
+                        >
+                          <span class="skill-result-name">{{
+                            getSkillDisplayName(tm.toolName ?? "")
+                          }}</span>
+                          <span class="skill-result-content">{{
+                            truncate(tm.content, 200)
+                          }}</span>
+                        </div>
+                      </div>
+                    </details>
+                  </template>
+                </div>
+
+                <!-- Tool executions (shown above the response text, excludes skill tools) -->
+                <div
+                  v-if="
+                    getNonSkillToolMessagesForAssistant(msg.id).length > 0 ||
+                    (msg.isStreaming &&
+                      msg.id === currentAssistantMsgId &&
+                      inProgressTools.filter(
+                        (t) => t.status === 'running' && !isSkillTool(t.name)
+                      ).length > 0)
                   "
                   class="tool-group"
                 >
@@ -118,13 +190,14 @@
                     v-if="
                       msg.isStreaming &&
                       msg.id === currentAssistantMsgId &&
-                      inProgressTools.filter((t) => t.status === 'running')
-                        .length > 0
+                      inProgressTools.filter(
+                        (t) => t.status === 'running' && !isSkillTool(t.name)
+                      ).length > 0
                     "
                   >
                     <div
                       v-for="tm in inProgressTools.filter(
-                        (t) => t.status === 'running'
+                        (t) => t.status === 'running' && !isSkillTool(t.name)
                       )"
                       :key="'running-' + tm.name"
                       class="tool-item tool-item-running"
@@ -142,9 +215,12 @@
                         <i class="pi pi-check-circle tool-check-icon" />
                         <span>
                           Used
-                          {{ getToolMessagesForAssistant(msg.id).length }}
+                          {{
+                            getNonSkillToolMessagesForAssistant(msg.id).length
+                          }}
                           tool{{
-                            getToolMessagesForAssistant(msg.id).length > 1
+                            getNonSkillToolMessagesForAssistant(msg.id).length >
+                            1
                               ? "s"
                               : ""
                           }}
@@ -153,7 +229,9 @@
                       </summary>
                       <div class="tool-results-list">
                         <div
-                          v-for="tm in getToolMessagesForAssistant(msg.id)"
+                          v-for="tm in getNonSkillToolMessagesForAssistant(
+                            msg.id
+                          )"
                           :key="tm.id"
                           class="tool-result-row"
                         >
@@ -241,6 +319,7 @@ import { useAgent } from "../composables/useAgent";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import { tools } from "../utils/toolManager";
+import { skillTools } from "../utils/skillSearchTools";
 
 const STORAGE_KEY = "aiAssistantChatHistory";
 
@@ -273,6 +352,18 @@ const agent = useAgent({
 - **One call per data need**: If a single tool call can answer your question, do not make additional calls. If you need to filter results, do it yourself from the data you already received.
 - **Stop when you have enough data**: Once you have the information needed to answer the user, stop calling tools and respond immediately.
 
+## Skills Library (MANDATORY)
+You have access to a local skill library containing specialized knowledge, instructions, code patterns, coding standards, and documentation. **You MUST search skills BEFORE generating any code, writing scripts, or providing technical guidance — regardless of the topic.** This is not optional — skill rules override your default knowledge.
+
+**Mandatory workflow:**
+1. **ALWAYS call \`search_skills\` FIRST** for every user request that involves writing code, generating scripts, explaining implementation patterns, debugging, or providing technical guidance — on any topic, not just SuiteScript or NetSuite. Search with relevant keywords related to the task.
+2. If \`search_skills\` returns results (it will always return available skills, even as a fallback), **inspect the returned skill names and descriptions** and **call \`load_skill\`** for any that could be relevant to the current task.
+3. **Follow all rules, patterns, and standards defined in loaded skills.** Skill instructions take priority over your built-in defaults. For example, if a skill says to use \`const\`/\`let\` instead of \`var\`, you MUST comply.
+4. Only generate your response AFTER you have searched and loaded applicable skills.
+5. Do NOT load all skills at once — only load what is relevant to the current question.
+
+If no skills seem relevant after inspecting the search results, proceed with your best knowledge, but the search step is still required.
+
 ## Response Formatting
 Format your responses using standard markdown:
 
@@ -285,7 +376,7 @@ Format your responses using standard markdown:
 - Use blockquotes for important notes or callouts
 
 Keep responses concise and well-structured. Prefer flat, scannable layouts over deeply nested content.`,
-  tools,
+  tools: [...tools, ...skillTools],
   onToolCall(name) {
     activeTools.value.push(name);
   },
@@ -548,6 +639,31 @@ const truncate = (str: string, n: number) => {
   return str.length > n ? str.slice(0, n) + "..." : str;
 };
 
+// ── Skill vs Tool identification ──
+const SKILL_TOOL_NAMES = new Set(["search_skills", "load_skill"]);
+
+const isSkillTool = (name: string | undefined): boolean => {
+  return SKILL_TOOL_NAMES.has(name ?? "");
+};
+
+const getSkillMessagesForAssistant = (assistantId: number) => {
+  return getToolMessagesForAssistant(assistantId).filter((m) =>
+    isSkillTool(m.toolName)
+  );
+};
+
+const getNonSkillToolMessagesForAssistant = (assistantId: number) => {
+  return getToolMessagesForAssistant(assistantId).filter(
+    (m) => !isSkillTool(m.toolName)
+  );
+};
+
+const getSkillDisplayName = (toolName: string): string => {
+  if (toolName === "search_skills") return "Searching skills";
+  if (toolName === "load_skill") return "Loading skill";
+  return toolName;
+};
+
 const autoResize = () => {
   const el = textareaRef.value;
   if (!el) return;
@@ -774,6 +890,127 @@ const sendMessage = async () => {
 /* ── Tool Group ── */
 .tool-group {
   margin-bottom: 0.5rem;
+}
+
+/* ── Skill Group ── */
+.skill-group {
+  margin-bottom: 0.5rem;
+}
+
+/* Running skill indicator */
+.skill-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  font-size: 0.75rem;
+}
+
+.skill-item-running {
+  color: var(--p-violet-600, #7c3aed);
+}
+
+.skill-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.skill-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--p-violet-200, #ddd6fe);
+  border-top-color: var(--p-violet-500, #8b5cf6);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.skill-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--p-violet-600, #7c3aed);
+}
+
+/* Completed skill details */
+.skill-details {
+  border: 1px solid var(--p-violet-200, #ddd6fe);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+}
+
+.skill-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--p-violet-50, #f5f3ff);
+  cursor: pointer;
+  color: var(--p-violet-700, #6d28d9);
+  font-size: 0.75rem;
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.skill-summary::-webkit-details-marker {
+  display: none;
+}
+
+.skill-summary:hover {
+  background: var(--p-violet-100, #ede9fe);
+}
+
+.skill-icon {
+  font-size: 0.7rem;
+  color: var(--p-violet-500, #8b5cf6);
+}
+
+.skill-chevron {
+  font-size: 0.55rem;
+  margin-left: auto;
+  color: var(--p-violet-400, #a78bfa);
+  transition: transform 0.2s ease;
+}
+
+.skill-details[open] .skill-chevron {
+  transform: rotate(180deg);
+}
+
+.skill-results-list {
+  border-top: 1px solid var(--p-violet-200, #ddd6fe);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.skill-result-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.65rem;
+  border-bottom: 1px solid var(--p-violet-100, #ede9fe);
+}
+
+.skill-result-row:last-child {
+  border-bottom: none;
+}
+
+.skill-result-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.675rem;
+  font-weight: 600;
+  color: var(--p-violet-700, #6d28d9);
+}
+
+.skill-result-content {
+  font-size: 0.675rem;
+  color: var(--p-violet-400, #a78bfa);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Running tool indicator */

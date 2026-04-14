@@ -113,11 +113,7 @@ export const tools: ToolDefinition[] = [
         scriptId: input.scriptId
       });
       let results = response.message;
-      if (
-        input.search &&
-        !input.scriptId &&
-        Array.isArray(results)
-      ) {
+      if (input.search && !input.scriptId && Array.isArray(results)) {
         const term = String(input.search).toLowerCase();
         results = results.filter(
           (s: Record<string, unknown>) =>
@@ -157,7 +153,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_script_url",
     description:
-      "Get the URL to open a script record page in NetSuite. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts), NOT the string scriptid.",
+      "Get the URL to open a script record page in NetSuite. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts NUMERIC), NOT the string scriptid.",
     parameters: {
       type: "object",
       properties: {

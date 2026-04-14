@@ -95,7 +95,9 @@ window.getScriptFiles = async ({ query, url }, { scriptIds }) => {
     const resultSet = await query.runSuiteQL.promise(queryConfig);
     const results = resultSet.asMappedResults();
 
-    console.log(`Found ${results.length} scripts for IDs: ${scriptIds.join(", ")}`);
+    console.log(
+      `Found ${results.length} scripts for IDs: ${scriptIds.join(", ")}`
+    );
 
     const domain = url.resolveDomain({
       hostType: url.HostType.APPLICATION
@@ -323,3 +325,66 @@ window.getSuiteletUrl = async (N, { script, deployment }) => {
   console.log("Suitelet URL:", suiteletUrl);
   return suiteletUrl;
 };
+
+const saveScriptlet = async ({
+  name,
+  scriptId,
+  scriptFile,
+  ownerId,
+  ownerName,
+  description = "",
+  apiVersion = "2.1",
+  csrf
+}) => {
+  const formEncode = (str) => encodeURIComponent(str).replace(/%20/g, "+");
+  let body = `submitter=Save&scripttype=SCRIPTLET&name=__NAME__&package=&scriptid=__SCRIPTID__&nsutils-automated-ids=on&apiversion=__APIVERSION__&description=__DESCRIPTION__&inpt_owner=__OWNERNAME__&owner=__OWNERID__&_eml_nkey_=__NKEY__&_multibtnstate_=&selectedtab=&nsapiPI=&nsapiSR=&nsapiVF=&nsapiFC=&nsapiPS=&nsapiVI=&nsapiVD=&nsapiPD=&nsapiVL=&nsapiRC=&nsapiLI=&nsapiLC=&nsapiCT=__NSAPICT__&nsbrowserenv=istop%3DT&wfPI=&wfSR=&wfVF=&wfFC=&wfPS=&type=script&id=&externalid=&whence=&customwhence=&entryformquerystring=scriptfile%3D__SCRIPTFILE__%26scripttype%3DSCRIPTLET%26apiversion%3D__APIVERSION__&_csrf=__CSRF__&wfinstances=&customplugintype=&scriptfile=__SCRIPTFILE__&defaultfunction=&defaultfunction_v2=F&notifyuser=F&notifyowner=T&notifyadmins=F&notifygroup=&notifyemails=&submitted=T&formdisplayview=NONE&_button=&customplugintypesfields=plugintype&customplugintypesflags=1&customplugintypesfieldsets=&customplugintypestypes=select&customplugintypesorigtypes=&customplugintypesparents=&customplugintypeslabels=Custom+Plug-In+Type&customplugintypesdata=&nextcustomplugintypesidx=1&customplugintypesvalid=T&parametersfields=label%01internalid%01fieldtype%01selectrecordtype%01setting%01accesslevel%01searchlevel&parametersflags=1%010%010%010%010%010%010&parametersfieldsets=%01%01%01%01%01%01&parameterstypes=text%01identifier%01select%01select%01select%01text%01text&parametersorigtypes=%01%01%01%01%01%01&parametersparents=%01%01%01%01%01%01&parameterslabels=Label%01ID%01Type%01List%2FRecord%01Preference%01%01&parametersdata=&nextparametersidx=1&parametersvalid=T&parametersloaded=F&deploymentsfields=id%01seqnum%01oldrecordtype%01scripttype%01title%01scriptid%01primarykey%01deploymentid%01version%01isdeployed%01status%01eventtype%01loglevel&deploymentsflags=0%010%010%010%011%010%010%010%010%010%011%010%010&deploymentsfieldsets=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentstypes=text%01text%01text%01text%01text%01identifier%01text%01text%01text%01checkbox%01select%01select%01select&deploymentsorigtypes=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentsparents=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentslabels=%01%01%01%01Title%01ID%01%01%01%01Deployed%01Status%01Event+Type%01Log+Level&deploymentsdata=&nextdeploymentsidx=1&deploymentsvalid=T&deploymentsloaded=F`;
+
+  body = body
+    .replace(/__NAME__/g, formEncode(name))
+    .replace(/__SCRIPTID__/g, formEncode(scriptId))
+    .replace(/__SCRIPTFILE__/g, formEncode(scriptFile))
+    .replace(/__OWNERID__/g, formEncode(ownerId))
+    .replace(/__OWNERNAME__/g, formEncode(ownerName))
+    .replace(/__DESCRIPTION__/g, formEncode(description))
+    .replace(/__APIVERSION__/g, formEncode(apiVersion))
+    .replace(/__CSRF__/g, csrf)
+    .replace(/__NSAPICT__/g, Date.now().toString());
+
+  return fetch(
+    "https://1964539.app.netsuite.com/app/common/scripting/script.nl",
+    {
+      method: "POST",
+      credentials: "include",
+      mode: "cors",
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "it-IT,it;q=0.6",
+        "cache-control": "max-age=0",
+        "content-type": "application/x-www-form-urlencoded",
+        priority: "u=0, i",
+
+        // critical headers
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+
+        "upgrade-insecure-requests": "1"
+      },
+      referrer: `https://1964539.app.netsuite.com/app/common/scripting/script.nl?scriptfile=${scriptFile}&scripttype=SCRIPTLET&apiversion=${apiVersion}&package=&whence=`,
+      body
+    }
+  );
+};
+
+const res = await saveScriptlet({
+  name: "Testing 5 test",
+  scriptId: "_testing_5_test",
+  scriptFile: "17077",
+  ownerId: "56",
+  ownerName: "Abdelmounaim Sabri",
+  description: "",
+  apiVersion: "2.1",
+  csrf: "zxrRSQN4x1sFYqwrEqXlycAKxQjLzJieuxF_inCkKA1im3rKkXl-pLsBTa1OADfmKScWerUgHOYOJa0NJSQ47bT9k29yFKkjDgjvlTdel3iftBKfFJ_BVVo9B10MC5cXYyZ6uy_P5NuH53d98aHRdu1ogouonZMyJ5ubLkoM9pU%3D"
+});
