@@ -743,6 +743,58 @@ export const tools: ToolDefinition[] = [
     }
   },
 
+  {
+    name: "netsuite_create_script",
+    description:
+      "Create a NetSuite Script record for an already-uploaded .js file. " +
+      "Requires the internal file ID returned by netsuite_upload_file, a script name, " +
+      "a script ID (e.g. 'customscript_my_suitelet'), and the script type (e.g. 'SUITELET'). " +
+      "Returns { scriptRecordId, scriptUrl } on success.",
+    destructive: true,
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Human-readable name for the script record (e.g. 'Customer Dashboard Suitelet')."
+        },
+        scriptId: {
+          type: "string",
+          description: "Script ID in NetSuite format (e.g. 'customscript_customer_dashboard')."
+        },
+        fileId: {
+          type: "string",
+          description: "Internal ID of the uploaded .js file in the File Cabinet."
+        },
+        scriptType: {
+          type: "string",
+          description:
+            "NetSuite script type constant. Common values: SUITELET, USEREVENT, SCHEDULED, RESTLET, PORTLET. Defaults to SUITELET."
+        },
+        description: {
+          type: "string",
+          description: "Optional description for the script record."
+        },
+        apiVersion: {
+          type: "string",
+          description: "SuiteScript API version. Defaults to '2.1'."
+        }
+      },
+      required: ["name", "scriptId", "fileId"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.CREATE_SCRIPT, {
+        name: input.name,
+        scriptId: input.scriptId,
+        fileId: input.fileId,
+        scriptType: input.scriptType ?? "SUITELET",
+        description: input.description ?? "",
+        apiVersion: input.apiVersion ?? "2.1"
+      });
+      return response.message;
+    }
+  },
+
   // ========== NetSuite Export ==========
   {
     name: "netsuite_export_record",

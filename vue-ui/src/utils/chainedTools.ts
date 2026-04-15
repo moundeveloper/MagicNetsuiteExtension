@@ -19,22 +19,24 @@ import type { ChainedToolDefinition } from "./chainedToolManager";
 //   1. (tool) netsuite_create_folder  — create a folder for the script
 //   2. (ai)   search_skills + load_skill + chatCompletion → Suitelet code
 //   3. (tool) netsuite_upload_file    — upload the generated file to the folder
+//   4. (tool) netsuite_create_script  — create the NetSuite Script record
 // ═════════════════════════════════════════════
 
 export const generateSuiteletChain: ChainedToolDefinition = {
   name: "generate_suitelet",
 
   description:
-    "End-to-end Suitelet generation pipeline. In three sequential steps it:\n" +
+    "End-to-end Suitelet generation pipeline. In four sequential steps it:\n" +
     "  1. Creates a dedicated folder in the NetSuite File Cabinet\n" +
     "  2. Searches skills, loads the relevant SuiteScript skill, and generates\n" +
     "     the SuiteScript 2.1 Suitelet source code guided by those skills\n" +
-    "  3. Uploads the generated file to the new folder\n\n" +
+    "  3. Uploads the generated file to the new folder\n" +
+    "  4. Creates the NetSuite Script record linked to the uploaded file\n\n" +
     "Use this tool whenever the user asks to create, generate, build, or scaffold " +
     "a new Suitelet. Do NOT call netsuite_create_folder, search_skills, load_skill, " +
-    "or netsuite_upload_file separately — this pipeline handles the full workflow " +
-    "in the correct order and threads data between steps automatically.\n\n" +
-    "Returns a summary with folderId, fileId, fileName, scriptId, and the generated code.",
+    "netsuite_upload_file, or netsuite_create_script separately — this pipeline handles " +
+    "the full workflow in the correct order and threads data between steps automatically.\n\n" +
+    "Returns a summary with folderId, fileId, fileName, scriptId, scriptRecordId, scriptUrl, and the generated code.",
 
   parameters: {
     type: "object",
@@ -229,6 +231,40 @@ export const generateSuiteletChain: ChainedToolDefinition = {
 
         const fileId = uploaded[0]?.fileId ?? uploaded[0]?.id ?? null;
         return { fileId };
+      }
+    },
+
+    // ── Step 4: Create Script record linked to the uploaded file ───────────
+    {
+      type: "tool",
+      label: "Create NetSuite Script record",
+      toolName: "netsuite_create_script",
+
+      inputMapper: (userInput, context) => ({
+        name: String(userInput.name || "NewSuitelet"),
+        scriptId: context.scriptId as string,
+        fileId: String(context.fileId),
+        scriptType: "SUITELET",
+        description: String(userInput.description || ""),
+        apiVersion: "2.1"
+      }),
+
+      outputMapper: (result, _context) => {
+        const r = result as { scriptRecordId?: string | null; scriptUrl?: string | null } | null;
+
+        if (!r?.scriptRecordId) {
+          // Non-fatal — script creation may have succeeded but ID extraction failed
+          console.warn("[generateSuiteletChain] Step 4: could not extract scriptRecordId from response:", result);
+          return {
+            scriptRecordId: null,
+            scriptUrl: r?.scriptUrl ?? null
+          };
+        }
+
+        return {
+          scriptRecordId: r.scriptRecordId,
+          scriptUrl: r.scriptUrl ?? null
+        };
       }
     }
   ]

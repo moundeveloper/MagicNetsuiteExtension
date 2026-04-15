@@ -215,6 +215,18 @@ const handlers = {
       csrfToken
     });
   },
+  CREATE_SCRIPT: async ({
+    modules,
+    payload: { name, scriptId, fileId, scriptType, description, apiVersion },
+    csrfToken
+  }) => {
+    console.log("Create Script action received", { name, scriptId, fileId, scriptType });
+    return await window.createScriptRecord(
+      modules,
+      { name, scriptId, fileId, scriptType, description, apiVersion },
+      csrfToken
+    );
+  },
   GET_ALL_RECORD_TYPES: async ({ modules }) => {
     console.log("Get All Record Types action received");
     const { record, query } = modules;
