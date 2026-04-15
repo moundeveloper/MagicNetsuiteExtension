@@ -747,8 +747,10 @@ export const tools: ToolDefinition[] = [
     name: "netsuite_create_script",
     description:
       "Create a NetSuite Script record for an already-uploaded .js file. " +
-      "Requires the internal file ID returned by netsuite_upload_file, a script name, " +
-      "a script ID (e.g. 'customscript_my_suitelet'), and the script type (e.g. 'SUITELET'). " +
+      "IMPORTANT: scriptType uses the NETSUITE SYSTEM NAME, NOT the UI label. " +
+      "Common mappings — UI label → system name: " +
+      "Suitelet → SCRIPTLET, RESTlet → RESTLET, SSP Application → WEBAPP, " +
+      "User Event → USEREVENT, Scheduled Script → SCHEDULED. " +
       "Returns { scriptRecordId, scriptUrl } on success.",
     destructive: true,
     parameters: {
@@ -787,7 +789,7 @@ export const tools: ToolDefinition[] = [
         name: input.name,
         scriptId: input.scriptId,
         fileId: input.fileId,
-        scriptType: input.scriptType ?? "SUITELET",
+        scriptType: input.scriptType,
         description: input.description ?? "",
         apiVersion: input.apiVersion ?? "2.1"
       });

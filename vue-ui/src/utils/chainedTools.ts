@@ -13,30 +13,31 @@
 import type { ChainedToolDefinition } from "./chainedToolManager";
 
 // ═════════════════════════════════════════════
-// Chain: generate_suitelet
+// Chain: generate_suitescript
 //
 // Steps:
 //   1. (tool) netsuite_create_folder  — create a folder for the script
-//   2. (ai)   search_skills + load_skill + chatCompletion → Suitelet code
+//   2. (ai)   search_skills + load_skill + chatCompletion → script code
 //   3. (tool) netsuite_upload_file    — upload the generated file to the folder
 //   4. (tool) netsuite_create_script  — create the NetSuite Script record
 // ═════════════════════════════════════════════
 
-export const generateSuiteletChain: ChainedToolDefinition = {
-  name: "generate_suitelet",
+export const generateSuitescriptChain: ChainedToolDefinition = {
+  name: "generate_suitescript",
 
   description:
-    "End-to-end Suitelet generation pipeline. In four sequential steps it:\n" +
+    "End-to-end SuiteScript generation pipeline. In four sequential steps it:\n" +
     "  1. Creates a dedicated folder in the NetSuite File Cabinet\n" +
     "  2. Searches skills, loads the relevant SuiteScript skill, and generates\n" +
-    "     the SuiteScript 2.1 Suitelet source code guided by those skills\n" +
+    "     the SuiteScript 2.1 source code guided by those skills\n" +
     "  3. Uploads the generated file to the new folder\n" +
-    "  4. Creates the NetSuite Script record linked to the uploaded file\n\n" +
+    "  4. Creates the NetSuite Script record\n\n" +
     "Use this tool whenever the user asks to create, generate, build, or scaffold " +
-    "a new Suitelet. Do NOT call netsuite_create_folder, search_skills, load_skill, " +
+    "any NetSuite script (Suitelet, RESTlet, User Event, Scheduled Script, Portlet, etc.). " +
+    "Do NOT call netsuite_create_folder, search_skills, load_skill, " +
     "netsuite_upload_file, or netsuite_create_script separately — this pipeline handles " +
     "the full workflow in the correct order and threads data between steps automatically.\n\n" +
-    "Returns a summary with folderId, fileId, fileName, scriptId, scriptRecordId, scriptUrl, and the generated code.",
+    "Returns a summary with folderId, fileId, fileName, scriptId, scriptType, scriptRecordId, and the generated code.",
 
   parameters: {
     type: "object",
@@ -44,14 +45,14 @@ export const generateSuiteletChain: ChainedToolDefinition = {
       name: {
         type: "string",
         description:
-          "Human-readable name for the Suitelet (e.g. 'Customer Dashboard'). " +
+          "Human-readable name for the script (e.g. 'Customer Dashboard'). " +
           "Used to derive the folder name, file name, and script ID."
       },
       description: {
         type: "string",
         description:
-          "What the Suitelet should do — purpose, data displayed, form fields, " +
-          "actions performed, record types it interacts with."
+          "What the script should do — type (Suitelet, RESTlet, User Event, Scheduled, etc.), " +
+          "purpose, data displayed, form fields, actions performed, record types it interacts with."
       },
       parentFolderId: {
         type: "number",
@@ -65,9 +66,10 @@ export const generateSuiteletChain: ChainedToolDefinition = {
   destructive: true,
 
   intentPatterns: [
-    /\b(create|generate|build|scaffold|make|write)\b.*\bsuitelet\b/i,
-    /\bsuitelet\b.*\b(create|generate|build|scaffold|make|write)\b/i,
-    /\bnew\s+suitelet\b/i
+    /\b(create|generate|build|scaffold|make|write)\b.*\b(suitelet|restlet|user.?event|scheduled|portlet|sessionmanager|workflowaction|csvimport|cmapimapping)\b/i,
+    /\b(suitelet|restlet|user.?event|scheduled|portlet)\b.*\b(create|generate|build|scaffold|make|write)\b/i,
+    /\bnew\s+(suitelet|restlet|user.?event|scheduled|portlet)\b/i,
+    /\b(suitelet|restlet|user.?event|scheduled|portlet)\b\s+script\b/i
   ],
 
   steps: [
@@ -113,26 +115,34 @@ export const generateSuiteletChain: ChainedToolDefinition = {
       label: "Generate Suitelet source code",
 
       // Virtual tool name for UI tracking — not in registry, just for display
-      toolName: "generate_suitelet_code",
+      toolName: "generate_suitescript_code",
 
       // Only skill tools are exposed to this mini loop
       allowedTools: ["search_skills", "load_skill"],
 
       systemPrompt:
         "You are a SuiteScript 2.1 expert. Your task is to generate a complete, " +
-        "production-ready Suitelet script. You MUST:\n" +
-        "1. Call search_skills with relevant keywords (e.g. 'suitelet suitescript')\n" +
-        "2. Call load_skill for every relevant skill returned\n" +
-        "3. Apply the skill rules strictly — they override your defaults\n" +
-        "4. Then output ONLY the final generated JavaScript code as a plain code block\n\n" +
+        "production-ready NetSuite script of the type requested by the user. You MUST:\n" +
+        "1. Detect the script type from the user's request and output its NetSuite system name:\n" +
+        "   - Suitelet / form-based script → scriptType 'SCRIPTLET'\n" +
+        "   - REST API endpoint → scriptType 'RESTLET'\n" +
+        "   - SSP Application → scriptType 'WEBAPP'\n" +
+        "   - Record-level script (beforeLoad/afterSubmit) → scriptType 'USEREVENT'\n" +
+        "   - Scheduled/batch script → scriptType 'SCHEDULED'\n" +
+        "   - Dashboard portlet → scriptType 'PORTLET'\n" +
+        "2. Call search_skills with relevant keywords (e.g. 'suitelet suitescript', 'userevent suitescript')\n" +
+        "3. Call load_skill for every relevant skill returned\n" +
+        "4. Apply the skill rules strictly — they override your defaults\n" +
+        "5. Generate the code matching the detected script type (correct @NScriptType annotation, entry points, etc.)\n\n" +
         "Code requirements (enforced by skills):\n" +
         "- @NApiVersion 2.1\n" +
         "- Use const/let, never var\n" +
         "- Proper define() module pattern\n" +
+        "- Include @NScriptType annotation matching the detected type\n" +
         "- Include JSDoc comments\n" +
         "- Handle errors with try/catch\n\n" +
         "After generating the code, respond with a JSON object on a SEPARATE line in this exact format:\n" +
-        '{"fileName":"<camelCase>.js","scriptId":"customscript_<snake_case>","generatedCode":"<full code here>"}',
+        '{"fileName":"<camelCase>.js","scriptId":"customscript_<snake_case>","scriptType":"<system name from step 1>","generatedCode":"<full code here>"}',
 
       promptBuilder: (userInput, context) => {
         const name = String(userInput.name || "NewSuitelet");
@@ -150,29 +160,29 @@ export const generateSuiteletChain: ChainedToolDefinition = {
           .replace(/\s+/g, "_");
 
         return (
-          `Generate a SuiteScript 2.1 Suitelet with the following specification:\n\n` +
+          `Generate a SuiteScript 2.1 NetSuite script with the following specification:\n\n` +
           `Name: ${name}\n` +
           `Description: ${description}\n` +
           `File name to use: ${camelName}.js\n` +
           `Script ID to use: customscript_${snakeName}\n` +
           `Target folder ID: ${folderId ?? "unknown"}\n\n` +
-          `First search and load relevant skills, then generate the complete Suitelet code. ` +
+          `Detect the script type from the description above (Suitelet, User Event, RESTlet, Scheduled, etc.), ` +
+          `search and load relevant skills, then generate the complete script code. ` +
           `End your response with the JSON metadata object as described in your instructions.`
         );
       },
 
       outputMapper: (aiResult, _context) => {
-        // Try to extract the JSON metadata line from the assistant's response
         const content = aiResult.assistantContent;
 
-        // Look for a JSON object at the end of the response
-        const jsonMatch = content.match(/\{[^{}]*"fileName"[^{}]*"scriptId"[^{}]*"generatedCode"[^{}]*\}/s);
+        const jsonMatch = content.match(/\{[^{}]*"fileName"[^{}]*"scriptId"[^{}]*"scriptType"[^{}]*"generatedCode"[^{}]*\}/s);
 
         if (jsonMatch) {
           try {
             const meta = JSON.parse(jsonMatch[0]) as {
               fileName?: string;
               scriptId?: string;
+              scriptType?: string;
               generatedCode?: string;
             };
 
@@ -180,18 +190,19 @@ export const generateSuiteletChain: ChainedToolDefinition = {
               return {
                 fileName: meta.fileName,
                 scriptId: meta.scriptId ?? "",
+                scriptType: meta.scriptType ?? "SCRIPTLET",
                 generatedCode: meta.generatedCode,
                 skillsUsed: Object.keys(aiResult.toolResults)
               };
             }
           } catch {
-            // Fall through to extraction from content
+            // Fall through to fallback
           }
         }
 
         // Fallback: extract code block from the response
         const codeMatch = content.match(/```(?:javascript|js)?\n([\s\S]*?)```/);
-        const rawName = String(_context.fileName ?? "newSuitelet");
+        const rawName = String(_context.name ?? "NewScript");
         const camelName = rawName
           .replace(/[^a-zA-Z0-9 ]/g, "")
           .replace(/\s+(.)/g, (_, c: string) => c.toUpperCase())
@@ -200,6 +211,7 @@ export const generateSuiteletChain: ChainedToolDefinition = {
         return {
           fileName: `${camelName}.js`,
           scriptId: `customscript_${camelName.toLowerCase()}`,
+          scriptType: "SCRIPTLET",
           generatedCode: codeMatch ? codeMatch[1]!.trim() : content,
           skillsUsed: Object.keys(aiResult.toolResults)
         };
@@ -234,36 +246,54 @@ export const generateSuiteletChain: ChainedToolDefinition = {
       }
     },
 
-    // ── Step 4: Create Script record linked to the uploaded file ───────────
+    // ── Step 4: Resolve correct scriptType and create the Script record ───────
+    // type: 'ai' so the mini loop can call netsuite_get_script_types first to get
+    // the live system names from NetSuite, then call netsuite_create_script with
+    // the correct value — no static mapping, always up to date.
     {
-      type: "tool",
+      type: "ai",
       label: "Create NetSuite Script record",
       toolName: "netsuite_create_script",
 
-      inputMapper: (userInput, context) => ({
-        name: String(userInput.name || "NewSuitelet"),
-        scriptId: context.scriptId as string,
-        fileId: String(context.fileId),
-        scriptType: "SUITELET",
-        description: String(userInput.description || ""),
-        apiVersion: "2.1"
-      }),
+      allowedTools: ["netsuite_get_script_types", "netsuite_create_script"],
 
-      outputMapper: (result, _context) => {
-        const r = result as { scriptRecordId?: string | null; scriptUrl?: string | null } | null;
+      systemPrompt:
+        "You are a NetSuite automation assistant. Your ONLY task is to create a Script record. " +
+        "You MUST:\n" +
+        "1. Call netsuite_get_script_types to get the full list of available types\n" +
+        "2. Find the entry whose 'label' matches the requested script type " +
+        "(e.g. the user wants a Suitelet → find label='SCRIPTLET', " +
+        "User Event → label='USEREVENT', RESTlet → label='RESTLET', etc.)\n" +
+        "3. Call netsuite_create_script using that exact 'label' value as scriptType\n" +
+        "Do not generate any code. Do not explain. Just call the two tools and report the result.",
 
-        if (!r?.scriptRecordId) {
-          // Non-fatal — script creation may have succeeded but ID extraction failed
-          console.warn("[generateSuiteletChain] Step 4: could not extract scriptRecordId from response:", result);
+      promptBuilder: (userInput, context) => (
+        `Create a NetSuite Script record with these details:\n` +
+        `name: ${String(userInput.name || "NewScript")}\n` +
+        `scriptId: ${String(context.scriptId)}\n` +
+        `fileId: ${String(context.fileId)}\n` +
+        `requestedScriptType: ${String(context.scriptType)} (this is a hint — verify the correct system name via netsuite_get_script_types)\n` +
+        `description: ${String(userInput.description || "")}\n` +
+        `apiVersion: 2.1`
+      ),
+
+      outputMapper: (aiResult, _context) => {
+        // netsuite_create_script result is in toolResults
+        const createResult = Object.values(aiResult.toolResults).find(
+          (r) => r && typeof r === "object" && "scriptRecordId" in r
+        ) as { scriptRecordId?: string | null; scriptUrl?: string | null } | undefined;
+
+        if (!createResult?.scriptRecordId) {
+          console.warn("[generateSuitescriptChain] Step 4: could not extract scriptRecordId:", aiResult.toolResults);
           return {
             scriptRecordId: null,
-            scriptUrl: r?.scriptUrl ?? null
+            scriptUrl: createResult?.scriptUrl ?? null
           };
         }
 
         return {
-          scriptRecordId: r.scriptRecordId,
-          scriptUrl: r.scriptUrl ?? null
+          scriptRecordId: createResult.scriptRecordId,
+          scriptUrl: createResult.scriptUrl ?? null
         };
       }
     }
@@ -275,5 +305,5 @@ export const generateSuiteletChain: ChainedToolDefinition = {
 // ─────────────────────────────────────────────
 
 export const chainedTools: ChainedToolDefinition[] = [
-  generateSuiteletChain
+  generateSuitescriptChain
 ];
