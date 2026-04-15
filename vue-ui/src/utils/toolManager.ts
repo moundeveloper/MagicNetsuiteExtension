@@ -660,7 +660,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_create_folder",
     description:
-      "Create a new folder in the NetSuite File Cabinet. Use this when asked to create a folder for uploading scripts or organizing files. Defaults to the SuiteScripts folder (ID -15) if no parent is specified. Returns the created folder id from NetSuite on success.",
+      "Create a new folder in the NetSuite File Cabinet. Use this when asked to create a folder for uploading scripts or organizing files. Returns the created folder id from NetSuite on success.",
     destructive: true,
     parameters: {
       type: "object",
@@ -672,15 +672,71 @@ export const tools: ToolDefinition[] = [
         parentFolderId: {
           type: "number",
           description:
-            "Internal ID of the parent folder. Defaults to -15 (SuiteScripts folder) if not provided."
+            "ALWAYS REQUIRED. Internal ID of the parent folder. " +
+            "If the user specified a folder ID, pass that exact number. " +
+            "If the user did not specify a parent folder, pass -15 (SuiteScripts root)."
         }
       },
-      required: ["name"]
+      required: ["name", "parentFolderId"]
     },
     execute: async (input) => {
+      if (input.parentFolderId === undefined || input.parentFolderId === null) {
+        console.warn(
+          "[netsuite_create_folder] parentFolderId not provided by AI — falling back to -15 (SuiteScripts root). " +
+            "If the user specified a parent folder ID, the AI failed to pass it."
+        );
+      }
       const response = await callApi(RequestRoutes.CREATE_FOLDER, {
         name: input.name,
         parentFolder: input.parentFolderId ?? -15
+      });
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_upload_file",
+    description:
+      "Upload a file to the NetSuite File Cabinet. Two modes:\n" +
+      "(1) Content mode — provide 'fileName', 'fileContent', and 'folderId'. Use this when the AI needs to upload a script or any text file it has generated.\n" +
+      "(2) Picker mode — omit 'fileName'/'fileContent' and the tool opens a file picker dialog so the user can select files from their machine.\n\n" +
+      "Returns { uploaded: string[], errors: string[] }.",
+    destructive: true,
+    parameters: {
+      type: "object",
+      properties: {
+        fileName: {
+          type: "string",
+          description:
+            "Name of the file to create and upload (e.g. 'my_script.js'). Required in content mode. Omit to open the file picker."
+        },
+        fileContent: {
+          type: "string",
+          description:
+            "Raw text content of the file (e.g. the full SuiteScript source). Required in content mode."
+        },
+        folderId: {
+          type: "number",
+          description:
+            "ALWAYS REQUIRED. Internal numeric ID of the target folder in the File Cabinet. " +
+            "If the user specified a folder ID (e.g. '2543'), pass that exact number. " +
+            "If the user did not specify a folder, pass -15 (SuiteScripts root)."
+        }
+      },
+      required: ["folderId"]
+    },
+    execute: async (input) => {
+      const folderId = input.folderId ?? -15;
+      if (input.folderId === undefined || input.folderId === null) {
+        console.warn(
+          "[netsuite_upload_file] folderId not provided by AI — falling back to -15 (SuiteScripts root). " +
+            "If the user specified a folder ID, the AI failed to pass it."
+        );
+      }
+      const response = await callApi(RequestRoutes.UPLOAD_FILE, {
+        fileName: input.fileName,
+        fileContent: input.fileContent,
+        folderId
       });
       return response.message;
     }

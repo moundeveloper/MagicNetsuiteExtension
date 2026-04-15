@@ -533,7 +533,10 @@ Format responses using standard markdown:
 - Tables for structured data
 - Blockquotes for callouts
 
-Keep responses concise and well-structured.`,
+Keep responses concise and well-structured.
+
+## File Upload — Folder ID Rules
+When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.`,
   tools: [...tools, ...skillTools],
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,

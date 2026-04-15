@@ -201,6 +201,20 @@ const handlers = {
       csrfToken
     });
   },
+  UPLOAD_FILE: async ({
+    modules,
+    payload: { fileName, fileContent, folderId },
+    csrfToken
+  }) => {
+    console.log("Upload File action received", { fileName, folderId });
+
+    return await window.uploadFile(modules, {
+      fileName,
+      fileContent,
+      folderId: folderId ?? -15,
+      csrfToken
+    });
+  },
   GET_ALL_RECORD_TYPES: async ({ modules }) => {
     console.log("Get All Record Types action received");
     const { record, query } = modules;
