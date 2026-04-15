@@ -10,6 +10,7 @@
  */
 
 import { puter } from "@heyputer/puter.js";
+import { Ollama } from "ollama/browser";
 import { useSettings } from "../states/settingsState";
 
 // ─────────────────────────────────────────────
@@ -80,7 +81,7 @@ const puterChat = async (
 };
 
 // ─────────────────────────────────────────────
-// Ollama adapter (OpenAI-compatible /api/chat)
+// Ollama adapter (using ollama/browser library)
 // ─────────────────────────────────────────────
 
 const ollamaChat = async (
@@ -89,46 +90,27 @@ const ollamaChat = async (
   baseUrl: string,
   model: string
 ): Promise<NormalisedResponse> => {
-  const body: Record<string, unknown> = {
+  const client = new Ollama({ host: baseUrl });
+
+  const response = await client.chat({
     model,
-    messages,
-    stream: false
-  };
-
-  if (options.tools && options.tools.length > 0) {
-    body.tools = options.tools;
-  }
-
-  const res = await fetch(`${baseUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    messages: messages as Parameters<typeof client.chat>[0]["messages"],
+    stream: false,
+    ...(options.tools && options.tools.length > 0
+      ? { tools: options.tools as Parameters<typeof client.chat>[0]["tools"] }
+      : {})
   });
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText);
-    throw new Error(`Ollama request failed (${res.status}): ${errText}`);
-  }
+  const rawMsg = response.message;
 
-  const data = (await res.json()) as {
-    message?: {
-      content?: string | null;
-      tool_calls?: Array<{
-        function: { name: string; arguments: Record<string, unknown> };
-      }>;
-    };
-  };
-
-  const rawMsg = data.message;
-
-  // Ollama tool_calls have no `id` field — generate a stable one
+  // Ollama ToolCall has no `id` — generate one; arguments is already an object
   const toolCalls: ToolCall[] =
     rawMsg?.tool_calls?.map((tc, idx) => ({
       id: `ollama-tc-${idx}-${Date.now()}`,
       type: "function" as const,
       function: {
         name: tc.function.name,
-        arguments: tc.function.arguments
+        arguments: tc.function.arguments as Record<string, unknown>
       }
     })) ?? [];
 
