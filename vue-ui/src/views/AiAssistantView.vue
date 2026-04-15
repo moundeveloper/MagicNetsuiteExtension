@@ -677,6 +677,36 @@ When a chained tool is available (e.g. \`generate_suitelet\`), **always prefer i
     console.log(
       `[ChainProgress] ${event.chainName} — Step ${event.stepIndex}/${event.totalSteps}: ${event.stepLabel} → ${event.toolName}`
     );
+  },
+  onChainStepMessage(stepMsg) {
+    // Push a real ChatMessage per chain step in real-time so all steps
+    // render in the indigo chain block as they complete, not all at once.
+    const lastAssistant = messages.value
+      .slice()
+      .reverse()
+      .find((m) => m.role === "assistant");
+
+    const newToolMsg: ChatMessage = {
+      id: Date.now() + Math.random(),
+      role: "tool",
+      content: stepMsg.content,
+      toolName: stepMsg.toolName,
+      chainContext: stepMsg.chainContext
+    };
+
+    messages.value.push(newToolMsg);
+
+    if (lastAssistant) {
+      toolMessageToAssistant.value.set(newToolMsg.id, lastAssistant.id);
+    }
+
+    // Also register in chainContextByToolKey so the history watcher
+    // doesn't duplicate this step when it processes the agent history
+    chainContextByToolKey.value.set(stepMsg.toolName + "_" + stepMsg.chainContext.stepIndex, stepMsg.chainContext);
+    // Mark key as synced so the history watcher skips it
+    syncedToolCallIds.value.add(stepMsg.toolCallId);
+
+    scrollToBottom();
   }
 });
 
@@ -762,6 +792,9 @@ const chainContextByToolKey = ref<Map<string, {
   totalSteps: number;
   stepLabel: string;
 }>>(new Map());
+
+/** Set of chain tool names — used to skip outer chain wrapper messages in the history watcher */
+const chainNameSet = new Set(chainedTools.map((c) => c.name));
 
 const chatHistory = ref<Chat[]>([]);
 const activeChatId = ref<string>("");
@@ -1155,7 +1188,7 @@ const getSkillMessagesForAssistant = (assistantId: number) => {
 
 const getNonSkillToolMessagesForAssistant = (assistantId: number) => {
   return getToolMessagesForAssistant(assistantId).filter(
-    (m) => !isSkillTool(m.toolName) && !m.chainContext
+    (m) => !isSkillTool(m.toolName) && !m.chainContext && !chainNameSet.has(m.toolName ?? "")
   );
 };
 
@@ -1256,6 +1289,14 @@ watch(
       const key = tm.toolCallId ?? `${tm.toolName}::${tm.content}`;
       if (syncedToolCallIds.value.has(key)) continue;
 
+      // Skip the outer chain wrapper result — chain steps were already pushed
+      // individually by onChainStepMessage in real-time. The wrapper message
+      // is only needed in agent history context (for the AI), not the UI.
+      if (tm.chainContext === undefined && tm.toolName && chainNameSet.has(tm.toolName)) {
+        syncedToolCallIds.value.add(key);
+        continue;
+      }
+
       // Find the last assistant message to link this tool to
       const lastAssistant = messages.value
         .slice()
@@ -1268,9 +1309,9 @@ watch(
         content: tm.content,
         toolName: tm.toolName,
         // Tag with chain context if this tool was part of a chain step
-        chainContext: tm.toolName
+        chainContext: tm.chainContext ?? (tm.toolName
           ? chainContextByToolKey.value.get(tm.toolName)
-          : undefined
+          : undefined)
       };
 
       messages.value.push(newToolMsg);

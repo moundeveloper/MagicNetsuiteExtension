@@ -1,6 +1,6 @@
 import { ref, readonly } from "vue";
 import { useAiProvider } from "./useAiProvider";
-import type { ChainedToolDefinition, ChainProgressEvent } from "../utils/chainedToolManager";
+import type { ChainedToolDefinition, ChainProgressEvent, ChainStepMessage } from "../utils/chainedToolManager";
 import { toToolDefinition, matchChainedToolIntent } from "../utils/chainedToolManager";
 
 // ─────────────────────────────────────────────
@@ -54,6 +54,13 @@ export interface AgentMessage {
   compactedCount?: number;
   /** Topic tags for relevance filtering (Strategy 2) */
   tags?: string[];
+  /** Set when this tool message was produced by a chain step */
+  chainContext?: {
+    chainName: string;
+    stepIndex: number;
+    totalSteps: number;
+    stepLabel: string;
+  };
   timestamp: Date;
 }
 
@@ -104,6 +111,12 @@ export interface AgentOptions {
   ephemeralTools?: string[];
   /** Called during chained tool execution to report step progress */
   onChainProgress?: (event: ChainProgressEvent) => void;
+  /**
+   * Called after each chain step completes with the step's tool message payload.
+   * The agent uses this to push a real history entry per step so the UI
+   * shows each step live as it executes (not only after the whole chain finishes).
+   */
+  onChainStepMessage?: (msg: ChainStepMessage) => void;
 }
 
 // ─────────────────────────────────────────────
@@ -531,7 +544,8 @@ export const useAgent = (options: AgentOptions = {}) => {
     onCompaction,
     onCompactionRequest,
     ephemeralTools = [],
-    onChainProgress
+    onChainProgress,
+    onChainStepMessage
   } = options;
 
   /** Resolve threshold — supports both static number and getter for reactive settings */
@@ -561,7 +575,9 @@ export const useAgent = (options: AgentOptions = {}) => {
   // ── Register chained tools *after* the registry exists ──
   // toToolDefinition needs a live getter for the registry (to resolve step tools
   // at execution time, not at definition time) and references to the agent hooks
-  // so each chain step fires onToolStart/onToolResult exactly like a plain call.
+  // so each chain step fires onToolStart/onToolResult/approval exactly like a plain call.
+  // chatCompletion is passed so AI steps can run a mini agent loop internally.
+  // onStepMessage lets each step push its own real history entry in real-time.
   chainedToolDefs.forEach((chain) => {
     const chainTool = toToolDefinition(
       chain,
@@ -571,7 +587,11 @@ export const useAgent = (options: AgentOptions = {}) => {
         onToolResult,
         onToolApprovalRequest
       },
-      onChainProgress
+      chatCompletion,
+      onChainProgress,
+      onChainStepMessage
+        ? (stepMsg) => onChainStepMessage(stepMsg)
+        : undefined
     );
     toolRegistry.value.set(chain.name, chainTool);
   });
@@ -1016,11 +1036,23 @@ export const useAgent = (options: AgentOptions = {}) => {
     // Check if a chained tool matches the prompt intent
     const matchedChain = matchChainedToolIntent(prompt, chainedToolDefs);
 
+    // When a chain matches, collect all step tool names it owns so we can exclude
+    // them from the tool list — the chain handles them internally.
+    const excludedStepTools = new Set<string>();
+    if (matchedChain) {
+      const matchedChainDef = chainedToolDefs.find((c) => c.name === matchedChain);
+      matchedChainDef?.steps.forEach((s) => excludedStepTools.add(s.toolName));
+    }
+
     const selected = allTools.filter((tool) => {
       // Chained tools: include when intent matches, otherwise exclude
       if (chainedToolNames.has(tool.name)) {
         return tool.name === matchedChain;
       }
+
+      // Step tools owned by the matched chain: always exclude them — the chain
+      // calls them internally with the correct data flow.
+      if (excludedStepTools.has(tool.name)) return false;
 
       // MCP tools (namespaced with "__") are always included
       if (tool.name.includes("__")) return true;
@@ -1154,13 +1186,20 @@ export const useAgent = (options: AgentOptions = {}) => {
               }
             })();
 
-            console.log(`[useAgent] → Calling tool "${toolName}"`, toolInput);
-            onToolCall?.(toolName, toolInput);
-
-            // ── Approval gate for destructive tools ──
+            const isChain = chainedToolNames.has(toolName);
             const tool = toolRegistry.value.get(toolName);
 
-            if (tool?.destructive && onToolApprovalRequest) {
+            console.log(`[useAgent] → Calling tool "${toolName}"`, toolInput);
+
+            // For chained tools: do NOT fire onToolCall (prevents chain appearing
+            // in "Used tools" section — steps will show individually instead)
+            if (!isChain) {
+              onToolCall?.(toolName, toolInput);
+            }
+
+            // ── Approval gate: only for non-chain destructive tools ──
+            // Chain steps handle their own approval gate inside the executor.
+            if (!isChain && tool?.destructive && onToolApprovalRequest) {
               const approved = await onToolApprovalRequest(toolName, toolInput);
               if (!approved) {
                 throw new ToolRejectedError(toolName);
@@ -1168,9 +1207,7 @@ export const useAgent = (options: AgentOptions = {}) => {
             }
 
             // ── For chained tools, skip outer onToolStart/onToolResult ──
-            // The chain executor calls those hooks internally per-step so the
-            // UI only sees individual step tool calls, not the chain wrapper.
-            const isChain = chainedToolNames.has(toolName);
+            // The chain executor calls those hooks internally per-step.
             if (!isChain) {
               onToolStart?.(toolName, toolInput);
             }
@@ -1205,8 +1242,9 @@ export const useAgent = (options: AgentOptions = {}) => {
               }
             }
 
-            // Push with toolCallId so buildMessages can match it to the
-            // tool_call that requested it.
+            // For chains: skip the outer pushMessage — each step already pushed
+            // its own history entry via onStepMessage. Push only a thin wrapper
+            // message so the AI gets the final summary in context.
             pushMessage({
               role: "tool",
               content: resultContent,
