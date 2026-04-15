@@ -221,18 +221,37 @@
                       ).length > 0
                     "
                   >
-                    <div
+                    <template
                       v-for="tm in inProgressTools.filter(
                         (t) => t.status === 'running' && !isSkillTool(t.name)
                       )"
-                      :key="'running-' + tm.name"
-                      class="tool-item tool-item-running"
+                      :key="'running-' + tm.name + (tm.chainContext?.stepIndex ?? '')"
                     >
-                      <div class="tool-indicator">
-                        <span class="tool-spinner" />
+                      <!-- Chain step: show chain header + step info -->
+                      <div v-if="tm.chainContext" class="chain-step-running">
+                        <div class="chain-step-header">
+                          <i class="pi pi-sitemap chain-step-icon" />
+                          <span class="chain-step-chain-name">{{ tm.chainContext.chainName }}</span>
+                          <span class="chain-step-progress">
+                            Step {{ tm.chainContext.stepIndex }}/{{ tm.chainContext.totalSteps }}
+                          </span>
+                        </div>
+                        <div class="chain-step-body">
+                          <div class="tool-indicator">
+                            <span class="tool-spinner" />
+                          </div>
+                          <span class="chain-step-label">{{ tm.chainContext.stepLabel }}</span>
+                          <span class="chain-step-tool-name">{{ tm.name }}</span>
+                        </div>
                       </div>
-                      <span class="tool-label">{{ tm.name }}</span>
-                    </div>
+                      <!-- Standalone tool: plain spinner row -->
+                      <div v-else class="tool-item tool-item-running">
+                        <div class="tool-indicator">
+                          <span class="tool-spinner" />
+                        </div>
+                        <span class="tool-label">{{ tm.name }}</span>
+                      </div>
+                    </template>
                   </template>
                   <!-- Completed tools -->
                   <template v-else>
@@ -267,6 +286,48 @@
                           <span class="tool-result-content">{{
                             truncate(tm.content, 200)
                           }}</span>
+                        </div>
+                      </div>
+                    </details>
+                  </template>
+                </div>
+
+                <!-- Chained tool results (indigo-styled pipeline breakdown) -->
+                <div
+                  v-if="getChainGroupsForAssistant(msg.id).size > 0"
+                  class="chain-group"
+                >
+                  <template
+                    v-for="[chainName, chainMsgs] in getChainGroupsForAssistant(msg.id)"
+                    :key="'chain-' + chainName"
+                  >
+                    <details class="chain-details" open>
+                      <summary class="chain-summary">
+                        <i class="pi pi-sitemap chain-summary-icon" />
+                        <span class="chain-summary-name">{{ chainName }}</span>
+                        <span class="chain-summary-steps">
+                          {{ chainMsgs.length }} step{{ chainMsgs.length > 1 ? 's' : '' }} completed
+                        </span>
+                        <i class="pi pi-chevron-down chain-summary-chevron" />
+                      </summary>
+                      <div class="chain-results-list">
+                        <div
+                          v-for="cm in chainMsgs"
+                          :key="cm.id"
+                          class="chain-result-row"
+                        >
+                          <div class="chain-result-step-badge">
+                            {{ cm.chainContext?.stepIndex }}
+                          </div>
+                          <div class="chain-result-info">
+                            <div class="chain-result-header">
+                              <span class="chain-result-label">{{ cm.chainContext?.stepLabel }}</span>
+                              <span class="chain-result-tool">{{ cm.toolName }}</span>
+                            </div>
+                            <span class="chain-result-content">{{
+                              truncate(cm.content, 200)
+                            }}</span>
+                          </div>
                         </div>
                       </div>
                     </details>
@@ -400,6 +461,7 @@ import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import { tools } from "../utils/toolManager";
 import { skillTools } from "../utils/skillSearchTools";
+import { chainedTools } from "../utils/chainedTools";
 import { useSettings } from "../states/settingsState";
 
 const STORAGE_KEY = "aiAssistantChatHistory";
@@ -414,6 +476,13 @@ interface ChatMessage {
   isStreaming?: boolean;
   isRunning?: boolean;
   compactedCount?: number;
+  /** Present when this tool message originated from a chained tool step */
+  chainContext?: {
+    chainName: string;
+    stepIndex: number;
+    totalSteps: number;
+    stepLabel: string;
+  };
 }
 
 interface Chat {
@@ -536,8 +605,12 @@ Format responses using standard markdown:
 Keep responses concise and well-structured.
 
 ## File Upload — Folder ID Rules
-When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.`,
+When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.
+
+## Chained Tools — Pipeline Priority
+When a chained tool is available (e.g. \`generate_suitelet\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.`,
   tools: [...tools, ...skillTools],
+  chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,
   onToolApprovalRequest: requestToolApproval,
@@ -567,16 +640,43 @@ When the user mentions a folder ID in their message (e.g. "folder 2543", "put it
       name,
       input,
       status: "running",
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      // Attach chain context if a chain step is currently executing
+      chainContext: activeChainContext.value ? { ...activeChainContext.value } : undefined
     });
     scrollToBottom();
   },
-  onToolResult(name, result) {
+  onToolResult(name, _result) {
     activeTools.value = activeTools.value.filter((t) => t !== name);
-    const toolIndex = inProgressTools.value.findIndex((t) => t.name === name);
+    // Remove matching entry — find last match to handle unlikely duplicate names
+    const toolIndex = [...inProgressTools.value].reverse()
+      .findIndex((t) => t.name === name);
     if (toolIndex !== -1) {
-      inProgressTools.value.splice(toolIndex, 1);
+      inProgressTools.value.splice(inProgressTools.value.length - 1 - toolIndex, 1);
     }
+    // Clear active chain context once the step finishes
+    if (activeChainContext.value) {
+      activeChainContext.value = null;
+    }
+  },
+  onChainProgress(event) {
+    // Store chain context so the next onToolStart can attach it
+    activeChainContext.value = {
+      chainName: event.chainName,
+      stepIndex: event.stepIndex,
+      totalSteps: event.totalSteps,
+      stepLabel: event.stepLabel
+    };
+    // Also record by tool name so the watcher can tag completed tool messages
+    chainContextByToolKey.value.set(event.toolName, {
+      chainName: event.chainName,
+      stepIndex: event.stepIndex,
+      totalSteps: event.totalSteps,
+      stepLabel: event.stepLabel
+    });
+    console.log(
+      `[ChainProgress] ${event.chainName} — Step ${event.stepIndex}/${event.totalSteps}: ${event.stepLabel} → ${event.toolName}`
+    );
   }
 });
 
@@ -628,10 +728,40 @@ interface InProgressTool {
   status: "running" | "done";
   result?: string;
   timestamp: number;
+  /** Set when this tool is a step inside a chained tool execution */
+  chainContext?: {
+    chainName: string;
+    stepIndex: number;
+    totalSteps: number;
+    stepLabel: string;
+  };
 }
 
 const inProgressTools = ref<InProgressTool[]>([]);
 const currentAssistantMsgId = ref<number>(0);
+
+/**
+ * Tracks the active chain execution so onToolStart can attach chain context
+ * to the InProgressTool entry for the current step.
+ */
+const activeChainContext = ref<{
+  chainName: string;
+  stepIndex: number;
+  totalSteps: number;
+  stepLabel: string;
+} | null>(null);
+
+/**
+ * Maps tool-call keys (toolCallId or `toolName::content`) to their chain context,
+ * so when the watcher syncs agent history → ChatMessage[], it can tag chain-originating
+ * tool messages with their chain step info for rendering.
+ */
+const chainContextByToolKey = ref<Map<string, {
+  chainName: string;
+  stepIndex: number;
+  totalSteps: number;
+  stepLabel: string;
+}>>(new Map());
 
 const chatHistory = ref<Chat[]>([]);
 const activeChatId = ref<string>("");
@@ -1025,8 +1155,31 @@ const getSkillMessagesForAssistant = (assistantId: number) => {
 
 const getNonSkillToolMessagesForAssistant = (assistantId: number) => {
   return getToolMessagesForAssistant(assistantId).filter(
-    (m) => !isSkillTool(m.toolName)
+    (m) => !isSkillTool(m.toolName) && !m.chainContext
   );
+};
+
+/** Tool messages that were part of a chained tool execution */
+const getChainToolMessagesForAssistant = (assistantId: number) => {
+  return getToolMessagesForAssistant(assistantId).filter(
+    (m) => !!m.chainContext
+  );
+};
+
+/** Group chain tool messages by chainName → ordered steps */
+const getChainGroupsForAssistant = (assistantId: number) => {
+  const chainMsgs = getChainToolMessagesForAssistant(assistantId);
+  const groups = new Map<string, ChatMessage[]>();
+  for (const m of chainMsgs) {
+    const key = m.chainContext!.chainName;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(m);
+  }
+  // Sort each group by stepIndex
+  for (const msgs of groups.values()) {
+    msgs.sort((a, b) => (a.chainContext?.stepIndex ?? 0) - (b.chainContext?.stepIndex ?? 0));
+  }
+  return groups;
 };
 
 const getSkillDisplayName = (toolName: string): string => {
@@ -1113,7 +1266,11 @@ watch(
         id: Date.now() + Math.random(),
         role: "tool",
         content: tm.content,
-        toolName: tm.toolName
+        toolName: tm.toolName,
+        // Tag with chain context if this tool was part of a chain step
+        chainContext: tm.toolName
+          ? chainContextByToolKey.value.get(tm.toolName)
+          : undefined
       };
 
       messages.value.push(newToolMsg);
@@ -1483,6 +1640,194 @@ const sendMessage = async () => {
 
 .tool-item-running {
   color: var(--p-slate-500);
+}
+
+/* Chain step running indicator */
+.chain-step-running {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 2px solid var(--p-indigo-300, #a5b4fc);
+  border-radius: 0 0.375rem 0.375rem 0;
+  background: var(--p-indigo-50, #eef2ff);
+  margin-bottom: 0.25rem;
+}
+
+.chain-step-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.65rem;
+  color: var(--p-indigo-500, #6366f1);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.chain-step-icon {
+  font-size: 0.6rem;
+  color: var(--p-indigo-400, #818cf8);
+}
+
+.chain-step-chain-name {
+  font-family: "JetBrains Mono", monospace;
+}
+
+.chain-step-progress {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--p-indigo-400, #818cf8);
+}
+
+.chain-step-body {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.chain-step-label {
+  font-size: 0.72rem;
+  color: var(--p-indigo-700, #4338ca);
+  font-weight: 500;
+}
+
+.chain-step-tool-name {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  color: var(--p-indigo-400, #818cf8);
+  margin-left: 0.15rem;
+}
+
+/* ── Completed chain group ── */
+.chain-group {
+  margin-bottom: 0.5rem;
+}
+
+.chain-details {
+  border: 1px solid var(--p-indigo-200, #c7d2fe);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.chain-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--p-indigo-50, #eef2ff);
+  cursor: pointer;
+  color: var(--p-indigo-700, #4338ca);
+  font-size: 0.75rem;
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.chain-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chain-summary:hover {
+  background: var(--p-indigo-100, #e0e7ff);
+}
+
+.chain-summary-icon {
+  font-size: 0.7rem;
+  color: var(--p-indigo-500, #6366f1);
+}
+
+.chain-summary-name {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+}
+
+.chain-summary-steps {
+  margin-left: auto;
+  font-size: 0.65rem;
+  color: var(--p-indigo-400, #818cf8);
+  font-weight: 400;
+}
+
+.chain-summary-chevron {
+  font-size: 0.55rem;
+  color: var(--p-indigo-400, #818cf8);
+  transition: transform 0.2s ease;
+  margin-left: 0.25rem;
+}
+
+.chain-details[open] .chain-summary-chevron {
+  transform: rotate(180deg);
+}
+
+.chain-results-list {
+  border-top: 1px solid var(--p-indigo-200, #c7d2fe);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.chain-result-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-bottom: 1px solid var(--p-indigo-100, #e0e7ff);
+}
+
+.chain-result-row:last-child {
+  border-bottom: none;
+}
+
+.chain-result-step-badge {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--p-indigo-500, #6366f1);
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 700;
+  margin-top: 0.1rem;
+}
+
+.chain-result-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.chain-result-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.chain-result-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--p-indigo-700, #4338ca);
+}
+
+.chain-result-tool {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.6rem;
+  color: var(--p-indigo-400, #818cf8);
+}
+
+.chain-result-content {
+  font-size: 0.65rem;
+  color: var(--p-indigo-500, #6366f1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tool-indicator {

@@ -1,5 +1,7 @@
 import { ref, readonly } from "vue";
 import { useAiProvider } from "./useAiProvider";
+import type { ChainedToolDefinition, ChainProgressEvent } from "../utils/chainedToolManager";
+import { toToolDefinition, matchChainedToolIntent } from "../utils/chainedToolManager";
 
 // ─────────────────────────────────────────────
 // Types
@@ -62,6 +64,12 @@ export interface AgentRunOptions {
 
 export interface AgentOptions {
   tools?: ToolDefinition[];
+  /**
+   * Chained tools: deterministic multi-step pipelines that take priority
+   * over ad-hoc tool selection when the user's intent matches.
+   * Each chain is exposed to the AI as a single callable tool.
+   */
+  chainedTools?: ChainedToolDefinition[];
   mcpServers?: MCPServer[];
   systemPrompt?: string;
   keepHistory?: boolean;
@@ -94,6 +102,8 @@ export interface AgentOptions {
    * Use for tools whose output is only needed for the current turn (e.g. skill loaders).
    */
   ephemeralTools?: string[];
+  /** Called during chained tool execution to report step progress */
+  onChainProgress?: (event: ChainProgressEvent) => void;
 }
 
 // ─────────────────────────────────────────────
@@ -509,6 +519,7 @@ const tagRecentMessages = (historyRef: AgentMessage[]) => {
 export const useAgent = (options: AgentOptions = {}) => {
   const {
     tools: localTools = [],
+    chainedTools: chainedToolDefs = [],
     mcpServers = [],
     systemPrompt: defaultSystemPrompt = "You are a helpful AI assistant.",
     keepHistory = true,
@@ -519,7 +530,8 @@ export const useAgent = (options: AgentOptions = {}) => {
     onToolApprovalRequest,
     onCompaction,
     onCompactionRequest,
-    ephemeralTools = []
+    ephemeralTools = [],
+    onChainProgress
   } = options;
 
   /** Resolve threshold — supports both static number and getter for reactive settings */
@@ -538,9 +550,31 @@ export const useAgent = (options: AgentOptions = {}) => {
   /** Estimated token count of the current context (updated each run iteration) */
   const contextTokens = ref(0);
 
+  // ── Build tool registry from local tools first ──
   const toolRegistry = ref<Map<string, ToolDefinition>>(
     new Map(localTools.map((t) => [t.name, t]))
   );
+
+  /** Set of chained tool names for priority routing */
+  const chainedToolNames = new Set(chainedToolDefs.map((c) => c.name));
+
+  // ── Register chained tools *after* the registry exists ──
+  // toToolDefinition needs a live getter for the registry (to resolve step tools
+  // at execution time, not at definition time) and references to the agent hooks
+  // so each chain step fires onToolStart/onToolResult exactly like a plain call.
+  chainedToolDefs.forEach((chain) => {
+    const chainTool = toToolDefinition(
+      chain,
+      () => toolRegistry.value,
+      {
+        onToolStart,
+        onToolResult,
+        onToolApprovalRequest
+      },
+      onChainProgress
+    );
+    toolRegistry.value.set(chain.name, chainTool);
+  });
 
   // ── MCP bootstrap ───────────────────────────
   const loadMCPTools = async () => {
@@ -954,11 +988,17 @@ export const useAgent = (options: AgentOptions = {}) => {
   /**
    * Select tools relevant to the current prompt.
    *
+   * **Chained tool priority**: When the prompt matches a chained tool's
+   * intent patterns, that chained tool is placed FIRST in the list and
+   * the individual tools it replaces are still included (as fallback),
+   * but the AI description guides it to prefer the chained tool.
+   *
    * This is a **NetSuite extension**, so NetSuite tools are included by
    * default. They are only excluded when the prompt is short and clearly
    * general-purpose (e.g. "what is 2+2", "hello").
    *
    * Categories:
+   *   - Chained tools: prioritized when intent matches
    *   - General tools (calculate, get_current_time, fetch_url): always included
    *   - NetSuite tools (netsuite_*): included by default, excluded only for
    *     clearly non-NetSuite prompts
@@ -973,7 +1013,15 @@ export const useAgent = (options: AgentOptions = {}) => {
     // Only exclude NetSuite tools for short, clearly non-NetSuite prompts
     const isGeneralOnly = prompt.length < 60 && GENERAL_ONLY_PATTERNS.test(prompt.trim());
 
+    // Check if a chained tool matches the prompt intent
+    const matchedChain = matchChainedToolIntent(prompt, chainedToolDefs);
+
     const selected = allTools.filter((tool) => {
+      // Chained tools: include when intent matches, otherwise exclude
+      if (chainedToolNames.has(tool.name)) {
+        return tool.name === matchedChain;
+      }
+
       // MCP tools (namespaced with "__") are always included
       if (tool.name.includes("__")) return true;
 
@@ -986,6 +1034,18 @@ export const useAgent = (options: AgentOptions = {}) => {
       // General tools: always included
       return true;
     });
+
+    // If a chained tool matched, move it to the front so the AI sees it first
+    if (matchedChain) {
+      const chainIdx = selected.findIndex((t) => t.name === matchedChain);
+      if (chainIdx > 0) {
+        const [chainTool] = selected.splice(chainIdx, 1);
+        selected.unshift(chainTool!);
+      }
+      console.log(
+        `[useAgent] Chained tool "${matchedChain}" matched prompt intent — prioritized`
+      );
+    }
 
     return selected.map(toExternalTool);
   };
@@ -1107,7 +1167,13 @@ export const useAgent = (options: AgentOptions = {}) => {
               }
             }
 
-            onToolStart?.(toolName, toolInput);
+            // ── For chained tools, skip outer onToolStart/onToolResult ──
+            // The chain executor calls those hooks internally per-step so the
+            // UI only sees individual step tool calls, not the chain wrapper.
+            const isChain = chainedToolNames.has(toolName);
+            if (!isChain) {
+              onToolStart?.(toolName, toolInput);
+            }
 
             let resultContent: string;
 
@@ -1127,11 +1193,15 @@ export const useAgent = (options: AgentOptions = {}) => {
                   `[useAgent] ← Tool "${toolName}" result:`,
                   resultContent
                 );
-                onToolResult?.(toolName, result);
+                if (!isChain) {
+                  onToolResult?.(toolName, result);
+                }
               } catch (execErr) {
                 resultContent = JSON.stringify({ error: String(execErr) });
                 console.error(`[useAgent] Tool "${toolName}" threw:`, execErr);
-                onToolResult?.(toolName, { error: String(execErr) });
+                if (!isChain) {
+                  onToolResult?.(toolName, { error: String(execErr) });
+                }
               }
             }
 
@@ -1141,7 +1211,7 @@ export const useAgent = (options: AgentOptions = {}) => {
               role: "tool",
               content: resultContent,
               toolName,
-              toolCallId: call.id // ← key fix: was already stored, now actually used
+              toolCallId: call.id
             });
           })
         );
