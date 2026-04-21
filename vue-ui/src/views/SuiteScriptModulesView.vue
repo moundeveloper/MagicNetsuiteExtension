@@ -156,13 +156,13 @@
             </div>
           </div>
 
-          <!-- Initial load spinner -->
-          <div v-else-if="isLoading" class="loading-state">
+          <!-- Initial load spinner (only before scraping starts) -->
+          <div v-else-if="isLoading && moduleCount === 0 && !isScraping" class="loading-state">
             <MLoader text="Loading..." />
           </div>
 
-          <!-- Update banner (when re-scraping) -->
-          <div v-if="isScraping && moduleCount > 0" class="update-banner">
+          <!-- Update banner (when re-scraping with existing data) -->
+          <div v-else-if="isScraping && moduleCount > 0" class="update-banner">
             <div class="update-banner-left">
               <MLoader text="" />
               <span class="update-banner-text"

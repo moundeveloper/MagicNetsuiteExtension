@@ -116,9 +116,22 @@ const parseParametersTable = (tableContainer) => {
   });
 };
 
+const parseEnumValues = (container) => {
+  const values = [];
+  const cells = container.querySelectorAll("td");
+  cells.forEach((cell) => {
+    const codeEls = cell.querySelectorAll("code");
+    codeEls.forEach((code) => {
+      const value = code.textContent.trim();
+      if (value) values.push(value);
+    });
+  });
+  return values;
+};
+
 const getDetails = async (url) => {
   const doc = await fetchDoc(url);
-  const details = { overview: null, notes: [], parameters: [], errors: [], syntax: null };
+  const details = { overview: null, notes: [], parameters: [], errors: [], syntax: null, enumValues: [] };
 
   const overviewTable = doc.querySelector("table.grid");
   if (overviewTable) {
@@ -131,6 +144,18 @@ const getDetails = async (url) => {
     if (sectionTitle === "syntax") {
       const codeEl = doc.querySelector("pre code");
       details.syntax = codeEl ? codeEl.textContent.trim() : null;
+      return;
+    }
+
+    if (sectionTitle === "values") {
+      let next = section.nextElementSibling;
+      while (next) {
+        if (next.tagName === "DIV" && next.querySelector("table.grid")) {
+          details.enumValues = parseEnumValues(next);
+          break;
+        }
+        next = next.nextElementSibling;
+      }
       return;
     }
 

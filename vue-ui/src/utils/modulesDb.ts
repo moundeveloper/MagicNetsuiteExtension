@@ -23,6 +23,7 @@ export interface MemberDetails {
   parameters?: ModuleParameter[];
   errors?: ModuleError[];
   syntax?: string;
+  enumValues?: string[];
 }
 
 export interface ModuleMember {
