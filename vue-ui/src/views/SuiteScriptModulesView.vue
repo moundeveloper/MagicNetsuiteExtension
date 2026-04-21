@@ -2,7 +2,7 @@
   <div class="modules-view">
     <ViewHeader />
 
-    <!-- Toolbar (inside MPanel like LogSearchView) -->
+    <!-- Toolbar (search + filters in header, like LogSearchView) -->
     <MPanel
       v-if="!isLoading && moduleCount > 0"
       outline
@@ -11,57 +11,48 @@
       box-shadow
     >
       <template #header>
-        <span class="filter-panel-label"> Search & Filters </span>
+        <div class="panel-header-row">
+          <div class="panel-header-left">
+            <InputText
+              v-model="searchQuery"
+              placeholder="Search methods, objects..."
+              class="toolbar-search"
+              @input="onSearch"
+            />
+            <MultiSelect
+              v-model="filterModules"
+              :options="moduleOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="All Modules"
+              class="toolbar-filter"
+              :maxSelectedLabels="1"
+              selectedItemsLabel="{0} modules"
+              filter
+              :virtualScrollerOptions="{ itemSize: 38 }"
+              @change="runSearch"
+            />
+            <MultiSelect
+              v-model="filterTypes"
+              :options="typeOptions"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="All Types"
+              class="toolbar-filter"
+              :maxSelectedLabels="2"
+              filter
+              @change="runSearch"
+            />
+          </div>
+          <div class="panel-header-right">
+            <span class="result-count">{{ displayedMembers.length }} results</span>
+            <Button size="small" outlined @click="startScrape" :loading="isScraping" title="Re-load modules from NetSuite">
+              <i class="pi pi-refresh" />
+              Update
+            </Button>
+          </div>
+        </div>
       </template>
-      <div class="toolbar-content">
-        <div class="toolbar-left">
-          <InputText
-            v-model="searchQuery"
-            placeholder="Search methods, objects..."
-            class="search-input"
-            @input="onSearch"
-          />
-          <MultiSelect
-            v-model="filterModules"
-            :options="moduleOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Modules"
-            class="module-filter"
-            :maxSelectedLabels="1"
-            selectedItemsLabel="{0} modules"
-            filter
-            :virtualScrollerOptions="{ itemSize: 38 }"
-            @change="runSearch"
-          />
-          <MultiSelect
-            v-model="filterTypes"
-            :options="typeOptions"
-            optionLabel="label"
-            optionValue="value"
-            placeholder="All Types"
-            class="type-filter"
-            :maxSelectedLabels="2"
-            filter
-            @change="runSearch"
-          />
-        </div>
-        <div class="toolbar-right">
-          <span class="result-count"
-            >{{ displayedMembers.length }} results</span
-          >
-          <Button
-            size="small"
-            outlined
-            @click="startScrape"
-            :loading="isScraping"
-            title="Re-load modules from NetSuite"
-          >
-            <i class="pi pi-refresh" />
-            Update
-          </Button>
-        </div>
-      </div>
     </MPanel>
 
     <!-- Module filter panel -->
@@ -249,13 +240,15 @@
                   class="detail-section"
                 >
                   <h4 class="detail-heading">Overview</h4>
-                  <div class="overview-grid">
+                  <div class="overview-list">
                     <template
                       v-for="(val, key) in expandedDetail.details.overview"
                       :key="key"
                     >
-                      <span class="overview-key">{{ key }}</span>
-                      <span class="overview-val">{{ val }}</span>
+                      <div class="overview-item">
+                        <span class="overview-label">{{ key }}</span>
+                        <span class="overview-value">{{ val }}</span>
+                      </div>
                     </template>
                   </div>
                 </div>
@@ -334,9 +327,11 @@
                   class="detail-section"
                 >
                   <h4 class="detail-heading">Syntax</h4>
-                  <pre class="syntax-block">{{
-                    expandedDetail.details.syntax
-                  }}</pre>
+                  <CodeViewer
+                    :code="expandedDetail.details.syntax"
+                    language="javascript"
+                    :auto-height="true"
+                  />
                 </div>
 
                 <div v-if="expandedDetail.scriptTypes" class="detail-section">
@@ -362,6 +357,7 @@ import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
+import CodeViewer from "../components/CodeViewer.vue";
 import Button from "primevue/button";
 import InputText from "primevue/inputtext";
 import MultiSelect from "primevue/multiselect";
@@ -669,44 +665,43 @@ const cancelScrape = () => {
   transition: width 0.3s ease;
 }
 
-.toolbar-content {
+.panel-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 1rem;
+  width: 100%;
 }
 
-.toolbar-left {
+.panel-header-left {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex: 1;
   min-width: 0;
-  flex-wrap: wrap;
 }
 
-.search-input {
+.toolbar-search {
   flex: 1;
+  min-width: 180px;
+  max-width: 300px;
+}
+
+.toolbar-filter {
   min-width: 140px;
-  max-width: 260px;
+  max-width: 180px;
 }
 
-.module-filter,
-.type-filter {
-  min-width: 120px;
-  max-width: 160px;
-}
-
-.toolbar-right {
+.panel-header-right {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 .result-count {
   font-size: 0.75rem;
-  color: var(--p-slate-400);
+  color: var(--p-slate-500);
   white-space: nowrap;
 }
 
@@ -951,19 +946,34 @@ const cancelScrape = () => {
   margin: 0;
 }
 
-.overview-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.2rem 0.75rem;
+.overview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
   font-size: 0.72rem;
 }
 
-.overview-key {
-  font-weight: 600;
-  color: var(--p-slate-600);
+.overview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--p-slate-50);
+  border-left: 3px solid var(--p-slate-300);
+  border-radius: 0 4px 4px 0;
 }
-.overview-val {
+
+.overview-label {
+  font-weight: 600;
   color: var(--p-slate-500);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.overview-value {
+  color: var(--p-slate-700);
+  line-height: 1.5;
 }
 
 .params-table {
