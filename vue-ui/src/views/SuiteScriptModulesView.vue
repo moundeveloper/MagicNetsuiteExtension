@@ -23,7 +23,6 @@
                 errors, and code examples — directly from NetSuite.
               </p>
 
-              <!-- Generic error -->
               <div v-if="scrapeState.error" class="page-hint page-hint-error">
                 <i class="pi pi-exclamation-triangle" />
                 {{ scrapeState.error }}
@@ -61,32 +60,36 @@
 
           <!-- Main UI: modules loaded -->
           <template v-else>
+
             <!-- Toolbar -->
             <div class="modules-toolbar">
               <div class="toolbar-left">
                 <InputText
                   v-model="searchQuery"
-                  placeholder="Search modules, methods, objects..."
+                  placeholder="Search methods, objects..."
                   class="search-input"
                   @input="onSearch"
                 />
-                <Select
-                  v-model="filterModule"
+                <MultiSelect
+                  v-model="filterModules"
                   :options="moduleOptions"
                   optionLabel="label"
                   optionValue="value"
                   placeholder="All Modules"
                   class="module-filter"
-                  showClear
+                  :maxSelectedLabels="1"
+                  selectedItemsLabel="{0} modules"
+                  @change="runSearch"
                 />
-                <Select
-                  v-model="filterType"
+                <MultiSelect
+                  v-model="filterTypes"
                   :options="typeOptions"
                   optionLabel="label"
                   optionValue="value"
                   placeholder="All Types"
                   class="type-filter"
-                  showClear
+                  :maxSelectedLabels="2"
+                  @change="runSearch"
                 />
               </div>
               <div class="toolbar-right">
@@ -98,19 +101,34 @@
               </div>
             </div>
 
-            <!-- Module chips (quick filter) -->
-            <div class="module-chips">
-              <button
-                v-for="mod in modules"
-                :key="mod.name"
-                class="module-chip"
-                :class="{ active: filterModule === mod.name }"
-                @click="toggleModuleFilter(mod.name)"
-              >
-                {{ mod.name }}
-                <span class="chip-count">{{ mod.memberCount }}</span>
-              </button>
-            </div>
+            <!-- Module filter panel -->
+            <MPanel
+              toggleable
+              :expanded="false"
+              outline
+              class="module-filter-panel"
+            >
+              <template #header>
+                <span class="filter-panel-label">
+                  Modules
+                  <span v-if="filterModules.length" class="filter-panel-count">{{ filterModules.length }} selected</span>
+                </span>
+              </template>
+              <template #content>
+                <div class="module-tags">
+                  <button
+                    v-for="mod in modules"
+                    :key="mod.name"
+                    class="module-tag"
+                    :class="{ active: filterModules.includes(mod.name) }"
+                    @click="toggleModuleFilter(mod.name)"
+                  >
+                    {{ mod.name }}
+                    <span class="tag-count">{{ mod.memberCount }}</span>
+                  </button>
+                </div>
+              </template>
+            </MPanel>
 
             <!-- Results -->
             <div class="results-area">
@@ -125,9 +143,9 @@
                 :key="member.id"
                 class="member-card"
                 :class="{ expanded: expandedId === member.id }"
-                @click="toggleExpand(member.id)"
               >
-                <div class="member-header">
+                <!-- Header row: click here to toggle -->
+                <div class="member-header" @click="toggleExpand(member.id)">
                   <div class="member-info">
                     <span class="member-type-badge" :class="memberTypeClass(member.memberType)">
                       {{ member.memberType }}
@@ -139,12 +157,17 @@
                     <span v-if="member.returnType" class="member-return">
                       &rarr; {{ member.returnType }}
                     </span>
+                    <i class="pi pi-chevron-down expand-icon" />
                   </div>
                 </div>
                 <p class="member-description">{{ member.description }}</p>
 
-                <!-- Expanded detail -->
-                <div v-if="expandedId === member.id && expandedDetail" class="member-detail">
+                <!-- Expanded detail — clicks here do NOT collapse the card -->
+                <div
+                  v-if="expandedId === member.id && expandedDetail"
+                  class="member-detail"
+                  @click.stop
+                >
                   <div v-if="expandedDetail.details?.overview" class="detail-section">
                     <h4 class="detail-heading">Overview</h4>
                     <div class="overview-grid">
@@ -214,13 +237,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, onMounted } from "vue";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
+import MPanel from "../components/universal/panels/MPanel.vue";
 import Button from "primevue/button";
 import InputText from "primevue/inputtext";
-import Select from "primevue/select";
+import MultiSelect from "primevue/multiselect";
 import {
   importModules,
   getModuleCount,
@@ -237,6 +261,7 @@ const props = defineProps<{ vhOffset: number }>();
 
 // ── Scraper ────────────────────────────────
 const { state: scrapeState, scrape, cancel: cancelScrapePort, reset: resetScraper } = useModuleScraper();
+import { computed } from "vue";
 const isScraping = computed(() =>
   scrapeState.value.status === "connecting" || scrapeState.value.status === "scraping"
 );
@@ -246,15 +271,15 @@ const isLoading = ref(true);
 const moduleCount = ref(0);
 const modules = ref<StoredModule[]>([]);
 const searchQuery = ref("");
-const filterModule = ref<string | null>(null);
-const filterType = ref<string | null>(null);
+const filterModules = ref<string[]>([]);
+const filterTypes = ref<string[]>([]);
 const displayedMembers = ref<ModuleSearchResult[]>([]);
 const expandedId = ref<number | null>(null);
 const expandedDetail = ref<StoredMember | null>(null);
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
-// ── Computed ───────────────────────────────
+// ── Options ────────────────────────────────
 const moduleOptions = computed(() =>
   modules.value.map((m) => ({ label: `${m.name} (${m.memberCount})`, value: m.name }))
 );
@@ -276,8 +301,6 @@ onMounted(async () => {
   isLoading.value = false;
 });
 
-watch([filterModule, filterType], () => runSearch());
-
 // ── Search ─────────────────────────────────
 const onSearch = () => {
   if (searchDebounce) clearTimeout(searchDebounce);
@@ -286,8 +309,8 @@ const onSearch = () => {
 
 const runSearch = async () => {
   displayedMembers.value = await searchMembers(searchQuery.value, {
-    moduleName: filterModule.value ?? undefined,
-    memberType: filterType.value ?? undefined,
+    moduleName: filterModules.value.length ? filterModules.value : undefined,
+    memberType: filterTypes.value.length ? filterTypes.value : undefined,
     limit: 100,
   });
 };
@@ -314,7 +337,13 @@ const memberTypeClass = (type: string) => {
 };
 
 const toggleModuleFilter = (name: string) => {
-  filterModule.value = filterModule.value === name ? null : name;
+  const idx = filterModules.value.indexOf(name);
+  if (idx === -1) {
+    filterModules.value = [...filterModules.value, name];
+  } else {
+    filterModules.value = filterModules.value.filter((n) => n !== name);
+  }
+  runSearch();
 };
 
 // ── Scrape ─────────────────────────────────
@@ -325,11 +354,9 @@ const startScrape = async () => {
   try {
     rawModules = await scrape();
   } catch {
-    // Error is already reflected in scrapeState
     return;
   }
 
-  // Import into IndexedDB
   await importModules(rawModules);
   moduleCount.value = await getModuleCount();
   modules.value = await getAllModules();
@@ -480,13 +507,13 @@ const cancelScrape = () => {
 .search-input {
   flex: 1;
   min-width: 140px;
-  max-width: 280px;
+  max-width: 260px;
 }
 
 .module-filter,
 .type-filter {
   min-width: 120px;
-  max-width: 180px;
+  max-width: 160px;
 }
 
 .toolbar-right {
@@ -501,44 +528,72 @@ const cancelScrape = () => {
   white-space: nowrap;
 }
 
-/* ── Module chips ── */
-.module-chips {
-  display: flex;
-  gap: 0.35rem;
-  padding: 0.5rem 1rem;
-  overflow-x: auto;
+/* ── Module filter panel ── */
+.module-filter-panel {
   flex-shrink: 0;
-  border-bottom: 1px solid var(--p-slate-200);
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+  background: var(--p-slate-50) !important;
+  padding: 0 !important;
 }
 
-.module-chip {
+.filter-panel-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
   display: flex;
   align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-panel-count {
+  font-size: 0.65rem;
+  font-weight: 500;
+  background: var(--p-slate-200);
+  color: var(--p-slate-600);
+  border-radius: 0.2rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.module-tags {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0.2rem 0.5rem;
+  padding: 0.25rem 0 0.5rem;
+}
+
+.module-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.45rem;
   border: 1px solid var(--p-slate-300);
-  border-radius: 1rem;
+  border-radius: 0.2rem;
   background: white;
   color: var(--p-slate-600);
   font-size: 0.675rem;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  transition: all 0.12s ease;
+  font-family: "JetBrains Mono", monospace;
 }
 
-.module-chip:hover {
+.module-tag:hover {
   background: var(--p-slate-100);
+  border-color: var(--p-slate-400);
 }
 
-.module-chip.active {
+.module-tag.active {
   background: var(--p-slate-700);
   color: white;
   border-color: var(--p-slate-700);
 }
 
-.chip-count {
+.tag-count {
   font-size: 0.6rem;
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
 /* ── Results ── */
@@ -571,10 +626,8 @@ const cancelScrape = () => {
 .member-card {
   background: white;
   border: 1px solid var(--p-slate-200);
-  border-radius: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  border-radius: 0.35rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .member-card:hover {
@@ -584,7 +637,6 @@ const cancelScrape = () => {
 
 .member-card.expanded {
   border-color: var(--p-blue-300);
-  background: var(--p-blue-50);
 }
 
 .member-header {
@@ -593,6 +645,25 @@ const cancelScrape = () => {
   justify-content: space-between;
   gap: 0.5rem;
   flex-wrap: wrap;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.member-header:hover .expand-icon {
+  color: var(--p-slate-600);
+}
+
+.expand-icon {
+  font-size: 0.6rem;
+  color: var(--p-slate-300);
+  transition: transform 0.2s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.member-card.expanded .expand-icon {
+  transform: rotate(180deg);
+  color: var(--p-slate-500);
 }
 
 .member-info {
@@ -642,7 +713,8 @@ const cancelScrape = () => {
 .member-description {
   font-size: 0.75rem;
   color: var(--p-slate-500);
-  margin: 0.3rem 0 0;
+  margin: 0;
+  padding: 0 0.75rem 0.6rem;
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -656,12 +728,13 @@ const cancelScrape = () => {
 
 /* ── Detail (expanded) ── */
 .member-detail {
-  margin-top: 0.75rem;
+  margin: 0 0.75rem 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--p-slate-200);
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  cursor: auto;
 }
 
 .detail-section {
@@ -726,7 +799,7 @@ const cancelScrape = () => {
   background: var(--p-slate-800);
   color: var(--p-slate-100);
   padding: 0.75rem;
-  border-radius: 0.35rem;
+  border-radius: 0.25rem;
   font-size: 0.7rem;
   font-family: "JetBrains Mono", monospace;
   line-height: 1.5;

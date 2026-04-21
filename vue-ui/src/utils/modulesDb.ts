@@ -191,7 +191,7 @@ export const getMemberById = async (id: number): Promise<StoredMember | undefine
  */
 export const searchMembers = async (
   query: string,
-  options?: { moduleName?: string; memberType?: string; limit?: number }
+  options?: { moduleName?: string | string[]; memberType?: string | string[]; limit?: number }
 ): Promise<ModuleSearchResult[]> => {
   const term = query.toLowerCase().trim();
   const limit = options?.limit ?? 50;
@@ -200,14 +200,22 @@ export const searchMembers = async (
 
   // Filter by module if specified
   if (options?.moduleName) {
-    collection = db.members.where("moduleName").equals(options.moduleName);
+    const names = Array.isArray(options.moduleName) ? options.moduleName : [options.moduleName];
+    if (names.length === 1) {
+      collection = db.members.where("moduleName").equals(names[0] as string);
+    } else if (names.length > 1) {
+      collection = db.members.where("moduleName").anyOf(names as string[]);
+    }
   }
 
   const all = await collection.toArray();
 
   // Filter by member type in memory
   const filtered = options?.memberType
-    ? all.filter((m) => m.memberType === options.memberType)
+    ? (() => {
+        const types = Array.isArray(options.memberType) ? options.memberType : [options.memberType];
+        return types.length > 0 ? all.filter((m) => types.includes(m.memberType)) : all;
+      })()
     : all;
 
   if (!term) {
