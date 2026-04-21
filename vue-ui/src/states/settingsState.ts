@@ -1,7 +1,7 @@
 // settingsState.ts
 import { onMounted, reactive, ref, watch } from "vue";
 
-export type AiProvider = "puter" | "ollama";
+export type AiProvider = "puter" | "ollama" | "opencode" | "copilot";
 export type CompactionMode = "auto" | "ask";
 
 export interface ShortcutsSettings {
@@ -13,6 +13,11 @@ export interface ShortcutsSettings {
   aiProvider: AiProvider;
   ollamaBaseUrl: string;
   ollamaModel: string;
+  opencodeBaseUrl: string;
+  opencodeModel: string;
+  // GitHub Copilot
+  githubToken: string;
+  copilotModel: string;
   /** Whether to auto-compact or ask the user first when context limit nears */
   compactionMode: CompactionMode;
   /** Token threshold at which context compaction triggers */
@@ -27,6 +32,10 @@ const defaultSettings: ShortcutsSettings = {
   aiProvider: "puter",
   ollamaBaseUrl: "http://localhost:11434",
   ollamaModel: "llama3.2",
+  opencodeBaseUrl: "http://localhost:4096",
+  opencodeModel: "",
+  githubToken: "",
+  copilotModel: "gpt-4o",
   compactionMode: "auto",
   compactionThreshold: 80000
 };
@@ -51,6 +60,10 @@ export function useSettings() {
         settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
         settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
         settings.ollamaModel = stored.ollamaModel || defaultSettings.ollamaModel;
+        settings.opencodeBaseUrl = stored.opencodeBaseUrl || defaultSettings.opencodeBaseUrl;
+        settings.opencodeModel = stored.opencodeModel ?? defaultSettings.opencodeModel;
+        settings.githubToken = stored.githubToken ?? defaultSettings.githubToken;
+        settings.copilotModel = stored.copilotModel || defaultSettings.copilotModel;
         settings.compactionMode = stored.compactionMode ?? defaultSettings.compactionMode;
         settings.compactionThreshold = stored.compactionThreshold ?? defaultSettings.compactionThreshold;
       }
