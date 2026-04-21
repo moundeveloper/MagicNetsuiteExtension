@@ -2,6 +2,99 @@
   <div class="modules-view">
     <ViewHeader />
 
+    <!-- Toolbar (inside MPanel like LogSearchView) -->
+    <MPanel
+      v-if="!isLoading && moduleCount > 0"
+      outline
+      toggleable
+      header="Search & Filters"
+      box-shadow
+    >
+      <template #header>
+        <span class="filter-panel-label"> Search & Filters </span>
+      </template>
+      <div class="toolbar-content">
+        <div class="toolbar-left">
+          <InputText
+            v-model="searchQuery"
+            placeholder="Search methods, objects..."
+            class="search-input"
+            @input="onSearch"
+          />
+          <MultiSelect
+            v-model="filterModules"
+            :options="moduleOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="All Modules"
+            class="module-filter"
+            :maxSelectedLabels="1"
+            selectedItemsLabel="{0} modules"
+            filter
+            :virtualScrollerOptions="{ itemSize: 38 }"
+            @change="runSearch"
+          />
+          <MultiSelect
+            v-model="filterTypes"
+            :options="typeOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="All Types"
+            class="type-filter"
+            :maxSelectedLabels="2"
+            filter
+            @change="runSearch"
+          />
+        </div>
+        <div class="toolbar-right">
+          <span class="result-count"
+            >{{ displayedMembers.length }} results</span
+          >
+          <Button
+            size="small"
+            outlined
+            @click="startScrape"
+            :loading="isScraping"
+            title="Re-load modules from NetSuite"
+          >
+            <i class="pi pi-refresh" />
+            Update
+          </Button>
+        </div>
+      </div>
+    </MPanel>
+
+    <!-- Module filter panel -->
+    <MPanel
+      v-if="!isLoading && moduleCount > 0"
+      outline
+      toggleable
+      header="Modules"
+      box-shadow
+    >
+      <template #header>
+        <span class="filter-panel-label">
+          Modules
+          <span v-if="filterModules.length" class="filter-panel-count"
+            >{{ filterModules.length }} selected</span
+          >
+        </span>
+      </template>
+      <div class="module-tags">
+        <button
+          v-for="mod in modules"
+          :key="mod.name"
+          class="module-tag"
+          :class="{ active: filterModules.includes(mod.name) }"
+          @click="toggleModuleFilter(mod.name)"
+        >
+          {{ mod.name }}
+          <span class="tag-count">{{ mod.memberCount }}</span>
+        </button>
+      </div>
+    </MPanel>
+
+    <!-- Results MCard (like LogSearchView) -->
     <MCard
       flex
       direction="column"
@@ -11,10 +104,12 @@
       :style="{ height: `${vhOffset}vh` }"
     >
       <template #default="{ contentHeight }">
-        <div class="modules-container" :style="{ height: `${contentHeight}px` }">
-
+        <div class="results-area" :style="{ height: `${contentHeight}px` }">
           <!-- Onboarding: no modules loaded yet -->
-          <div v-if="!isLoading && moduleCount === 0" class="onboarding">
+          <div
+            v-if="!isLoading && moduleCount === 0 && !isScraping"
+            class="onboarding"
+          >
             <div class="onboarding-content">
               <i class="pi pi-book onboarding-icon" />
               <h3 class="onboarding-title">SuiteScript Module Documentation</h3>
@@ -30,26 +125,43 @@
 
               <Button @click="startScrape" :loading="isScraping">
                 <i class="pi pi-cloud-download" />
-                {{ scrapeState.error ? 'Retry' : 'Load from NetSuite' }}
+                {{ scrapeState.error ? "Retry" : "Load from NetSuite" }}
               </Button>
             </div>
           </div>
 
-          <!-- Scraping progress -->
-          <div v-else-if="isScraping" class="loading-state">
+          <!-- First-time scraping progress -->
+          <div
+            v-else-if="moduleCount === 0 && isScraping"
+            class="loading-state"
+          >
             <div class="scrape-progress">
               <MLoader text="" />
               <p class="scrape-label">
-                Loading module <strong>{{ scrapeState.currentModule || '...' }}</strong>
+                Loading
+                <strong>{{ scrapeState.currentModule || "..." }}</strong>
               </p>
               <div class="progress-bar-track">
                 <div
                   class="progress-bar-fill"
-                  :style="{ width: scrapeState.total > 0 ? `${(scrapeState.current / scrapeState.total) * 100}%` : '0%' }"
+                  :style="{
+                    width:
+                      scrapeState.total > 0
+                        ? `${(scrapeState.current / scrapeState.total) * 100}%`
+                        : '2%'
+                  }"
                 />
               </div>
-              <p class="scrape-count">{{ scrapeState.current }} / {{ scrapeState.total }} modules</p>
-              <Button size="small" severity="secondary" outlined @click="cancelScrape">Cancel</Button>
+              <p class="scrape-count">
+                {{ scrapeState.current }} / {{ scrapeState.total }} modules
+              </p>
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
+                @click="cancelScrape"
+                >Cancel</Button
+              >
             </div>
           </div>
 
@@ -58,174 +170,182 @@
             <MLoader text="Loading..." />
           </div>
 
-          <!-- Main UI: modules loaded -->
-          <template v-else>
+          <!-- Update banner (when re-scraping) -->
+          <div v-if="isScraping && moduleCount > 0" class="update-banner">
+            <div class="update-banner-left">
+              <MLoader text="" />
+              <span class="update-banner-text"
+                >Updating —
+                <strong>{{
+                  scrapeState.currentModule || "connecting..."
+                }}</strong></span
+              >
+            </div>
+            <div class="update-banner-right">
+              <span class="update-banner-progress" v-if="scrapeState.total > 0"
+                >{{ scrapeState.current }} / {{ scrapeState.total }}</span
+              >
+              <div class="update-progress-bar-track">
+                <div
+                  class="update-progress-bar-fill"
+                  :style="{
+                    width:
+                      scrapeState.total > 0
+                        ? `${(scrapeState.current / scrapeState.total) * 100}%`
+                        : '2%'
+                  }"
+                />
+              </div>
+              <Button
+                size="small"
+                severity="secondary"
+                text
+                @click="cancelScrape"
+                >Cancel</Button
+              >
+            </div>
+          </div>
 
-            <!-- Toolbar -->
-            <div class="modules-toolbar">
-              <div class="toolbar-left">
-                <InputText
-                  v-model="searchQuery"
-                  placeholder="Search methods, objects..."
-                  class="search-input"
-                  @input="onSearch"
-                />
-                <MultiSelect
-                  v-model="filterModules"
-                  :options="moduleOptions"
-                  optionLabel="label"
-                  optionValue="value"
-                  placeholder="All Modules"
-                  class="module-filter"
-                  :maxSelectedLabels="1"
-                  selectedItemsLabel="{0} modules"
-                  @change="runSearch"
-                />
-                <MultiSelect
-                  v-model="filterTypes"
-                  :options="typeOptions"
-                  optionLabel="label"
-                  optionValue="value"
-                  placeholder="All Types"
-                  class="type-filter"
-                  :maxSelectedLabels="2"
-                  @change="runSearch"
-                />
-              </div>
-              <div class="toolbar-right">
-                <span class="result-count">{{ displayedMembers.length }} results</span>
-                <Button size="small" outlined @click="startScrape" :loading="isScraping" title="Re-load modules from NetSuite">
-                  <i class="pi pi-refresh" />
-                  Update
-                </Button>
-              </div>
+          <!-- Results list -->
+          <template v-else>
+            <div v-if="displayedMembers.length === 0" class="empty-state">
+              <i class="pi pi-search empty-icon" />
+              <p class="empty-title">No matching members</p>
+              <p class="empty-sub">Try a different search term or filter.</p>
             </div>
 
-            <!-- Module filter panel -->
-            <MPanel
-              toggleable
-              :expanded="false"
-              outline
-              class="module-filter-panel"
+            <div
+              v-for="member in displayedMembers"
+              :key="member.id"
+              class="member-card"
+              :class="{ expanded: expandedId === member.id }"
             >
-              <template #header>
-                <span class="filter-panel-label">
-                  Modules
-                  <span v-if="filterModules.length" class="filter-panel-count">{{ filterModules.length }} selected</span>
-                </span>
-              </template>
-              <template #content>
-                <div class="module-tags">
-                  <button
-                    v-for="mod in modules"
-                    :key="mod.name"
-                    class="module-tag"
-                    :class="{ active: filterModules.includes(mod.name) }"
-                    @click="toggleModuleFilter(mod.name)"
+              <div class="member-header" @click="toggleExpand(member.id)">
+                <div class="member-info">
+                  <span
+                    class="member-type-badge"
+                    :class="memberTypeClass(member.memberType)"
+                    >{{ member.memberType }}</span
                   >
-                    {{ mod.name }}
-                    <span class="tag-count">{{ mod.memberCount }}</span>
-                  </button>
+                  <span class="member-name">{{ member.name }}</span>
                 </div>
-              </template>
-            </MPanel>
-
-            <!-- Results -->
-            <div class="results-area">
-              <div v-if="displayedMembers.length === 0" class="empty-state">
-                <i class="pi pi-search empty-icon" />
-                <p class="empty-title">No matching members</p>
-                <p class="empty-sub">Try a different search term or filter.</p>
+                <div class="member-meta">
+                  <span class="member-module">{{ member.moduleName }}</span>
+                  <span v-if="member.returnType" class="member-return"
+                    >&rarr; {{ member.returnType }}</span
+                  >
+                  <i class="pi pi-chevron-down expand-icon" />
+                </div>
               </div>
+              <p class="member-description">{{ member.description }}</p>
 
               <div
-                v-for="member in displayedMembers"
-                :key="member.id"
-                class="member-card"
-                :class="{ expanded: expandedId === member.id }"
+                v-if="expandedId === member.id && expandedDetail"
+                class="member-detail"
+                @click.stop
               >
-                <!-- Header row: click here to toggle -->
-                <div class="member-header" @click="toggleExpand(member.id)">
-                  <div class="member-info">
-                    <span class="member-type-badge" :class="memberTypeClass(member.memberType)">
-                      {{ member.memberType }}
-                    </span>
-                    <span class="member-name">{{ member.name }}</span>
-                  </div>
-                  <div class="member-meta">
-                    <span class="member-module">{{ member.moduleName }}</span>
-                    <span v-if="member.returnType" class="member-return">
-                      &rarr; {{ member.returnType }}
-                    </span>
-                    <i class="pi pi-chevron-down expand-icon" />
+                <div
+                  v-if="expandedDetail.details?.overview"
+                  class="detail-section"
+                >
+                  <h4 class="detail-heading">Overview</h4>
+                  <div class="overview-grid">
+                    <template
+                      v-for="(val, key) in expandedDetail.details.overview"
+                      :key="key"
+                    >
+                      <span class="overview-key">{{ key }}</span>
+                      <span class="overview-val">{{ val }}</span>
+                    </template>
                   </div>
                 </div>
-                <p class="member-description">{{ member.description }}</p>
 
-                <!-- Expanded detail — clicks here do NOT collapse the card -->
                 <div
-                  v-if="expandedId === member.id && expandedDetail"
-                  class="member-detail"
-                  @click.stop
+                  v-if="expandedDetail.details?.parameters?.length"
+                  class="detail-section"
                 >
-                  <div v-if="expandedDetail.details?.overview" class="detail-section">
-                    <h4 class="detail-heading">Overview</h4>
-                    <div class="overview-grid">
-                      <template v-for="(val, key) in expandedDetail.details.overview" :key="key">
-                        <span class="overview-key">{{ key }}</span>
-                        <span class="overview-val">{{ val }}</span>
-                      </template>
-                    </div>
-                  </div>
+                  <h4 class="detail-heading">Parameters</h4>
+                  <table class="params-table">
+                    <thead>
+                      <tr>
+                        <th>Parameter</th>
+                        <th>Type</th>
+                        <th>Required</th>
+                        <th>Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(param, i) in expandedDetail.details.parameters"
+                        :key="i"
+                      >
+                        <td class="param-name">{{ param.Parameter }}</td>
+                        <td class="param-type">{{ param.Type }}</td>
+                        <td class="param-req">
+                          {{ param["Required / Optional"] }}
+                        </td>
+                        <td>{{ param.Description }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
 
-                  <div v-if="expandedDetail.details?.parameters?.length" class="detail-section">
-                    <h4 class="detail-heading">Parameters</h4>
-                    <table class="params-table">
-                      <thead>
-                        <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(param, i) in expandedDetail.details.parameters" :key="i">
-                          <td class="param-name">{{ param.Parameter }}</td>
-                          <td class="param-type">{{ param.Type }}</td>
-                          <td class="param-req">{{ param["Required / Optional"] }}</td>
-                          <td>{{ param.Description }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+                <div
+                  v-if="expandedDetail.details?.errors?.length"
+                  class="detail-section"
+                >
+                  <h4 class="detail-heading">Errors</h4>
+                  <table class="params-table">
+                    <thead>
+                      <tr>
+                        <th>Error Code</th>
+                        <th>Thrown If</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="(err, i) in expandedDetail.details.errors"
+                        :key="i"
+                      >
+                        <td class="error-code">{{ err["Error Code"] }}</td>
+                        <td>{{ err["Thrown If"] }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
 
-                  <div v-if="expandedDetail.details?.errors?.length" class="detail-section">
-                    <h4 class="detail-heading">Errors</h4>
-                    <table class="params-table">
-                      <thead>
-                        <tr><th>Error Code</th><th>Thrown If</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr v-for="(err, i) in expandedDetail.details.errors" :key="i">
-                          <td class="error-code">{{ err["Error Code"] }}</td>
-                          <td>{{ err["Thrown If"] }}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
+                <div
+                  v-if="expandedDetail.details?.notes?.length"
+                  class="detail-section"
+                >
+                  <h4 class="detail-heading">Notes</h4>
+                  <ul class="notes-list">
+                    <li
+                      v-for="(note, i) in expandedDetail.details.notes"
+                      :key="i"
+                    >
+                      {{ note }}
+                    </li>
+                  </ul>
+                </div>
 
-                  <div v-if="expandedDetail.details?.notes?.length" class="detail-section">
-                    <h4 class="detail-heading">Notes</h4>
-                    <ul class="notes-list">
-                      <li v-for="(note, i) in expandedDetail.details.notes" :key="i">{{ note }}</li>
-                    </ul>
-                  </div>
+                <div
+                  v-if="expandedDetail.details?.syntax"
+                  class="detail-section"
+                >
+                  <h4 class="detail-heading">Syntax</h4>
+                  <pre class="syntax-block">{{
+                    expandedDetail.details.syntax
+                  }}</pre>
+                </div>
 
-                  <div v-if="expandedDetail.details?.syntax" class="detail-section">
-                    <h4 class="detail-heading">Syntax</h4>
-                    <pre class="syntax-block">{{ expandedDetail.details.syntax }}</pre>
-                  </div>
-
-                  <div v-if="expandedDetail.scriptTypes" class="detail-section">
-                    <span class="script-types-label">Supported Script Types:</span>
-                    <span class="script-types-value">{{ expandedDetail.scriptTypes }}</span>
-                  </div>
+                <div v-if="expandedDetail.scriptTypes" class="detail-section">
+                  <span class="script-types-label"
+                    >Supported Script Types:</span
+                  >
+                  <span class="script-types-value">{{
+                    expandedDetail.scriptTypes
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -237,7 +357,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import ViewHeader from "../components/ViewHeader.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
@@ -253,17 +373,23 @@ import {
   getMemberById,
   type StoredModule,
   type StoredMember,
-  type ModuleSearchResult,
+  type ModuleSearchResult
 } from "../utils/modulesDb";
 import { useModuleScraper } from "../composables/useModuleScraper";
 
 const props = defineProps<{ vhOffset: number }>();
 
 // ── Scraper ────────────────────────────────
-const { state: scrapeState, scrape, cancel: cancelScrapePort, reset: resetScraper } = useModuleScraper();
-import { computed } from "vue";
-const isScraping = computed(() =>
-  scrapeState.value.status === "connecting" || scrapeState.value.status === "scraping"
+const {
+  state: scrapeState,
+  scrape,
+  cancel: cancelScrapePort,
+  reset: resetScraper
+} = useModuleScraper();
+const isScraping = computed(
+  () =>
+    scrapeState.value.status === "connecting" ||
+    scrapeState.value.status === "scraping"
 );
 
 // ── State ──────────────────────────────────
@@ -281,14 +407,17 @@ let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
 // ── Options ────────────────────────────────
 const moduleOptions = computed(() =>
-  modules.value.map((m) => ({ label: `${m.name} (${m.memberCount})`, value: m.name }))
+  modules.value.map((m) => ({
+    label: `${m.name} (${m.memberCount})`,
+    value: m.name
+  }))
 );
 
 const typeOptions = [
   { label: "Method", value: "Method" },
   { label: "Object", value: "Object" },
   { label: "Property", value: "Property" },
-  { label: "Enum", value: "Enum" },
+  { label: "Enum", value: "Enum" }
 ];
 
 // ── Lifecycle ──────────────────────────────
@@ -311,7 +440,7 @@ const runSearch = async () => {
   displayedMembers.value = await searchMembers(searchQuery.value, {
     moduleName: filterModules.value.length ? filterModules.value : undefined,
     memberType: filterTypes.value.length ? filterTypes.value : undefined,
-    limit: 100,
+    limit: 100
   });
 };
 
@@ -331,18 +460,17 @@ const memberTypeClass = (type: string) => {
     Method: "type-method",
     Object: "type-object",
     Property: "type-property",
-    Enum: "type-enum",
+    Enum: "type-enum"
   };
   return map[type] || "";
 };
 
 const toggleModuleFilter = (name: string) => {
   const idx = filterModules.value.indexOf(name);
-  if (idx === -1) {
-    filterModules.value = [...filterModules.value, name];
-  } else {
-    filterModules.value = filterModules.value.filter((n) => n !== name);
-  }
+  filterModules.value =
+    idx === -1
+      ? [...filterModules.value, name]
+      : filterModules.value.filter((n) => n !== name);
   runSearch();
 };
 
@@ -404,14 +532,12 @@ const cancelScrape = () => {
   font-size: 2.5rem;
   color: var(--p-slate-300);
 }
-
 .onboarding-title {
   font-size: 1rem;
   font-weight: 700;
   color: var(--p-slate-700);
   margin: 0;
 }
-
 .onboarding-desc {
   font-size: 0.8rem;
   color: var(--p-slate-500);
@@ -439,7 +565,7 @@ const cancelScrape = () => {
   color: #dc2626;
 }
 
-/* ── Loading / Scraping ── */
+/* ── Loading / First scrape ── */
 .loading-state {
   flex: 1;
   display: flex;
@@ -452,7 +578,7 @@ const cancelScrape = () => {
   flex-direction: column;
   align-items: center;
   gap: 0.6rem;
-  width: 240px;
+  width: 260px;
 }
 
 .scrape-label {
@@ -460,6 +586,10 @@ const cancelScrape = () => {
   color: var(--p-slate-600);
   margin: 0;
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .progress-bar-track {
@@ -483,16 +613,68 @@ const cancelScrape = () => {
   margin: 0;
 }
 
-/* ── Toolbar ── */
-.modules-toolbar {
+/* ── Update banner (shown above toolbar when re-scraping) ── */
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 1rem;
+  background: var(--p-slate-800);
+  color: var(--p-slate-100);
+  flex-shrink: 0;
+  font-size: 0.75rem;
+}
+
+.update-banner-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.update-banner-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--p-slate-200);
+}
+
+.update-banner-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.update-banner-progress {
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+  white-space: nowrap;
+}
+
+.update-progress-bar-track {
+  width: 80px;
+  height: 3px;
+  background: var(--p-slate-600);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.update-progress-bar-fill {
+  height: 100%;
+  background: var(--p-slate-300);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.toolbar-content {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--p-slate-200);
   flex-wrap: wrap;
-  flex-shrink: 0;
 }
 
 .toolbar-left {
@@ -528,28 +710,17 @@ const cancelScrape = () => {
   white-space: nowrap;
 }
 
-/* ── Module filter panel ── */
-.module-filter-panel {
-  flex-shrink: 0;
-  border-radius: 0 !important;
-  border-left: none !important;
-  border-right: none !important;
-  border-top: none !important;
-  background: var(--p-slate-50) !important;
-  padding: 0 !important;
-}
-
 .filter-panel-label {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--p-slate-600);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .filter-panel-count {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 500;
   background: var(--p-slate-200);
   color: var(--p-slate-600);
@@ -561,19 +732,18 @@ const cancelScrape = () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
-  padding: 0.25rem 0 0.5rem;
 }
 
 .module-tag {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.2rem 0.45rem;
+  padding: 0.18rem 0.45rem;
   border: 1px solid var(--p-slate-300);
   border-radius: 0.2rem;
   background: white;
   color: var(--p-slate-600);
-  font-size: 0.675rem;
+  font-size: 0.67rem;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.12s ease;
@@ -601,6 +771,7 @@ const cancelScrape = () => {
   flex: 1;
   overflow-y: auto;
   padding: 0.5rem 0.75rem;
+  padding-left: 0;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -618,23 +789,35 @@ const cancelScrape = () => {
   gap: 0.4rem;
 }
 
-.empty-icon { font-size: 2rem; color: var(--p-slate-300); }
-.empty-title { font-size: 0.95rem; font-weight: 600; color: var(--p-slate-600); margin: 0; }
-.empty-sub { font-size: 0.8rem; margin: 0; }
+.empty-icon {
+  font-size: 2rem;
+  color: var(--p-slate-300);
+}
+.empty-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
+  margin: 0;
+}
+.empty-sub {
+  font-size: 0.8rem;
+  margin: 0;
+}
 
 /* ── Member card ── */
 .member-card {
   background: white;
   border: 1px solid var(--p-slate-200);
   border-radius: 0.35rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .member-card:hover {
   border-color: var(--p-slate-300);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
 }
-
 .member-card.expanded {
   border-color: var(--p-blue-300);
 }
@@ -650,14 +833,12 @@ const cancelScrape = () => {
   user-select: none;
 }
 
-.member-header:hover .expand-icon {
-  color: var(--p-slate-600);
-}
-
 .expand-icon {
   font-size: 0.6rem;
   color: var(--p-slate-300);
-  transition: transform 0.2s ease, color 0.15s ease;
+  transition:
+    transform 0.2s ease,
+    color 0.15s ease;
   flex-shrink: 0;
 }
 
@@ -685,10 +866,22 @@ const cancelScrape = () => {
   flex-shrink: 0;
 }
 
-.type-method   { background: #dbeafe; color: #1d4ed8; }
-.type-object   { background: #f3e8ff; color: #7c3aed; }
-.type-property { background: #dcfce7; color: #16a34a; }
-.type-enum     { background: #fef3c7; color: #d97706; }
+.type-method {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.type-object {
+  background: #f3e8ff;
+  color: #7c3aed;
+}
+.type-property {
+  background: #dcfce7;
+  color: #16a34a;
+}
+.type-enum {
+  background: #fef3c7;
+  color: #d97706;
+}
 
 .member-name {
   font-size: 0.8rem;
@@ -707,8 +900,16 @@ const cancelScrape = () => {
   flex-shrink: 0;
 }
 
-.member-module { font-size: 0.65rem; color: var(--p-slate-400); font-weight: 500; }
-.member-return { font-size: 0.65rem; color: var(--p-slate-500); font-family: "JetBrains Mono", monospace; }
+.member-module {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  font-weight: 500;
+}
+.member-return {
+  font-size: 0.65rem;
+  color: var(--p-slate-500);
+  font-family: "JetBrains Mono", monospace;
+}
 
 .member-description {
   font-size: 0.75rem;
@@ -757,8 +958,13 @@ const cancelScrape = () => {
   font-size: 0.72rem;
 }
 
-.overview-key { font-weight: 600; color: var(--p-slate-600); }
-.overview-val { color: var(--p-slate-500); }
+.overview-key {
+  font-weight: 600;
+  color: var(--p-slate-600);
+}
+.overview-val {
+  color: var(--p-slate-500);
+}
 
 .params-table {
   width: 100%;
@@ -782,10 +988,26 @@ const cancelScrape = () => {
   vertical-align: top;
 }
 
-.param-name  { font-family: "JetBrains Mono", monospace; font-weight: 600; color: var(--p-slate-700); white-space: nowrap; }
-.param-type  { font-family: "JetBrains Mono", monospace; color: var(--p-blue-600); white-space: nowrap; }
-.param-req   { white-space: nowrap; }
-.error-code  { font-family: "JetBrains Mono", monospace; font-weight: 600; color: var(--p-red-600); white-space: nowrap; }
+.param-name {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+  color: var(--p-slate-700);
+  white-space: nowrap;
+}
+.param-type {
+  font-family: "JetBrains Mono", monospace;
+  color: var(--p-blue-600);
+  white-space: nowrap;
+}
+.param-req {
+  white-space: nowrap;
+}
+.error-code {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+  color: var(--p-red-600);
+  white-space: nowrap;
+}
 
 .notes-list {
   margin: 0;
@@ -809,6 +1031,14 @@ const cancelScrape = () => {
   margin: 0;
 }
 
-.script-types-label { font-size: 0.7rem; font-weight: 600; color: var(--p-slate-600); }
-.script-types-value { font-size: 0.7rem; color: var(--p-slate-500); margin-left: 0.3rem; }
+.script-types-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
+}
+.script-types-value {
+  font-size: 0.7rem;
+  color: var(--p-slate-500);
+  margin-left: 0.3rem;
+}
 </style>
