@@ -63,7 +63,8 @@
         "content/core/interceptors/*.js",
         "content/utils/*.js",
         "content/ui/**/*.js",
-        "content/keyboard/*.js"
+        "content/keyboard/*.js",
+        "content/modules/*.js"
       ],
       "matches": ["<all_urls>"]
     }

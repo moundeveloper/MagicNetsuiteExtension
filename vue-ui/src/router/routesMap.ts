@@ -16,6 +16,7 @@ import TemplatesView from "../views/TemplatesView.vue";
 import TemplateDetailView from "../views/TemplateDetailView.vue";
 import AiAssistantView from "../views/AiAssistantView.vue";
 import SkillsView from "../views/SkillsView.vue";
+import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -208,6 +209,14 @@ export const routes: FullRoute[] = [
     component: SkillsView,
     status: RouteStatus.release,
     breadcrumb: "Skills"
+  },
+  {
+    route: "/suitescript-modules",
+    name: "SuiteScript Modules",
+    icon: "pi pi-database",
+    component: SuiteScriptModulesView,
+    status: RouteStatus.release,
+    breadcrumb: "SuiteScript Modules"
   }
 ];
 
