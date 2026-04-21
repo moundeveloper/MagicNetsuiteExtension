@@ -45,8 +45,16 @@
             />
           </div>
           <div class="panel-header-right">
-            <span class="result-count">{{ displayedMembers.length }} results</span>
-            <Button size="small" outlined @click="startScrape" :loading="isScraping" title="Re-load modules from NetSuite">
+            <span class="result-count"
+              >{{ displayedMembers.length }} results</span
+            >
+            <Button
+              size="small"
+              outlined
+              @click="startScrape"
+              :loading="isScraping"
+              title="Re-load modules from NetSuite"
+            >
               <i class="pi pi-refresh" />
               Update
             </Button>
@@ -98,7 +106,9 @@
         <div class="results-area" :style="{ height: `${contentHeight}px` }">
           <!-- Onboarding: no modules loaded yet -->
           <div
-            v-if="!isLoading && moduleCount === 0 && !isScraping"
+            v-if="
+              !isLoading && moduleCount === 0 && !isScraping && !isProcessing
+            "
             class="onboarding"
           >
             <div class="onboarding-content">
@@ -121,9 +131,9 @@
             </div>
           </div>
 
-          <!-- First-time scraping progress -->
+          <!-- First-time scraping + import progress -->
           <div
-            v-else-if="moduleCount === 0 && isScraping"
+            v-else-if="moduleCount === 0 && (isScraping || isProcessing)"
             class="loading-state"
           >
             <div class="scrape-progress">
@@ -157,28 +167,29 @@
           </div>
 
           <!-- Initial load spinner (only before scraping starts) -->
-          <div v-else-if="isLoading && moduleCount === 0 && !isScraping" class="loading-state">
+          <div
+            v-else-if="isLoading && moduleCount === 0 && !isScraping"
+            class="loading-state"
+          >
             <MLoader text="Loading..." />
           </div>
 
-          <!-- Update banner (when re-scraping with existing data) -->
-          <div v-else-if="isScraping && moduleCount > 0" class="update-banner">
-            <div class="update-banner-left">
+          <!-- Update progress (when re-scraping with existing data) -->
+          <div
+            v-else-if="(isScraping || isProcessing) && moduleCount > 0"
+            class="loading-state"
+          >
+            <div class="scrape-progress">
               <MLoader text="" />
-              <span class="update-banner-text"
-                >Updating —
-                <strong>{{
-                  scrapeState.currentModule || "connecting..."
-                }}</strong></span
-              >
-            </div>
-            <div class="update-banner-right">
-              <span class="update-banner-progress" v-if="scrapeState.total > 0"
-                >{{ scrapeState.current }} / {{ scrapeState.total }}</span
-              >
-              <div class="update-progress-bar-track">
+              <p class="scrape-label">
+                {{ isProcessing ? "Saving modules..." : "Updating" }}
+                <strong v-if="!isProcessing">{{
+                  scrapeState.currentModule || "..."
+                }}</strong>
+              </p>
+              <div class="progress-bar-track">
                 <div
-                  class="update-progress-bar-fill"
+                  class="progress-bar-fill"
                   :style="{
                     width:
                       scrapeState.total > 0
@@ -187,10 +198,14 @@
                   }"
                 />
               </div>
+              <p class="scrape-count">
+                {{ scrapeState.current }} / {{ scrapeState.total }} modules
+              </p>
               <Button
+                v-if="!isProcessing"
                 size="small"
                 severity="secondary"
-                text
+                outlined
                 @click="cancelScrape"
                 >Cancel</Button
               >
@@ -334,6 +349,36 @@
                   />
                 </div>
 
+                <div
+                  v-if="expandedDetail.details?.enumValues?.length"
+                  class="detail-section"
+                >
+                  <h4 class="detail-heading">
+                    Values
+                    <span class="enum-count-badge">{{
+                      expandedDetail.details.enumValues.length
+                    }}</span>
+                  </h4>
+                  <InputText
+                    v-model="enumSearch"
+                    placeholder="Filter values..."
+                    class="enum-search-input"
+                  />
+                  <div class="enum-values-grid">
+                    <span
+                      v-for="val in filteredEnumValues"
+                      :key="val"
+                      class="enum-value-tag"
+                      >{{ val }}</span
+                    >
+                    <span
+                      v-if="filteredEnumValues.length === 0"
+                      class="enum-no-match"
+                      >No matches</span
+                    >
+                  </div>
+                </div>
+
                 <div v-if="expandedDetail.scriptTypes" class="detail-section">
                   <span class="script-types-label"
                     >Supported Script Types:</span
@@ -390,6 +435,7 @@ const isScraping = computed(
 
 // ── State ──────────────────────────────────
 const isLoading = ref(true);
+const isProcessing = ref(false);
 const moduleCount = ref(0);
 const modules = ref<StoredModule[]>([]);
 const searchQuery = ref("");
@@ -398,6 +444,14 @@ const filterTypes = ref<string[]>([]);
 const displayedMembers = ref<ModuleSearchResult[]>([]);
 const expandedId = ref<number | null>(null);
 const expandedDetail = ref<StoredMember | null>(null);
+const enumSearch = ref("");
+
+const filteredEnumValues = computed(() => {
+  const vals = expandedDetail.value?.details?.enumValues ?? [];
+  if (!enumSearch.value.trim()) return vals;
+  const q = enumSearch.value.toLowerCase();
+  return vals.filter((v) => v.toLowerCase().includes(q));
+});
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -445,9 +499,11 @@ const toggleExpand = async (id: number) => {
   if (expandedId.value === id) {
     expandedId.value = null;
     expandedDetail.value = null;
+    enumSearch.value = "";
     return;
   }
   expandedId.value = id;
+  enumSearch.value = "";
   expandedDetail.value = (await getMemberById(id)) ?? null;
 };
 
@@ -481,10 +537,15 @@ const startScrape = async () => {
     return;
   }
 
-  await importModules(rawModules);
-  moduleCount.value = await getModuleCount();
-  modules.value = await getAllModules();
-  await runSearch();
+  isProcessing.value = true;
+  try {
+    await importModules(rawModules);
+    moduleCount.value = await getModuleCount();
+    modules.value = await getAllModules();
+    await runSearch();
+  } finally {
+    isProcessing.value = false;
+  }
 };
 
 const cancelScrape = () => {
@@ -607,62 +668,6 @@ const cancelScrape = () => {
   font-size: 0.7rem;
   color: var(--p-slate-400);
   margin: 0;
-}
-
-/* ── Update banner (shown above toolbar when re-scraping) ── */
-.update-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.45rem 1rem;
-  background: var(--p-slate-800);
-  color: var(--p-slate-100);
-  flex-shrink: 0;
-  font-size: 0.75rem;
-}
-
-.update-banner-left {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  flex: 1;
-}
-
-.update-banner-text {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--p-slate-200);
-}
-
-.update-banner-right {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-}
-
-.update-banner-progress {
-  font-size: 0.7rem;
-  color: var(--p-slate-400);
-  white-space: nowrap;
-}
-
-.update-progress-bar-track {
-  width: 80px;
-  height: 3px;
-  background: var(--p-slate-600);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.update-progress-bar-fill {
-  height: 100%;
-  background: var(--p-slate-300);
-  border-radius: 2px;
-  transition: width 0.3s ease;
 }
 
 .panel-header-row {
@@ -925,24 +930,26 @@ const cancelScrape = () => {
 /* ── Detail (expanded) ── */
 .member-detail {
   margin: 0 0.75rem 0.75rem;
-  padding-top: 0.75rem;
+  padding-top: 1rem;
   border-top: 1px solid var(--p-slate-200);
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.1rem;
   cursor: auto;
 }
 
 .detail-section {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.75rem;
 }
 
 .detail-heading {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  color: var(--p-slate-700);
+  color: var(--p-slate-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   margin: 0;
 }
 
@@ -1039,6 +1046,52 @@ const cancelScrape = () => {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+
+.enum-count-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 500;
+  background: var(--p-slate-200);
+  color: var(--p-slate-600);
+  border-radius: 0.2rem;
+  padding: 0.1rem 0.35rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.enum-search-input {
+  width: 100%;
+  font-size: 0.72rem !important;
+  padding: 0.3rem 0.5rem !important;
+  height: auto !important;
+}
+
+.enum-values-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 0.1rem 0;
+}
+
+.enum-value-tag {
+  display: inline-block;
+  padding: 0.18rem 0.5rem;
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.2rem;
+  font-size: 0.67rem;
+  font-family: "JetBrains Mono", monospace;
+  white-space: nowrap;
+}
+
+.enum-no-match {
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+  font-style: italic;
 }
 
 .script-types-label {
