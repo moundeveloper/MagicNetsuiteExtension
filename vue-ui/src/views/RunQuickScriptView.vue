@@ -498,7 +498,7 @@ onMounted(() => {
   }
 
   chrome.storage.local.get(
-    ["cachedFiles", "cachedOpenTabs", "cachedActiveTab"],
+    ["cachedFiles", "cachedOpenTabs", "cachedActiveTab", "rqs_pendingFile"],
     (result) => {
 
       try {
@@ -553,6 +553,22 @@ onMounted(() => {
         activeFileId.value = "";
 
         chrome.storage.local.remove(["cachedOpenTabs", "cachedActiveTab"]);
+      }
+
+      // Pick up any pending file transferred from SuiteQL Editor
+      if (result.rqs_pendingFile && typeof result.rqs_pendingFile === "object") {
+        const pf = result.rqs_pendingFile as any;
+        const pendingFile: ScriptFile = {
+          id: pf.id || generateId(),
+          name: pf.name || "sql_query.js",
+          code: pf.code || "",
+          logs: [],
+          isExecuting: false
+        };
+        files.value = [...files.value, pendingFile];
+        openTabs.value = [...openTabs.value, pendingFile.id];
+        activeFileId.value = pendingFile.id;
+        chrome.storage.local.remove("rqs_pendingFile");
       }
 
       isRestoring.value = false;

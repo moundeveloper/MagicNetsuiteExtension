@@ -58,13 +58,38 @@ window.fetchSuiteQLTableDetail = async (tableName) => {
 };
 
 /**
- * Run a SuiteQL query using N/query module
+ * Run a SuiteQL query using the paged N/query API
  * @param {object} N - NetSuite modules
  * @param {string} sql - The SuiteQL query string
+ * @param {number|null} limit - Max rows to return (null = all)
+ * @returns {{ results: object[], totalCount: number }}
  */
-window.runSuiteQLQuery = async (N, sql) => {
+window.runSuiteQLQuery = async (N, sql, limit) => {
   const { query } = N;
-  const resultSet = await query.runSuiteQL.promise({ query: sql });
-  const results = resultSet.asMappedResults();
-  return results;
+  const pagedData = await query.runSuiteQLPaged.promise({ query: sql, pageSize: 1000 });
+  const totalCount = pagedData.count;
+
+  const results = [];
+  const effectiveLimit = (limit === null || limit === undefined) ? Infinity : limit;
+
+  for (const pageRange of pagedData.pageRanges) {
+    if (results.length >= effectiveLimit) break;
+    const page = await pagedData.fetch.promise({ index: pageRange.index });
+    const rows = page.data.asMappedResults();
+    results.push(...rows);
+  }
+
+  return { results: results.slice(0, effectiveLimit === Infinity ? undefined : effectiveLimit), totalCount };
+};
+
+/**
+ * Get the total row count for a SuiteQL query without fetching all data
+ * @param {object} N - NetSuite modules
+ * @param {string} sql - The SuiteQL query string
+ * @returns {number}
+ */
+window.getSuiteQLCount = async (N, sql) => {
+  const { query } = N;
+  const pagedData = await query.runSuiteQLPaged.promise({ query: sql, pageSize: 5 });
+  return pagedData.count;
 };

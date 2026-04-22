@@ -247,8 +247,12 @@ const handlers = {
     console.log("Fetch SuiteQL Table Detail action received:", tableName);
     return window.fetchSuiteQLTableDetail(tableName);
   },
-  RUN_SUITEQL_QUERY: async ({ modules, payload: { sql } }) => {
-    console.log("Run SuiteQL Query action received");
-    return window.runSuiteQLQuery(modules, sql);
+  RUN_SUITEQL_QUERY: async ({ modules, payload: { sql, limit } }) => {
+    console.log("Run SuiteQL Query action received", { limit });
+    return window.runSuiteQLQuery(modules, sql, limit ?? 1000);
+  },
+  GET_SUITEQL_COUNT: async ({ modules, payload: { sql } }) => {
+    console.log("Get SuiteQL Count action received");
+    return window.getSuiteQLCount(modules, sql);
   }
 };
