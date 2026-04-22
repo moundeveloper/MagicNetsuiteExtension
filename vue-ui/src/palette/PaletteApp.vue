@@ -151,107 +151,10 @@
         </div>
 
         <template v-else-if="detailFull">
-          <!-- Overview -->
-          <div v-if="detailFull.details?.overview" class="d-section">
-            <h4 class="d-heading">Overview</h4>
-            <div class="overview-list">
-              <div
-                v-for="(val, key) in detailFull.details.overview"
-                :key="key"
-                class="overview-item"
-              >
-                <span class="overview-label">{{ key }}</span>
-                <span class="overview-value">{{ val }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Parameters -->
-          <div v-if="detailFull.details?.parameters?.length" class="d-section">
-            <h4 class="d-heading">Parameters</h4>
-            <table class="params-table">
-              <thead>
-                <tr>
-                  <th>Parameter</th>
-                  <th>Type</th>
-                  <th>Required</th>
-                  <th>Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(p, i) in detailFull.details.parameters" :key="i">
-                  <td class="param-name">{{ p.Parameter }}</td>
-                  <td class="param-type">{{ p.Type }}</td>
-                  <td class="param-req">{{ p["Required / Optional"] }}</td>
-                  <td>{{ p.Description }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Errors -->
-          <div v-if="detailFull.details?.errors?.length" class="d-section">
-            <h4 class="d-heading">Errors</h4>
-            <table class="params-table">
-              <thead>
-                <tr>
-                  <th>Error Code</th>
-                  <th>Thrown If</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(e, i) in detailFull.details.errors" :key="i">
-                  <td class="error-code">{{ e["Error Code"] }}</td>
-                  <td>{{ e["Thrown If"] }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Notes -->
-          <div v-if="detailFull.details?.notes?.length" class="d-section">
-            <h4 class="d-heading">Notes</h4>
-            <ul class="notes-list">
-              <li v-for="(n, i) in detailFull.details.notes" :key="i">{{ n }}</li>
-            </ul>
-          </div>
-
-          <!-- Syntax -->
-          <div v-if="detailFull.details?.syntax" class="d-section">
-            <h4 class="d-heading">Syntax</h4>
-            <CodeViewer
-              :code="detailFull.details.syntax"
-              language="javascript"
-              :auto-height="true"
-            />
-          </div>
-
-          <!-- Enum values -->
-          <div v-if="detailFull.details?.enumValues?.length" class="d-section">
-            <h4 class="d-heading">
-              Values
-              <span class="enum-count-badge">{{ detailFull.details.enumValues.length }}</span>
-            </h4>
-            <input
-              v-model="enumSearch"
-              class="enum-search-input"
-              placeholder="Filter values..."
-            />
-            <div class="enum-grid">
-              <span
-                v-for="v in filteredEnumValues"
-                :key="v"
-                class="enum-tag"
-              >{{ v }}</span>
-              <span v-if="filteredEnumValues.length === 0" class="enum-no-match">No matches</span>
-            </div>
-          </div>
-
-          <!-- Script types -->
-          <div v-if="detailFull.scriptTypes" class="d-section">
-            <h4 class="d-heading">Supported Script Types</h4>
-            <p class="script-types-text">{{ detailFull.scriptTypes }}</p>
-          </div>
+          <MemberDetail
+            :details="detailFull.details"
+            :script-types="detailFull.scriptTypes"
+          />
         </template>
       </div>
     </div>
@@ -259,8 +162,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from "vue";
-import CodeViewer from "../components/CodeViewer.vue";
+import { ref, nextTick, onMounted, onBeforeUnmount } from "vue";
+import MemberDetail from "../components/MemberDetail.vue";
 import {
   searchMembers,
   getMemberById,
@@ -283,7 +186,6 @@ const itemRefs: HTMLElement[] = [];
 const detailMember = ref<ModuleSearchResult | null>(null);
 const detailFull = ref<StoredMember | null>(null);
 const isLoadingDetail = ref(false);
-const enumSearch = ref("");
 
 // Sidebar inline search
 const sidebarSearchOpen = ref(false);
@@ -311,14 +213,6 @@ const typeFilter = ref<TypeFilter>("All");
 const dbStats = ref<{ moduleCount: number; memberCount: number } | null>(null);
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-
-// ── Computed ───────────────────────────────────────────────────────
-const filteredEnumValues = computed(() => {
-  const vals = detailFull.value?.details?.enumValues ?? [];
-  if (!enumSearch.value.trim()) return vals;
-  const q = enumSearch.value.toLowerCase();
-  return vals.filter((v) => v.toLowerCase().includes(q));
-});
 
 // ── Helpers ────────────────────────────────────────────────────────
 const badgeClass = (type: string) => {
@@ -361,7 +255,6 @@ const closePalette = () => {
 const closeDetail = () => {
   detailMember.value = null;
   detailFull.value = null;
-  enumSearch.value = "";
   if (!paletteOpen.value) {
     window.parent.postMessage({ type: "PALETTE_CLOSE" }, "*");
   }
@@ -389,7 +282,6 @@ const doSearch = async () => {
 // ── Select ─────────────────────────────────────────────────────────
 const selectItem = async (item: ModuleSearchResult) => {
   paletteOpen.value = false;
-  enumSearch.value = "";
   detailMember.value = item;
   isLoadingDetail.value = true;
   detailFull.value = (await getMemberById(item.id)) ?? null;
@@ -457,7 +349,6 @@ const doSidebarSearch = async () => {
 
 const selectSidebarItem = async (item: ModuleSearchResult) => {
   closeSidebarSearch();
-  enumSearch.value = "";
   detailMember.value = item;
   isLoadingDetail.value = true;
   detailFull.value = (await getMemberById(item.id)) ?? null;
@@ -1109,169 +1000,6 @@ body {
   padding: 2rem;
   color: #94a3b8;
   font-size: 0.8rem;
-}
-
-/* ── Detail sections ── */
-.d-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.d-heading {
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.overview-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.overview-item {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  padding: 0.45rem 0.6rem;
-  background: #f8fafc;
-  border-left: 3px solid #cbd5e1;
-  border-radius: 0 4px 4px 0;
-  font-size: 0.72rem;
-}
-
-.overview-label {
-  font-weight: 600;
-  color: #94a3b8;
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.overview-value {
-  color: #334155;
-  line-height: 1.5;
-}
-
-.params-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.7rem;
-}
-
-.params-table th {
-  text-align: left;
-  padding: 0.3rem 0.4rem;
-  background: #f8fafc;
-  color: #64748b;
-  font-weight: 600;
-  border-bottom: 1px solid #e2e8f0;
-}
-
-.params-table td {
-  padding: 0.3rem 0.4rem;
-  color: #475569;
-  border-bottom: 1px solid #f1f5f9;
-  vertical-align: top;
-}
-
-.param-name {
-  font-family: "JetBrains Mono", monospace;
-  font-weight: 600;
-  color: #1e293b;
-  white-space: nowrap;
-}
-
-.param-type {
-  font-family: "JetBrains Mono", monospace;
-  color: #1d4ed8;
-  white-space: nowrap;
-}
-
-.param-req {
-  white-space: nowrap;
-}
-
-.error-code {
-  font-family: "JetBrains Mono", monospace;
-  font-weight: 600;
-  color: #dc2626;
-  white-space: nowrap;
-}
-
-.notes-list {
-  margin: 0;
-  padding-left: 1.2rem;
-  font-size: 0.72rem;
-  color: #475569;
-  line-height: 1.5;
-}
-
-.enum-count-badge {
-  display: inline-block;
-  font-size: 0.6rem;
-  font-weight: 500;
-  background: #e2e8f0;
-  color: #64748b;
-  border-radius: 3px;
-  padding: 1px 5px;
-}
-
-.enum-search-input {
-  width: 100%;
-  border: 1px solid #e2e8f0;
-  border-radius: 5px;
-  padding: 0.3rem 0.5rem;
-  font-size: 0.72rem;
-  font-family: inherit;
-  outline: none;
-  color: #334155;
-  background: #fafafa;
-}
-
-.enum-search-input:focus {
-  border-color: #94a3b8;
-  background: #fff;
-}
-
-.enum-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  max-height: 150px;
-  overflow-y: auto;
-  padding: 0.1rem 0;
-}
-
-.enum-tag {
-  display: inline-block;
-  padding: 0.15rem 0.45rem;
-  background: #f1f5f9;
-  color: #334155;
-  border: 1px solid #cbd5e1;
-  border-radius: 3px;
-  font-size: 0.67rem;
-  font-family: "JetBrains Mono", monospace;
-  white-space: nowrap;
-}
-
-.enum-no-match {
-  font-size: 0.7rem;
-  color: #94a3b8;
-  font-style: italic;
-}
-
-.script-types-text {
-  font-size: 0.72rem;
-  color: #475569;
-  margin: 0;
 }
 
 /* ── Transitions ── */

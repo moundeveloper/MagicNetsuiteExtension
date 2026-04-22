@@ -50,6 +50,7 @@ const hidePalette = () => {
   isVisible = false;
   paletteFrame.style.opacity = "0";
   paletteFrame.style.pointerEvents = "none";
+  window.focus();
 };
 
 const togglePalette = () => {
