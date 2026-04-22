@@ -160,6 +160,7 @@ const fetchCompareVersion = async (
         printType: templateData.printType,
         transactionType: templateData.tranType,
         customRecordType: templateData.customRecordTypeScriptId,
+        savedSearch: templateData.savedSearch,
         version
       }
     );
