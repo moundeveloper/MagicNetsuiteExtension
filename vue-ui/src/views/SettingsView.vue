@@ -372,6 +372,15 @@ const modelLabel = (m: OllamaModel) => {
       />
     </div>
     <div class="shortcut-item">
+      <label for="modules-search">SuiteScript Module Search:</label>
+      <InputText
+        id="modules-search"
+        v-model="settings.modulesSearch"
+        placeholder="e.g., ctrl+m"
+      />
+      <small>(On NetSuite pages)</small>
+    </div>
+    <div class="shortcut-item">
       <label for="customization-open">Open On Customization Page:</label>
       <Checkbox
         id="customization-open"

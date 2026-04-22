@@ -7,6 +7,7 @@ export type CompactionMode = "auto" | "ask";
 export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
+  modulesSearch: string; // configurable, default "ctrl+m"
   openOnCustomizationPage: boolean;
   preferredFeatures: string[]; // array of route names that are preferred
   // AI provider settings
@@ -27,6 +28,7 @@ export interface ShortcutsSettings {
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
+  modulesSearch: "ctrl+m",
   openOnCustomizationPage: true,
   preferredFeatures: [],
   aiProvider: "puter",
@@ -56,6 +58,7 @@ export function useSettings() {
           ? [...stored.preferredFeatures]
           : [];
         settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
+        settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
         settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
         settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
