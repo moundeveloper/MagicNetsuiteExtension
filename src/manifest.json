@@ -48,6 +48,7 @@
     {
       "resources": [
         "netsuiteApi/scripts.js",
+        "netsuiteApi/suiteQL.js",
         "netsuiteApi/netsuiteApi.js",
         "netsuiteApi/content.js",
         "netsuiteApi/customRecords.js",

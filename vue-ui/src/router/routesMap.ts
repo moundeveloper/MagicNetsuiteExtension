@@ -17,6 +17,7 @@ import TemplateDetailView from "../views/TemplateDetailView.vue";
 import AiAssistantView from "../views/AiAssistantView.vue";
 import SkillsView from "../views/SkillsView.vue";
 import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
+import SuiteQLView from "../views/SuiteQLView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -217,6 +218,14 @@ export const routes: FullRoute[] = [
     component: SuiteScriptModulesView,
     status: RouteStatus.release,
     breadcrumb: "SuiteScript Modules"
+  },
+  {
+    route: "/suiteql",
+    name: "SuiteQL Editor",
+    icon: "pi pi-server",
+    component: SuiteQLView,
+    status: RouteStatus.release,
+    breadcrumb: "SuiteQL Editor"
   }
 ];
 

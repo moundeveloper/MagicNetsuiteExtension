@@ -238,5 +238,17 @@ const handlers = {
         resolve({ pong: true, delay });
       }, delay);
     });
+  },
+  FETCH_SUITEQL_TABLES: async () => {
+    console.log("Fetch SuiteQL Tables action received");
+    return window.fetchSuiteQLTables();
+  },
+  FETCH_SUITEQL_TABLE_DETAIL: async ({ payload: { tableName } }) => {
+    console.log("Fetch SuiteQL Table Detail action received:", tableName);
+    return window.fetchSuiteQLTableDetail(tableName);
+  },
+  RUN_SUITEQL_QUERY: async ({ modules, payload: { sql } }) => {
+    console.log("Run SuiteQL Query action received");
+    return window.runSuiteQLQuery(modules, sql);
   }
 };
