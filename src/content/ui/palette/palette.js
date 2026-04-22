@@ -54,7 +54,8 @@ const hidePalette = () => {
 
 const togglePalette = () => {
   if (isVisible) {
-    hidePalette();
+    // Iframe already visible — let Vue app decide context (open sidebar search or close palette)
+    paletteFrame.contentWindow.postMessage({ type: "PALETTE_OPEN" }, "*");
   } else {
     showPalette();
   }

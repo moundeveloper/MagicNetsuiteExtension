@@ -76,7 +76,52 @@
 
   <!-- Detail slide-over (right side, full height) -->
   <transition name="detail-slide">
-    <div v-if="detailMember" class="detail-panel">
+    <div v-if="detailMember" class="detail-panel" :style="{ width: panelWidth + 'px' }">
+      <!-- Resize handle (left edge) -->
+      <div class="resize-handle" @mousedown.prevent="startResize" />
+
+      <!-- Inline sidebar search -->
+      <transition name="sidebar-search-drop">
+        <div v-if="sidebarSearchOpen" class="sidebar-search" @keydown="onSidebarKeydown" @click.stop>
+          <div class="sidebar-search-row">
+            <i class="pi pi-search sidebar-search-icon" />
+            <input
+              ref="sidebarSearchInputEl"
+              v-model="sidebarQuery"
+              class="sidebar-search-input"
+              placeholder="Search SuiteScript..."
+              autocomplete="off"
+              spellcheck="false"
+              @input="onSidebarInput"
+            />
+            <button class="sidebar-search-close" @click="closeSidebarSearch" title="Close search (Esc)">
+              <i class="pi pi-times" />
+            </button>
+          </div>
+          <div v-if="sidebarResults.length > 0" class="sidebar-results" ref="sidebarResultsEl">
+            <div
+              v-for="(item, idx) in sidebarResults"
+              :key="item.id"
+              class="sidebar-result-item"
+              :class="{ active: idx === sidebarActiveIdx }"
+              @mouseenter="sidebarActiveIdx = idx"
+              @click="selectSidebarItem(item)"
+              :ref="(el) => setSidebarItemRef(el, idx)"
+            >
+              <span class="result-badge" :class="badgeClass(item.memberType)">{{ item.memberType }}</span>
+              <span class="result-name">{{ item.name }}</span>
+              <span class="result-module">{{ item.moduleName }}</span>
+            </div>
+          </div>
+          <div v-else-if="sidebarIsSearching" class="sidebar-status">
+            <i class="pi pi-spin pi-spinner" /> Searching...
+          </div>
+          <div v-else-if="sidebarQuery.trim()" class="sidebar-status">
+            No results for "{{ sidebarQuery }}"
+          </div>
+        </div>
+      </transition>
+
       <div class="detail-header">
         <div class="detail-header-main">
           <span class="detail-badge" :class="badgeClass(detailMember.memberType)">
@@ -86,7 +131,7 @@
           <span class="detail-module">{{ detailMember.moduleName }}</span>
         </div>
         <div class="detail-header-actions">
-          <button class="action-btn" @click="openPalette" title="Search again">
+          <button class="action-btn" @click="openSidebarSearch" title="Search in sidebar (Ctrl+M)">
             <i class="pi pi-search" />
           </button>
           <button class="action-btn close-btn" @click="closeDetail">
@@ -174,7 +219,11 @@
           <!-- Syntax -->
           <div v-if="detailFull.details?.syntax" class="d-section">
             <h4 class="d-heading">Syntax</h4>
-            <pre class="syntax-block">{{ detailFull.details.syntax }}</pre>
+            <CodeViewer
+              :code="detailFull.details.syntax"
+              language="javascript"
+              :auto-height="true"
+            />
           </div>
 
           <!-- Enum values -->
@@ -211,6 +260,7 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from "vue";
+import CodeViewer from "../components/CodeViewer.vue";
 import {
   searchMembers,
   getMemberById,
@@ -234,6 +284,25 @@ const detailMember = ref<ModuleSearchResult | null>(null);
 const detailFull = ref<StoredMember | null>(null);
 const isLoadingDetail = ref(false);
 const enumSearch = ref("");
+
+// Sidebar inline search
+const sidebarSearchOpen = ref(false);
+const sidebarQuery = ref("");
+const sidebarResults = ref<ModuleSearchResult[]>([]);
+const sidebarActiveIdx = ref(0);
+const sidebarIsSearching = ref(false);
+const sidebarSearchInputEl = ref<HTMLInputElement | null>(null);
+const sidebarResultsEl = ref<HTMLElement | null>(null);
+const sidebarItemRefs: HTMLElement[] = [];
+let sidebarSearchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+// Panel resize
+const PANEL_MIN_WIDTH = 320;
+const PANEL_MAX_WIDTH = Math.round(window.innerWidth * 0.9);
+const panelWidth = ref(500);
+let resizing = false;
+let resizeStartX = 0;
+let resizeStartWidth = 0;
 
 const TYPE_FILTERS = ["All", "Method", "Object", "Property", "Enum"] as const;
 type TypeFilter = (typeof TYPE_FILTERS)[number];
@@ -264,6 +333,10 @@ const badgeClass = (type: string) => {
 
 const setItemRef = (el: unknown, idx: number) => {
   if (el) itemRefs[idx] = el as HTMLElement;
+};
+
+const setSidebarItemRef = (el: unknown, idx: number) => {
+  if (el) sidebarItemRefs[idx] = el as HTMLElement;
 };
 
 const scrollActiveIntoView = () => {
@@ -350,6 +423,98 @@ const onPaletteKeydown = (e: KeyboardEvent) => {
   }
 };
 
+// ── Sidebar inline search ──────────────────────────────────────────
+const openSidebarSearch = () => {
+  sidebarSearchOpen.value = true;
+  sidebarQuery.value = "";
+  sidebarResults.value = [];
+  sidebarActiveIdx.value = 0;
+  nextTick(() => sidebarSearchInputEl.value?.focus());
+};
+
+const closeSidebarSearch = () => {
+  sidebarSearchOpen.value = false;
+  sidebarQuery.value = "";
+  sidebarResults.value = [];
+};
+
+const onSidebarInput = () => {
+  if (sidebarSearchDebounce) clearTimeout(sidebarSearchDebounce);
+  sidebarActiveIdx.value = 0;
+  sidebarSearchDebounce = setTimeout(() => doSidebarSearch(), 180);
+};
+
+const doSidebarSearch = async () => {
+  if (!sidebarQuery.value.trim()) {
+    sidebarResults.value = [];
+    return;
+  }
+  sidebarIsSearching.value = true;
+  sidebarResults.value = await searchMembers(sidebarQuery.value, { limit: 20 });
+  sidebarIsSearching.value = false;
+  sidebarActiveIdx.value = 0;
+};
+
+const selectSidebarItem = async (item: ModuleSearchResult) => {
+  closeSidebarSearch();
+  enumSearch.value = "";
+  detailMember.value = item;
+  isLoadingDetail.value = true;
+  detailFull.value = (await getMemberById(item.id)) ?? null;
+  isLoadingDetail.value = false;
+};
+
+const onSidebarKeydown = (e: KeyboardEvent) => {
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeSidebarSearch();
+    return;
+  }
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    sidebarActiveIdx.value = Math.min(sidebarActiveIdx.value + 1, sidebarResults.value.length - 1);
+    sidebarItemRefs[sidebarActiveIdx.value]?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    sidebarActiveIdx.value = Math.max(sidebarActiveIdx.value - 1, 0);
+    sidebarItemRefs[sidebarActiveIdx.value]?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const item = sidebarResults.value[sidebarActiveIdx.value];
+    if (item) selectSidebarItem(item);
+    return;
+  }
+};
+
+// ── Panel resize ───────────────────────────────────────────────────
+const startResize = (e: MouseEvent) => {
+  resizing = true;
+  resizeStartX = e.clientX;
+  resizeStartWidth = panelWidth.value;
+  document.addEventListener("mousemove", onResizeMove);
+  document.addEventListener("mouseup", stopResize);
+};
+
+const onResizeMove = (e: MouseEvent) => {
+  if (!resizing) return;
+  const delta = resizeStartX - e.clientX; // dragging left = wider
+  const newWidth = Math.min(
+    Math.max(resizeStartWidth + delta, PANEL_MIN_WIDTH),
+    PANEL_MAX_WIDTH
+  );
+  panelWidth.value = newWidth;
+};
+
+const stopResize = () => {
+  resizing = false;
+  document.removeEventListener("mousemove", onResizeMove);
+  document.removeEventListener("mouseup", stopResize);
+};
+
 // ── Type filter ────────────────────────────────────────────────────
 const setTypeFilter = (t: TypeFilter) => {
   typeFilter.value = t;
@@ -359,12 +524,66 @@ const setTypeFilter = (t: TypeFilter) => {
 // ── Message listener (from content script) ────────────────────────
 const onMessage = (e: MessageEvent) => {
   if (e.data?.type === "PALETTE_OPEN") {
-    openPalette();
+    if (paletteOpen.value) {
+      // Palette search modal already open — toggle it closed
+      closePalette();
+    } else if (detailMember.value) {
+      // Sidebar detail panel is open — open inline search within it
+      if (sidebarSearchOpen.value) {
+        closeSidebarSearch();
+      } else {
+        openSidebarSearch();
+      }
+    } else {
+      // Nothing open — open floating palette
+      openPalette();
+    }
+  }
+};
+
+// ── Internal shortcut listener (handles Ctrl+M when iframe has focus) ──
+let internalShortcut = "ctrl+m";
+
+const parseShortcut = (s: string) => {
+  const parts = s.toLowerCase().split("+");
+  return { key: parts[parts.length - 1], modifiers: parts.slice(0, -1) };
+};
+
+const onInternalKeydown = (e: KeyboardEvent) => {
+  const { key, modifiers } = parseShortcut(internalShortcut);
+  const ctrlMatch = modifiers.includes("ctrl") ? e.ctrlKey || e.metaKey : !e.ctrlKey && !e.metaKey;
+  const altMatch = modifiers.includes("alt") ? e.altKey : !e.altKey;
+  const shiftMatch = modifiers.includes("shift") ? e.shiftKey : !e.shiftKey;
+  const keyMatch = e.key.toLowerCase() === key;
+
+  if (ctrlMatch && altMatch && shiftMatch && keyMatch) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Dispatch through the same message handler for consistent logic
+    onMessage({ data: { type: "PALETTE_OPEN" } } as MessageEvent);
   }
 };
 
 onMounted(() => {
   window.addEventListener("message", onMessage);
+  window.addEventListener("keydown", onInternalKeydown);
+
+  // Load configured shortcut from extension settings
+  try {
+    chrome.storage.sync.get(["magic_netsuite_settings"], (result) => {
+      if (result?.magic_netsuite_settings?.modulesSearch) {
+        internalShortcut = result.magic_netsuite_settings.modulesSearch;
+      }
+    });
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.magic_netsuite_settings?.newValue?.modulesSearch) {
+        internalShortcut = changes.magic_netsuite_settings.newValue.modulesSearch;
+      }
+    });
+  } catch {
+    // chrome API unavailable (e.g. dev mode outside extension) — use default
+  }
+
   // Load DB stats for footer badge
   Promise.all([getModuleCount(), getMemberCount()]).then(([moduleCount, memberCount]) => {
     dbStats.value = { moduleCount, memberCount };
@@ -375,6 +594,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
+  window.removeEventListener("keydown", onInternalKeydown);
+  document.removeEventListener("mousemove", onResizeMove);
+  document.removeEventListener("mouseup", stopResize);
 });
 </script>
 
@@ -514,8 +736,8 @@ body {
   color: #16a34a;
 }
 .badge-enum {
-  background: #e0f2fe;
-  color: #0369a1;
+  background: #fef3c7;
+  color: #d97706;
 }
 
 .result-name {
@@ -645,9 +867,9 @@ body {
   border-color: #86efac;
 }
 .type-pill.pill-enum.active {
-  background: #e0f2fe;
-  color: #0369a1;
-  border-color: #7dd3fc;
+  background: #fef3c7;
+  color: #d97706;
+  border-color: #fcd34d;
 }
 
 /* ── Detail panel ── */
@@ -664,6 +886,124 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ── Resize handle ── */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 5px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 10;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: rgba(99, 102, 241, 0.25);
+}
+
+/* ── Sidebar inline search ── */
+.sidebar-search {
+  border-bottom: 2px solid #e2e8f0;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.sidebar-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+}
+
+.sidebar-search-icon {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+
+.sidebar-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color: #1e293b;
+  background: transparent;
+}
+
+.sidebar-search-input::placeholder {
+  color: #94a3b8;
+}
+
+.sidebar-search-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  transition: all 0.1s;
+}
+
+.sidebar-search-close:hover {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.sidebar-results {
+  max-height: 220px;
+  overflow-y: auto;
+  border-top: 1px solid #e2e8f0;
+}
+
+.sidebar-result-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.sidebar-result-item.active,
+.sidebar-result-item:hover {
+  background: #eff6ff;
+}
+
+.sidebar-status {
+  padding: 0.6rem 0.75rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Sidebar search transition */
+.sidebar-search-drop-enter-active,
+.sidebar-search-drop-leave-active {
+  transition: max-height 0.2s ease, opacity 0.2s ease;
+  overflow: hidden;
+  max-height: 320px;
+}
+
+.sidebar-search-drop-enter-from,
+.sidebar-search-drop-leave-to {
+  max-height: 0;
+  opacity: 0;
 }
 
 .detail-header {
@@ -872,20 +1212,6 @@ body {
   font-size: 0.72rem;
   color: #475569;
   line-height: 1.5;
-}
-
-.syntax-block {
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 0.75rem;
-  border-radius: 6px;
-  font-size: 0.7rem;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
 }
 
 .enum-count-badge {
