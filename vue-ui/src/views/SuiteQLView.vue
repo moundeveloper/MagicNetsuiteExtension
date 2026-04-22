@@ -12,55 +12,38 @@
     :style="{ height: `90vh` }"
   >
     <template #default>
+      <!-- Left Sidebar: Actions + Files only -->
       <ExpandableSidebar>
         <template #collapsed>
           <button
             class="p-2 rounded bg-slate-600 hover:opacity-100 hover:bg-slate-500 transition-opacity duration-150 text-[var(--p-slate-50)]"
             @click="runCurrentQuery"
             :disabled="currentFile?.isExecuting"
-            :title="currentFile?.isExecuting ? 'Running...' : 'Run Query'"
-            size="small"
+            title="Run Query (Ctrl+Enter)"
           >
             <i class="pi pi-play text-sm"></i>
           </button>
         </template>
         <template #default>
-          <!-- Actions -->
           <div class="sidebar-section">
             <h4>Actions</h4>
             <div class="flex flex-col gap-2">
-              <Button
-                @click="runCurrentQuery"
-                :disabled="currentFile?.isExecuting"
-                class="w-full"
-              >
+              <Button @click="runCurrentQuery" :disabled="currentFile?.isExecuting" class="w-full">
                 <i class="pi pi-play font-medium"></i>
                 {{ currentFile?.isExecuting ? "Running..." : "Run Query" }}
               </Button>
-              <Button
-                @click="fetchTables"
-                :disabled="isLoadingTables"
-                class="w-full"
-                severity="secondary"
-              >
+              <Button @click="fetchTables" :disabled="isLoadingTables" severity="secondary" class="w-full">
                 <i class="pi pi-refresh font-medium"></i>
                 {{ isLoadingTables ? "Loading..." : "Refresh Tables" }}
               </Button>
-              <div class="text-xs text-gray-500">
-                <span v-if="saveStatus === 'saving'" class="text-yellow-500">
-                  Syncing…
-                </span>
-                <span v-else-if="saveStatus === 'saved'" class="text-green-500">
-                  ✓ Saved
-                </span>
-                <span v-else-if="saveStatus === 'error'" class="text-red-500">
-                  Save failed
-                </span>
+              <div class="text-xs">
+                <span v-if="saveStatus === 'saving'" class="text-yellow-500">Syncing…</span>
+                <span v-else-if="saveStatus === 'saved'" class="text-green-500">✓ Saved</span>
+                <span v-else-if="saveStatus === 'error'" class="text-red-500">Save failed</span>
               </div>
             </div>
           </div>
 
-          <!-- Files -->
           <div class="sidebar-section">
             <h4>Query Files</h4>
             <InputText
@@ -70,15 +53,15 @@
               size="small"
               class="w-full mb-2"
             />
-            <div class="flex flex-col gap-1 max-h-32 overflow-y-auto pr-2">
+            <div class="flex flex-col gap-1 overflow-y-auto pr-1" style="max-height: calc(90vh - 300px)">
               <div
                 v-for="file in filteredFiles"
                 :key="file.id"
-                class="file-item flex items-center gap-2 py-2 px-4 rounded cursor-pointer hover:bg-slate-200 transition-colors group"
+                class="file-item flex items-center gap-2 py-2 px-3 rounded cursor-pointer hover:bg-slate-200 transition-colors group"
                 :class="{ 'bg-slate-200': activeFileId === file.id }"
                 @click="openFileInTab(file.id)"
               >
-                <i class="pi pi-database text-sm" style="color: var(--p-slate-600)"></i>
+                <i class="pi pi-database text-xs" style="color: var(--p-slate-600)"></i>
                 <MInput
                   v-model="file.name"
                   outlined
@@ -98,87 +81,10 @@
               New Query
             </Button>
           </div>
-
-          <!-- Tables Browser -->
-          <div class="sidebar-section">
-            <h4>Tables ({{ tables.length }})</h4>
-            <InputText
-              v-model="tableSearchTerm"
-              type="text"
-              placeholder="Search tables..."
-              size="small"
-              class="w-full mb-2"
-            />
-            <div class="flex flex-col gap-1 text-xs max-h-48 overflow-y-auto">
-              <div
-                v-for="table in filteredTables"
-                :key="table.id"
-                class="table-item py-1 px-2 rounded cursor-pointer hover:bg-slate-200 transition-colors"
-                :class="{ 'bg-blue-100': selectedTableId === table.id }"
-                @click="selectTable(table)"
-              >
-                <div class="font-medium truncate">{{ table.id }}</div>
-                <div class="text-gray-400 truncate">{{ table.label }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Table Detail -->
-          <div v-if="selectedTableDetail" class="sidebar-section">
-            <h4>{{ selectedTableDetail.id }} Fields</h4>
-            <InputText
-              v-model="fieldSearchTerm"
-              type="text"
-              placeholder="Search fields..."
-              size="small"
-              class="w-full mb-2"
-            />
-            <div class="flex flex-col gap-1 text-xs max-h-40 overflow-y-auto">
-              <div
-                v-for="field in filteredFields"
-                :key="field.id"
-                class="py-1 px-2 rounded hover:bg-slate-200 cursor-pointer"
-                @click="insertFieldAtCursor(field.id)"
-                :title="`${field.label} (${field.dataType})`"
-              >
-                <div class="flex justify-between items-center">
-                  <span class="font-mono truncate">{{ field.id }}</span>
-                  <span class="text-gray-400 ml-1 shrink-0">{{ field.dataType }}</span>
-                </div>
-                <div class="text-gray-400 truncate">{{ field.label }}</div>
-              </div>
-            </div>
-
-            <!-- Joins -->
-            <div v-if="selectedTableDetail.joins?.length" class="mt-2">
-              <h4>Joins ({{ selectedTableDetail.joins.length }})</h4>
-              <InputText
-                v-model="joinSearchTerm"
-                type="text"
-                placeholder="Search joins..."
-                size="small"
-                class="w-full mb-2"
-              />
-              <div class="flex flex-col gap-1 text-xs max-h-32 overflow-y-auto">
-                <div
-                  v-for="join in filteredJoins"
-                  :key="join.id"
-                  class="py-1 px-2 rounded hover:bg-slate-200 cursor-pointer"
-                  @click="insertJoinAtCursor(join)"
-                  :title="getJoinTooltip(join)"
-                >
-                  <div class="font-mono truncate text-blue-600">{{ join.label }}</div>
-                  <div class="text-gray-400 truncate">
-                    {{ join.cardinality }} · {{ join.joinType }}
-                    <span v-if="join.sourceTargetType"> → {{ join.sourceTargetType.id }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
         </template>
       </ExpandableSidebar>
 
+      <!-- Main area -->
       <div class="flex-1 flex flex-col p-2" style="min-width: 0">
         <MTabs
           v-if="openTabs.length > 0"
@@ -193,74 +99,282 @@
               v-for="file in files"
               :key="file.id"
               v-show="activeTabName === file.id"
-              class="h-full"
+              class="flex flex-col"
               :style="{ height: `${contentHeight}px` }"
             >
-              <vue-splitter is-horizontal data-ignore class="h-full">
-                <template #top-pane>
-                  <MonacoCodeEditor
-                    v-model="file.code"
-                    language="sql"
-                    :readonly="file.isExecuting"
-                    :completion-items="sqlCompletionItems"
-                    :ref="(el: any) => setEditorRef(file.id, el)"
-                  />
-                </template>
-                <template #bottom-pane>
-                  <div class="results-pane h-full flex flex-col">
-                    <!-- Results toolbar -->
-                    <div class="flex items-center gap-2 px-3 py-1 bg-slate-100 border-b text-xs">
-                      <span v-if="file.results.length > 0" class="text-green-600">
-                        {{ file.results.length }} rows returned
-                      </span>
-                      <span v-else-if="file.error" class="text-red-500">
-                        {{ file.error }}
-                      </span>
-                      <span v-else class="text-gray-400">
-                        Run a query to see results
-                      </span>
-                      <button
-                        v-if="file.results.length > 0"
-                        class="ml-auto px-2 py-1 rounded hover:bg-slate-200"
-                        @click="copyResults(file)"
-                        title="Copy as JSON"
+              <!-- Editor toolbar -->
+              <div
+                class="editor-toolbar shrink-0 flex items-center gap-2 px-3 py-1.5 border-b"
+                style="background: #2d2d2d; border-color: #404040"
+              >
+                <Button size="small" @click="runCurrentQuery" :disabled="file.isExecuting">
+                  <i class="pi pi-play text-xs mr-1"></i>
+                  {{ file.isExecuting ? "Running..." : "Run" }}
+                </Button>
+                <Button size="small" severity="secondary" @click="formatCurrentSQL(file.id)">
+                  <i class="pi pi-align-left text-xs mr-1"></i>
+                  Format
+                </Button>
+                <div class="w-px h-4 mx-1" style="background: #555"></div>
+                <Button size="small" severity="secondary" @click="openInRunQuickScript(file)">
+                  <i class="pi pi-external-link text-xs mr-1"></i>
+                  Open in Script Runner
+                </Button>
+                <span v-if="file.isExecuting" class="text-xs ml-auto" style="color: #fbbf24">Executing…</span>
+              </div>
+
+              <!-- Editor + bottom panel splitter -->
+              <div class="flex-1 min-h-0">
+                <vue-splitter is-horizontal data-ignore class="h-full">
+                  <template #top-pane>
+                    <MonacoCodeEditor
+                      v-model="file.code"
+                      language="sql"
+                      :readonly="file.isExecuting"
+                      :ref="(el: any) => setEditorRef(file.id, el)"
+                      @change="onCodeChange(file.id, $event)"
+                    />
+                  </template>
+                  <template #bottom-pane>
+                    <!-- Bottom schema/results panel -->
+                    <div class="bottom-panel h-full flex flex-col" style="background: #1e1e1e">
+                      <!-- Tab bar -->
+                      <div
+                        class="bottom-tabbar shrink-0 flex items-center border-b"
+                        style="background: #252526; border-color: #404040; min-height: 34px"
                       >
-                        <i class="pi pi-clipboard text-xs"></i>
-                      </button>
-                      <button
-                        v-if="file.results.length > 0"
-                        class="px-2 py-1 rounded hover:bg-slate-200"
-                        @click="copyResultsCSV(file)"
-                        title="Copy as CSV"
-                      >
-                        CSV
-                      </button>
-                    </div>
-                    <!-- Results table -->
-                    <div class="flex-1 overflow-auto">
-                      <table v-if="file.results.length > 0" class="results-table w-full text-xs">
-                        <thead>
-                          <tr>
-                            <th v-for="col in file.columns" :key="col" class="sticky top-0">
-                              {{ col }}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="(row, idx) in file.results" :key="idx">
-                            <td v-for="col in file.columns" :key="col">
-                              {{ row[col] ?? '' }}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                      <div v-else-if="file.error" class="p-4 text-red-500 text-sm">
-                        {{ file.error }}
+                        <button
+                          v-for="btab in bottomTabDefs"
+                          :key="btab.id"
+                          class="bottom-tab px-4 py-2 text-xs whitespace-nowrap transition-colors"
+                          :class="
+                            bottomTab === btab.id
+                              ? 'tab-active'
+                              : 'tab-inactive'
+                          "
+                          @click="bottomTab = btab.id; schemaSearch = ''"
+                        >
+                          {{ btab.label }}
+                        </button>
+
+                        <!-- Right side of tab bar -->
+                        <div class="ml-auto flex items-center gap-2 px-3">
+                          <span
+                            v-if="file.results.length > 0 && bottomTab === 'results'"
+                            class="text-xs font-mono"
+                            style="color: #4ec9b0"
+                          >
+                            {{ file.results.length }} rows
+                          </span>
+                          <span
+                            v-else-if="file.error && bottomTab === 'results'"
+                            class="text-xs"
+                            style="color: #f48771"
+                          >Error</span>
+                          <template v-if="bottomTab === 'results' && file.results.length > 0">
+                            <button class="schema-action-btn" @click="copyResults(file)">JSON</button>
+                            <button class="schema-action-btn" @click="copyResultsCSV(file)">CSV</button>
+                          </template>
+                          <input
+                            v-if="bottomTab !== 'results'"
+                            v-model="schemaSearch"
+                            placeholder="Search…"
+                            class="schema-search-input"
+                          />
+                        </div>
+                      </div>
+
+                      <!-- Tab content -->
+                      <div class="flex-1 overflow-auto">
+
+                        <!-- Results -->
+                        <div v-show="bottomTab === 'results'" class="h-full">
+                          <table v-if="file.results.length > 0" class="results-table w-full">
+                            <thead>
+                              <tr>
+                                <th v-for="col in file.columns" :key="col">{{ col }}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr v-for="(row, idx) in file.results" :key="idx">
+                                <td v-for="col in file.columns" :key="col">{{ row[col] ?? '' }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <div
+                            v-else-if="file.error"
+                            class="p-4 text-sm font-mono whitespace-pre-wrap"
+                            style="color: #f48771"
+                          >{{ file.error }}</div>
+                          <div
+                            v-else
+                            class="flex flex-col items-center justify-center h-full gap-2"
+                            style="color: #6b7280"
+                          >
+                            <i class="pi pi-table text-2xl"></i>
+                            <span class="text-sm">Run a query to see results</span>
+                            <span class="text-xs opacity-60">Ctrl+Enter</span>
+                          </div>
+                        </div>
+
+                        <!-- Tables -->
+                        <div v-show="bottomTab === 'tables'" class="p-3">
+                          <div
+                            v-if="isLoadingTables"
+                            class="flex items-center justify-center py-10 gap-2"
+                            style="color: #9d9d9d"
+                          >
+                            <i class="pi pi-spin pi-spinner"></i>
+                            Loading tables…
+                          </div>
+                          <div v-else class="tables-grid">
+                            <div
+                              v-for="table in filteredSchemaTables"
+                              :key="table.id"
+                              class="table-card"
+                              :class="{ 'table-card-selected': selectedTableId === table.id }"
+                              @click="handleTableClick(table)"
+                              :title="table.label"
+                            >
+                              <div class="table-card-id">{{ table.id }}</div>
+                              <div class="table-card-label">{{ table.label }}</div>
+                            </div>
+                          </div>
+                          <div
+                            v-if="!isLoadingTables && filteredSchemaTables.length === 0"
+                            class="text-center py-10 text-sm"
+                            style="color: #6b7280"
+                          >
+                            No tables match "{{ schemaSearch }}"
+                          </div>
+                        </div>
+
+                        <!-- Fields -->
+                        <div v-show="bottomTab === 'fields'">
+                          <div
+                            v-if="!selectedTableDetail && !isLoadingDetail"
+                            class="flex flex-col items-center justify-center py-10 gap-2"
+                            style="color: #6b7280"
+                          >
+                            <i class="pi pi-table text-2xl"></i>
+                            <span class="text-sm">
+                              Select a table from the
+                              <button
+                                class="underline"
+                                style="color: #569cd6"
+                                @click="bottomTab = 'tables'"
+                              >Tables</button>
+                              tab
+                            </span>
+                          </div>
+                          <div
+                            v-else-if="isLoadingDetail"
+                            class="flex items-center justify-center py-10 gap-2"
+                            style="color: #9d9d9d"
+                          >
+                            <i class="pi pi-spin pi-spinner"></i>
+                            Loading fields…
+                          </div>
+                          <table v-else-if="filteredSchemaFields.length > 0" class="schema-table w-full">
+                            <thead>
+                              <tr>
+                                <th>Column ID</th>
+                                <th>Label</th>
+                                <th>Data Type</th>
+                                <th>Field Type</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                v-for="field in filteredSchemaFields"
+                                :key="field.id"
+                                class="schema-row"
+                                @click="insertAtCursor(field.id)"
+                                :title="`Click to insert '${field.id}' at cursor`"
+                              >
+                                <td class="font-mono" style="color: #9cdcfe">{{ field.id }}</td>
+                                <td style="color: #d4d4d4">{{ field.label }}</td>
+                                <td class="font-mono text-xs" style="color: #dcdcaa">{{ field.dataType }}</td>
+                                <td class="text-xs" style="color: #6b7280">{{ field.fieldType }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <div
+                            v-else-if="selectedTableDetail"
+                            class="text-center py-6 text-sm"
+                            style="color: #6b7280"
+                          >
+                            No fields match "{{ schemaSearch }}"
+                          </div>
+                        </div>
+
+                        <!-- Joins -->
+                        <div v-show="bottomTab === 'joins'">
+                          <div
+                            v-if="!selectedTableDetail"
+                            class="flex flex-col items-center justify-center py-10 gap-2"
+                            style="color: #6b7280"
+                          >
+                            <i class="pi pi-sitemap text-2xl"></i>
+                            <span class="text-sm">
+                              Select a table from the
+                              <button
+                                class="underline"
+                                style="color: #569cd6"
+                                @click="bottomTab = 'tables'"
+                              >Tables</button>
+                              tab
+                            </span>
+                          </div>
+                          <table v-else-if="filteredSchemaJoins.length > 0" class="schema-table w-full">
+                            <thead>
+                              <tr>
+                                <th>Join / Relation</th>
+                                <th>Target Table</th>
+                                <th>Cardinality</th>
+                                <th>Type</th>
+                                <th>Condition</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr
+                                v-for="join in filteredSchemaJoins"
+                                :key="join.id"
+                                class="schema-row"
+                                @click="insertJoinAtCursor(join)"
+                                :title="`Click to insert JOIN for '${join.label}'`"
+                              >
+                                <td style="color: #4fc1ff">{{ join.label }}</td>
+                                <td class="font-mono" style="color: #d4d4d4">{{ join.sourceTargetType?.id || '–' }}</td>
+                                <td class="text-xs font-mono" style="color: #dcdcaa">{{ join.cardinality }}</td>
+                                <td class="text-xs" style="color: #6b7280">{{ join.joinType }}</td>
+                                <td class="font-mono text-xs" style="color: #5a5a5a; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
+                                  {{ join.sourceTargetType?.joinPairs?.[0]?.label || '–' }}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <div
+                            v-else-if="selectedTableDetail && selectedTableDetail.joins?.length === 0"
+                            class="text-center py-6 text-sm"
+                            style="color: #6b7280"
+                          >
+                            No joins available for this table
+                          </div>
+                          <div
+                            v-else-if="selectedTableDetail"
+                            class="text-center py-6 text-sm"
+                            style="color: #6b7280"
+                          >
+                            No joins match "{{ schemaSearch }}"
+                          </div>
+                        </div>
+
                       </div>
                     </div>
-                  </div>
-                </template>
-              </vue-splitter>
+                  </template>
+                </vue-splitter>
+              </div>
             </div>
           </template>
         </MTabs>
@@ -295,7 +409,16 @@
 </template>
 
 <script lang="ts" setup>
-import { onBeforeUnmount, onMounted, ref, watch, computed } from "vue";
+import {
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  computed,
+  nextTick
+} from "vue";
+import { useRouter } from "vue-router";
+import * as monaco from "monaco-editor";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
@@ -308,6 +431,8 @@ import MCard from "../components/universal/card/MCard.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MInput from "../components/universal/input/MInput.vue";
 import { generateId } from "../utils/utilities";
+
+const router = useRouter();
 
 // ============================================================================
 // Types
@@ -347,10 +472,7 @@ interface JoinInfo {
   sourceTargetType?: {
     id: string;
     label: string;
-    joinPairs?: Array<{
-      id: string;
-      label: string;
-    }>;
+    joinPairs?: Array<{ id: string; label: string }>;
   };
 }
 
@@ -362,6 +484,22 @@ interface TableDetail {
 }
 
 // ============================================================================
+// SQL Keywords
+// ============================================================================
+
+const SQL_KEYWORDS = [
+  "SELECT", "DISTINCT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "LIKE",
+  "BETWEEN", "IS NULL", "IS NOT NULL", "INNER JOIN", "LEFT JOIN",
+  "LEFT OUTER JOIN", "RIGHT JOIN", "RIGHT OUTER JOIN", "FULL OUTER JOIN",
+  "CROSS JOIN", "JOIN", "ON", "ORDER BY", "GROUP BY", "HAVING",
+  "LIMIT", "OFFSET", "UNION", "UNION ALL", "CASE", "WHEN", "THEN", "ELSE",
+  "END", "COUNT", "SUM", "AVG", "MIN", "MAX", "AS", "NULL", "ROWNUM",
+  "COALESCE", "NULLIF", "CAST", "UPPER", "LOWER", "TRIM", "LENGTH",
+  "SUBSTRING", "REPLACE", "TO_DATE", "TO_CHAR", "NVL", "NVL2", "DECODE",
+  "BUILTIN.DF", "BUILTIN.CF", "EXISTS", "ALL", "ANY", "SOME", "ASC", "DESC"
+];
+
+// ============================================================================
 // State
 // ============================================================================
 
@@ -371,35 +509,30 @@ const activeFileId = ref("");
 const fileSearchTerm = ref("");
 const isRestoring = ref(true);
 
-// Tables state
+// Schema state
 const tables = ref<TableInfo[]>([]);
-const tableSearchTerm = ref("");
+const isLoadingTables = ref(false);
+const isLoadingDetail = ref(false);
 const selectedTableId = ref("");
 const selectedTableDetail = ref<TableDetail | null>(null);
-const fieldSearchTerm = ref("");
-const joinSearchTerm = ref("");
-const isLoadingTables = ref(false);
 const tableDetailCache = ref<Record<string, TableDetail>>({});
 
-// Editor refs for inserting text at cursor
+// Bottom panel
+const bottomTab = ref("results");
+const schemaSearch = ref("");
+
+// Editor refs
 const editorRefs = ref<Record<string, any>>({});
 
-const setEditorRef = (fileId: string, el: any) => {
-  if (el) {
-    editorRefs.value[fileId] = el;
-  }
-};
+// Monaco completion disposable
+let sqlCompletionDisposable: monaco.IDisposable | null = null;
 
 // ============================================================================
 // Computed
 // ============================================================================
 
 const persistedState = computed(() => ({
-  files: files.value.map(f => ({
-    id: f.id,
-    name: f.name,
-    code: f.code
-  })),
+  files: files.value.map((f) => ({ id: f.id, name: f.name, code: f.code })),
   openTabs: openTabs.value,
   activeTab: activeFileId.value
 }));
@@ -415,12 +548,40 @@ const tabs = computed(() =>
 
 const filteredFiles = computed(() => {
   const term = fileSearchTerm.value.toLowerCase();
-  if (!term) return files.value;
-  return files.value.filter((f) => f.name.toLowerCase().includes(term));
+  return term
+    ? files.value.filter((f) => f.name.toLowerCase().includes(term))
+    : files.value;
 });
 
-const filteredTables = computed(() => {
-  const term = tableSearchTerm.value.toLowerCase();
+const currentFile = computed(() =>
+  files.value.find((f) => f.id === activeFileId.value)
+);
+
+const bottomTabDefs = computed(() => {
+  const defs: { id: string; label: string }[] = [
+    { id: "results", label: "Results" },
+    {
+      id: "tables",
+      label: `Tables${tables.value.length ? ` (${tables.value.length})` : ""}`
+    }
+  ];
+  if (selectedTableDetail.value) {
+    defs.push({
+      id: "fields",
+      label: `Fields · ${selectedTableDetail.value.id}`
+    });
+    if (selectedTableDetail.value.joins?.length) {
+      defs.push({
+        id: "joins",
+        label: `Joins (${selectedTableDetail.value.joins.length}) · ${selectedTableDetail.value.id}`
+      });
+    }
+  }
+  return defs;
+});
+
+const filteredSchemaTables = computed(() => {
+  const term = schemaSearch.value.toLowerCase();
   if (!term) return tables.value;
   return tables.value.filter(
     (t) =>
@@ -429,10 +590,10 @@ const filteredTables = computed(() => {
   );
 });
 
-const filteredFields = computed(() => {
+const filteredSchemaFields = computed(() => {
   if (!selectedTableDetail.value?.fields) return [];
-  const term = fieldSearchTerm.value.toLowerCase();
   const fields = selectedTableDetail.value.fields.filter((f) => f.isColumn);
+  const term = schemaSearch.value.toLowerCase();
   if (!term) return fields;
   return fields.filter(
     (f) =>
@@ -441,96 +602,154 @@ const filteredFields = computed(() => {
   );
 });
 
-const filteredJoins = computed(() => {
+const filteredSchemaJoins = computed(() => {
   if (!selectedTableDetail.value?.joins) return [];
-  const term = joinSearchTerm.value.toLowerCase();
+  const term = schemaSearch.value.toLowerCase();
   if (!term) return selectedTableDetail.value.joins;
   return selectedTableDetail.value.joins.filter(
     (j) =>
       j.id.toLowerCase().includes(term) ||
-      j.label.toLowerCase().includes(term)
+      j.label.toLowerCase().includes(term) ||
+      (j.sourceTargetType?.id ?? "").toLowerCase().includes(term)
   );
 });
 
-const currentFile = computed(() =>
-  files.value.find((f) => f.id === activeFileId.value)
-);
+// ============================================================================
+// Context-Aware Monaco Completions
+// ============================================================================
 
-// SQL completion items built from tables + fields
-const sqlCompletionItems = computed(() => {
-  const items: Array<{
-    label: string;
-    kind?: string;
-    insertText?: string;
-    documentation?: string;
-    detail?: string;
-  }> = [];
+const getTableDetailByName = (tableName: string): TableDetail | null => {
+  const lower = tableName.toLowerCase();
+  for (const detail of Object.values(tableDetailCache.value)) {
+    if (detail.id.toLowerCase() === lower) return detail;
+  }
+  return null;
+};
 
-  // SQL keywords
-  const keywords = [
-    "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN",
-    "IS", "NULL", "JOIN", "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "LEFT OUTER JOIN",
-    "ON", "AS", "ORDER BY", "GROUP BY", "HAVING", "LIMIT", "OFFSET",
-    "COUNT", "SUM", "AVG", "MIN", "MAX", "DISTINCT", "CASE", "WHEN",
-    "THEN", "ELSE", "END", "UNION", "UNION ALL", "INSERT", "UPDATE",
-    "DELETE", "CREATE", "ALTER", "DROP", "EXISTS", "COALESCE", "NULLIF",
-    "CAST", "UPPER", "LOWER", "TRIM", "SUBSTRING", "LENGTH", "REPLACE",
-    "TO_DATE", "TO_CHAR", "NVL", "NVL2", "DECODE", "BUILTIN.DF", "BUILTIN.CF"
-  ];
-
-  keywords.forEach((kw) => {
-    items.push({
-      label: kw,
-      kind: "Keyword",
-      insertText: kw,
-      detail: "SQL Keyword"
-    });
-  });
-
-  // Table names
-  tables.value.forEach((table) => {
-    items.push({
-      label: table.id,
-      kind: "Class",
-      insertText: table.id,
-      documentation: table.label,
-      detail: "Table"
-    });
-  });
-
-  // Fields from selected table
-  if (selectedTableDetail.value?.fields) {
-    selectedTableDetail.value.fields
-      .filter((f) => f.isColumn)
-      .forEach((field) => {
-        items.push({
-          label: field.id,
-          kind: "Field",
-          insertText: field.id,
-          documentation: `${field.label} (${field.dataType})`,
-          detail: `Field · ${field.dataType}`
-        });
-      });
+const registerContextAwareCompletions = () => {
+  if (sqlCompletionDisposable) {
+    sqlCompletionDisposable.dispose();
+    sqlCompletionDisposable = null;
   }
 
-  // Fields from cached table details
-  Object.values(tableDetailCache.value).forEach((detail) => {
-    if (detail.id === selectedTableDetail.value?.id) return;
-    detail.fields
-      .filter((f) => f.isColumn)
-      .forEach((field) => {
-        items.push({
-          label: `${detail.id}.${field.id}`,
-          kind: "Field",
-          insertText: `${detail.id}.${field.id}`,
-          documentation: `${field.label} (${field.dataType})`,
-          detail: `${detail.id} · ${field.dataType}`
-        });
-      });
-  });
+  sqlCompletionDisposable = monaco.languages.registerCompletionItemProvider(
+    "sql",
+    {
+      triggerCharacters: [" ", "\n", ",", "."],
+      provideCompletionItems: (model, position) => {
+        const word = model.getWordUntilPosition(position);
+        const range = new monaco.Range(
+          position.lineNumber,
+          word.startColumn,
+          position.lineNumber,
+          word.endColumn
+        );
 
-  return items;
-});
+        const fullText = model.getValue();
+        const textBeforeCursor = model.getValueInRange(
+          new monaco.Range(1, 1, position.lineNumber, position.column)
+        );
+
+        // After FROM or JOIN → suggest table names only
+        const isAfterFromOrJoin = /\b(?:FROM|JOIN)\s+\w*$/i.test(
+          textBeforeCursor
+        );
+
+        // Extract tables referenced in the full query
+        const referencedTables = new Set<string>();
+        for (const m of fullText.matchAll(/\b(?:FROM|JOIN)\s+(\w+)/gi)) {
+          if (m[1]) referencedTables.add(m[1]);
+        }
+
+        const suggestions: monaco.languages.CompletionItem[] = [];
+
+        if (isAfterFromOrJoin) {
+          tables.value.forEach((t) => {
+            suggestions.push({
+              label: { label: t.id, description: t.label },
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: t.id,
+              documentation: { value: `**${t.id}**\n\n${t.label}` },
+              detail: "NetSuite Table",
+              range,
+              sortText: `0${t.id}`
+            });
+          });
+        } else {
+          // Keywords first
+          SQL_KEYWORDS.forEach((kw) => {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw,
+              detail: "SQL Keyword",
+              range,
+              sortText: `0${kw}`
+            });
+          });
+
+          // Fields from all tables referenced in query
+          for (const tableName of referencedTables) {
+            const detail = getTableDetailByName(tableName);
+            if (detail) {
+              detail.fields
+                .filter((f) => f.isColumn)
+                .forEach((field) => {
+                  suggestions.push({
+                    label: {
+                      label: field.id,
+                      description: field.dataType
+                    },
+                    kind: monaco.languages.CompletionItemKind.Field,
+                    insertText: field.id,
+                    documentation: {
+                      value: `**${field.label}**\n\nType: \`${field.dataType}\`\nTable: \`${detail.id}\``
+                    },
+                    detail: `${detail.id} · ${field.dataType}`,
+                    range,
+                    sortText: `1${field.id}`
+                  });
+                });
+            }
+          }
+
+          // All table names (lower priority)
+          tables.value.forEach((t) => {
+            suggestions.push({
+              label: { label: t.id, description: t.label },
+              kind: monaco.languages.CompletionItemKind.Class,
+              insertText: t.id,
+              detail: "NetSuite Table",
+              range,
+              sortText: `2${t.id}`
+            });
+          });
+        }
+
+        return { suggestions };
+      }
+    }
+  );
+};
+
+// ============================================================================
+// Editor Ref Setup (Ctrl+Enter + ref tracking)
+// ============================================================================
+
+const setEditorRef = (fileId: string, el: any) => {
+  if (!el) return;
+  editorRefs.value[fileId] = el;
+  // Register Ctrl+Enter to run the query
+  nextTick(() => {
+    const editorInst =
+      el.getEditor() as monaco.editor.IStandaloneCodeEditor | null;
+    if (!editorInst) return;
+    editorInst.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+      () => runCurrentQuery()
+    );
+  });
+};
 
 // ============================================================================
 // File Management
@@ -541,7 +760,7 @@ const addNewFile = () => {
   files.value.push({
     id: newId,
     name: `query${newId}`,
-    code: "SELECT\n  id,\n  entityid\nFROM\n  customer\nWHERE\n  ROWNUM <= 10",
+    code: "SELECT\n    id,\n    entityid\nFROM\n    customer\nWHERE\n    ROWNUM <= 10",
     results: [],
     columns: [],
     error: "",
@@ -552,9 +771,7 @@ const addNewFile = () => {
 };
 
 const openFileInTab = (fileId: string) => {
-  if (!openTabs.value.includes(fileId)) {
-    openTabs.value.push(fileId);
-  }
+  if (!openTabs.value.includes(fileId)) openTabs.value.push(fileId);
   activeFileId.value = fileId;
 };
 
@@ -563,41 +780,43 @@ const removeFile = (fileId: string) => {
   const index = files.value.findIndex((f) => f.id === fileId);
   if (index > -1) files.value.splice(index, 1);
   if (activeFileId.value === fileId) {
-    activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
+    activeFileId.value =
+      openTabs.value[0] || files.value[0]?.id || "";
   }
 };
 
-const removeFileByTab = ({ tabId, nextTabId }: { tabId: string; nextTabId: string | null }) => {
+const removeFileByTab = ({
+  tabId,
+  nextTabId
+}: {
+  tabId: string;
+  nextTabId: string | null;
+}) => {
   openTabs.value = openTabs.value.filter((id) => id !== tabId);
   if (activeFileId.value === tabId) {
-    activeFileId.value = nextTabId || openTabs.value[0] || files.value[0]?.id || "";
+    activeFileId.value =
+      nextTabId || openTabs.value[0] || files.value[0]?.id || "";
   }
 };
 
 // ============================================================================
-// Table Operations
+// Table / Schema Operations
 // ============================================================================
 
 const fetchTables = async () => {
   isLoadingTables.value = true;
   try {
-    const response = await callApi(RequestRoutes.FETCH_SUITEQL_TABLES) as ApiResponse;
+    const response = (await callApi(
+      RequestRoutes.FETCH_SUITEQL_TABLES
+    )) as ApiResponse;
     const data = response.message;
-    if (data?.data) {
-      tables.value = data.data.map((t: any) => ({
-        id: t.id,
-        label: t.label,
-        type: t.type,
-        isAvailable: t.isAvailable
-      }));
-    } else if (Array.isArray(data)) {
-      tables.value = data.map((t: any) => ({
-        id: t.id,
-        label: t.label,
-        type: t.type,
-        isAvailable: t.isAvailable
-      }));
-    }
+    const list: any[] = data?.data ?? (Array.isArray(data) ? data : []);
+    tables.value = list.map((t: any) => ({
+      id: t.id,
+      label: t.label,
+      type: t.type,
+      isAvailable: t.isAvailable
+    }));
   } catch (error) {
     console.error("Failed to fetch tables:", error);
   } finally {
@@ -607,32 +826,31 @@ const fetchTables = async () => {
 
 const selectTable = async (table: TableInfo) => {
   selectedTableId.value = table.id;
-  fieldSearchTerm.value = "";
-  joinSearchTerm.value = "";
-
-  // Check cache
-  const cachedDetail = tableDetailCache.value[table.id];
-  if (cachedDetail) {
-    selectedTableDetail.value = cachedDetail;
+  const cached = tableDetailCache.value[table.id];
+  if (cached) {
+    selectedTableDetail.value = cached;
     return;
   }
 
+  isLoadingDetail.value = true;
   try {
-    const response = await callApi(RequestRoutes.FETCH_SUITEQL_TABLE_DETAIL, {
-      tableName: table.id
-    }) as ApiResponse;
+    const response = (await callApi(
+      RequestRoutes.FETCH_SUITEQL_TABLE_DETAIL,
+      { tableName: table.id }
+    )) as ApiResponse;
     const data = response.message;
+    const raw = data?.data ?? data ?? {};
     const detail: TableDetail = {
-      id: data?.data?.id || data?.id || table.id,
-      label: data?.data?.label || data?.label || table.label,
-      fields: (data?.data?.fields || data?.fields || []).map((f: any) => ({
+      id: raw.id || table.id,
+      label: raw.label || table.label,
+      fields: (raw.fields ?? []).map((f: any) => ({
         id: f.id,
         label: f.label,
         dataType: f.dataType,
         fieldType: f.fieldType,
         isColumn: f.isColumn
       })),
-      joins: (data?.data?.joins || data?.joins || []).map((j: any) => ({
+      joins: (raw.joins ?? []).map((j: any) => ({
         id: j.id,
         label: j.label,
         joinType: j.joinType,
@@ -645,21 +863,158 @@ const selectTable = async (table: TableInfo) => {
     selectedTableDetail.value = detail;
   } catch (error) {
     console.error("Failed to fetch table detail:", error);
+  } finally {
+    isLoadingDetail.value = false;
   }
 };
 
-// Auto-detect table from FROM clause and load its details
-const detectTableFromQuery = (sql: string) => {
+// Click in the Tables tab: select + switch to Fields tab
+const handleTableClick = (table: TableInfo) => {
+  selectTable(table);
+  bottomTab.value = "fields";
+};
+
+// Auto-detect table from FROM clause and load its detail
+const detectAndLoadTableFromQuery = async (sql: string) => {
+  if (!tables.value.length) return;
   const fromMatch = sql.match(/\bFROM\s+(\w+)/i);
-  if (fromMatch && fromMatch[1]) {
-    const tableName = fromMatch[1];
-    const table = tables.value.find(
-      (t) => t.id.toLowerCase() === tableName.toLowerCase()
-    );
-    if (table && selectedTableId.value !== table.id) {
-      selectTable(table);
+  if (!fromMatch?.[1]) return;
+  const tableName = fromMatch[1];
+  const table = tables.value.find(
+    (t) => t.id.toLowerCase() === tableName.toLowerCase()
+  );
+  if (!table || selectedTableId.value === table.id) return;
+  await selectTable(table);
+};
+
+// ============================================================================
+// Insert at Cursor
+// ============================================================================
+
+const insertAtCursor = (text: string) => {
+  const editorEl = editorRefs.value[activeFileId.value];
+  if (!editorEl) return;
+  const editorInst =
+    editorEl.getEditor() as monaco.editor.IStandaloneCodeEditor | null;
+  if (!editorInst) return;
+  const position = editorInst.getPosition();
+  if (!position) return;
+  editorInst.executeEdits("suiteql-insert", [
+    {
+      range: new monaco.Range(
+        position.lineNumber,
+        position.column,
+        position.lineNumber,
+        position.column
+      ),
+      text
     }
+  ]);
+  editorInst.focus();
+};
+
+const insertJoinAtCursor = (join: JoinInfo) => {
+  if (!join.sourceTargetType) return;
+  const joinPair = join.sourceTargetType.joinPairs?.[0];
+  const joinKeyword =
+    join.joinType === "INVERSE" ? "LEFT JOIN" : "INNER JOIN";
+  const clause = joinPair
+    ? `\n${joinKeyword} ${join.sourceTargetType.id}\n    ON ${joinPair.label}`
+    : `\n${joinKeyword} ${join.sourceTargetType.id}\n    ON -- ${join.label}`;
+  insertAtCursor(clause);
+};
+
+// ============================================================================
+// Format SQL
+// ============================================================================
+
+const formatSQL = (sql: string): string => {
+  let result = sql.trim().replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ");
+
+  // Uppercase multi-word keywords first (order matters: longest first)
+  const multiWordKeywords = [
+    "SELECT DISTINCT",
+    "IS NOT NULL",
+    "IS NULL",
+    "NOT LIKE",
+    "NOT BETWEEN",
+    "NOT IN",
+    "INNER JOIN",
+    "LEFT OUTER JOIN",
+    "RIGHT OUTER JOIN",
+    "FULL OUTER JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    "CROSS JOIN",
+    "ORDER BY",
+    "GROUP BY",
+    "UNION ALL"
+  ];
+  multiWordKeywords.forEach((kw) => {
+    result = result.replace(new RegExp(`\\b${kw}\\b`, "gi"), kw);
+  });
+
+  const singleKeywords = [
+    "SELECT", "FROM", "WHERE", "HAVING", "LIMIT", "OFFSET", "UNION",
+    "JOIN", "ON", "AND", "OR", "NOT", "IN", "LIKE", "BETWEEN", "AS",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "DISTINCT", "NULL",
+    "COUNT", "SUM", "AVG", "MIN", "MAX", "ROWNUM", "ASC", "DESC",
+    "COALESCE", "NULLIF", "CAST", "UPPER", "LOWER", "TRIM"
+  ];
+  singleKeywords.forEach((kw) => {
+    result = result.replace(new RegExp(`\\b(${kw})\\b`, "gi"), kw);
+  });
+
+  // Line break before main clauses
+  [
+    "FROM", "WHERE", "ORDER BY", "GROUP BY", "HAVING", "LIMIT",
+    "OFFSET", "UNION ALL", "UNION"
+  ].forEach((clause) => {
+    result = result.replace(new RegExp(`\\b(${clause})\\b`, "g"), "\n$1");
+  });
+
+  // Line break before JOINs
+  [
+    "INNER JOIN", "LEFT OUTER JOIN", "RIGHT OUTER JOIN", "FULL OUTER JOIN",
+    "LEFT JOIN", "RIGHT JOIN", "CROSS JOIN", "JOIN"
+  ].forEach((j) => {
+    result = result.replace(new RegExp(`\\b(${j})\\b`, "g"), "\n$1");
+  });
+
+  // Indent ON
+  result = result.replace(/\bON\b/g, "\n    ON");
+
+  // Format SELECT column list: each comma-separated item on its own line
+  result = result.replace(
+    /^(SELECT(?:\s+DISTINCT)?)(.*?)(?=\nFROM)/ms,
+    (_, selectKw: string, cols: string) => {
+      const items = cols
+        .split(",")
+        .map((item: string, idx: number) => {
+          const trimmed = item.trim();
+          return idx === 0 ? `\n    ${trimmed}` : `    ${trimmed}`;
+        });
+      return `${selectKw}${items.join(",\n")}`;
+    }
+  );
+
+  result = result.replace(/^\n+/, "").trim().replace(/\n{3,}/g, "\n\n");
+  return result;
+};
+
+const formatCurrentSQL = (fileId: string) => {
+  const file = files.value.find((f) => f.id === fileId);
+  if (!file) return;
+  const editorEl = editorRefs.value[fileId];
+  const editorInst = editorEl?.getEditor() as
+    | monaco.editor.IStandaloneCodeEditor
+    | null
+    | undefined;
+  const formatted = formatSQL(editorInst?.getValue() ?? file.code);
+  if (editorInst) {
+    editorInst.setValue(formatted);
   }
+  file.code = formatted;
 };
 
 // ============================================================================
@@ -668,20 +1023,20 @@ const detectTableFromQuery = (sql: string) => {
 
 const runCurrentQuery = async () => {
   const file = currentFile.value;
-  if (!file) return;
+  if (!file || file.isExecuting) return;
 
   file.isExecuting = true;
   file.results = [];
   file.columns = [];
   file.error = "";
+  bottomTab.value = "results";
 
-  // Auto-detect table
-  detectTableFromQuery(file.code);
+  detectAndLoadTableFromQuery(file.code);
 
   try {
-    const response = await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
+    const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
       sql: file.code
-    }) as ApiResponse;
+    })) as ApiResponse;
 
     if (response.status === "error") {
       file.error = response.message || "Query execution failed";
@@ -693,65 +1048,103 @@ const runCurrentQuery = async () => {
       file.columns = Object.keys(results[0]);
       file.results = results;
     } else if (Array.isArray(results)) {
-      file.results = [];
-      file.columns = [];
       file.error = "Query returned 0 rows";
     } else {
       file.error = "Unexpected response format";
     }
   } catch (error: any) {
-    file.error = `Execution failed: ${error.message || error}`;
+    file.error = `Execution failed: ${error?.message ?? error}`;
   } finally {
     file.isExecuting = false;
   }
 };
 
 // ============================================================================
-// Helper Functions
+// Open in RunQuickScript
 // ============================================================================
 
-const insertFieldAtCursor = (fieldId: string) => {
-  const file = currentFile.value;
-  if (!file) return;
-  // Append to code if no cursor control
-  file.code = file.code + (file.code.endsWith("\n") ? "" : "\n") + "  " + fieldId;
+const openInRunQuickScript = (file: QueryFile) => {
+  const wrappedCode = `const sql = \`
+${file.code}
+\`;
+
+const queryConfig = { query: sql };
+const resultSet = await query.runSuiteQL.promise(queryConfig);
+const results = resultSet.asMappedResults();
+
+console.log('${file.name} results:', results.length, results);`;
+
+  const newId = generateId();
+  const newFile = {
+    id: newId,
+    name: `sql_${file.name}`,
+    code: wrappedCode
+  };
+
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    chrome.storage.local.get(
+      ["cachedFiles", "cachedOpenTabs"],
+      (result) => {
+        const existingFiles = Array.isArray(result.cachedFiles)
+          ? result.cachedFiles
+          : [];
+        const existingTabs = Array.isArray(result.cachedOpenTabs)
+          ? result.cachedOpenTabs
+          : [];
+        chrome.storage.local.set(
+          {
+            cachedFiles: [...existingFiles, newFile],
+            cachedOpenTabs: [...existingTabs, newId],
+            cachedActiveTab: newId
+          },
+          () => router.push("/run-quick-script")
+        );
+      }
+    );
+  } else {
+    router.push("/run-quick-script");
+  }
 };
 
-const insertJoinAtCursor = (join: JoinInfo) => {
-  if (!join.sourceTargetType) return;
-  const joinPair = join.sourceTargetType.joinPairs?.[0];
-  const joinClause = joinPair
-    ? `\n${join.joinType === "AUTOMATIC" ? "INNER" : "LEFT"} JOIN ${join.sourceTargetType.id} ON ${joinPair.label}`
-    : `\n-- JOIN ${join.sourceTargetType.id} (${join.label})`;
+// ============================================================================
+// Code Change Handler
+// ============================================================================
 
-  const file = currentFile.value;
-  if (!file) return;
-  file.code += joinClause;
+const onCodeChange = (fileId: string, newCode: string) => {
+  if (fileId !== activeFileId.value) return;
+  detectAndLoadTableFromQuery(newCode);
 };
 
-const getJoinTooltip = (join: JoinInfo): string => {
-  const pairs = join.sourceTargetType?.joinPairs?.map((p) => p.label).join(", ") || "";
-  return `${join.label}\n${join.cardinality} · ${join.joinType}\n${pairs}`;
-};
+// ============================================================================
+// Copy Helpers
+// ============================================================================
 
 const copyResults = async (file: QueryFile) => {
   try {
     await navigator.clipboard.writeText(JSON.stringify(file.results, null, 2));
-  } catch { /* silent */ }
+  } catch {
+    /* silent */
+  }
 };
 
 const copyResultsCSV = async (file: QueryFile) => {
-  if (file.results.length === 0) return;
+  if (!file.results.length) return;
   const header = file.columns.join(",");
   const rows = file.results.map((r) =>
-    file.columns.map((c) => {
-      const val = r[c] ?? "";
-      return typeof val === "string" && val.includes(",") ? `"${val}"` : val;
-    }).join(",")
+    file.columns
+      .map((c) => {
+        const val = String(r[c] ?? "");
+        return val.includes(",") || val.includes('"') || val.includes("\n")
+          ? `"${val.replace(/"/g, '""')}"`
+          : val;
+      })
+      .join(",")
   );
   try {
     await navigator.clipboard.writeText([header, ...rows].join("\n"));
-  } catch { /* silent */ }
+  } catch {
+    /* silent */
+  }
 };
 
 // ============================================================================
@@ -762,22 +1155,22 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
-const STORAGE_KEY_FILES = "suiteql_cachedFiles";
-const STORAGE_KEY_TABS = "suiteql_cachedOpenTabs";
-const STORAGE_KEY_ACTIVE = "suiteql_cachedActiveTab";
+const STORAGE_KEYS = {
+  files: "suiteql_cachedFiles",
+  tabs: "suiteql_cachedOpenTabs",
+  active: "suiteql_cachedActiveTab"
+};
 
 const saveAllFiles = (state: any) => {
   if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-
   saveStatus.value = "saving";
   if (saveTimeout) clearTimeout(saveTimeout);
-
   saveTimeout = window.setTimeout(() => {
     chrome.storage.local.set(
       {
-        [STORAGE_KEY_FILES]: state.files,
-        [STORAGE_KEY_TABS]: state.openTabs,
-        [STORAGE_KEY_ACTIVE]: state.activeTab
+        [STORAGE_KEYS.files]: state.files,
+        [STORAGE_KEYS.tabs]: state.openTabs,
+        [STORAGE_KEYS.active]: state.activeTab
       },
       () => {
         if (chrome.runtime.lastError) {
@@ -793,31 +1186,17 @@ const saveAllFiles = (state: any) => {
   }, 1000);
 };
 
-watch(
-  persistedState,
-  (state) => {
-    if (isRestoring.value) return;
-    saveAllFiles(state);
-  },
-  { deep: true }
-);
-
-// Watch for code changes to auto-detect tables
-watch(
-  () => currentFile.value?.code,
-  (newCode) => {
-    if (newCode && tables.value.length > 0) {
-      detectTableFromQuery(newCode);
-    }
-  }
-);
+watch(persistedState, (state) => {
+  if (isRestoring.value) return;
+  saveAllFiles(state);
+}, { deep: true });
 
 // ============================================================================
 // Lifecycle
 // ============================================================================
 
 onMounted(() => {
-  // Fetch tables on mount
+  registerContextAwareCompletions();
   fetchTables();
 
   if (typeof chrome === "undefined" || !chrome.storage?.local) {
@@ -826,11 +1205,11 @@ onMounted(() => {
   }
 
   chrome.storage.local.get(
-    [STORAGE_KEY_FILES, STORAGE_KEY_TABS, STORAGE_KEY_ACTIVE],
+    [STORAGE_KEYS.files, STORAGE_KEYS.tabs, STORAGE_KEYS.active],
     (result) => {
       try {
-        const restoredFiles = Array.isArray(result[STORAGE_KEY_FILES])
-          ? result[STORAGE_KEY_FILES].map((f: any) => ({
+        const restoredFiles = Array.isArray(result[STORAGE_KEYS.files])
+          ? result[STORAGE_KEYS.files].map((f: any) => ({
               id: f.id || generateId(),
               name: f.name || "query.sql",
               code: f.code || "",
@@ -844,10 +1223,13 @@ onMounted(() => {
         files.value = restoredFiles;
 
         let cachedTabs: string[] = [];
-        if (Array.isArray(result[STORAGE_KEY_TABS])) {
-          cachedTabs = result[STORAGE_KEY_TABS];
-        } else if (result[STORAGE_KEY_TABS] && typeof result[STORAGE_KEY_TABS] === "object") {
-          cachedTabs = Object.values(result[STORAGE_KEY_TABS]);
+        if (Array.isArray(result[STORAGE_KEYS.tabs])) {
+          cachedTabs = result[STORAGE_KEYS.tabs];
+        } else if (
+          result[STORAGE_KEYS.tabs] &&
+          typeof result[STORAGE_KEYS.tabs] === "object"
+        ) {
+          cachedTabs = Object.values(result[STORAGE_KEYS.tabs]);
         }
 
         const validTabs = cachedTabs.filter((id: string) =>
@@ -855,7 +1237,7 @@ onMounted(() => {
         );
         openTabs.value = validTabs;
 
-        const active = result[STORAGE_KEY_ACTIVE];
+        const active = result[STORAGE_KEYS.active];
         activeFileId.value =
           typeof active === "string" && openTabs.value.includes(active)
             ? active
@@ -864,15 +1246,18 @@ onMounted(() => {
         console.error("Restore failed:", error);
         openTabs.value = [];
         activeFileId.value = "";
-        chrome.storage.local.remove([STORAGE_KEY_TABS, STORAGE_KEY_ACTIVE]);
+        chrome.storage.local.remove([STORAGE_KEYS.tabs, STORAGE_KEYS.active]);
       }
-
       isRestoring.value = false;
     }
   );
 });
 
 onBeforeUnmount(() => {
+  if (sqlCompletionDisposable) {
+    sqlCompletionDisposable.dispose();
+    sqlCompletionDisposable = null;
+  }
   try {
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
       const filesData = files.value.map((f) => ({
@@ -881,9 +1266,9 @@ onBeforeUnmount(() => {
         code: f.code
       }));
       chrome.storage.local.set({
-        [STORAGE_KEY_FILES]: filesData,
-        [STORAGE_KEY_TABS]: openTabs.value,
-        [STORAGE_KEY_ACTIVE]: activeFileId.value
+        [STORAGE_KEYS.files]: filesData,
+        [STORAGE_KEYS.tabs]: openTabs.value,
+        [STORAGE_KEYS.active]: activeFileId.value
       });
     }
   } catch (error) {
@@ -911,72 +1296,94 @@ onBeforeUnmount(() => {
   color: var(--p-slate-700);
 }
 
-.sidebar-section p {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--p-slate-600);
-}
-
-.sidebar-section code {
-  background: var(--p-slate-200);
-  padding: 0.125rem 0.25rem;
-  border-radius: 2px;
-  font-size: 0.7rem;
-}
-
 .file-item {
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
 }
 
-.file-item:hover .opacity-0 {
-  opacity: 1;
+/* Bottom panel tab styles */
+.bottom-tab {
+  cursor: pointer;
+  border-top: 2px solid transparent;
+  user-select: none;
 }
 
-.table-item {
-  border-left: 2px solid transparent;
-  transition: border-color 0.15s;
+.tab-active {
+  color: #ffffff;
+  border-top-color: #569cd6;
+  background: #1e1e1e;
 }
 
-.table-item:hover {
-  border-left-color: var(--p-slate-400);
+.tab-inactive {
+  color: #9d9d9d;
 }
 
-.sidebar-section :deep(.p-inputtext) {
+.tab-inactive:hover {
+  color: #cccccc;
+  background: #2d2d2d;
+}
+
+.schema-search-input {
+  background: #3c3c3c;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
   font-size: 0.75rem;
+  padding: 3px 8px;
+  outline: none;
+  width: 180px;
+  font-family: inherit;
 }
 
-.sidebar-section :deep(.max-h-32) {
-  max-height: 8rem;
+.schema-search-input::placeholder {
+  color: #6b7280;
+}
+
+.schema-search-input:focus {
+  border-color: #569cd6;
+}
+
+.schema-action-btn {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: #9d9d9d;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.schema-action-btn:hover {
+  color: #ffffff;
+  background: #3c3c3c;
 }
 
 /* Results table */
-.results-pane {
-  background: #1e1e1e;
-  color: #d4d4d4;
-}
-
 .results-table {
   border-collapse: collapse;
-  font-family: 'Consolas', 'Monaco', monospace;
+  font-family: "Consolas", "Monaco", monospace;
+  font-size: 0.75rem;
 }
 
 .results-table th {
   background: #2d2d2d;
   color: #569cd6;
-  padding: 6px 12px;
+  padding: 6px 14px;
   text-align: left;
   font-weight: 600;
   border-bottom: 1px solid #404040;
   white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .results-table td {
-  padding: 4px 12px;
-  border-bottom: 1px solid #333;
+  padding: 4px 14px;
+  border-bottom: 1px solid #2a2a2a;
   white-space: nowrap;
-  max-width: 300px;
+  max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #d4d4d4;
 }
 
 .results-table tr:hover td {
@@ -984,10 +1391,96 @@ onBeforeUnmount(() => {
 }
 
 .results-table tr:nth-child(even) td {
-  background: #252526;
+  background: #242424;
 }
 
 .results-table tr:nth-child(even):hover td {
   background: #2a2d2e;
+}
+
+/* Schema tables (fields / joins) */
+.schema-table {
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+
+.schema-table th {
+  background: #2d2d2d;
+  color: #9cdcfe;
+  padding: 6px 14px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid #404040;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.schema-row td {
+  padding: 5px 14px;
+  border-bottom: 1px solid #242424;
+  cursor: pointer;
+}
+
+.schema-row:hover td {
+  background: #2a2d2e;
+}
+
+.schema-row:hover td:first-child::after {
+  content: " ↵";
+  font-size: 0.65rem;
+  color: #569cd6;
+  opacity: 0.7;
+}
+
+/* Tables grid */
+.tables-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px;
+}
+
+.table-card {
+  padding: 8px 10px;
+  border: 1px solid #404040;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: #252526;
+}
+
+.table-card:hover {
+  border-color: #569cd6;
+  background: #2a2d2e;
+}
+
+.table-card-selected {
+  border-color: #569cd6 !important;
+  background: #1e3a5f !important;
+}
+
+.table-card-id {
+  font-family: "Consolas", monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #9cdcfe;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-card-label {
+  font-size: 0.65rem;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* Sidebar input styling */
+.sidebar-section :deep(.p-inputtext) {
+  font-size: 0.75rem;
 }
 </style>
