@@ -5,6 +5,51 @@
       <div class="sql-ai-header-left">
         <i class="pi pi-sparkles sql-ai-icon"></i>
         <span class="sql-ai-title">AI SQL Editor</span>
+
+        <!-- Chat history dropdown trigger -->
+        <div class="sql-ai-history-wrapper" ref="historyDropdownRef">
+          <button
+            class="sql-ai-history-btn"
+            @click="showHistoryDropdown = !showHistoryDropdown"
+            :title="activeChatName"
+          >
+            <span class="sql-ai-history-label">{{ activeChatName }}</span>
+            <i class="pi pi-chevron-down sql-ai-history-chevron" :class="{ rotated: showHistoryDropdown }"></i>
+          </button>
+
+          <!-- Dropdown panel -->
+          <div v-if="showHistoryDropdown" class="sql-ai-history-dropdown">
+            <div class="sql-ai-history-search-row">
+              <input
+                v-model="historySearchQuery"
+                class="sql-ai-history-search"
+                placeholder="Search chats…"
+                @click.stop
+              />
+              <button class="sql-ai-history-new-btn" @click="startNewChat" title="New chat">
+                <i class="pi pi-plus"></i>
+              </button>
+            </div>
+            <div class="sql-ai-history-list">
+              <div
+                v-if="filteredSessions.length === 0"
+                class="sql-ai-history-empty"
+              >No chats yet</div>
+              <button
+                v-for="session in filteredSessions"
+                :key="session.id"
+                class="sql-ai-history-item"
+                :class="{ 'history-item-active': session.id === activeChatId }"
+                @click="loadSession(session)"
+              >
+                <span class="sql-ai-history-item-name">{{ session.name }}</span>
+                <span class="sql-ai-history-item-date">
+                  {{ new Date(session.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) }}
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="sql-ai-header-right">
         <span v-if="tokenCounterLabel" :class="tokenCounterClass">
@@ -65,7 +110,7 @@
                 <span>
                   Used
                   {{ getToolMessagesForAssistant(msg.id).length }}
-                  dynamic skill{{
+                  tool{{
                     getToolMessagesForAssistant(msg.id).length > 1 ? "s" : ""
                   }}
                 </span>
@@ -209,15 +254,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, watch, onMounted } from "vue";
-import { useAgent, type ToolDefinition } from "../composables/useAgent";
+import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount } from "vue";
+import { useAgent, type ToolDefinition, type AgentMessage } from "../composables/useAgent";
 import MessageContentRenderer from "./MessageContentRenderer.vue";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { useSettings } from "../states/settingsState";
+import { getSkillsByDomain } from "../utils/skillsDb";
 
 const props = defineProps<{
   /** Returns the current SQL from the main editor */
   getEditorQuery: () => string;
+  /** Current query file ID — used to scope chat history */
+  fileId: string;
 }>();
 
 const { settings } = useSettings();
@@ -242,6 +290,17 @@ interface RunningTool {
   input: unknown;
 }
 
+// ── Chat history (per file) ──
+interface ChatSession {
+  id: string;
+  name: string;
+  createdAt: string;
+  messages: SqlChatMessage[];
+  agentHistory: AgentMessage[];
+}
+
+const CHATS_STORAGE_PREFIX = "suiteql_ai_chats_";
+
 // ── Suggestions ──
 const suggestions = [
   "What tables are related to customers?",
@@ -259,6 +318,14 @@ const currentAssistantMsgId = ref(0);
 const runningTools = ref<RunningTool[]>([]);
 const toolMessageToAssistant = ref(new Map<number, number>());
 let abortController: AbortController | null = null;
+
+// ── Chat history state ──
+const chatSessions = ref<ChatSession[]>([]);
+const activeChatId = ref<string>("");
+const showHistoryDropdown = ref(false);
+const historySearchQuery = ref("");
+const historyDropdownRef = ref<HTMLElement | null>(null);
+const sqlDomainSkillsContent = ref<string>("");
 
 // ── SQL AI Tools with dynamic editor context ──
 const sqlTools = createSqlAiTools();
@@ -308,12 +375,157 @@ executeQueryTool.execute = async (input) => {
   return result;
 };
 
-// ── Agent setup ──
-const agent = useAgent({
-  systemPrompt: `You are a SuiteQL query builder assistant embedded in a SQL editor. Your job is to help users build, debug, and understand SuiteQL queries.
+// ── Chat history helpers ──
+const storageKey = () => `${CHATS_STORAGE_PREFIX}${props.fileId}`;
+
+const loadChatSessions = async () => {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+  return new Promise<void>((resolve) => {
+    chrome.storage.local.get([storageKey()], (result) => {
+      const stored = result[storageKey()];
+      chatSessions.value = Array.isArray(stored) ? stored : [];
+      resolve();
+    });
+  });
+};
+
+const saveChatSessions = () => {
+  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+  chrome.storage.local.set({ [storageKey()]: chatSessions.value });
+};
+
+const filteredSessions = computed(() => {
+  const q = historySearchQuery.value.toLowerCase().trim();
+  if (!q) return chatSessions.value;
+  return chatSessions.value.filter((s) => s.name.toLowerCase().includes(q));
+});
+
+const activeChatName = computed(() => {
+  const s = chatSessions.value.find((c) => c.id === activeChatId.value);
+  return s?.name ?? "New Chat";
+});
+
+const generateChatName = (msgs: SqlChatMessage[]): string => {
+  const first = msgs.find((m) => m.role === "user");
+  if (first?.content) {
+    const name = first.content.trim().replace(/\s+/g, " ").slice(0, 40);
+    return name.length < first.content.trim().length ? `${name}…` : name;
+  }
+  return `Chat ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+};
+
+const saveCurrentSession = () => {
+  if (!activeChatId.value || messages.value.length === 0) return;
+  const idx = chatSessions.value.findIndex((s) => s.id === activeChatId.value);
+  const session: ChatSession = {
+    id: activeChatId.value,
+    name: generateChatName(messages.value),
+    createdAt: chatSessions.value[idx]?.createdAt ?? new Date().toISOString(),
+    messages: messages.value.map((m) => ({ ...m, isStreaming: false })),
+    agentHistory: agent.history.value.map((m) => ({ ...m })) as AgentMessage[]
+  };
+  if (idx >= 0) {
+    chatSessions.value[idx] = session;
+  } else {
+    chatSessions.value.unshift(session);
+  }
+  saveChatSessions();
+};
+
+const startNewChat = () => {
+  saveCurrentSession();
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  activeChatId.value = id;
+  messages.value = [];
+  agent.clearHistory();
+  runningTools.value = [];
+  currentAssistantMsgId.value = 0;
+  toolMessageToAssistant.value.clear();
+  showHistoryDropdown.value = false;
+  nextTick(() => textareaRef.value?.focus());
+};
+
+const loadSession = (session: ChatSession) => {
+  saveCurrentSession();
+  activeChatId.value = session.id;
+  messages.value = session.messages.map((m) => ({ ...m }));
+  agent.setHistory(session.agentHistory ?? []);
+  runningTools.value = [];
+  toolMessageToAssistant.value.clear();
+  // Rebuild toolMessageToAssistant map from loaded messages
+  let lastAssistantId = 0;
+  for (const m of messages.value) {
+    if (m.role === "assistant") lastAssistantId = m.id;
+    if (m.role === "tool" && lastAssistantId) {
+      toolMessageToAssistant.value.set(m.id, lastAssistantId);
+    }
+  }
+  showHistoryDropdown.value = false;
+  nextTick(scrollToBottom);
+};
+
+const switchFileContext = async () => {
+  await loadChatSessions();
+  // If there are sessions for this file, load the most recent
+  if (chatSessions.value.length > 0) {
+    const latest = chatSessions.value[0];
+    activeChatId.value = latest!.id;
+    messages.value = latest?.messages.map((m) => ({ ...m })) ?? [];
+    agent.setHistory(latest?.agentHistory ?? []);
+    runningTools.value = [];
+    toolMessageToAssistant.value.clear();
+    let lastAssistantId = 0;
+    for (const m of messages.value) {
+      if (m.role === "assistant") lastAssistantId = m.id;
+      if (m.role === "tool" && lastAssistantId) {
+        toolMessageToAssistant.value.set(m.id, lastAssistantId);
+      }
+    }
+  } else {
+    // No sessions — start fresh
+    activeChatId.value = `${Date.now()}-init`;
+    messages.value = [];
+    agent.clearHistory();
+    runningTools.value = [];
+    toolMessageToAssistant.value.clear();
+  }
+};
+
+// Close dropdown on outside click
+const handleOutsideClick = (e: MouseEvent) => {
+  if (
+    showHistoryDropdown.value &&
+    historyDropdownRef.value &&
+    !historyDropdownRef.value.contains(e.target as Node)
+  ) {
+    showHistoryDropdown.value = false;
+  }
+};
+
+// ── SQL domain skills loader ──
+const loadSqlDomainSkills = async () => {
+  try {
+    const sqlSkills = await getSkillsByDomain("sql");
+    if (sqlSkills.length === 0) {
+      sqlDomainSkillsContent.value = "";
+      return;
+    }
+    const parts = sqlSkills.map(
+      (s) => `### ${s.name}\n${s.content}`
+    );
+    sqlDomainSkillsContent.value =
+      "\n\n## Domain-Specific Instructions\nThe following additional instructions apply specifically to this SQL environment:\n\n" +
+      parts.join("\n\n");
+  } catch {
+    sqlDomainSkillsContent.value = "";
+  }
+};
+
+// ── Base system prompt ──
+const BASE_SYSTEM_PROMPT = `You are a SuiteQL query builder assistant embedded in a SQL editor. Your job is to help users build, debug, and understand SuiteQL queries.
 
 ## Your Capabilities
-You have access to dynamic skills that fetch live schema data from NetSuite:
+You have access to tools that fetch live schema data from NetSuite:
 - **sql_search_tables**: Search for available tables by keyword
 - **sql_get_table_fields**: Get all columns for a specific table  
 - **sql_get_table_joins**: Get available joins/relationships for a table
@@ -321,7 +533,7 @@ You have access to dynamic skills that fetch live schema data from NetSuite:
 - **sql_get_editor_query**: Read the current query in the main editor (read-only)
 - **sql_discover_field_values**: Sample DISTINCT real values for a column — use this before filtering on any text/string field to get the exact casing (e.g. 'COMPLETED' vs 'Completed')
 
-## Dynamic Skills Workflow
+## Tool Workflow
 When building a query, ALWAYS use this workflow:
 1. Use \`sql_search_tables\` to find relevant tables
 2. Use \`sql_get_table_fields\` to discover available columns
@@ -344,7 +556,14 @@ When building a query, ALWAYS use this workflow:
 ## Response Format
 - Use markdown for formatting
 - Put SQL in \`\`\`sql code blocks
-- Keep responses short and focused`,
+- Keep responses short and focused`;
+
+const buildSystemPrompt = () =>
+  BASE_SYSTEM_PROMPT + sqlDomainSkillsContent.value;
+
+// ── Agent setup ──
+const agent = useAgent({
+  systemPrompt: BASE_SYSTEM_PROMPT,
   tools: sqlTools,
   ephemeralTools: [],
   compactionThreshold: () => settings.compactionThreshold,
@@ -437,7 +656,10 @@ const sendMessage = async (text: string) => {
 
   try {
     abortController = new AbortController();
-    const result = await agent.run(text, { maxIterations: 10 });
+    const result = await agent.run(text, {
+      systemPrompt: buildSystemPrompt(),
+      maxIterations: 10
+    });
 
     // Update assistant message
     const assistantMsg = messages.value.find((m) => m.id === assistantId);
@@ -448,6 +670,7 @@ const sendMessage = async (text: string) => {
 
     // Sync tool messages from agent history
     syncToolMessages(assistantId);
+    saveCurrentSession();
   } catch (error) {
     const assistantMsg = messages.value.find((m) => m.id === assistantId);
     if (assistantMsg) {
@@ -510,11 +733,7 @@ const stopAgent = () => {
 };
 
 const clearChat = () => {
-  messages.value = [];
-  agent.clearHistory();
-  runningTools.value = [];
-  currentAssistantMsgId.value = 0;
-  toolMessageToAssistant.value.clear();
+  startNewChat();
 };
 
 // Auto-scroll on new messages
@@ -523,8 +742,18 @@ watch(
   () => scrollToBottom()
 );
 
-onMounted(() => {
+// Switch chat context when file changes
+watch(() => props.fileId, switchFileContext);
+
+onMounted(async () => {
+  await Promise.all([switchFileContext(), loadSqlDomainSkills()]);
   textareaRef.value?.focus();
+  document.addEventListener("mousedown", handleOutsideClick);
+});
+
+onBeforeUnmount(() => {
+  saveCurrentSession();
+  document.removeEventListener("mousedown", handleOutsideClick);
 });
 </script>
 
@@ -552,17 +781,169 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: 0;
+  flex: 1;
 }
 
 .sql-ai-icon {
   font-size: 0.75rem;
-  color: var(--p-blue-500, #3b82f6);
+  color: var(--p-slate-500);
+  flex-shrink: 0;
 }
 
 .sql-ai-title {
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--p-slate-700);
+  flex-shrink: 0;
+}
+
+/* ── Chat history dropdown ── */
+.sql-ai-history-wrapper {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.sql-ai-history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  cursor: pointer;
+  max-width: 100%;
+  transition: all 0.12s;
+}
+
+.sql-ai-history-btn:hover {
+  border-color: var(--p-slate-400);
+  background: var(--p-slate-100);
+}
+
+.sql-ai-history-label {
+  font-size: 0.68rem;
+  color: var(--p-slate-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.sql-ai-history-chevron {
+  font-size: 0.55rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.sql-ai-history-chevron.rotated {
+  transform: rotate(180deg);
+}
+
+.sql-ai-history-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  width: 240px;
+  background: white;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.sql-ai-history-search-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+
+.sql-ai-history-search {
+  flex: 1;
+  font-size: 0.72rem;
+  padding: 3px 7px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+  outline: none;
+  color: var(--p-slate-700);
+  font-family: inherit;
+}
+.sql-ai-history-search::placeholder { color: var(--p-slate-400); }
+.sql-ai-history-search:focus { border-color: var(--p-slate-400); }
+
+.sql-ai-history-new-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid var(--p-slate-200);
+  background: white;
+  cursor: pointer;
+  color: var(--p-slate-500);
+  transition: all 0.12s;
+  flex-shrink: 0;
+}
+.sql-ai-history-new-btn:hover {
+  background: var(--p-slate-100);
+  border-color: var(--p-slate-400);
+  color: var(--p-slate-700);
+}
+.sql-ai-history-new-btn i { font-size: 0.6rem; }
+
+.sql-ai-history-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.sql-ai-history-empty {
+  padding: 12px;
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  text-align: center;
+}
+
+.sql-ai-history-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  gap: 6px;
+  transition: background 0.1s;
+}
+.sql-ai-history-item:hover {
+  background: var(--p-slate-50);
+}
+.history-item-active {
+  background: var(--p-slate-100) !important;
+}
+
+.sql-ai-history-item-name {
+  font-size: 0.72rem;
+  color: var(--p-slate-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.sql-ai-history-item-date {
+  font-size: 0.62rem;
+  color: var(--p-slate-400);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .sql-ai-header-right {

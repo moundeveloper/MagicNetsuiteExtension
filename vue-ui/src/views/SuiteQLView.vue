@@ -32,7 +32,8 @@
                 class="w-full"
               >
                 <i class="pi pi-play font-medium"></i>
-                {{ currentFile?.isExecuting ? "Running..." : "Run Query" }}
+                <span class="flex-1 text-left">{{ currentFile?.isExecuting ? "Running..." : "Run Query" }}</span>
+                <kbd class="run-kbd">Ctrl+↵</kbd>
               </Button>
               <Button
                 @click="fetchTables"
@@ -330,6 +331,13 @@
                               @click="copyResultsCSV(file)"
                             >
                               CSV
+                            </button>
+                            <button
+                              class="schema-action-btn schema-action-btn-danger"
+                              title="Clear results"
+                              @click="clearResults(file)"
+                            >
+                              <i class="pi pi-times" style="font-size: 0.65rem" />
                             </button>
                           </template>
 
@@ -634,6 +642,7 @@
                   />
                   <SqlAiEditor
                     :get-editor-query="getEditorQuery"
+                    :file-id="activeFileId"
                     class="sql-ai-editor-panel"
                     :style="{ width: aiPanelWidth + 'px' }"
                   />
@@ -1474,6 +1483,13 @@ const copyResultsCSV = async (file: QueryFile) => {
   }
 };
 
+const clearResults = (file: QueryFile) => {
+  file.results = [];
+  file.columns = [];
+  file.error = "";
+  file.totalCount = 0;
+};
+
 // ============================================================================
 // Persistence
 // ============================================================================
@@ -1636,6 +1652,18 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
 }
 
+.run-kbd {
+  font-size: 0.6rem;
+  font-family: "JetBrains Mono", monospace;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: rgba(255,255,255,0.8);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
 .sidebar-section h4 {
   margin: 0 0 0.5rem 0;
   font-size: 0.875rem;
@@ -1786,7 +1814,7 @@ onBeforeUnmount(() => {
 
 .tab-active {
   color: var(--p-slate-800);
-  border-top-color: var(--p-blue-500, #3b82f6);
+  border-top-color: var(--p-slate-600);
   background: var(--p-slate-50);
   font-weight: 600;
 }
@@ -1859,6 +1887,11 @@ onBeforeUnmount(() => {
   color: var(--p-slate-700);
   background: var(--p-slate-100);
   border-color: var(--p-slate-400);
+}
+.schema-action-btn-danger:hover {
+  color: var(--p-red-600);
+  background: var(--p-red-50);
+  border-color: var(--p-red-300);
 }
 
 /* ── Results table ── */
@@ -2094,6 +2127,6 @@ onBeforeUnmount(() => {
 
 .ai-panel-resize-handle:hover,
 .ai-panel-resize-handle:active {
-  background: var(--p-blue-400, #60a5fa);
+  background: var(--p-slate-400);
 }
 </style>

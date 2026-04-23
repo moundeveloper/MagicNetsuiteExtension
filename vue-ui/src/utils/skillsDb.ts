@@ -15,6 +15,12 @@ export interface Skill {
   content: string;
   /** Whether this skill is active and visible to the AI agent. Defaults to true. */
   enabled: boolean;
+  /**
+   * Domain scope for the skill.
+   * - "global": available to all AI agents (default)
+   * - "sql": injected only into the SQL AI Editor system prompt
+   */
+  domain?: "global" | "sql";
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +51,16 @@ db.version(2).stores({
   return tx.table("skills").toCollection().modify((skill) => {
     if (skill.enabled === undefined) {
       skill.enabled = true;
+    }
+  });
+});
+
+db.version(3).stores({
+  skills: "++id, name, tags, description, enabled, domain"
+}).upgrade((tx) => {
+  return tx.table("skills").toCollection().modify((skill) => {
+    if (skill.domain === undefined) {
+      skill.domain = "global";
     }
   });
 });
@@ -86,6 +102,14 @@ export const getSkill = async (id: number): Promise<Skill | undefined> => {
 
 export const getAllSkills = async (): Promise<Skill[]> => {
   return db.skills.toArray();
+};
+
+export const getSkillsByDomain = async (
+  domain: "global" | "sql"
+): Promise<Skill[]> => {
+  return db.skills
+    .filter((s) => s.enabled !== false && (s.domain ?? "global") === domain)
+    .toArray();
 };
 
 export const getSkillCount = async (): Promise<number> => {
@@ -169,6 +193,7 @@ export interface SkillExport {
   description: string;
   tags: string;
   content: string;
+  domain?: "global" | "sql";
 }
 
 export const importSkills = async (
@@ -181,6 +206,7 @@ export const importSkills = async (
     tags: s.tags,
     content: s.content,
     enabled: true,
+    domain: s.domain ?? "global",
     createdAt: now,
     updatedAt: now
   }));
@@ -190,11 +216,12 @@ export const importSkills = async (
 
 export const exportAllSkills = async (): Promise<SkillExport[]> => {
   const all = await db.skills.toArray();
-  return all.map(({ name, description, tags, content }) => ({
+  return all.map(({ name, description, tags, content, domain }) => ({
     name,
     description,
     tags,
-    content
+    content,
+    domain: domain ?? "global"
   }));
 };
 

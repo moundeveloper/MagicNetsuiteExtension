@@ -74,7 +74,10 @@
             >
               <div class="skill-card-header">
                 <div class="skill-info">
-                  <span class="skill-name">{{ skill.name }}</span>
+                  <div class="skill-name-row">
+                    <span class="skill-name">{{ skill.name }}</span>
+                    <span v-if="skill.domain === 'sql'" class="skill-domain-badge">SQL</span>
+                  </div>
                   <span class="skill-description">{{ skill.description }}</span>
                 </div>
                 <div class="skill-actions">
@@ -163,6 +166,31 @@
         </div>
 
         <div class="form-field">
+          <label>Domain</label>
+          <div class="domain-toggle">
+            <button
+              class="domain-btn"
+              :class="{ 'domain-btn-active': formData.domain === 'global' }"
+              type="button"
+              @click="formData.domain = 'global'"
+            >
+              Global
+            </button>
+            <button
+              class="domain-btn"
+              :class="{ 'domain-btn-active': formData.domain === 'sql' }"
+              type="button"
+              @click="formData.domain = 'sql'"
+            >
+              SQL Editor
+            </button>
+          </div>
+          <span class="domain-hint">
+            {{ formData.domain === 'sql' ? 'Injected only into the SQL AI Editor system prompt.' : 'Available to all AI agents.' }}
+          </span>
+        </div>
+
+        <div class="form-field">
           <label for="skill-content">Content</label>
           <Textarea
             id="skill-content"
@@ -248,11 +276,18 @@ const deleteTarget = ref<Skill | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const props = defineProps<{ vhOffset: number }>();
 
-const formData = ref({
+const formData = ref<{
+  name: string;
+  description: string;
+  tags: string;
+  content: string;
+  domain: "global" | "sql";
+}>({
   name: "",
   description: "",
   tags: "",
-  content: ""
+  content: "",
+  domain: "global"
 });
 
 // ── Computed ───────────────────────────────
@@ -286,7 +321,7 @@ const onSearch = () => {
 const openCreateDialog = () => {
   isEditing.value = false;
   editingId.value = null;
-  formData.value = { name: "", description: "", tags: "", content: "" };
+  formData.value = { name: "", description: "", tags: "", content: "", domain: "global" };
   dialogVisible.value = true;
 };
 
@@ -297,19 +332,20 @@ const openEditDialog = (skill: Skill) => {
     name: skill.name,
     description: skill.description,
     tags: skill.tags,
-    content: skill.content
+    content: skill.content,
+    domain: skill.domain ?? "global"
   };
   dialogVisible.value = true;
 };
 
 const saveSkill = async () => {
-  const { name, description, tags, content } = formData.value;
+  const { name, description, tags, content, domain } = formData.value;
   if (!name.trim() || !content.trim()) return;
 
   if (isEditing.value && editingId.value !== null) {
-    await updateSkill(editingId.value, { name, description, tags, content });
+    await updateSkill(editingId.value, { name, description, tags, content, domain });
   } else {
-    await addSkill({ name, description, tags, content, enabled: true });
+    await addSkill({ name, description, tags, content, domain, enabled: true });
   }
 
   dialogVisible.value = false;
@@ -369,7 +405,8 @@ const onFileSelected = async (event: Event) => {
               name: item.name,
               description: item.description || "",
               tags: item.tags || "",
-              content: item.content
+              content: item.content,
+              domain: item.domain ?? "global"
             }))
           );
         }
@@ -696,6 +733,62 @@ const formatSize = (chars: number): string => {
 
 .w-full {
   width: 100%;
+}
+
+.skill-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.skill-domain-badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  background: var(--p-indigo-100);
+  border: 1px solid var(--p-indigo-200);
+  border-radius: 0.25rem;
+  font-size: 0.6rem;
+  color: var(--p-indigo-600);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* ── Domain Toggle ── */
+.domain-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.375rem;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.domain-btn {
+  padding: 0.35rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.domain-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+}
+
+.domain-btn-active {
+  background: var(--p-slate-700);
+  color: white;
+}
+
+.domain-hint {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  margin-top: 0.1rem;
 }
 
 /* ── Delete Dialog ── */
