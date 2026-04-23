@@ -134,6 +134,10 @@ html,
   scrollbar-color: lightslategray transparent;
 }
 
+.p-breadcrumb {
+  padding-left: 0 !important;
+}
+
 .p-inputtext {
   background: transparent !important;
 }

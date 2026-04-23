@@ -63,7 +63,7 @@ import {
   Button,
   Dialog,
   InputText,
-  type TreeSelectionKeys,
+  type TreeSelectionKeys
 } from "primevue";
 import type { MenuItem } from "primevue/menuitem";
 
@@ -82,14 +82,14 @@ interface File {
 
 // ------------------ State ------------------
 const folders = ref<Folder[]>([
-  { key: "1", label: "Root", children: [{ key: "2", label: "Projects" }] },
+  { key: "1", label: "Root", children: [{ key: "2", label: "Projects" }] }
 ]);
 
 const selectedFolder = ref<TreeSelectionKeys>();
 const breadcrumbItems = ref([{ label: "Root" }]);
 
 const files = ref<File[]>([
-  { id: 1, name: "File1.docx", size: "12 KB", modified: "2025-12-23" },
+  { id: 1, name: "File1.docx", size: "12 KB", modified: "2025-12-23" }
 ]);
 
 const selectedFile = ref<File | null>(null);
@@ -102,18 +102,18 @@ let renameTarget: "file" | "folder" | null = null;
 // ------------------ Toolbar ------------------
 const toolbarItems: MenuItem[] = [
   { label: "Upload", icon: "pi pi-upload", command: () => uploadFile() },
-  { label: "New Folder", icon: "pi pi-folder", command: () => createFolder() },
+  { label: "New Folder", icon: "pi pi-folder", command: () => createFolder() }
 ];
 
 // ------------------ Context Menus ------------------
 const folderMenu: MenuItem[] = [
   { label: "Rename", icon: "pi pi-pencil", command: () => openRenameFolder() },
-  { label: "Delete", icon: "pi pi-trash", command: () => deleteFolder() },
+  { label: "Delete", icon: "pi pi-trash", command: () => deleteFolder() }
 ];
 
 const fileMenu: MenuItem[] = [
   { label: "Rename", icon: "pi pi-pencil", command: () => openRenameFile() },
-  { label: "Delete", icon: "pi pi-trash", command: () => deleteFile() },
+  { label: "Delete", icon: "pi pi-trash", command: () => deleteFile() }
 ];
 
 const folderContextMenu = ref<InstanceType<typeof ContextMenu> | null>(null);
@@ -214,11 +214,11 @@ function loadFilesForFolder(folderKey: string | null) {
   // Example: replace with backend call
   if (folderKey === "2") {
     files.value = [
-      { id: 2, name: "Project.docx", size: "50 KB", modified: "2025-12-23" },
+      { id: 2, name: "Project.docx", size: "50 KB", modified: "2025-12-23" }
     ];
   } else {
     files.value = [
-      { id: 1, name: "File1.docx", size: "12 KB", modified: "2025-12-23" },
+      { id: 1, name: "File1.docx", size: "12 KB", modified: "2025-12-23" }
     ];
   }
 }
