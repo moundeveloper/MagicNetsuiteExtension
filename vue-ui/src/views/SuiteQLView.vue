@@ -141,6 +141,15 @@
                   <i class="pi pi-external-link"></i>
                   <span>Script Runner</span>
                 </button>
+                <button
+                  class="toolbar-btn"
+                  :class="showAiEditor ? 'toolbar-btn-active' : ''"
+                  @click="showAiEditor = !showAiEditor"
+                  title="Toggle AI SQL Editor"
+                >
+                  <i class="pi pi-sparkles"></i>
+                  <span>AI Editor</span>
+                </button>
 
                 <!-- Limit selector -->
                 <div class="flex items-center gap-1 ml-2">
@@ -244,8 +253,10 @@
                 </div>
               </div>
 
-              <!-- Editor + bottom panel splitter -->
-              <div class="flex-1 min-h-0">
+              <!-- Editor + bottom panel splitter + AI editor -->
+              <div class="flex-1 min-h-0 flex flex-row">
+                <!-- Main editor area -->
+                <div class="flex-1 min-w-0">
                 <vue-splitter is-horizontal data-ignore class="h-full">
                   <template #top-pane>
                     <SuiteQLCodeEditor
@@ -613,6 +624,14 @@
                     </div>
                   </template>
                 </vue-splitter>
+                </div>
+
+                <!-- AI SQL Editor panel -->
+                <SqlAiEditor
+                  v-if="showAiEditor"
+                  :get-editor-query="getEditorQuery"
+                  class="sql-ai-editor-panel"
+                />
               </div>
             </div>
           </template>
@@ -663,6 +682,7 @@ import { Button } from "primevue";
 import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
+import SqlAiEditor from "../components/SqlAiEditor.vue";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
@@ -789,6 +809,9 @@ const onCustomLimitChange = (e: Event) => {
   }
   isEditingCustom.value = false;
 };
+
+// AI Editor panel
+const showAiEditor = ref(false);
 
 // Editor refs
 const editorRefs = ref<Record<string, any>>({});
@@ -942,6 +965,14 @@ const sqlSchema = computed((): Record<string, string[]> => {
 
 const setEditorRef = (fileId: string, el: any) => {
   if (el) editorRefs.value[fileId] = el;
+};
+
+/** Returns the current active editor's SQL (used by AI editor) */
+const getEditorQuery = (): string => {
+  const file = currentFile.value;
+  if (!file) return "";
+  const editorEl = editorRefs.value[file.id];
+  return editorEl?.getValue() ?? file.code;
 };
 
 // ============================================================================
@@ -2008,5 +2039,20 @@ onBeforeUnmount(() => {
 /* Sidebar input sizing */
 .sidebar-section :deep(.p-inputtext) {
   font-size: 0.75rem;
+}
+
+/* ── AI Editor toggle ── */
+.toolbar-btn-active {
+  background: var(--p-blue-50, #eff6ff) !important;
+  color: var(--p-blue-600, #2563eb) !important;
+  border-color: var(--p-blue-300, #93c5fd) !important;
+}
+
+/* ── AI Editor panel ── */
+.sql-ai-editor-panel {
+  width: 340px;
+  min-width: 280px;
+  max-width: 450px;
+  flex-shrink: 0;
 }
 </style>
