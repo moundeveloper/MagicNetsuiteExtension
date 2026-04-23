@@ -4,7 +4,7 @@
 
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount, watch } from "vue";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorState, Compartment, Prec } from "@codemirror/state";
 import {
   EditorView,
   keymap,
@@ -255,17 +255,19 @@ onMounted(() => {
 
   console.log("[SuiteQLEditor] Mounting editor");
 
-  const ctrlEnterKeymap = keymap.of([
-    {
-      key: "Ctrl-Enter",
-      mac: "Cmd-Enter",
-      run: () => {
-        console.log("[SuiteQLEditor] Ctrl+Enter fired → emit ctrl-enter");
-        emit("ctrl-enter");
-        return true;
+  const ctrlEnterKeymap = Prec.highest(
+    keymap.of([
+      {
+        key: "Ctrl-Enter",
+        mac: "Cmd-Enter",
+        run: () => {
+          console.log("[SuiteQLEditor] Ctrl+Enter fired → emit ctrl-enter");
+          emit("ctrl-enter");
+          return true;
+        },
       },
-    },
-  ]);
+    ])
+  );
 
   const initialSchema = props.schema ?? {};
   console.log(

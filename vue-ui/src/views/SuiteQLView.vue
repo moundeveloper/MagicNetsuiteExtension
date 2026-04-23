@@ -1479,7 +1479,15 @@ watch(activeFileId, (id) => {
 // Lifecycle
 // ============================================================================
 
+const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    runCurrentQuery();
+  }
+};
+
 onMounted(() => {
+  window.addEventListener("keydown", handleGlobalKeydown);
   fetchTables(); // also triggers detectAndLoadTablesFromQuery after tables load
 
   if (typeof chrome === "undefined" || !chrome.storage?.local) {
@@ -1539,6 +1547,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleGlobalKeydown);
   try {
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
       const filesData = files.value.map((f) => ({
