@@ -9,38 +9,12 @@
     >
       <template #header>
         <div class="panel-header-row">
-          <div class="panel-header-left">
-            <InputText
-              v-model="searchQuery"
-              placeholder="Search methods, objects..."
-              class="toolbar-search"
-              @input="onSearch"
-            />
-            <MultiSelect
-              v-model="filterModules"
-              :options="moduleOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="All Modules"
-              class="toolbar-filter"
-              :maxSelectedLabels="1"
-              selectedItemsLabel="{0} modules"
-              filter
-              :virtualScrollerOptions="{ itemSize: 38 }"
-              @change="runSearch"
-            />
-            <MultiSelect
-              v-model="filterTypes"
-              :options="typeOptions"
-              optionLabel="label"
-              optionValue="value"
-              placeholder="All Types"
-              class="toolbar-filter"
-              :maxSelectedLabels="2"
-              filter
-              @change="runSearch"
-            />
-          </div>
+          <InputText
+            v-model="searchQuery"
+            placeholder="Search methods, objects..."
+            class="toolbar-search"
+            @input="onSearch"
+          />
           <div class="panel-header-right">
             <span class="result-count"
               >{{ displayedMembers.length }} results</span
@@ -58,35 +32,31 @@
           </div>
         </div>
       </template>
-    </MPanel>
-
-    <!-- Module filter panel -->
-    <MPanel
-      v-if="!isLoading && moduleCount > 0"
-      outline
-      toggleable
-      header="Modules"
-      box-shadow
-    >
-      <template #header>
-        <span class="filter-panel-label">
-          Modules
-          <span v-if="filterModules.length" class="filter-panel-count"
-            >{{ filterModules.length }} selected</span
-          >
-        </span>
-      </template>
-      <div class="module-tags">
-        <button
-          v-for="mod in modules"
-          :key="mod.name"
-          class="module-tag"
-          :class="{ active: filterModules.includes(mod.name) }"
-          @click="toggleModuleFilter(mod.name)"
-        >
-          {{ mod.name }}
-          <span class="tag-count">{{ mod.memberCount }}</span>
-        </button>
+      <div class="filter-body">
+        <MultiSelect
+          v-model="filterModules"
+          :options="moduleOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="All Modules"
+          class="toolbar-filter"
+          :maxSelectedLabels="1"
+          selectedItemsLabel="{0} modules"
+          filter
+          :virtualScrollerOptions="{ itemSize: 38 }"
+          @change="runSearch"
+        />
+        <MultiSelect
+          v-model="filterTypes"
+          :options="typeOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="All Types"
+          class="toolbar-filter"
+          :maxSelectedLabels="2"
+          filter
+          @change="runSearch"
+        />
       </div>
     </MPanel>
 
@@ -371,15 +341,6 @@ const memberTypeClass = (type: string) => {
   return map[type] || "";
 };
 
-const toggleModuleFilter = (name: string) => {
-  const idx = filterModules.value.indexOf(name);
-  filterModules.value =
-    idx === -1
-      ? [...filterModules.value, name]
-      : filterModules.value.filter((n) => n !== name);
-  runSearch();
-};
-
 // ── Scrape ─────────────────────────────────
 const startScrape = async () => {
   resetScraper();
@@ -532,14 +493,6 @@ const cancelScrape = () => {
   width: 100%;
 }
 
-.panel-header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex: 1;
-  min-width: 0;
-}
-
 .toolbar-search {
   flex: 1;
   min-width: 180px;
@@ -564,60 +517,11 @@ const cancelScrape = () => {
   white-space: nowrap;
 }
 
-.filter-panel-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--p-slate-600);
+.filter-body {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-}
-
-.filter-panel-count {
-  font-size: 0.62rem;
-  font-weight: 500;
-  background: var(--p-slate-200);
-  color: var(--p-slate-600);
-  border-radius: 0.2rem;
-  padding: 0.1rem 0.35rem;
-}
-
-.module-tags {
-  display: flex;
+  gap: 0.5rem;
   flex-wrap: wrap;
-  gap: 0.3rem;
-}
-
-.module-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.18rem 0.45rem;
-  border: 1px solid var(--p-slate-300);
-  border-radius: 0.2rem;
-  background: white;
-  color: var(--p-slate-600);
-  font-size: 0.67rem;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.12s ease;
-  font-family: "JetBrains Mono", monospace;
-}
-
-.module-tag:hover {
-  background: var(--p-slate-100);
-  border-color: var(--p-slate-400);
-}
-
-.module-tag.active {
-  background: var(--p-slate-700);
-  color: white;
-  border-color: var(--p-slate-700);
-}
-
-.tag-count {
-  font-size: 0.6rem;
-  opacity: 0.65;
 }
 
 /* ── Results ── */
