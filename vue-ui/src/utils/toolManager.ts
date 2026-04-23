@@ -4,6 +4,7 @@ import { callApi, ApiRequestType } from "./api";
 import { RequestRoutes } from "../types/request";
 import { Parser } from "expr-eval";
 import { searchSkills, getSkillContent } from "./skillsDb";
+import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 
 export const tools: ToolDefinition[] = [
   {
@@ -295,7 +296,9 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_suitelet_url",
-    description: "Get the URL to open a Suitelet in NetSuite.",
+    description:
+      "Get the URL to open a Suitelet in NetSuite (for copying/sharing). " +
+      "Does NOT open the URL — use netsuite_open_deployment_suitelet to open it in a browser tab.",
     parameters: {
       type: "object",
       properties: {
@@ -322,7 +325,9 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_open_deployment_suitelet",
     description:
-      "Generate the Suitelet URL for a given script ID and deployment ID, then open it in a new browser tab. Returns the generated URL.",
+      "Open a Suitelet directly in a new browser tab. " +
+      "Use this when the user asks to open, launch, or run a Suitelet. " +
+      "Does NOT return the URL — use netsuite_get_suitelet_url if you just need the link.",
     destructive: true,
     parameters: {
       type: "object",
@@ -887,6 +892,104 @@ export const tools: ToolDefinition[] = [
     execute: async () => {
       const response = await callApi(RequestRoutes.AVAILABLE_MODULES);
       return response.message;
+    }
+  },
+
+  // ========== SuiteScript Module Documentation ==========
+  {
+    name: "netsuite_search_module_docs",
+    description:
+      "Search the local SuiteScript 2.x module documentation. Returns methods, objects, properties, and enums from N/* modules (e.g. N/record, N/search, N/query, N/file). Use this BEFORE writing any SuiteScript code to look up correct method signatures, parameters, and return types. Also use it when you are unsure how a specific API works.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Search term — a method name, object name, keyword, or description fragment (e.g. 'record.load', 'search.create', 'file', 'submit')."
+        },
+        moduleName: {
+          type: "string",
+          description:
+            "Optional: filter results to a specific module, e.g. 'N/record', 'N/search', 'N/query', 'N/file'."
+        },
+        memberType: {
+          type: "string",
+          enum: ["Method", "Object", "Property", "Enum"],
+          description: "Optional: filter by member type."
+        }
+      },
+      required: ["query"]
+    },
+    execute: async (input) => {
+      const count = await getModuleCount();
+      if (count === 0) {
+        return {
+          error:
+            "No SuiteScript module documentation loaded. Ask the user to load it from the SuiteScript Modules view first."
+        };
+      }
+
+      const query = String(input.query ?? "");
+      const moduleName = input.moduleName ? String(input.moduleName) : undefined;
+      const memberType = input.memberType ? String(input.memberType) : undefined;
+
+      const results = await searchMembers(query, {
+        moduleName,
+        memberType: memberType as string | undefined,
+        limit: 20
+      });
+
+      if (results.length === 0) {
+        return { message: `No documentation found for "${query}".`, results: [] };
+      }
+
+      return {
+        query,
+        count: results.length,
+        results: results.map((r) => ({
+          id: r.id,
+          module: r.moduleName,
+          type: r.memberType,
+          name: r.name,
+          returnType: r.returnType || undefined,
+          description: r.description
+        }))
+      };
+    }
+  },
+
+  {
+    name: "netsuite_get_module_member_details",
+    description:
+      "Get the full documentation details for a specific SuiteScript module member — including parameters, return type, supported script types, errors, syntax examples, and enum values. Call this after netsuite_search_module_docs to get the complete signature for a method or object you plan to use.",
+    parameters: {
+      type: "object",
+      properties: {
+        memberId: {
+          type: "number",
+          description:
+            "The numeric id of the member returned by netsuite_search_module_docs."
+        }
+      },
+      required: ["memberId"]
+    },
+    execute: async (input) => {
+      const id = Number(input.memberId);
+      const member = await getMemberById(id);
+      if (!member) {
+        return { error: `No module member found with id ${id}.` };
+      }
+
+      return {
+        module: member.moduleName,
+        type: member.memberType,
+        name: member.name,
+        returnType: member.returnType || undefined,
+        scriptTypes: member.scriptTypes || undefined,
+        description: member.description,
+        details: member.details ?? undefined
+      };
     }
   }
 ];

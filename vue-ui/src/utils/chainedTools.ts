@@ -13,7 +13,7 @@
 import type { ChainedToolDefinition } from "./chainedToolManager";
 
 // ═════════════════════════════════════════════
-// Chain: generate_suitescript
+// Chain: generate_script_deployment
 //
 // Steps:
 //   1. (tool) netsuite_create_folder  — create a folder for the script
@@ -23,20 +23,20 @@ import type { ChainedToolDefinition } from "./chainedToolManager";
 // ═════════════════════════════════════════════
 
 export const generateSuitescriptChain: ChainedToolDefinition = {
-  name: "generate_suitescript",
+  name: "generate_script_deployment",
 
   description:
-    "End-to-end SuiteScript generation pipeline. In four sequential steps it:\n" +
+    "End-to-end script generation + deployment pipeline. In four sequential steps it:\n" +
     "  1. Creates a dedicated folder in the NetSuite File Cabinet\n" +
     "  2. Searches skills, loads the relevant SuiteScript skill, and generates\n" +
     "     the SuiteScript 2.1 source code guided by those skills\n" +
     "  3. Uploads the generated file to the new folder\n" +
-    "  4. Creates the NetSuite Script record\n\n" +
+    "  4. Creates the NetSuite Script record and deploys it\n\n" +
     "Use this tool whenever the user asks to create, generate, build, or scaffold " +
-    "any NetSuite script (Suitelet, RESTlet, User Event, Scheduled Script, Portlet, etc.). " +
+    "ANY NetSuite script AND want it deployed in NetSuite.\n" +
     "Do NOT call netsuite_create_folder, search_skills, load_skill, " +
-    "netsuite_upload_file, or netsuite_create_script separately — this pipeline handles " +
-    "the full workflow in the correct order and threads data between steps automatically.\n\n" +
+    "netsuite_upload_file, or netsuite_create_script separately.\n\n" +
+    "If the user ONLY wants code (for manual upload/deployment), do NOT use this tool.\n\n" +
     "Returns a summary with folderId, fileId, fileName, scriptId, scriptType, scriptRecordId, and the generated code.",
 
   parameters: {
