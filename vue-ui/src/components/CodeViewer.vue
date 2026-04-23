@@ -15,8 +15,11 @@ import {
   type DecorationSet
 } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
+import { sql } from "@codemirror/lang-sql";
+import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { oneDark } from "@codemirror/theme-one-dark";
+import { format as sqlFormat } from "sql-formatter";
 import prettier from "prettier/standalone";
 import babelParser from "prettier/plugins/babel";
 import estreeParser from "prettier/plugins/estree";
@@ -26,7 +29,7 @@ import type { SearchOptions } from "../composables/useCodeViewerSearch";
 
 interface Props {
   code: string;
-  language: "javascript";
+  language?: "javascript" | "sql";
   autoHeight?: boolean;
   showId?: boolean;
 }
@@ -80,7 +83,43 @@ const escapeRegExp = (str: string) =>
   str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // --- Format code ---
-const formatCode = async (code: string) => {
+const nordHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword,              color: "#81A1C1", fontWeight: "600" },
+  { tag: tags.operator,             color: "#81A1C1" },
+  { tag: tags.operatorKeyword,      color: "#81A1C1" },
+  { tag: tags.string,               color: "#A3BE8C" },
+  { tag: tags.number,               color: "#B48EAD" },
+  { tag: tags.bool,                 color: "#81A1C1" },
+  { tag: tags.null,                 color: "#81A1C1" },
+  { tag: tags.comment,              color: "#616E88", fontStyle: "italic" },
+  { tag: tags.name,                 color: "#D8DEE9" },
+  { tag: tags.variableName,         color: "#D8DEE9" },
+  { tag: tags.function(tags.variableName), color: "#88C0D0" },
+  { tag: tags.function(tags.name),  color: "#88C0D0" },
+  { tag: tags.definition(tags.variableName), color: "#8FBCBB" },
+  { tag: tags.typeName,             color: "#8FBCBB" },
+  { tag: tags.className,            color: "#8FBCBB" },
+  { tag: tags.namespace,            color: "#8FBCBB" },
+  { tag: tags.propertyName,         color: "#88C0D0" },
+  { tag: tags.punctuation,          color: "#81A1C1" },
+  { tag: tags.separator,            color: "#4C566A" },
+  { tag: tags.bracket,              color: "#ECEFF4" },
+  { tag: tags.special(tags.string), color: "#EBCB8B" },
+  { tag: tags.escape,               color: "#EBCB8B" },
+  { tag: tags.regexp,               color: "#EBCB8B" },
+  { tag: tags.meta,                 color: "#616E88" },
+  { tag: tags.invalid,              color: "#BF616A" },
+]);
+
+// --- Format code ---
+const formatCode = async (code: string, lang: "javascript" | "sql" = "javascript") => {
+  if (lang === "sql") {
+    try {
+      return sqlFormat(code, { language: "sql", keywordCase: "upper" });
+    } catch {
+      return code;
+    }
+  }
   try {
     return await prettier.format(code, {
       parser: "babel",
@@ -97,7 +136,40 @@ const formatCode = async (code: string) => {
 // --- Create editor ---
 const createEditor = async () => {
   if (!editorEl.value) return;
-  const formattedCode = await formatCode(props.code);
+  const formattedCode = await formatCode(props.code, props.language ?? "javascript");
+
+  const langExtension = props.language === "sql" ? sql() : javascript();
+
+  // Nord-like theme (matching SuiteQLCodeEditor)
+  const nordLikeTheme = EditorView.theme({
+    "&": {
+      backgroundColor: "#2E3440",
+      color: "#D8DEE9",
+      fontSize: "13.5px",
+      fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+    },
+    ".cm-content": {
+      caretColor: "#D8DEE9",
+      padding: "8px 0",
+    },
+    ".cm-gutters": {
+      backgroundColor: "#2E3440",
+      color: "#616E88",
+      border: "none",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "#3B4252",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "#3B4252",
+    },
+    ".cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "#434C5E !important",
+    },
+    ".cm-cursor": {
+      borderLeftColor: "#D8DEE9",
+    },
+  });
 
   const state = EditorState.create({
     doc: formattedCode,
@@ -105,10 +177,11 @@ const createEditor = async () => {
       lineNumbers(),
       highlightSelectionMatches(),
       keymap.of(searchKeymap),
-      oneDark,
+      nordLikeTheme,
+      syntaxHighlighting(nordHighlightStyle, { fallback: true }),
       EditorView.editable.of(false),
       EditorView.lineWrapping,
-      javascript(),
+      langExtension,
       searchDecorationsField,
       templateDollarField,
       rainbowBrackets()

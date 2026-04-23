@@ -87,18 +87,37 @@ export const createSqlAiTools = (): ToolDefinition[] => [
         )) as ApiResponse;
         const data = response.message;
         const raw = data?.data ?? data ?? {};
+        // Patterns that typically hold coded enum values — must discover before filtering
+        const ENUM_FIELD_PATTERNS =
+          /^(status|type|category|class|subsidiary|currency|department|location|terms|shipmethod|paymentmethod|custbody_|custcol_)/i;
+
         const fields = (raw.fields ?? [])
           .filter((f: { isColumn: boolean }) => f.isColumn)
           .map((f: { id: string; label: string; dataType: string }) => ({
             id: f.id,
             label: f.label,
-            dataType: f.dataType
+            dataType: f.dataType,
+            ...(ENUM_FIELD_PATTERNS.test(f.id)
+              ? {
+                  requiresValueDiscovery: true,
+                  note: "⚠️ Coded field — call sql_discover_field_values before using in WHERE"
+                }
+              : {})
           }));
+
+        const flaggedCount = fields.filter(
+          (f: { requiresValueDiscovery?: boolean }) => f.requiresValueDiscovery
+        ).length;
 
         return {
           table: tableName,
           fieldCount: fields.length,
-          fields
+          flaggedCount,
+          fields,
+          reminder:
+            flaggedCount > 0
+              ? `${flaggedCount} field(s) marked requiresValueDiscovery — you MUST call sql_discover_field_values on each before using them in WHERE clauses`
+              : undefined
         };
       } catch (error) {
         return {

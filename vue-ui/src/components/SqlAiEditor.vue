@@ -42,10 +42,19 @@
                 :class="{ 'history-item-active': session.id === activeChatId }"
                 @click="loadSession(session)"
               >
-                <span class="sql-ai-history-item-name">{{ session.name }}</span>
-                <span class="sql-ai-history-item-date">
-                  {{ new Date(session.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) }}
-                </span>
+                <div class="sql-ai-history-item-left">
+                  <span class="sql-ai-history-item-name">{{ session.name }}</span>
+                  <span class="sql-ai-history-item-date">
+                    {{ new Date(session.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' }) }}
+                  </span>
+                </div>
+                <button
+                  class="sql-ai-history-delete"
+                  title="Delete chat"
+                  @click.stop="deleteSession(session.id)"
+                >
+                  <i class="pi pi-times" />
+                </button>
               </button>
             </div>
           </div>
@@ -558,7 +567,7 @@ When building a query, ALWAYS use this workflow:
 1. Use \`sql_search_tables\` to find relevant tables
 2. Use \`sql_get_table_fields\` to discover available columns
 3. Use \`sql_get_table_joins\` if you need to join tables
-4. For any WHERE clause on a text/string/status field, use \`sql_discover_field_values\` FIRST to discover real values before filtering
+4. For any field returned with \`requiresValueDiscovery: true\` (e.g. \`status\`, \`type\`), you MUST call \`sql_discover_field_values\` BEFORE writing any WHERE condition — never assume enum values from general knowledge
 5. Build the query based on actual schema data and verified field values
 6. Use \`sql_execute_query\` to test the query and verify results
 7. If the query fails or returns unexpected data, analyze the error, adjust, and retry
@@ -569,7 +578,7 @@ When building a query, ALWAYS use this workflow:
 - Always verify your queries work before presenting the final version.
 - Use proper SuiteQL syntax (NetSuite's SQL dialect).
 - When the user asks about the current query, use \`sql_get_editor_query\` first.
-- ALWAYS use \`sql_discover_field_values\` before writing WHERE conditions on string fields — never guess the casing.
+- **NEVER** write a WHERE clause on any field marked \`requiresValueDiscovery: true\` without first calling \`sql_discover_field_values\` — this includes all \`status\`, \`type\`, \`category\`, and \`class\` fields. Do not guess enum values from general knowledge.
 - Show the final query in a SQL code block so the user can copy it.
 - Be concise — this is a side panel with limited space.
 
@@ -952,7 +961,9 @@ onBeforeUnmount(async () => {
   border-color: var(--p-slate-400);
   color: var(--p-slate-700);
 }
-.sql-ai-history-new-btn i { font-size: 0.6rem; }
+.sql-ai-history-new-btn i {
+  font-size: 0.65rem;
+}
 
 .sql-ai-history-list {
   max-height: 220px;
@@ -968,7 +979,7 @@ onBeforeUnmount(async () => {
 
 .sql-ai-history-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   width: 100%;
   padding: 7px 10px;
@@ -986,13 +997,20 @@ onBeforeUnmount(async () => {
   background: var(--p-slate-100) !important;
 }
 
+.sql-ai-history-item-left {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
 .sql-ai-history-item-name {
   font-size: 0.72rem;
   color: var(--p-slate-700);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
 }
 
 .sql-ai-history-item-date {
@@ -1000,6 +1018,32 @@ onBeforeUnmount(async () => {
   color: var(--p-slate-400);
   white-space: nowrap;
   flex-shrink: 0;
+  cursor: pointer;
+}
+
+.sql-ai-history-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  transition: all 0.1s;
+  flex-shrink: 0;
+  opacity: 0;
+  margin-left: 4px;
+}
+.sql-ai-history-item:hover .sql-ai-history-delete {
+  opacity: 0.6;
+}
+.sql-ai-history-delete:hover {
+  background: #fee2e2;
+  color: #ef4444;
+  opacity: 1;
 }
 
 .sql-ai-header-right {

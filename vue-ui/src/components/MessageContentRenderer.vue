@@ -122,7 +122,9 @@ const renderText = (text: string): string => {
           :language="
             block.language === 'typescript'
               ? 'javascript'
-              : (block.language as 'javascript')
+              : block.language === 'sql'
+              ? 'sql'
+              : 'javascript'
           "
           :auto-height="true"
         />
