@@ -1,6 +1,4 @@
 <template>
-  <ViewHeader />
-
   <MCard
     flex
     autoHeight
@@ -665,7 +663,7 @@ import { Button } from "primevue";
 import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";

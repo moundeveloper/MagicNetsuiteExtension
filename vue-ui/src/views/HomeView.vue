@@ -6,7 +6,7 @@ import {
   RouteStatusColors
 } from "../router/routesMap";
 import { InputText } from "primevue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import { Privilege } from "../types/privilege";
 import { callApi, ApiRequestType } from "../utils/api";
 import { useSettings } from "../states/settingsState";
@@ -76,7 +76,6 @@ const testPing = async () => {
 </script>
 
 <template>
-  <ViewHeader />
   <!--   <div class="test-buttons">
     <button class="test-ping-btn" @click="testPing">
       Test Temp Tab (30s Ping)

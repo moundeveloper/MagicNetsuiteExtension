@@ -5,7 +5,7 @@ import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 
 interface RecordItem {
   internalid: number;
@@ -74,8 +74,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ViewHeader />
-
   <MCard
     flex
     direction="column"

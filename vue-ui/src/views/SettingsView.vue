@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import ViewHeader from "../components/ViewHeader.vue";
+
 import { useSettings } from "../states/settingsState";
 import { ref, watch } from "vue";
 import InputText from "primevue/inputtext";
@@ -353,8 +353,6 @@ const modelLabel = (m: OllamaModel) => {
 </script>
 
 <template>
-  <ViewHeader />
-
   <!-- Shortcuts section -->
   <div class="settings-section">
     <h2>Shortcuts</h2>

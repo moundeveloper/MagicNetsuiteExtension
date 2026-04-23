@@ -1,7 +1,5 @@
 <template>
   <div class="skills-view">
-    <ViewHeader />
-
     <MCard
       flex
       direction="column"
@@ -220,7 +218,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import InputText from "primevue/inputtext";

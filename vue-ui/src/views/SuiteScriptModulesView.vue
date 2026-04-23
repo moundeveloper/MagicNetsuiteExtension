@@ -1,8 +1,5 @@
 <template>
   <div class="modules-view">
-    <ViewHeader />
-
-    <!-- Toolbar (search + filters in header, like LogSearchView) -->
     <MPanel
       v-if="!isLoading && moduleCount > 0"
       outline
@@ -265,7 +262,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import MCard from "../components/universal/card/MCard.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";

@@ -8,7 +8,7 @@ import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import { MultiSelect } from "primevue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 
 interface ScriptItem {
   id: number;
@@ -158,8 +158,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ViewHeader />
-
   <MCard
     flex
     direction="column"

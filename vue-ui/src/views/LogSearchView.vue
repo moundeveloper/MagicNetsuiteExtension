@@ -20,7 +20,7 @@ import MPanel from "../components/universal/panels/MPanel.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MTable from "../components/universal/table/MTable.vue";
 import MTableColumn from "../components/universal/table/MTableColumn.vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import { type ContextMenuItem } from "../composables/useMContextMenu";
 
 type LogItem = {
@@ -418,8 +418,6 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ViewHeader />
-
   <!-- ===================== QUERY FILTERS ===================== -->
 
   <MPanel outline toggleable box-shadow header="Query Filters">

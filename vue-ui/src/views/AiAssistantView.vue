@@ -1,7 +1,5 @@
 <template>
   <div class="ai-assistant-view">
-    <ViewHeader />
-
     <MCard
       flex
       direction="row"
@@ -452,7 +450,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted, computed } from "vue";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent, ToolRejectedError } from "../composables/useAgent";

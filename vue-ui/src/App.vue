@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { RouterView, useRouter, useRoute } from "vue-router";
-import ItemListNavigation from "./components/ItemListNavigation.vue";
+import AppHeader from "./components/AppHeader.vue";
 import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
-import MagicNetsuiteLogo from "./components/MagicNetsuiteLogo.vue";
-import GridPattern from "./components/universal/patterns/GridPattern.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -27,7 +25,6 @@ const router = useRouter();
 
 onMounted(async () => {
   try {
-    // Open Panel on a specific route
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "OPEN_VIEW") {
         router.push({ name: message.view });
@@ -42,10 +39,8 @@ onMounted(async () => {
       }
     });
 
-    // Port Detection
     const port = chrome.runtime.connect({ name: "sidePanel" });
 
-    // Optional: detect disconnect from background
     port.onDisconnect.addListener(() => {
       console.log("Disconnected from background (cleanup if needed)");
     });
@@ -65,13 +60,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Toast />
-  <ItemListNavigation v-if="!isProcessingRoute" :links="getRouteMap()" />
-  <MagicNetsuiteLogo
-    v-if="!isProcessingRoute"
-    class="pattern-decoration"
-    :fill="'var(--p-slate-200)'"
-    width="30%"
-  />
+  <AppHeader v-if="!isProcessingRoute" />
 
   <RouterView v-slot="{ Component, route }">
     <transition name="subtle-fade" mode="out-in">
@@ -84,56 +73,22 @@ onBeforeUnmount(() => {
       </main>
     </transition>
   </RouterView>
-
-  <GridPattern v-if="!isProcessingRoute" class="pattern-decoration" />
 </template>
 
 <style scoped>
-.route-wrapper {
-  height: 100%;
-  width: 100%;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #42b883aa);
-}
-.item-list-navigation {
-  z-index: 2;
-}
-
 main {
   height: 100%;
   overflow: hidden;
-  padding: 1rem 1rem;
+  padding: 0.75rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  position: relative;
-  z-index: 1;
+  gap: 0.75rem;
 }
 
 main.full-screen {
   padding: 0;
 }
 
-.pattern-decoration {
-  position: absolute;
-  top: 50%;
-  right: 50%;
-  transform: translate(50%, -50%);
-  z-index: 0;
-}
-
-/* Transition animation */
 .subtle-fade-enter-active {
   transition:
     transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
@@ -150,24 +105,6 @@ main.full-screen {
   opacity: 1;
 }
 
-/* Leave transition can be simple fade */
-.subtle-fade-enter-active {
-  transition:
-    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.subtle-fade-enter-from {
-  transform: translateX(-20px);
-  opacity: 0;
-}
-
-.subtle-fade-enter-to {
-  transform: translateX(0);
-  opacity: 1;
-}
-
-/* Leave transition: simple fade */
 .subtle-fade-leave-active {
   transition: opacity 0.2s ease;
 }

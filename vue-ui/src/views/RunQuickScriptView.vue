@@ -1,6 +1,4 @@
 <template>
-  <ViewHeader />
-
   <MCard
     flex
     autoHeight
@@ -189,7 +187,7 @@ import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";

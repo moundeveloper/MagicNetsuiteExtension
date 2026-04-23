@@ -1,30 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref } from "vue";
+import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
+import { Button, Breadcrumb, Drawer, InputText } from "primevue";
+import { useSettings } from "../states/settingsState";
 import {
+  routes,
   RouteStatus,
   RouteStatusColors,
   type RouteItem
 } from "../router/routesMap";
-import { Button, Drawer, InputText } from "primevue";
-import { useSettings } from "../states/settingsState";
-import { Privilege } from "../types/privilege";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
-import MPanel from "../components/universal/panels/MPanel.vue";
+import MPanel from "./universal/panels/MPanel.vue";
 
-const props = defineProps<{
-  links: RouteItem[];
-}>();
-
-const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
+const route = useRoute();
+const { settings, isSettingsLoaded } = useSettings();
 const visibleBottom = ref(false);
 const search = ref("");
-const blackList = ["settings", "modules not found", "features", "processing"];
+
+const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
-const { settings, isSettingsLoaded } = useSettings();
+
+const blackList = ["settings", "modules not found", "features", "processing"];
 
 const allLinks = computed(() => {
-  return props.links.filter((link) => {
+  return routes.filter((link) => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
       !blackList.includes(link.name.toLowerCase()) &&
@@ -43,15 +42,11 @@ const nonPreferredLinks = computed(() => {
   return allLinks.value.filter((l) => !prefs.includes(l.route));
 });
 
-const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
+const isAdmin = computed(() => privilegeLevel === "ADMIN");
 
 const canAccess = (link: RouteItem) => {
   if (link.status === RouteStatus.release) return true;
   return isAdmin.value;
-};
-
-const isDisabled = (link: RouteItem) => {
-  return !canAccess(link);
 };
 
 const togglePreferred = (routeName: string) => {
@@ -66,66 +61,101 @@ const togglePreferred = (routeName: string) => {
   }
 };
 
-const parseShortcut = (shortcut: string) => {
-  const parts = shortcut.toLowerCase().split("+");
-  const modifiers = parts.slice(0, -1);
-  const key = parts[parts.length - 1];
-  return { modifiers, key };
-};
-
-const handleKeydown = (e: KeyboardEvent) => {
-  const { modifiers, key } = parseShortcut(settings.drawerOpen);
-  const ctrlPressed = e.ctrlKey || e.metaKey;
-  const altPressed = e.altKey;
-  const shiftPressed = e.shiftKey;
-
-  let match = true;
-  if (modifiers.includes("ctrl") && !ctrlPressed) match = false;
-  if (modifiers.includes("alt") && !altPressed) match = false;
-  if (modifiers.includes("shift") && !shiftPressed) match = false;
-  if (e.key.toLowerCase() !== key) match = false;
-
-  if (match) {
-    e.preventDefault();
-    visibleBottom.value = !visibleBottom.value;
-  }
-};
-
 const closeDrawer = (routeStatus: RouteStatus) => {
   if (routeStatus !== RouteStatus.release) return;
   visibleBottom.value = false;
 };
 
-onMounted(() => {
-  window.addEventListener("keydown", handleKeydown);
-});
+const home = {
+  icon: "pi pi-home",
+  route: "/"
+};
 
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleKeydown);
+const breadcrumbs = computed(() => {
+  const currentPath = route.path;
+  let foundRoute = routes.find((r) => r.route === currentPath);
+
+  if (!foundRoute) {
+    for (const r of routes) {
+      if (r.children) {
+        const child = r.children.find((c) => {
+          const routePattern = c.route.replace(/:[^/]+/g, "[^/]+");
+          const regex = new RegExp(`^${routePattern}$`);
+          return regex.test(currentPath);
+        });
+        if (child) {
+          const items = [];
+          if (r.breadcrumbParents) {
+            for (const parent of r.breadcrumbParents) {
+              items.push({ label: parent.label, route: parent.route });
+            }
+          }
+          items.push({ label: child.breadcrumb || child.name });
+          return items;
+        }
+      }
+    }
+    return [];
+  }
+
+  const items = [];
+  if (foundRoute.breadcrumbParents) {
+    for (const parent of foundRoute.breadcrumbParents) {
+      items.push({ label: parent.label, route: parent.route });
+    }
+  }
+  items.push({ label: foundRoute.breadcrumb || foundRoute.name });
+  return items;
 });
 </script>
 
 <template>
-  <div class="flex p-4 gap-3 z-10">
-    <RouterLink to="/" class="flex flex-col items-center">
-      <MagicNetsuiteLogo width="3rem" fill="var(--p-slate-600)" />
+  <header class="app-header">
+    <RouterLink to="/" class="logo-link">
+      <MagicNetsuiteLogo width="2.5rem" fill="var(--p-slate-600)" />
     </RouterLink>
+
     <Button
       icon="pi pi-arrow-up"
       @click="visibleBottom = true"
-      class="fixed flex-1"
+      class="menu-btn"
     >
       <span class="!text-white">{{
         `Open Menu(${settings.drawerOpen.toUpperCase()})`
       }}</span>
     </Button>
 
-    <RouterLink to="/settings">
-      <Button class="w-full h-full">
+    <div class="separator" />
+
+    <div class="breadcrumb-container">
+      <Breadcrumb :home="home" :model="breadcrumbs">
+        <template #item="{ item, props }">
+          <router-link
+            v-if="item.route"
+            v-slot="{ href, navigate }"
+            :to="item.route"
+            custom
+          >
+            <a :href="href" v-bind="props.action" @click="navigate">
+              <span :class="[item.icon, 'text-color']" />
+              <span class="text-primary font-semibold">{{ item.label }}</span>
+            </a>
+          </router-link>
+          <a v-else v-bind="props.action">
+            <span class="text-surface-700 dark:text-surface-0">{{
+              item.label
+            }}</span>
+          </a>
+        </template>
+      </Breadcrumb>
+    </div>
+
+    <RouterLink to="/settings" class="settings-link">
+      <Button class="settings-btn">
         <i class="pi pi-cog text-white"></i>
       </Button>
     </RouterLink>
-  </div>
+  </header>
 
   <Drawer
     v-model:visible="visibleBottom"
@@ -151,6 +181,7 @@ onBeforeUnmount(() => {
           </Button>
         </RouterLink>
       </div>
+
       <MPanel
         v-if="preferredLinks.length > 0"
         expanded
@@ -172,7 +203,7 @@ onBeforeUnmount(() => {
               class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
               :class="{
                 'feature-development': link.status !== RouteStatus.release,
-                'feature-disabled': isDisabled(link)
+                'feature-disabled': !canAccess(link)
               }"
               @click="
                 () => {
@@ -190,7 +221,6 @@ onBeforeUnmount(() => {
               >
                 <i class="pi pi-star-fill"></i>
               </button>
-
               <div
                 v-if="link.status !== RouteStatus.release"
                 class="feature-status"
@@ -200,7 +230,6 @@ onBeforeUnmount(() => {
               >
                 {{ link.status }}
               </div>
-
               <i :class="link.icon" />
               <span class="text-center">{{ link.name }}</span>
             </div>
@@ -229,7 +258,7 @@ onBeforeUnmount(() => {
               class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
               :class="{
                 'feature-development': link.status !== RouteStatus.release,
-                'feature-disabled': isDisabled(link)
+                'feature-disabled': !canAccess(link)
               }"
               @click="
                 () => {
@@ -247,7 +276,6 @@ onBeforeUnmount(() => {
               >
                 <i class="pi pi-star"></i>
               </button>
-
               <div
                 v-if="link.status !== RouteStatus.release"
                 class="feature-status"
@@ -257,7 +285,6 @@ onBeforeUnmount(() => {
               >
                 {{ link.status }}
               </div>
-
               <i :class="link.icon" />
               <span class="text-center">{{ link.name }}</span>
             </div>
@@ -269,17 +296,52 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.menu-bar {
+.app-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  padding: 0.75rem 1.5rem;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
   background: var(--surface-card);
-  border-radius: 0.75rem;
+  border-bottom: 1px solid var(--surface-border);
 }
 
-/* Base link style */
+.logo-link {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.menu-btn {
+  flex-shrink: 0;
+  flex-grow: 0 !important;
+  white-space: nowrap;
+  width: fit-content;
+  padding: 0.5rem 1rem;
+}
+
+.separator {
+  width: 2px;
+  height: 60%;
+  background: var(--p-slate-400);
+  flex-shrink: 0;
+  align-self: center;
+  border-radius: 0.5rem;
+}
+
+.breadcrumb-container {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.settings-link {
+  flex-shrink: 0;
+}
+
+.settings-btn {
+  padding: 0.5rem;
+}
+
 .menu-item {
   display: flex;
   align-items: center;
@@ -287,7 +349,7 @@ onBeforeUnmount(() => {
   padding: 0.5rem 1rem;
   text-decoration: none;
   font-weight: 500;
-  color: #475569; /* slate-600 text */
+  color: var(--p-slate-600);
   border-radius: 0.5rem;
   transition:
     background-color 0.25s,
@@ -296,17 +358,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* Hover: lighter slate tone */
 .menu-item:hover {
-  background-color: #e2e8f0; /* slate-200 */
-  color: #1e293b; /* slate-800 */
-}
-
-/* Active: darker slate tone */
-.menu-item.active {
-  background-color: #cbd5e1; /* slate-300 */
-  color: #0f172a; /* slate-900 */
-  font-weight: 600;
+  background-color: var(--p-slate-200);
+  color: var(--p-slate-800);
 }
 
 .feature-status {
@@ -320,12 +374,10 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-/* Development route base (badge only, no dimming) */
 .feature-development {
   outline: solid 1px var(--p-slate-400);
 }
 
-/* Disabled ONLY when user cannot access */
 .feature-disabled {
   cursor: not-allowed;
   background-color: var(--p-slate-200);
@@ -333,13 +385,7 @@ onBeforeUnmount(() => {
   outline: solid 1px var(--p-slate-300);
 }
 
-/* Disabled hover lock */
 .feature-disabled:hover {
-  background-color: var(--p-slate-200);
-  color: var(--p-slate-400);
-}
-
-.feature-development:hover {
   background-color: var(--p-slate-200);
   color: var(--p-slate-400);
 }
@@ -359,18 +405,8 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-.preferred-btn:hover {
-  color: var(--p-amber-500);
-}
-
+.preferred-btn:hover,
 .preferred-btn.active {
   color: var(--p-amber-500);
-}
-</style>
-
-<style>
-.p-drawer-title {
-  color: var(--p-slate-600) !important;
-  font-weight: 700 !important;
 }
 </style>

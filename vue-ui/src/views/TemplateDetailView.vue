@@ -3,7 +3,7 @@ import { onMounted, ref, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import ViewHeader from "../components/ViewHeader.vue";
+
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
@@ -354,8 +354,6 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ViewHeader />
-
   <MCard
     v-if="template"
     flex
