@@ -99,9 +99,35 @@
           v-else-if="msg.role === 'assistant'"
           class="sql-ai-msg sql-ai-msg-assistant"
         >
-          <!-- Dynamic skills used -->
+          <!-- Tools: expanded live view during streaming, collapsed after -->
           <div
-            v-if="getToolMessagesForAssistant(msg.id).length > 0"
+            v-if="msg.isStreaming && msg.id === currentAssistantMsgId &&
+              (getToolMessagesForAssistant(msg.id).length > 0 || runningTools.length > 0)"
+            class="sql-ai-tools-live"
+          >
+            <!-- Already-completed tools (live) -->
+            <div
+              v-for="tm in getToolMessagesForAssistant(msg.id)"
+              :key="tm.id"
+              class="sql-ai-tool-live-done"
+            >
+              <i class="pi pi-check-circle sql-ai-tool-live-check" />
+              <span class="sql-ai-tool-running-label">{{ formatToolName(tm.toolName ?? "") }}</span>
+            </div>
+            <!-- Currently-running tool -->
+            <div
+              v-for="tool in runningTools"
+              :key="'running-' + tool.name"
+              class="sql-ai-tool-running-item"
+            >
+              <span class="sql-ai-tool-spinner" />
+              <span class="sql-ai-tool-running-label">{{ formatToolName(tool.name) }}</span>
+            </div>
+          </div>
+
+          <!-- Collapsed tools summary (after streaming done) -->
+          <div
+            v-else-if="!msg.isStreaming && getToolMessagesForAssistant(msg.id).length > 0"
             class="sql-ai-tools-group"
           >
             <details class="sql-ai-tools-details">
@@ -129,25 +155,6 @@
                 </div>
               </div>
             </details>
-          </div>
-
-          <!-- Running tools indicator -->
-          <div
-            v-if="
-              msg.isStreaming &&
-              msg.id === currentAssistantMsgId &&
-              runningTools.length > 0
-            "
-            class="sql-ai-tools-running"
-          >
-            <div
-              v-for="tool in runningTools"
-              :key="'running-' + tool.name"
-              class="sql-ai-tool-running-item"
-            >
-              <span class="sql-ai-tool-spinner" />
-              <span class="sql-ai-tool-running-label">{{ formatToolName(tool.name) }}</span>
-            </div>
           </div>
 
           <!-- Query result preview -->
@@ -260,6 +267,11 @@ import MessageContentRenderer from "./MessageContentRenderer.vue";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { useSettings } from "../states/settingsState";
 import { getSkillsByDomain } from "../utils/skillsDb";
+import {
+  getChatSessionsForFile,
+  upsertChatSession,
+  deleteChatSession
+} from "../utils/suiteqlDb";
 
 const props = defineProps<{
   /** Returns the current SQL from the main editor */
@@ -299,7 +311,7 @@ interface ChatSession {
   agentHistory: AgentMessage[];
 }
 
-const CHATS_STORAGE_PREFIX = "suiteql_ai_chats_";
+const CHATS_STORAGE_PREFIX = "suiteql_ai_chats_"; // kept for one-time migration from chrome.storage
 
 // ── Suggestions ──
 const suggestions = [
@@ -376,22 +388,48 @@ executeQueryTool.execute = async (input) => {
 };
 
 // ── Chat history helpers ──
-const storageKey = () => `${CHATS_STORAGE_PREFIX}${props.fileId}`;
-
 const loadChatSessions = async () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-  return new Promise<void>((resolve) => {
-    chrome.storage.local.get([storageKey()], (result) => {
-      const stored = result[storageKey()];
-      chatSessions.value = Array.isArray(stored) ? stored : [];
-      resolve();
-    });
+  const stored = await getChatSessionsForFile(props.fileId);
+  chatSessions.value = stored.map((r) => ({
+    id: r.sessionId,
+    name: r.name,
+    createdAt: r.createdAt,
+    messages: r.messages,
+    agentHistory: r.agentHistory
+  }));
+};
+
+const saveCurrentSession = async () => {
+  if (!activeChatId.value || messages.value.length === 0) return;
+  const existing = chatSessions.value.find((s) => s.id === activeChatId.value);
+  const session: ChatSession = {
+    id: activeChatId.value,
+    name: generateChatName(messages.value),
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+    messages: messages.value.map((m) => ({ ...m, isStreaming: false })),
+    agentHistory: agent.history.value.map((m) => ({ ...m })) as AgentMessage[]
+  };
+  const idx = chatSessions.value.findIndex((s) => s.id === activeChatId.value);
+  if (idx >= 0) {
+    chatSessions.value[idx] = session;
+  } else {
+    chatSessions.value.unshift(session);
+  }
+  // Deep-clone to strip Vue reactive Proxy before IndexedDB structured-clone
+  const plain = JSON.parse(JSON.stringify(session));
+  await upsertChatSession({
+    sessionId: plain.id,
+    fileId: props.fileId,
+    name: plain.name,
+    createdAt: plain.createdAt,
+    messages: plain.messages,
+    agentHistory: plain.agentHistory
   });
 };
 
-const saveChatSessions = () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-  chrome.storage.local.set({ [storageKey()]: chatSessions.value });
+const deleteSession = async (sessionId: string) => {
+  chatSessions.value = chatSessions.value.filter((s) => s.id !== sessionId);
+  await deleteChatSession(sessionId);
 };
 
 const filteredSessions = computed(() => {
@@ -414,26 +452,8 @@ const generateChatName = (msgs: SqlChatMessage[]): string => {
   return `Chat ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 };
 
-const saveCurrentSession = () => {
-  if (!activeChatId.value || messages.value.length === 0) return;
-  const idx = chatSessions.value.findIndex((s) => s.id === activeChatId.value);
-  const session: ChatSession = {
-    id: activeChatId.value,
-    name: generateChatName(messages.value),
-    createdAt: chatSessions.value[idx]?.createdAt ?? new Date().toISOString(),
-    messages: messages.value.map((m) => ({ ...m, isStreaming: false })),
-    agentHistory: agent.history.value.map((m) => ({ ...m })) as AgentMessage[]
-  };
-  if (idx >= 0) {
-    chatSessions.value[idx] = session;
-  } else {
-    chatSessions.value.unshift(session);
-  }
-  saveChatSessions();
-};
-
-const startNewChat = () => {
-  saveCurrentSession();
+const startNewChat = async () => {
+  await saveCurrentSession();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   activeChatId.value = id;
   messages.value = [];
@@ -445,8 +465,8 @@ const startNewChat = () => {
   nextTick(() => textareaRef.value?.focus());
 };
 
-const loadSession = (session: ChatSession) => {
-  saveCurrentSession();
+const loadSession = async (session: ChatSession) => {
+  await saveCurrentSession();
   activeChatId.value = session.id;
   messages.value = session.messages.map((m) => ({ ...m }));
   agent.setHistory(session.agentHistory ?? []);
@@ -573,6 +593,9 @@ const agent = useAgent({
   },
   onToolResult(name) {
     runningTools.value = runningTools.value.filter((t) => t.name !== name);
+    // Immediately surface completed tool messages so they're visible during streaming
+    syncToolMessages(currentAssistantMsgId.value);
+    scrollToBottom();
   }
 });
 
@@ -746,13 +769,46 @@ watch(
 watch(() => props.fileId, switchFileContext);
 
 onMounted(async () => {
+  // One-time migration from chrome.storage.local → IndexedDB
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    const legacyKey = `${CHATS_STORAGE_PREFIX}${props.fileId}`;
+    await new Promise<void>((resolve) => {
+      chrome.storage.local.get([legacyKey], async (result) => {
+        const stored = result[legacyKey];
+        if (Array.isArray(stored) && stored.length > 0) {
+          // Only migrate if IndexedDB is empty for this file
+          const existing = await getChatSessionsForFile(props.fileId);
+          if (existing.length === 0) {
+            for (const s of stored) {
+              await upsertChatSession({
+                sessionId: s.id,
+                fileId: props.fileId,
+                name: s.name,
+                createdAt: s.createdAt,
+                messages: s.messages ?? [],
+                agentHistory: s.agentHistory ?? []
+              });
+            }
+          }
+          chrome.storage.local.remove([legacyKey]);
+        }
+        resolve();
+      });
+    });
+  }
+
   await Promise.all([switchFileContext(), loadSqlDomainSkills()]);
   textareaRef.value?.focus();
   document.addEventListener("mousedown", handleOutsideClick);
+
+  const onHide = () => {
+    if (document.visibilityState === "hidden") saveCurrentSession();
+  };
+  document.addEventListener("visibilitychange", onHide);
 });
 
-onBeforeUnmount(() => {
-  saveCurrentSession();
+onBeforeUnmount(async () => {
+  await saveCurrentSession();
   document.removeEventListener("mousedown", handleOutsideClick);
 });
 </script>
@@ -1215,6 +1271,31 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 0.2rem;
   margin-bottom: 0.25rem;
+}
+
+/* Live tools container — shown during streaming */
+.sql-ai-tools-live {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.25rem;
+}
+
+.sql-ai-tool-live-done {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.4rem;
+  background: var(--p-emerald-50, #ecfdf5);
+  border: 1px solid var(--p-emerald-200, #a7f3d0);
+  font-size: 0.68rem;
+  color: var(--p-emerald-700, #065f46);
+}
+
+.sql-ai-tool-live-check {
+  font-size: 0.6rem;
+  color: var(--p-emerald-500, #10b981);
 }
 
 .sql-ai-tool-running-item {

@@ -145,7 +145,7 @@
                 <button
                   class="toolbar-btn"
                   :class="showAiEditor ? 'toolbar-btn-active' : ''"
-                  @click="showAiEditor = !showAiEditor"
+                  @click="toggleAiEditor"
                   title="Toggle AI SQL Editor"
                 >
                   <i class="pi pi-sparkles"></i>
@@ -704,6 +704,14 @@ import MCard from "../components/universal/card/MCard.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MInput from "../components/universal/input/MInput.vue";
 import { generateId } from "../utils/utilities";
+import {
+  getAllQueryFiles,
+  bulkUpsertQueryFiles,
+  deleteQueryFile,
+  deleteChatSessionsForFile,
+  getUiState,
+  setUiState
+} from "../utils/suiteqlDb";
 
 const router = useRouter();
 
@@ -825,9 +833,26 @@ const onCustomLimitChange = (e: Event) => {
   isEditingCustom.value = false;
 };
 
-// AI Editor panel
-const showAiEditor = ref(false);
+// AI Editor panel — per-tab open state
+const aiEditorOpenTabs = ref<Set<string>>(new Set());
 const aiPanelWidth = ref(340);
+
+const showAiEditor = computed(
+  () => !!activeFileId.value && aiEditorOpenTabs.value.has(activeFileId.value)
+);
+
+const toggleAiEditor = () => {
+  if (!activeFileId.value) return;
+  const next = new Set(aiEditorOpenTabs.value);
+  if (next.has(activeFileId.value)) {
+    next.delete(activeFileId.value);
+  } else {
+    next.add(activeFileId.value);
+  }
+  aiEditorOpenTabs.value = next;
+  setUiState("aiEditorOpenTabs", [...next]);
+  setUiState("aiPanelWidth", aiPanelWidth.value);
+};
 
 const startAiPanelResize = (e: MouseEvent) => {
   const startX = e.clientX;
@@ -841,6 +866,7 @@ const startAiPanelResize = (e: MouseEvent) => {
   const onUp = () => {
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
+    setUiState("aiPanelWidth", aiPanelWidth.value);
   };
 
   window.addEventListener("mousemove", onMove);
@@ -853,12 +879,6 @@ const editorRefs = ref<Record<string, any>>({});
 // ============================================================================
 // Computed
 // ============================================================================
-
-const persistedState = computed(() => ({
-  files: files.value.map((f) => ({ id: f.id, name: f.name, code: f.code })),
-  openTabs: openTabs.value,
-  activeTab: activeFileId.value
-}));
 
 const tabs = computed(() =>
   openTabs.value
@@ -1040,6 +1060,16 @@ const removeFile = (fileId: string) => {
   if (index > -1) files.value.splice(index, 1);
   if (activeFileId.value === fileId) {
     activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
+  }
+  // Clean up from IndexedDB
+  deleteQueryFile(fileId);
+  deleteChatSessionsForFile(fileId);
+  // Remove from ai editor open tabs
+  if (aiEditorOpenTabs.value.has(fileId)) {
+    const next = new Set(aiEditorOpenTabs.value);
+    next.delete(fileId);
+    aiEditorOpenTabs.value = next;
+    setUiState("aiEditorOpenTabs", [...next]);
   }
 };
 
@@ -1491,52 +1521,65 @@ const clearResults = (file: QueryFile) => {
 };
 
 // ============================================================================
-// Persistence
+// Persistence — IndexedDB via suiteqlDb
+// ============================================================================
+
+// ============================================================================
+// Persistence — IndexedDB via suiteqlDb
 // ============================================================================
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
-const STORAGE_KEYS = {
-  files: "suiteql_cachedFiles",
-  tabs: "suiteql_cachedOpenTabs",
-  active: "suiteql_cachedActiveTab"
+const flushFileSave = async () => {
+  try {
+    const now = new Date().toISOString();
+    await bulkUpsertQueryFiles(
+      files.value.map((f) => ({
+        fileId: f.id,
+        name: f.name,
+        code: f.code,
+        createdAt: now,
+        updatedAt: now
+      }))
+    );
+    saveStatus.value = "saved";
+    setTimeout(() => {
+      if (saveStatus.value === "saved") saveStatus.value = "idle";
+    }, 1500);
+  } catch (err) {
+    console.error("[SuiteQL] flushFileSave failed:", err);
+    saveStatus.value = "error";
+  }
 };
 
-const saveAllFiles = (state: any) => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
+// Debounced save for file content (code/name changes)
+const saveFileContent = () => {
+  if (isRestoring.value) return;
   saveStatus.value = "saving";
   if (saveTimeout) clearTimeout(saveTimeout);
-  saveTimeout = window.setTimeout(() => {
-    chrome.storage.local.set(
-      {
-        [STORAGE_KEYS.files]: state.files,
-        [STORAGE_KEYS.tabs]: state.openTabs,
-        [STORAGE_KEYS.active]: state.activeTab
-      },
-      () => {
-        if (chrome.runtime.lastError) {
-          saveStatus.value = "error";
-          return;
-        }
-        saveStatus.value = "saved";
-        setTimeout(() => {
-          if (saveStatus.value === "saved") saveStatus.value = "idle";
-        }, 1500);
-      }
-    );
-  }, 1000);
+  saveTimeout = window.setTimeout(flushFileSave, 300);
+};
+
+// Immediate save for tab state
+const saveTabState = async () => {
+  if (isRestoring.value) return;
+  try {
+    await setUiState("openTabs", [...openTabs.value]);
+    await setUiState("activeTab", activeFileId.value);
+  } catch (err) {
+    console.error("[SuiteQL] saveTabState failed:", err);
+  }
 };
 
 watch(
-  persistedState,
-  (state) => {
-    if (isRestoring.value) return;
-    saveAllFiles(state);
-  },
+  () => files.value.map((f) => ({ id: f.id, name: f.name, code: f.code })),
+  () => { saveFileContent(); },
   { deep: true }
 );
+
+watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
 
 // When switching tabs, detect tables in the newly active file's SQL
 watch(activeFileId, (id) => {
@@ -1558,84 +1601,103 @@ const handleGlobalKeydown = (event: KeyboardEvent) => {
   }
 };
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("keydown", handleGlobalKeydown);
-  fetchTables(); // also triggers detectAndLoadTablesFromQuery after tables load
+  fetchTables();
 
-  if (typeof chrome === "undefined" || !chrome.storage?.local) {
-    isRestoring.value = false;
-    return;
-  }
-
-  chrome.storage.local.get(
-    [STORAGE_KEYS.files, STORAGE_KEYS.tabs, STORAGE_KEYS.active],
-    (result) => {
-      try {
-        const restoredFiles = Array.isArray(result[STORAGE_KEYS.files])
-          ? result[STORAGE_KEYS.files].map((f: any) => ({
-              id: f.id || generateId(),
-              name: f.name || "query.sql",
-              code: f.code || "",
-              results: [],
-              columns: [],
-              error: "",
-              isExecuting: false,
-              totalCount: 0
-            }))
-          : [];
-
-        files.value = restoredFiles;
-
-        let cachedTabs: string[] = [];
-        if (Array.isArray(result[STORAGE_KEYS.tabs])) {
-          cachedTabs = result[STORAGE_KEYS.tabs];
-        } else if (
-          result[STORAGE_KEYS.tabs] &&
-          typeof result[STORAGE_KEYS.tabs] === "object"
-        ) {
-          cachedTabs = Object.values(result[STORAGE_KEYS.tabs]);
-        }
-
-        const validTabs = cachedTabs.filter((id: string) =>
-          restoredFiles.some((file: QueryFile) => file.id === id)
-        );
-        openTabs.value = validTabs;
-
-        const active = result[STORAGE_KEYS.active];
-        activeFileId.value =
-          typeof active === "string" && openTabs.value.includes(active)
-            ? active
-            : openTabs.value[0] || "";
-      } catch (error) {
-        console.error("Restore failed:", error);
-        openTabs.value = [];
-        activeFileId.value = "";
-        chrome.storage.local.remove([STORAGE_KEYS.tabs, STORAGE_KEYS.active]);
-      }
-      isRestoring.value = false;
-      // fetchTables (async above) will call detectAndLoadTablesFromQuery once tables arrive
+  const onHide = () => {
+    if (document.visibilityState === "hidden") {
+      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+      flushFileSave();
+      saveTabState();
     }
-  );
-});
+  };
+  document.addEventListener("visibilitychange", onHide);
 
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", handleGlobalKeydown);
   try {
-    if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      const filesData = files.value.map((f) => ({
-        id: f.id,
-        name: f.name,
-        code: f.code
-      }));
-      chrome.storage.local.set({
-        [STORAGE_KEYS.files]: filesData,
-        [STORAGE_KEYS.tabs]: openTabs.value,
-        [STORAGE_KEYS.active]: activeFileId.value
+    // ── Migrate from chrome.storage.local if needed (one-time) ──
+    const existing = await getAllQueryFiles();
+    if (existing.length === 0 && typeof chrome !== "undefined" && chrome.storage?.local) {
+      await new Promise<void>((resolve) => {
+        chrome.storage.local.get(
+          ["suiteql_cachedFiles", "suiteql_cachedOpenTabs", "suiteql_cachedActiveTab"],
+          async (result) => {
+            if (Array.isArray(result.suiteql_cachedFiles) && result.suiteql_cachedFiles.length > 0) {
+              const now = new Date().toISOString();
+              await bulkUpsertQueryFiles(
+                result.suiteql_cachedFiles.map((f: any) => ({
+                  fileId: f.id || generateId(),
+                  name: f.name || "query.sql",
+                  code: f.code || "",
+                  createdAt: now,
+                  updatedAt: now
+                }))
+              );
+              if (Array.isArray(result.suiteql_cachedOpenTabs)) {
+                await setUiState("openTabs", result.suiteql_cachedOpenTabs);
+              }
+              if (result.suiteql_cachedActiveTab) {
+                await setUiState("activeTab", result.suiteql_cachedActiveTab);
+              }
+              chrome.storage.local.remove([
+                "suiteql_cachedFiles",
+                "suiteql_cachedOpenTabs",
+                "suiteql_cachedActiveTab"
+              ]);
+            }
+            resolve();
+          }
+        );
       });
     }
+
+    // ── Restore state from IndexedDB ──
+    const storedFiles = await getAllQueryFiles();
+    const restoredFiles: QueryFile[] = storedFiles.map((f) => ({
+      id: f.fileId,
+      name: f.name,
+      code: f.code,
+      results: [],
+      columns: [],
+      error: "",
+      isExecuting: false,
+      totalCount: 0
+    }));
+    files.value = restoredFiles;
+
+    const storedTabs = await getUiState<string[]>("openTabs", []);
+    const validTabs = storedTabs.filter((id: string) =>
+      restoredFiles.some((file) => file.id === id)
+    );
+    openTabs.value = validTabs;
+
+    const storedActive = await getUiState<string>("activeTab", "");
+    activeFileId.value =
+      storedActive && openTabs.value.includes(storedActive)
+        ? storedActive
+        : openTabs.value[0] || "";
+
+    // ── Restore AI editor per-tab open state ──
+    const storedAiTabs = await getUiState<string[]>("aiEditorOpenTabs", []);
+    aiEditorOpenTabs.value = new Set(storedAiTabs);
+
+    // ── Restore AI panel width ──
+    const storedWidth = await getUiState<number>("aiPanelWidth", 340);
+    aiPanelWidth.value = storedWidth;
   } catch (error) {
-    console.error(error);
+    console.error("Restore failed:", error);
+    openTabs.value = [];
+    activeFileId.value = "";
   }
+
+  isRestoring.value = false;
+});
+
+onBeforeUnmount(async () => {
+  window.removeEventListener("keydown", handleGlobalKeydown);
+  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+  await flushFileSave();
+  await saveTabState();
 });
 </script>
 

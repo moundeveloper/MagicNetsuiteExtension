@@ -193,6 +193,13 @@ import MCard from "../components/universal/card/MCard.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MInput from "../components/universal/input/MInput.vue";
 import { generateId } from "../utils/utilities";
+import {
+  getAllScriptFiles,
+  bulkUpsertScriptFiles,
+  deleteScriptFile,
+  getRQSUiState,
+  setRQSUiState
+} from "../utils/runQuickScriptDb";
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -217,16 +224,6 @@ const activeFileId = ref("");
 const fileSearchTerm = ref("");
 const commandSearchTerm = ref("");
 const isRestoring = ref(true);
-
-const persistedState = computed(() => ({
-  files: files.value.map(f => ({
-    id: f.id,
-    name: f.name,
-    code: f.code
-  })),
-  openTabs: openTabs.value,
-  activeTab: activeFileId.value
-}));
 
 const tabs = computed(() =>
   openTabs.value
@@ -301,6 +298,8 @@ const removeFile = (fileId: string) => {
   if (activeFileId.value === fileId) {
     activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
   }
+
+  deleteScriptFile(fileId).catch(console.error);
 };
 
 const removeFileByTab = ({ tabId, nextTabId }: { tabId: string; nextTabId: string | null }) => {
@@ -450,110 +449,129 @@ type SaveStatus = "idle" | "saving" | "saved" | "error";
 const saveStatus = ref<SaveStatus>("idle");
 let saveTimeout: number | undefined;
 
-const saveAllFiles = (state: any) => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-
-  saveStatus.value = "saving";
-
-  if (saveTimeout) clearTimeout(saveTimeout);
-
-  saveTimeout = window.setTimeout(() => {
-    chrome.storage.local.set(
-      {
-        cachedFiles: state.files,
-        cachedOpenTabs: state.openTabs,
-        cachedActiveTab: state.activeTab
-      },
-      () => {
-        if (chrome.runtime.lastError) {
-          saveStatus.value = "error";
-          return;
-        }
-
-        saveStatus.value = "saved";
-
-        setTimeout(() => {
-          if (saveStatus.value === "saved") saveStatus.value = "idle";
-        }, 1500);
-      }
+const flushFileSave = async () => {
+  try {
+    await bulkUpsertScriptFiles(
+      files.value.map((f) => ({
+        fileId: f.id,
+        name: f.name,
+        code: f.code,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }))
     );
-  }, 1000);
+    saveStatus.value = "saved";
+    setTimeout(() => {
+      if (saveStatus.value === "saved") saveStatus.value = "idle";
+    }, 1500);
+  } catch (err) {
+    console.error("[RQS] flushFileSave failed:", err);
+    saveStatus.value = "error";
+  }
+};
+
+// Debounced save for file content (code/name changes)
+const saveFileContent = () => {
+  if (isRestoring.value) return;
+  saveStatus.value = "saving";
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = window.setTimeout(flushFileSave, 300);
+};
+
+// Immediate save for tab state (openTabs / activeTab)
+const saveTabState = async () => {
+  if (isRestoring.value) return;
+  try {
+    await setRQSUiState("openTabs", [...openTabs.value]);
+    await setRQSUiState("activeTab", activeFileId.value);
+  } catch (err) {
+    console.error("[RQS] saveTabState failed:", err);
+  }
 };
 
 watch(
-  persistedState,
-  (state) => {
-    if (isRestoring.value) return;
-    saveAllFiles(state);
-  },
+  () => files.value.map((f) => ({ id: f.id, name: f.name, code: f.code })),
+  () => { saveFileContent(); },
   { deep: true }
 );
 
-onMounted(() => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) {
-    isRestoring.value = false;
-    return;
-  }
+watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
 
-  chrome.storage.local.get(
-    ["cachedFiles", "cachedOpenTabs", "cachedActiveTab", "rqs_pendingFile"],
-    (result) => {
+onMounted(async () => {
+  const onHide = () => {
+    if (document.visibilityState === "hidden") {
+      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+      flushFileSave();
+      saveTabState();
+    }
+  };
+  document.addEventListener("visibilitychange", onHide);
 
-      try {
-        const restoredFiles = Array.isArray(result.cachedFiles)
-          ? result.cachedFiles.map((f: any) => ({
-              id: f.id || generateId(),
+  // One-time migration from chrome.storage.local
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    await new Promise<void>((resolve) => {
+      chrome.storage.local.get(
+        ["cachedFiles", "cachedOpenTabs", "cachedActiveTab"],
+        async (result) => {
+          const existingFiles = await getAllScriptFiles();
+          if (existingFiles.length === 0 && Array.isArray(result.cachedFiles) && result.cachedFiles.length > 0) {
+            await bulkUpsertScriptFiles(result.cachedFiles.map((f: any) => ({
+              fileId: f.id || generateId(),
               name: f.name || "script.js",
               code: f.code || "",
-              logs: [],
-              isExecuting: false
-            }))
-          : [];
-
-        files.value = restoredFiles;
-
-        let cachedTabs: string[] = [];
-
-        // Validate cachedOpenTabs
-        if (Array.isArray(result.cachedOpenTabs)) {
-          cachedTabs = result.cachedOpenTabs;
-        } else if (
-          result.cachedOpenTabs &&
-          typeof result.cachedOpenTabs === "object"
-        ) {
-          // Handle legacy object format
-          cachedTabs = Object.values(result.cachedOpenTabs);
-        } else if (result.cachedOpenTabs !== undefined) {
-          // Invalid format → clear it from storage
-          chrome.storage.local.remove("cachedOpenTabs");
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            })));
+            if (Array.isArray(result.cachedOpenTabs)) {
+              await setRQSUiState("openTabs", result.cachedOpenTabs);
+            }
+            if (result.cachedActiveTab) {
+              await setRQSUiState("activeTab", result.cachedActiveTab);
+            }
+            chrome.storage.local.remove(["cachedFiles", "cachedOpenTabs", "cachedActiveTab"]);
+          }
+          resolve();
         }
+      );
+    });
+  }
 
-        // Only keep tabs that still have a valid file
-        const validTabs = cachedTabs.filter((id: string) =>
-          restoredFiles.some((file: ScriptFile) => file.id === id)
-        );
+  // Restore from IndexedDB
+  try {
+    const [storedFiles, storedOpenTabs, storedActiveTab] = await Promise.all([
+      getAllScriptFiles(),
+      getRQSUiState<string[]>("openTabs", []),
+      getRQSUiState<string>("activeTab", "")
+    ]);
 
-        // 🚨 DO NOT auto-open files if storage had none
-        openTabs.value = validTabs;
+    const restoredFiles: ScriptFile[] = storedFiles.map((f) => ({
+      id: f.fileId,
+      name: f.name,
+      code: f.code,
+      logs: [],
+      isExecuting: false
+    }));
 
-        const active = result.cachedActiveTab;
+    files.value = restoredFiles;
 
-        activeFileId.value =
-          typeof active === "string" && openTabs.value.includes(active)
-            ? active
-            : openTabs.value[0] || "";
+    const validTabs = storedOpenTabs.filter((id) =>
+      restoredFiles.some((f) => f.id === id)
+    );
+    openTabs.value = validTabs;
 
-      } catch (error) {
-        console.error("Restore failed, resetting tabs:", error);
+    activeFileId.value =
+      typeof storedActiveTab === "string" && validTabs.includes(storedActiveTab)
+        ? storedActiveTab
+        : validTabs[0] || "";
+  } catch (error) {
+    console.error("Restore from IndexedDB failed:", error);
+    openTabs.value = [];
+    activeFileId.value = "";
+  }
 
-        // Reset corrupted tab state
-        openTabs.value = [];
-        activeFileId.value = "";
-
-        chrome.storage.local.remove(["cachedOpenTabs", "cachedActiveTab"]);
-      }
-
-      // Pick up any pending file transferred from SuiteQL Editor
+  // Pick up any pending file transferred from SuiteQL Editor
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    chrome.storage.local.get(["rqs_pendingFile"], (result) => {
       if (result.rqs_pendingFile && typeof result.rqs_pendingFile === "object") {
         const pf = result.rqs_pendingFile as any;
         const pendingFile: ScriptFile = {
@@ -568,32 +586,17 @@ onMounted(() => {
         activeFileId.value = pendingFile.id;
         chrome.storage.local.remove("rqs_pendingFile");
       }
+    });
+  }
 
-      isRestoring.value = false;
-    }
-  );
+  isRestoring.value = false;
 });
 
 
-onBeforeUnmount(() => {
-  try {
-    if (typeof chrome !== "undefined" && chrome.storage?.local) {
-      const filesData = files.value.map((f) => ({
-        id: f.id,
-        name: f.name,
-        code: f.code
-      }));
-      chrome.storage.local.set({ 
-        cachedFiles: filesData,
-        cachedOpenTabs: openTabs.value,
-        cachedActiveTab: activeFileId.value
-      }, () => {
-        console.log("Saved!");
-      });
-    }
-  } catch (error) {
-    console.error(error);
-  }
+onBeforeUnmount(async () => {
+  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+  await flushFileSave();
+  await saveTabState();
 });
 </script>
 

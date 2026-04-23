@@ -449,7 +449,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted, computed } from "vue";
+import { ref, nextTick, watch, onMounted, onBeforeUnmount, computed } from "vue";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -461,8 +461,13 @@ import { tools } from "../utils/toolManager";
 import { skillTools } from "../utils/skillSearchTools";
 import { chainedTools } from "../utils/chainedTools";
 import { useSettings } from "../states/settingsState";
-
-const STORAGE_KEY = "aiAssistantChatHistory";
+import {
+  getAllAiChats,
+  upsertAiChat,
+  deleteAiChat,
+  getAiAssistantUiState,
+  setAiAssistantUiState
+} from "../utils/aiAssistantDb";
 
 const { settings } = useSettings();
 
@@ -807,21 +812,23 @@ const getFirstUserMessage = (msgs: ChatMessage[]) => {
 
 let saveChatDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-const saveChatHistoryImmediate = () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-
-  const historyToSave = chatHistory.value;
-
-  chrome.storage.local.set(
-    {
-      [STORAGE_KEY]: historyToSave
-    },
-    () => {
-      if (chrome.runtime.lastError) {
-        console.error("Failed to save chat history:", chrome.runtime.lastError);
-      }
-    }
-  );
+const saveChatHistoryImmediate = async () => {
+  try {
+    await Promise.all(
+      chatHistory.value.map((chat) => {
+        const plain = JSON.parse(JSON.stringify(chat));
+        return upsertAiChat({
+          chatId: plain.id,
+          title: plain.title,
+          createdAt: plain.createdAt,
+          updatedAt: plain.updatedAt,
+          messages: plain.messages
+        });
+      })
+    );
+  } catch (error) {
+    console.error("Failed to save chat history:", error);
+  }
 };
 
 const saveChatHistory = (immediate = false) => {
@@ -839,64 +846,87 @@ const saveChatHistory = (immediate = false) => {
 };
 
 const saveActiveChatId = () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-
-  chrome.storage.local.set({
-    aiAssistantActiveChatId: activeChatId.value
-  });
+  setAiAssistantUiState("activeChatId", activeChatId.value).catch(console.error);
 };
 
-const loadChatHistory = () => {
-  if (typeof chrome === "undefined" || !chrome.storage?.local) {
-    isRestoring.value = false;
-    return;
+const loadChatHistory = async () => {
+  try {
+    // One-time migration from chrome.storage.local
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      await new Promise<void>((resolve) => {
+        chrome.storage.local.get(
+          ["aiAssistantChatHistory", "aiAssistantActiveChatId"],
+          async (result) => {
+            const existingChats = await getAllAiChats();
+            if (existingChats.length === 0) {
+              const rawHistory = result["aiAssistantChatHistory"];
+              let history: Chat[] = [];
+              if (Array.isArray(rawHistory)) {
+                history = rawHistory;
+              } else if (rawHistory && typeof rawHistory === "object") {
+                history = Object.values(rawHistory);
+              }
+              if (history.length > 0) {
+                await Promise.all(
+                  history.map((chat) =>
+                    upsertAiChat({
+                      chatId: chat.id,
+                      title: chat.title,
+                      createdAt: chat.createdAt,
+                      updatedAt: chat.updatedAt,
+                      messages: Array.isArray(chat.messages)
+                        ? chat.messages
+                        : Object.values(chat.messages || {})
+                    })
+                  )
+                );
+                const activeId = result["aiAssistantActiveChatId"];
+                if (typeof activeId === "string" && activeId) {
+                  await setAiAssistantUiState("activeChatId", activeId);
+                }
+                chrome.storage.local.remove(["aiAssistantChatHistory", "aiAssistantActiveChatId"]);
+              }
+            }
+            resolve();
+          }
+        );
+      });
+    }
+
+    // Restore from IndexedDB
+    const [storedChats, storedActiveId] = await Promise.all([
+      getAllAiChats(),
+      getAiAssistantUiState<string>("activeChatId", "")
+    ]);
+
+    chatHistory.value = storedChats.map((c) => ({
+      id: c.chatId,
+      title: c.title,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      messages: Array.isArray(c.messages) ? c.messages : Object.values(c.messages || {})
+    }));
+
+    if (typeof storedActiveId === "string" && storedActiveId) {
+      const chat = chatHistory.value.find((c) => c.id === storedActiveId);
+      if (chat) {
+        activeChatId.value = storedActiveId;
+        messages.value = chat.messages;
+        const restoredHistory = chatMessagesToAgentHistory(messages.value);
+        agent.setHistory(restoredHistory);
+        rebuildToolMessageMap();
+      }
+    }
+
+    inProgressTools.value = [];
+    activeTools.value = [];
+    currentAssistantMsgId.value = 0;
+  } catch (error) {
+    console.error("Failed to load chat history:", error);
+    chatHistory.value = [];
   }
 
-  chrome.storage.local.get(
-    [STORAGE_KEY, "aiAssistantActiveChatId"],
-    (result) => {
-      try {
-        let history: Chat[] = [];
-
-        const rawHistory = result[STORAGE_KEY];
-
-        if (Array.isArray(rawHistory)) {
-          history = rawHistory;
-        } else if (rawHistory && typeof rawHistory === "object") {
-          history = Object.values(rawHistory);
-        }
-
-        chatHistory.value = history.map((chat) => ({
-          ...chat,
-          messages: Array.isArray(chat.messages)
-            ? chat.messages
-            : Object.values(chat.messages || {})
-        }));
-
-        const activeId = result.aiAssistantActiveChatId;
-        if (typeof activeId === "string" && activeId) {
-          const chat = chatHistory.value.find((c) => c.id === activeId);
-          if (chat) {
-            activeChatId.value = activeId;
-            messages.value = chat.messages;
-            // Restore agent history so AI has context from previous session
-            const restoredHistory = chatMessagesToAgentHistory(messages.value);
-            agent.setHistory(restoredHistory);
-            rebuildToolMessageMap();
-          }
-        }
-
-        inProgressTools.value = [];
-        activeTools.value = [];
-        currentAssistantMsgId.value = 0;
-      } catch (error) {
-        console.error("Failed to load chat history:", error);
-        chatHistory.value = [];
-      }
-
-      isRestoring.value = false;
-    }
-  );
+  isRestoring.value = false;
 };
 
 const createNewChat = () => {
@@ -1115,6 +1145,7 @@ const deleteChat = (chatId: string) => {
     syncedToolCallIds.value.clear();
   }
 
+  deleteAiChat(chatId).catch(console.error);
   saveChatHistory(true);
   saveActiveChatId();
 };
@@ -1165,6 +1196,21 @@ const formatDate = (dateStr: string) => {
 
 onMounted(() => {
   loadChatHistory();
+
+  const onHide = () => {
+    if (document.visibilityState === "hidden") {
+      if (saveChatDebounceTimer) { clearTimeout(saveChatDebounceTimer); saveChatDebounceTimer = null; }
+      saveChatHistoryImmediate();
+      saveActiveChatId();
+    }
+  };
+  document.addEventListener("visibilitychange", onHide);
+});
+
+onBeforeUnmount(() => {
+  if (saveChatDebounceTimer) { clearTimeout(saveChatDebounceTimer); saveChatDebounceTimer = null; }
+  saveChatHistoryImmediate();
+  saveActiveChatId();
 });
 
 const truncate = (str: string, n: number) => {
