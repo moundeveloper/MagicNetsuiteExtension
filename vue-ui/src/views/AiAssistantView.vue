@@ -1213,7 +1213,8 @@ onBeforeUnmount(() => {
   saveActiveChatId();
 });
 
-const truncate = (str: string, n: number) => {
+const truncate = (str: string | null | undefined, n: number) => {
+  if (!str) return "";
   return str.length > n ? str.slice(0, n) + "..." : str;
 };
 

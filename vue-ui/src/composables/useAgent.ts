@@ -405,10 +405,11 @@ const condenseTurn = (turn: ConversationTurn): AgentMessage[] => {
   const TOOL_RESULT_MAX = 500;
   return turn.messages.map((m) => {
     if (m.role === "tool") {
+      const content = m.content ?? "";
       const truncated =
-        m.content.length > TOOL_RESULT_MAX
-          ? m.content.slice(0, TOOL_RESULT_MAX) + "... [truncated]"
-          : m.content;
+        content.length > TOOL_RESULT_MAX
+          ? content.slice(0, TOOL_RESULT_MAX) + "... [truncated]"
+          : content;
       return { ...m, content: truncated };
     }
     return m;
@@ -895,7 +896,7 @@ export const useAgent = (options: AgentOptions = {}) => {
             : "";
           return `Assistant${toolInfo}: ${m.content}`;
         }
-        if (m.role === "tool") return `Tool (${m.toolName ?? "unknown"}): ${m.content.slice(0, 2000)}`;
+        if (m.role === "tool") return `Tool (${m.toolName ?? "unknown"}): ${(m.content ?? "").slice(0, 2000)}`;
         return `${m.role}: ${m.content}`;
       })
       .join("\n\n");

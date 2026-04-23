@@ -641,8 +641,10 @@ const autoResize = () => {
   el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
 };
 
-const truncate = (text: string, max: number) =>
-  text.length > max ? `${text.slice(0, max)}...` : text;
+const truncate = (text: string | null | undefined, max: number) => {
+  if (!text) return "";
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+};
 
 const formatToolName = (name: string) =>
   name
