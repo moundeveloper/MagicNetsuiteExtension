@@ -36,6 +36,7 @@ export interface ToolCall {
 export interface ChatCompletionOptions {
   tools?: unknown[];
   model?: string;
+  signal?: AbortSignal;
 }
 
 export interface NormalisedResponse {
@@ -107,7 +108,8 @@ const ollamaChat = async (
     stream: false,
     ...(options.tools && options.tools.length > 0
       ? { tools: options.tools as Parameters<typeof client.chat>[0]["tools"] }
-      : {})
+      : {}),
+    ...(options.signal ? { signal: options.signal } : {})
   });
 
   const rawMsg = response.message;
@@ -238,7 +240,8 @@ const copilotChat = async (
       "OpenAI-Intent": "conversation-panel",
       "User-Agent": "MagicNetsuiteExtension"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal: options.signal
   });
 
   if (!res.ok) {
@@ -280,7 +283,7 @@ let opencodeSessionId: string | null = null;
 
 const opencodeChat = async (
   messages: ChatMessage[],
-  _options: ChatCompletionOptions,
+  options: ChatCompletionOptions,
   baseUrl: string,
   model?: string
 ): Promise<NormalisedResponse> => {
@@ -289,7 +292,8 @@ const opencodeChat = async (
     const sessionRes = await fetch(`${baseUrl}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      signal: options.signal
     });
 
     if (!sessionRes.ok) {
@@ -332,7 +336,8 @@ const opencodeChat = async (
               };
             })()
           : {})
-      })
+      }),
+      signal: options.signal
     }
   );
 

@@ -67,6 +67,7 @@ export interface AgentMessage {
 export interface AgentRunOptions {
   systemPrompt?: string;
   maxIterations?: number;
+  signal?: AbortSignal;
 }
 
 export interface AgentOptions {
@@ -1088,7 +1089,7 @@ export const useAgent = (options: AgentOptions = {}) => {
     prompt: string,
     runOptions: AgentRunOptions = {}
   ): Promise<string> => {
-    const { systemPrompt = defaultSystemPrompt, maxIterations = 10 } =
+    const { systemPrompt = defaultSystemPrompt, maxIterations = 10, signal } =
       runOptions;
 
     loading.value = true;
@@ -1115,6 +1116,11 @@ export const useAgent = (options: AgentOptions = {}) => {
       while (iterations < maxIterations) {
         iterations++;
 
+        // ── Check for cancellation ──
+        if (signal?.aborted) {
+          throw new DOMException("Generation stopped by user.", "AbortError");
+        }
+
         // ── Check if context needs compaction ──
         await compactIfNeeded(systemPrompt);
 
@@ -1129,7 +1135,7 @@ export const useAgent = (options: AgentOptions = {}) => {
 
         let response: { content: string | null; tool_calls: ToolCall[] };
         try {
-          response = await chatCompletion(messages, { tools: allTools.length > 0 ? allTools : undefined });
+          response = await chatCompletion(messages, { tools: allTools.length > 0 ? allTools : undefined, signal });
           console.log(
             "[useAgent] Provider response:",
             JSON.stringify(response, null, 2)

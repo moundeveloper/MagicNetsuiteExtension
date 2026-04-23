@@ -105,7 +105,7 @@
                     <i class="pi pi-chevron-down compaction-chevron" />
                   </summary>
                   <div class="compaction-content">
-                    <MessageContentRenderer :content="msg.content" />
+                    <MessageContentRenderer :content="msg.content" @open-in-sql-editor="openInSqlEditor" />
                   </div>
                 </details>
               </div>
@@ -342,7 +342,7 @@
                     <span class="thinking-dot" />
                     <span class="thinking-dot" />
                   </div>
-                  <MessageContentRenderer v-else :content="msg.content" />
+                  <MessageContentRenderer v-else :content="msg.content" @open-in-sql-editor="openInSqlEditor" />
                 </div>
               </div>
             </template>
@@ -388,12 +388,20 @@
                 @input="autoResize"
               />
               <button
+                v-if="loading"
+                class="stop-btn"
+                @click="stopAgent"
+                title="Stop generation"
+              >
+                <i class="pi pi-stop-circle" />
+              </button>
+              <button
+                v-else
                 class="send-btn"
-                :disabled="!prompt.trim() || loading"
+                :disabled="!prompt.trim()"
                 @click="sendMessage"
               >
-                <i v-if="loading" class="pi pi-spin pi-spinner" />
-                <i v-else class="pi pi-arrow-up" />
+                <i class="pi pi-arrow-up" />
               </button>
             </div>
           </div>
@@ -450,6 +458,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted, onBeforeUnmount, computed } from "vue";
+import { useRouter } from "vue-router";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -471,6 +480,7 @@ import {
 } from "../utils/aiAssistantDb";
 
 const { settings } = useSettings();
+const router = useRouter();
 
 interface ChatMessage {
   id: number;
@@ -738,6 +748,7 @@ When a chained tool is available (e.g. \`generate_script_deployment\`), **always
 
 const { loading } = agent;
 const contextTokens = agent.contextTokens;
+let abortController: AbortController | null = null;
 
 /** Estimate tokens from UI messages (used as fallback when agent history is empty, e.g. after chat load) */
 const estimateUiTokens = (): number => {
@@ -1395,6 +1406,31 @@ watch(
   { deep: true }
 );
 
+const openInSqlEditor = (code: string) => {
+  if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    chrome.storage.local.set({ suiteql_pendingQuery: code }, () => {
+      router.push("/suiteql");
+    });
+  } else {
+    router.push("/suiteql");
+  }
+};
+
+const stopAgent = () => {
+  abortController?.abort();
+  abortController = null;
+  const streaming = messages.value.find((m) => m.isStreaming);
+  if (streaming) {
+    streaming.isStreaming = false;
+    if (!streaming.content) {
+      streaming.content = "Generation stopped.";
+    }
+  }
+  inProgressTools.value = [];
+  activeTools.value = [];
+  currentAssistantMsgId.value = 0;
+};
+
 const sendMessage = async () => {
   const text = prompt.value.trim();
   if (!text || loading.value) return;
@@ -1423,7 +1459,8 @@ const sendMessage = async () => {
   await scrollToBottom();
 
   try {
-    const finalText = await agent.run(text, { maxIterations: 6 });
+    abortController = new AbortController();
+    const finalText = await agent.run(text, { maxIterations: 6, signal: abortController.signal });
     assistantMsg.content =
       typeof finalText === "string"
         ? finalText
@@ -1437,7 +1474,11 @@ const sendMessage = async () => {
 
     autoSaveCurrentChat();
   } catch (e) {
-    if (e instanceof ToolRejectedError) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      if (!assistantMsg.content) {
+        assistantMsg.content = "Generation stopped.";
+      }
+    } else if (e instanceof ToolRejectedError) {
       assistantMsg.content = `⛔ Stopped — tool **\`${e.toolName}\`** was rejected.`;
     } else {
       assistantMsg.content =
@@ -1453,6 +1494,7 @@ const sendMessage = async () => {
 
     autoSaveCurrentChat();
   } finally {
+    abortController = null;
     await scrollToBottom();
   }
 };
@@ -2188,6 +2230,26 @@ const sendMessage = async () => {
 .send-btn:disabled {
   background: var(--p-slate-300);
   cursor: not-allowed;
+}
+
+.stop-btn {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--p-red-600);
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.8rem;
+}
+
+.stop-btn:hover {
+  background: var(--p-red-700);
 }
 
 /* ── Token Counter styles ── */

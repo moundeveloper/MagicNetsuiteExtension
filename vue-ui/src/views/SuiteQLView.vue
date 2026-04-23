@@ -1684,6 +1684,29 @@ onMounted(async () => {
     // ── Restore AI panel width ──
     const storedWidth = await getUiState<number>("aiPanelWidth", 340);
     aiPanelWidth.value = storedWidth;
+
+    // ── Open pending SQL query from AI assistant ──
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      chrome.storage.local.get(["suiteql_pendingQuery"], (result) => {
+        if (result.suiteql_pendingQuery) {
+          const pendingCode = result.suiteql_pendingQuery as string;
+          chrome.storage.local.remove(["suiteql_pendingQuery"]);
+          const newId = generateId();
+          files.value.push({
+            id: newId,
+            name: `query${newId}`,
+            code: pendingCode,
+            results: [],
+            columns: [],
+            error: "",
+            isExecuting: false,
+            totalCount: 0
+          });
+          openTabs.value.push(newId);
+          activeFileId.value = newId;
+        }
+      });
+    }
   } catch (error) {
     console.error("Restore failed:", error);
     openTabs.value = [];

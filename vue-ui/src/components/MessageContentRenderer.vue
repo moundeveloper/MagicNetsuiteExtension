@@ -24,6 +24,9 @@ interface ContentBlock {
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<{
+  openInSqlEditor: [code: string];
+}>();
 
 const copyStates = ref<Record<number, boolean>>({});
 
@@ -108,14 +111,25 @@ const renderText = (text: string): string => {
       <div v-if="block.type === 'code'" class="code-block-container">
         <div class="code-block-header">
           <span class="code-lang">{{ block.language || "code" }}</span>
-          <button
-            class="code-copy-btn"
-            @click="copyCode(block.content, index)"
-            :title="copyStates[index] ? 'Copied!' : 'Copy code'"
-          >
-            <i :class="copyStates[index] ? 'pi pi-check' : 'pi pi-copy'" />
-            <span>{{ copyStates[index] ? "Copied" : "Copy" }}</span>
-          </button>
+          <div class="code-block-actions">
+            <button
+              v-if="block.language === 'sql'"
+              class="code-action-btn"
+              @click="emit('openInSqlEditor', block.content)"
+              title="Open in SQL Editor"
+            >
+              <i class="pi pi-external-link" />
+              <span>Open in SQL Editor</span>
+            </button>
+            <button
+              class="code-copy-btn"
+              @click="copyCode(block.content, index)"
+              :title="copyStates[index] ? 'Copied!' : 'Copy code'"
+            >
+              <i :class="copyStates[index] ? 'pi pi-check' : 'pi pi-copy'" />
+              <span>{{ copyStates[index] ? "Copied" : "Copy" }}</span>
+            </button>
+          </div>
         </div>
         <CodeViewer
           :code="block.content"
@@ -162,6 +176,12 @@ const renderText = (text: string): string => {
   border-bottom: 1px solid var(--p-slate-700);
 }
 
+.code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .code-lang {
   font-size: 0.6875rem;
   font-weight: 600;
@@ -193,6 +213,31 @@ const renderText = (text: string): string => {
   background: var(--p-slate-700);
   color: var(--p-slate-200);
   border-color: var(--p-slate-500);
+}
+
+.code-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: inherit;
+  font-size: 0.6875rem;
+  padding: 0.2rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--p-blue-500);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  color: var(--p-blue-400);
+  transition: all 0.15s ease;
+}
+
+.code-action-btn i {
+  font-size: 0.625rem;
+}
+
+.code-action-btn:hover {
+  background: var(--p-blue-900);
+  color: var(--p-blue-200);
+  border-color: var(--p-blue-400);
 }
 
 /* ── Text blocks ── */

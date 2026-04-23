@@ -692,7 +692,8 @@ const sendMessage = async (text: string) => {
     abortController = new AbortController();
     const result = await agent.run(text, {
       systemPrompt: buildSystemPrompt(),
-      maxIterations: 10
+      maxIterations: 10,
+      signal: abortController.signal
     });
 
     // Update assistant message
@@ -708,12 +709,20 @@ const sendMessage = async (text: string) => {
   } catch (error) {
     const assistantMsg = messages.value.find((m) => m.id === assistantId);
     if (assistantMsg) {
-      assistantMsg.content =
-        error instanceof Error
-          ? `Error: ${error.message}`
-          : "An error occurred.";
+      if (error instanceof DOMException && (error as DOMException).name === "AbortError") {
+        if (!assistantMsg.content) {
+          assistantMsg.content = "Generation stopped.";
+        }
+      } else {
+        assistantMsg.content =
+          error instanceof Error
+            ? `Error: ${error.message}`
+            : "An error occurred.";
+      }
       assistantMsg.isStreaming = false;
     }
+  } finally {
+    abortController = null;
   }
 
   runningTools.value = [];

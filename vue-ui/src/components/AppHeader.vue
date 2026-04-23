@@ -125,8 +125,6 @@ const breadcrumbs = computed(() => {
       }}</span>
     </Button>
 
-    <div class="separator" />
-
     <div class="breadcrumb-container">
       <Breadcrumb :home="home" :model="breadcrumbs">
         <template #item="{ item, props }">

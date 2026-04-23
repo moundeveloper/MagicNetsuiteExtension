@@ -129,6 +129,10 @@ const handlers = {
     console.log("Current Record Type action received");
     return window.getCurrentRecordIdType(modules);
   },
+  CURRENT_USER: async ({ modules }) => {
+    console.log("Current User action received");
+    return window.getCurrentUser(modules);
+  },
   EXPORT_RECORD: async ({ modules, payload: { config } }) => {
     console.log("Export Record action received");
     return window.exportRecord(modules, config);

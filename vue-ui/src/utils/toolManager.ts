@@ -443,6 +443,20 @@ export const tools: ToolDefinition[] = [
     }
   },
 
+  {
+    name: "netsuite_get_current_user",
+    description: "Get the currently logged-in NetSuite user's information (id, name, email, role, location, department, subsidiary).",
+    parameters: {
+      type: "object",
+      properties: {},
+      required: []
+    },
+    execute: async () => {
+      const response = await callApi(RequestRoutes.CURRENT_USER);
+      return response.message;
+    }
+  },
+
   // ========== NetSuite PDF Templates ==========
   {
     name: "netsuite_get_pdf_templates",
