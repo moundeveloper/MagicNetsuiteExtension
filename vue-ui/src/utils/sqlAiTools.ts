@@ -232,6 +232,75 @@ export const createSqlAiTools = (): ToolDefinition[] => [
     }
   },
 
+  // ── Dynamic Skill: Discover field values ──
+  {
+    name: "sql_discover_field_values",
+    description:
+      "Sample DISTINCT actual values for a specific column in a table. Use this BEFORE writing WHERE clauses on text/string fields to discover the exact casing and format of real values (e.g. 'COMPLETED' vs 'Completed'). Returns up to 20 distinct non-null values. This is a dynamic skill — it runs a live query against NetSuite data.",
+    parameters: {
+      type: "object",
+      properties: {
+        tableName: {
+          type: "string",
+          description:
+            "The exact table ID (e.g. 'transaction', 'customrecord_foo'). Must match a real SuiteQL table."
+        },
+        fieldId: {
+          type: "string",
+          description:
+            "The column ID to sample values for (e.g. 'status', 'custrecord_ctkc_enrichment_status')."
+        }
+      },
+      required: ["tableName", "fieldId"]
+    },
+    execute: async (input) => {
+      try {
+        const tableName = String(input.tableName);
+        const fieldId = String(input.fieldId);
+        const sql = `SELECT DISTINCT ${fieldId} FROM ${tableName} WHERE ${fieldId} IS NOT NULL AND ROWNUM <= 20`;
+        const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
+          sql,
+          limit: 20
+        })) as ApiResponse;
+
+        if (response.status === "error") {
+          return {
+            success: false,
+            error: response.message || "Query failed"
+          };
+        }
+
+        const payload = response.message as
+          | { results: Record<string, unknown>[] }
+          | Record<string, unknown>[];
+        const results = Array.isArray(payload)
+          ? payload
+          : ((payload as { results: Record<string, unknown>[] }).results ?? []);
+
+        const values = results
+          .map((r) => r[fieldId] ?? Object.values(r)[0])
+          .filter((v) => v !== null && v !== undefined && v !== "");
+
+        return {
+          success: true,
+          table: tableName,
+          field: fieldId,
+          sampleCount: values.length,
+          distinctValues: values,
+          note:
+            values.length === 0
+              ? "No non-null values found in the first 20 rows."
+              : `Found ${values.length} distinct value(s). Use exact casing in WHERE clauses.`
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: `Field value discovery failed: ${String(error)}`
+        };
+      }
+    }
+  },
+
   // ── Get current editor query (read-only context) ──
   {
     name: "sql_get_editor_query",

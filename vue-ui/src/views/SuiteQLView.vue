@@ -626,12 +626,18 @@
                 </vue-splitter>
                 </div>
 
-                <!-- AI SQL Editor panel -->
-                <SqlAiEditor
-                  v-if="showAiEditor"
-                  :get-editor-query="getEditorQuery"
-                  class="sql-ai-editor-panel"
-                />
+                <!-- AI SQL Editor panel (drag-resizable) -->
+                <template v-if="showAiEditor">
+                  <div
+                    class="ai-panel-resize-handle"
+                    @mousedown="startAiPanelResize"
+                  />
+                  <SqlAiEditor
+                    :get-editor-query="getEditorQuery"
+                    class="sql-ai-editor-panel"
+                    :style="{ width: aiPanelWidth + 'px' }"
+                  />
+                </template>
               </div>
             </div>
           </template>
@@ -812,6 +818,25 @@ const onCustomLimitChange = (e: Event) => {
 
 // AI Editor panel
 const showAiEditor = ref(false);
+const aiPanelWidth = ref(340);
+
+const startAiPanelResize = (e: MouseEvent) => {
+  const startX = e.clientX;
+  const startWidth = aiPanelWidth.value;
+
+  const onMove = (moveEvent: MouseEvent) => {
+    const delta = startX - moveEvent.clientX; // drag left = wider
+    aiPanelWidth.value = Math.max(240, Math.min(800, startWidth + delta));
+  };
+
+  const onUp = () => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+  };
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+};
 
 // Editor refs
 const editorRefs = ref<Record<string, any>>({});
@@ -2048,11 +2073,27 @@ onBeforeUnmount(() => {
   border-color: var(--p-blue-300, #93c5fd) !important;
 }
 
-/* ── AI Editor panel ── */
+/* ── AI Editor panel (drag-resizable) ── */
 .sql-ai-editor-panel {
-  width: 340px;
-  min-width: 280px;
-  max-width: 450px;
   flex-shrink: 0;
+  min-width: 240px;
+  max-width: 800px;
+  overflow: hidden;
+}
+
+/* ── Drag handle between main editor and AI panel ── */
+.ai-panel-resize-handle {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--p-slate-200);
+  transition: background 0.12s;
+  position: relative;
+  z-index: 1;
+}
+
+.ai-panel-resize-handle:hover,
+.ai-panel-resize-handle:active {
+  background: var(--p-blue-400, #60a5fa);
 }
 </style>
