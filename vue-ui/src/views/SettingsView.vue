@@ -1,12 +1,14 @@
 <script setup lang="ts">
-
 import { useSettings } from "../states/settingsState";
 import { ref, watch } from "vue";
 import InputText from "primevue/inputtext";
 import Checkbox from "primevue/checkbox";
 import Select from "primevue/select";
 import Button from "primevue/button";
-import { COPILOT_CLIENT_ID, fetchCopilotModels } from "../composables/useAiProvider";
+import {
+  COPILOT_CLIENT_ID,
+  fetchCopilotModels
+} from "../composables/useAiProvider";
 
 const { settings } = useSettings();
 
@@ -63,7 +65,8 @@ const startCopilotAuth = async () => {
       })
     });
 
-    if (!res.ok) throw new Error(`GitHub device code request failed (${res.status})`);
+    if (!res.ok)
+      throw new Error(`GitHub device code request failed (${res.status})`);
 
     const data = (await res.json()) as {
       device_code: string;
@@ -88,18 +91,21 @@ const startCopilotAuth = async () => {
       }
 
       try {
-        const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json"
-          },
-          body: JSON.stringify({
-            client_id: COPILOT_CLIENT_ID,
-            device_code: copilotDeviceCode.value,
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code"
-          })
-        });
+        const tokenRes = await fetch(
+          "https://github.com/login/oauth/access_token",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json"
+            },
+            body: JSON.stringify({
+              client_id: COPILOT_CLIENT_ID,
+              device_code: copilotDeviceCode.value,
+              grant_type: "urn:ietf:params:oauth:grant-type:device_code"
+            })
+          }
+        );
 
         const tokenData = (await tokenRes.json()) as {
           access_token?: string;
@@ -113,15 +119,21 @@ const startCopilotAuth = async () => {
           return;
         }
 
-        if (tokenData.error === "authorization_pending" || tokenData.error === "slow_down") {
+        if (
+          tokenData.error === "authorization_pending" ||
+          tokenData.error === "slow_down"
+        ) {
           pollTimer = setTimeout(poll, intervalMs);
           return;
         }
 
-        throw new Error(tokenData.error ?? "Unknown error during token exchange");
+        throw new Error(
+          tokenData.error ?? "Unknown error during token exchange"
+        );
       } catch (err) {
         copilotAuthStep.value = "error";
-        copilotAuthError.value = err instanceof Error ? err.message : String(err);
+        copilotAuthError.value =
+          err instanceof Error ? err.message : String(err);
       }
     };
 
@@ -159,7 +171,8 @@ const fetchCopilotModelList = async () => {
       if (firstModel) settings.copilotModel = firstModel.id;
     }
   } catch (err) {
-    copilotModelsFetchError.value = err instanceof Error ? err.message : String(err);
+    copilotModelsFetchError.value =
+      err instanceof Error ? err.message : String(err);
     copilotModelsFetchState.value = "error";
   }
 };
@@ -168,7 +181,11 @@ const fetchCopilotModelList = async () => {
 watch(
   () => settings.aiProvider,
   (provider) => {
-    if (provider === "copilot" && settings.githubToken && copilotModels.value.length === 0) {
+    if (
+      provider === "copilot" &&
+      settings.githubToken &&
+      copilotModels.value.length === 0
+    ) {
       fetchCopilotModelList();
     }
   },
@@ -224,11 +241,13 @@ const fetchOpenCodeModels = async () => {
         return raw as Array<{ id: string; name?: string }>;
       }
       if (raw && typeof raw === "object") {
-        return Object.entries(raw as Record<string, unknown>).map(([id, v]) => ({
-          id,
-          name: (v as { name?: string })?.name ?? id,
-          ...(typeof v === "object" && v !== null ? (v as object) : {})
-        }));
+        return Object.entries(raw as Record<string, unknown>).map(
+          ([id, v]) => ({
+            id,
+            name: (v as { name?: string })?.name ?? id,
+            ...(typeof v === "object" && v !== null ? (v as object) : {})
+          })
+        );
       }
       return [];
     };
@@ -423,7 +442,12 @@ const modelLabel = (m: OllamaModel) => {
       <InputText
         id="compaction-threshold"
         :model-value="String(settings.compactionThreshold)"
-        @update:model-value="(v: string | undefined) => { const n = parseInt(v ?? '', 10); if (!isNaN(n) && n > 0) settings.compactionThreshold = n; }"
+        @update:model-value="
+          (v: string | undefined) => {
+            const n = parseInt(v ?? '', 10);
+            if (!isNaN(n) && n > 0) settings.compactionThreshold = n;
+          }
+        "
         placeholder="e.g., 80000"
         class="threshold-input"
       />
@@ -431,7 +455,6 @@ const modelLabel = (m: OllamaModel) => {
 
     <!-- GitHub Copilot options -->
     <template v-if="settings.aiProvider === 'copilot'">
-
       <!-- Already connected -->
       <template v-if="settings.githubToken">
         <div class="shortcut-item">
@@ -439,7 +462,12 @@ const modelLabel = (m: OllamaModel) => {
           <span class="auth-connected">
             <i class="pi pi-check-circle" /> Connected to GitHub
           </span>
-          <Button size="small" severity="danger" outlined @click="disconnectCopilot">
+          <Button
+            size="small"
+            severity="danger"
+            outlined
+            @click="disconnectCopilot"
+          >
             Disconnect
           </Button>
         </div>
@@ -456,7 +484,8 @@ const modelLabel = (m: OllamaModel) => {
 
           <template v-else-if="copilotModelsFetchState === 'error'">
             <span class="fetch-error">
-              <i class="pi pi-exclamation-triangle" /> {{ copilotModelsFetchError }}
+              <i class="pi pi-exclamation-triangle" />
+              {{ copilotModelsFetchError }}
             </span>
             <InputText
               id="copilot-model"
@@ -499,7 +528,9 @@ const modelLabel = (m: OllamaModel) => {
 
       <!-- Not connected — device auth flow -->
       <template v-else>
-        <template v-if="copilotAuthStep === 'idle' || copilotAuthStep === 'error'">
+        <template
+          v-if="copilotAuthStep === 'idle' || copilotAuthStep === 'error'"
+        >
           <div class="shortcut-item">
             <label>Status:</label>
             <span class="auth-disconnected">
@@ -509,7 +540,11 @@ const modelLabel = (m: OllamaModel) => {
               Connect with GitHub
             </Button>
           </div>
-          <p v-if="copilotAuthStep === 'error'" class="fetch-error" style="margin-bottom:1rem">
+          <p
+            v-if="copilotAuthStep === 'error'"
+            class="fetch-error"
+            style="margin-bottom: 1rem"
+          >
             <i class="pi pi-exclamation-triangle" /> {{ copilotAuthError }}
           </p>
         </template>
@@ -518,25 +553,38 @@ const modelLabel = (m: OllamaModel) => {
           <div class="device-auth-box">
             <p class="device-auth-instruction">
               1. Open
-              <a :href="copilotVerificationUrl" target="_blank">{{ copilotVerificationUrl }}</a>
+              <a :href="copilotVerificationUrl" target="_blank">{{
+                copilotVerificationUrl
+              }}</a>
               in your browser
             </p>
             <p class="device-auth-instruction">2. Enter this code:</p>
             <div class="device-code-row">
               <span class="device-code">{{ copilotUserCode }}</span>
-              <Button size="small" severity="secondary" outlined @click="copyUserCode" title="Copy code">
+              <Button
+                size="small"
+                severity="secondary"
+                outlined
+                @click="copyUserCode"
+                title="Copy code"
+              >
                 <i class="pi pi-copy" />
               </Button>
             </div>
-            <p class="fetch-status" style="margin-top:0.5rem">
+            <p class="fetch-status" style="margin-top: 0.5rem">
               <i class="pi pi-spin pi-spinner" /> Waiting for authorization…
             </p>
             <Button
               size="small"
               severity="secondary"
               outlined
-              style="margin-top:0.5rem"
-              @click="() => { stopPolling(); copilotAuthStep = 'idle'; }"
+              style="margin-top: 0.5rem"
+              @click="
+                () => {
+                  stopPolling();
+                  copilotAuthStep = 'idle';
+                }
+              "
             >
               Cancel
             </Button>
@@ -545,10 +593,13 @@ const modelLabel = (m: OllamaModel) => {
       </template>
 
       <p class="provider-hint">
-        Uses your GitHub Copilot subscription directly — no OpenCode required.
-        Requires an active
-        <a href="https://github.com/features/copilot" target="_blank">GitHub Copilot</a>
-        subscription.
+        Uses your GitHub Copilot subscription directly. Requires an active
+        <a href="https://github.com/features/copilot" target="_blank"
+          >GitHub Copilot</a
+        >
+        subscription. (Use only free models like GPT 4.1, 4o and 5 mini as we
+        don't have the agents pass for github and might incur into cost on each
+        agent request)
       </p>
     </template>
 
@@ -702,8 +753,8 @@ const modelLabel = (m: OllamaModel) => {
       </div>
 
       <p class="provider-hint">
-        Start a local server with <code>opencode serve</code> (default port 4096).
-        Only connected providers and their models are shown.
+        Start a local server with <code>opencode serve</code> (default port
+        4096). Only connected providers and their models are shown.
       </p>
     </template>
   </div>
