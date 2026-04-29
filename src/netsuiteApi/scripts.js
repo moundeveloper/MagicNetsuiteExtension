@@ -540,6 +540,12 @@ window.createScriptRecord = async (
  * @returns {string} returns.body
  * Raw HTML response body returned by NetSuite.
  *
+ * @returns {string|null} returns.deploymentId
+ * Extracted deployment ID from the HTML response, or null if not found.
+ *
+ * @returns {string|null} returns.deployUrl
+ * Full deployment URL (e.g. /app/site/hosting/scriptlet.nl?script=1495&deploy=2).
+ *
  * @returns {Response} returns.response
  * Native Fetch API `Response` object.
  *
@@ -713,5 +719,62 @@ window.createScriptDeployRecord = async (
   );
   console.log("Response body:", text);
 
-  return { status: response.status, body: text, response };
+  const deploymentId = extractDeploymentIdFromHtml(text);
+  const deployUrl = extractDeployUrlFromHtml(text);
+
+  return { status: response.status, body: text, deploymentId, deployUrl, response };
 };
+
+/**
+ * Extract the deployment URL from NetSuite's script deployment record HTML response.
+ * Looks for the URL field containing /app/site/hosting/scriptlet.nl?script=...&deploy=...
+ * @param {string} html - raw HTML response
+ * @returns {string|null}
+ */
+function extractDeployUrlFromHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  const urlAnchor = doc.querySelector('a[href*="/app/site/hosting/scriptlet.nl"]');
+  if (urlAnchor && urlAnchor.href) {
+    const m = urlAnchor.href.match(/deploy=(\d+)/);
+    if (m) return urlAnchor.href;
+  }
+
+  const m = html.match(/href="(\/app\/site\/hosting\/scriptlet\.nl\?script=\d+&deploy=\d+)"/);
+  if (m) return m[1];
+
+  return null;
+}
+
+/**
+ * Extract the deployment ID from NetSuite's script deployment record HTML response.
+ * Three strategies:
+ *  1. Hidden input named "deploymentid" → value="2"
+ *  2. URL field contains /app/site/hosting/scriptlet.nl?script=...&deploy=2
+ *  3. Edit link URL with deploymentid param
+ * @param {string} html - raw HTML response
+ * @returns {string|null}
+ */
+function extractDeploymentIdFromHtml(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  const depInput = doc.querySelector('input[name="deploymentid"]');
+  if (depInput && depInput.value) return depInput.value;
+
+  const urlAnchor = doc.querySelector('a[href*="/app/site/hosting/scriptlet.nl"]');
+  if (urlAnchor) {
+    const m = urlAnchor.href.match(/[?&]deploy=(\d+)/);
+    if (m) return m[1];
+  }
+
+  const editLink = doc.querySelector('a[href*="deploymentid="]');
+  if (editLink) {
+    const m = editLink.href.match(/deploymentid=(\d+)/);
+    if (m) return m[1];
+  }
+
+  const m = html.match(/deploymentid[="](\d+)/);
+  if (m) return m[1];
+
+  return null;
+}
