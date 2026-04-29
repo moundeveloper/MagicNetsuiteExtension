@@ -10,6 +10,7 @@ const CONFIG = {
   scriptId: "customscript_magic_netsuite_server",
   SUITELET_SCRIPT_NAME: "Magic Netsuite Server",
   SUITELET_SCRIPT_ID: "_magic_netsuite_server",
+  SUITELET_DEPLOYMENT_NAME: "Magic Netsuite Server Deployment",
   SUITELET_SCRIPT_DEPLOY_ID: "_magic_netsuite_server_dp"
 };
 
@@ -131,6 +132,8 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.folderId = folder?.id;
   }
 
+  console.log("mutation", mutation);
+
   // -------------------------
   // FILES
   // -------------------------
@@ -146,32 +149,40 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   // Handler file
   if (!handlerFileExists) {
     const initialContent = buildHandlerModuleContent({});
-    const { fileId } = await window.uploadFile(N, {
+    const handlerResult = await window.uploadFile(N, {
       fileName: CONFIG.HANDLER_FILE,
       fileContent: initialContent,
       folderId: mutation.folderId,
       csrfToken
     });
 
-    mutation.handlerFileId = fileId;
+    const handlerFileId = handlerResult.uploaded?.[0]?.fileId;
+
+    mutation.handlerFileId = handlerFileId;
   } else {
     mutation.handlerFileId = fileMap.get(CONFIG.HANDLER_FILE);
   }
 
+  console.log("mutation", mutation);
+
   // Server file
   if (!serverFileExists) {
     const suiteletContent = buildSuiteletContent();
-    const { fileId } = await window.uploadFile(N, {
+    const serverResult = await window.uploadFile(N, {
       fileName: CONFIG.SERVER_FILE,
       fileContent: suiteletContent,
       folderId: mutation.folderId,
       csrfToken
     });
 
-    mutation.serverFileId = fileId;
+    const serverFileId = serverResult.uploaded?.[0]?.fileId;
+
+    mutation.serverFileId = serverFileId;
   } else {
     mutation.serverFileId = fileMap.get(CONFIG.SERVER_FILE);
   }
+
+  console.log("mutation", mutation);
 
   // -------------------------
   // SCRIPT
@@ -200,6 +211,8 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
 
     mutation.scriptRecordId = script?.id;
   }
+
+  console.log("mutation", mutation);
 
   // -------------------------
   // DEPLOYMENT
