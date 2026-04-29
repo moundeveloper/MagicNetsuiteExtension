@@ -3,58 +3,228 @@
  * for server-side Quick Script execution
  */
 
-const MAGIC_FOLDER_NAME = "MagicNetsuiteScripts";
-const SUITELET_SCRIPT_NAME = "magic_netsuite_server";
-const SUITELET_SCRIPT_ID = "_magic_netsuite_server";
-const HANDLER_MODULE_NAME = "magic_netsuite_handlers";
+const CONFIG = {
+  FOLDER_NAME: "MagicNetsuiteScripts",
+  HANDLER_FILE: "magic_netsuite_handlers.js",
+  SERVER_FILE: "magic_netsuite_server.js",
+  scriptId: "customscript_magic_netsuite_server",
+  SUITELET_SCRIPT_NAME: "Magic Netsuite Server",
+  SUITELET_SCRIPT_ID: "_magic_netsuite_server",
+  SUITELET_SCRIPT_DEPLOY_ID: "_magic_netsuite_server_dp"
+};
 
-/**
- * Get or create the MagicNetsuiteScripts folder
- * @param {object} N - NetSuite modules
- * @returns {Promise<{folderId: string|null, created: boolean}>}
- */
-window.getOrCreateMagicFolder = async (N) => {
-  const { query } = N;
+window.checkMagicNetsuiteComponents = async ({ query }) => {
+  const runQuery = async (sql, params = []) => {
+    const result = await query.runSuiteQL.promise({ query: sql, params });
+    return result.asMappedResults();
+  };
 
   try {
-    // Check if folder exists in SuiteScripts (-15)
-    const sql = `
-      SELECT id, name
-      FROM MediaItemFolder
-      WHERE name = ?
-      AND parent = -15
-    `;
+    console.log("Checking server components...");
 
-    const resultSet = await query.runSuiteQL.promise({
-      query: sql,
-      params: [MAGIC_FOLDER_NAME]
-    });
-
-    const results = resultSet.asMappedResults();
-
-    if (results.length > 0) {
-      return { folderId: results[0].id, created: false };
-    }
-
-    // Folder doesn't exist, create it using the proven createFolder function
-    const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
-
-    const { folderId } = await window.createFolder(
-      {},
-      {
-        folderName: MAGIC_FOLDER_NAME,
-        parentFolderId: -15,
-        csrfToken
-      }
+    // 1. Check folder
+    const [folder] = await runQuery(
+      `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+      [CONFIG.FOLDER_NAME]
     );
 
-    return { folderId, created: true };
-  } catch (error) {
-    console.error("[getOrCreateMagicFolder]", error);
-    throw error;
+    if (!folder) {
+      return {
+        folderExists: false,
+        handlerFileExists: false,
+        serverFileExists: false,
+        suiteletScriptExists: false,
+        suiteletDeployed: false,
+        allReady: false
+      };
+    }
+
+    const folderId = folder.id;
+
+    // 2. Check both files in one query
+    const files = await runQuery(
+      `SELECT name FROM file WHERE folder = ? AND name IN (?, ?)`,
+      [folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
+    );
+
+    const fileSet = new Set(files.map((f) => f.name));
+
+    const handlerFileExists = fileSet.has(CONFIG.HANDLER_FILE);
+    const serverFileExists = fileSet.has(CONFIG.SERVER_FILE);
+
+    // 3. Check script
+    const [script] = await runQuery(
+      `SELECT id FROM script WHERE scriptid = ?`,
+      [CONFIG.scriptId]
+    );
+
+    const suiteletScriptExists = !!script;
+
+    // 4. Check deployment (only if script exists)
+    let suiteletDeployed = false;
+
+    if (suiteletScriptExists) {
+      const deployments = await runQuery(
+        `SELECT id FROM scriptdeployment WHERE script = ?`,
+        [script.id]
+      );
+      suiteletDeployed = deployments.length > 0;
+    }
+
+    // Final result
+    const allReady =
+      handlerFileExists &&
+      serverFileExists &&
+      suiteletScriptExists &&
+      suiteletDeployed;
+
+    return {
+      folderExists: true,
+      handlerFileExists,
+      serverFileExists,
+      suiteletScriptExists,
+      suiteletDeployed,
+      allReady
+    };
+  } catch (err) {
+    console.error("[CHECK_SERVER_COMPONENTS] Error:", err);
+    return { error: err.message };
   }
 };
 
+window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
+  const { query } = N;
+
+  const runQuery = async (sql, params = []) => {
+    const result = await query.runSuiteQL.promise({ query: sql, params });
+    return result.asMappedResults();
+  };
+
+  const {
+    folderExists,
+    handlerFileExists,
+    serverFileExists,
+    suiteletScriptExists,
+    suiteletDeployed
+  } = await window.checkMagicNetsuiteComponents({ query });
+
+  const mutation = {};
+
+  // -------------------------
+  // FOLDER
+  // -------------------------
+  if (!folderExists) {
+    const { folderId } = await window.createFolder(N, {
+      folderName: CONFIG.FOLDER_NAME,
+      parentFolderId: -15,
+      csrfToken
+    });
+
+    mutation.folderId = folderId;
+  } else {
+    // hydrate existing folder
+    const [folder] = await runQuery(
+      `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+      [CONFIG.FOLDER_NAME]
+    );
+
+    mutation.folderId = folder?.id;
+  }
+
+  // -------------------------
+  // FILES
+  // -------------------------
+  const files = await runQuery(
+    `SELECT id, name FROM file WHERE folder = ? AND name IN (?, ?)`,
+    [mutation.folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
+  );
+
+  console.log("files", files);
+
+  const fileMap = new Map(files.map((f) => [f.name, f.id]));
+
+  // Handler file
+  if (!handlerFileExists) {
+    const initialContent = buildHandlerModuleContent({});
+    const { fileId } = await window.uploadFile(N, {
+      fileName: CONFIG.HANDLER_FILE,
+      fileContent: initialContent,
+      folderId: mutation.folderId,
+      csrfToken
+    });
+
+    mutation.handlerFileId = fileId;
+  } else {
+    mutation.handlerFileId = fileMap.get(CONFIG.HANDLER_FILE);
+  }
+
+  // Server file
+  if (!serverFileExists) {
+    const suiteletContent = buildSuiteletContent();
+    const { fileId } = await window.uploadFile(N, {
+      fileName: CONFIG.SERVER_FILE,
+      fileContent: suiteletContent,
+      folderId: mutation.folderId,
+      csrfToken
+    });
+
+    mutation.serverFileId = fileId;
+  } else {
+    mutation.serverFileId = fileMap.get(CONFIG.SERVER_FILE);
+  }
+
+  // -------------------------
+  // SCRIPT
+  // -------------------------
+  if (!suiteletScriptExists) {
+    const { scriptRecordId } = await window.createScriptRecord(
+      N,
+      {
+        name: CONFIG.SUITELET_SCRIPT_NAME,
+        scriptId: CONFIG.SUITELET_SCRIPT_ID,
+        fileId: mutation.serverFileId,
+        scriptType: "SCRIPTLET",
+        description:
+          "Suitelet for Magic Netsuite extension server-side script execution",
+        apiVersion: "2.1"
+      },
+      csrfToken
+    );
+
+    mutation.scriptRecordId = scriptRecordId;
+  } else {
+    const [script] = await runQuery(
+      `SELECT id FROM script WHERE scriptid = ?`,
+      [CONFIG.scriptId]
+    );
+
+    mutation.scriptRecordId = script?.id;
+  }
+
+  // -------------------------
+  // DEPLOYMENT
+  // -------------------------
+  if (!suiteletDeployed) {
+    const response = await window.createScriptDeployRecord(
+      N,
+      {
+        name: CONFIG.SUITELET_DEPLOYMENT_NAME,
+        scriptId: CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
+        scriptInternalId: mutation.scriptRecordId,
+        title: CONFIG.SUITELET_DEPLOYMENT_NAME,
+        status: "RELEASED",
+        logLevel: "DEBUG",
+        runAsRole: "3"
+      },
+      csrfToken
+    );
+  }
+
+  return {
+    success: true,
+    mutation // optional but VERY useful for debugging / chaining
+  };
+};
 /**
  * Get or create the handler module file
  * @param {object} N - NetSuite modules
@@ -515,7 +685,7 @@ function buildSuiteletContent() {
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(["./${HANDLER_MODULE_NAME}"], (handler) => {
+define(["./${CONFIG.HANDLER_FILE}"], (handler) => {
   const onRequest = (context) => {
     try {
       const { method } = context.request;

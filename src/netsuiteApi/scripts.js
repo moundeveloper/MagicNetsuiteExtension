@@ -487,15 +487,90 @@ window.createScriptRecord = async (
 };
 
 /**
- * Save a NetSuite Script Record (UI POST emulation)
+ * Creates and deploys a NetSuite Script Deployment record by issuing a POST request
+ * to the native `scriptrecord.nl` endpoint using the current browser session.
  *
- * Use case:
- * - Programmatically create/update a Script record via the same endpoint
- *   used by the NetSuite UI (scriptrecord.nl)
+ * This utility is intended for client-side automation in a NetSuite UI context,
+ * leveraging the authenticated session and CSRF token.
  *
- * NOTE:
- * - Requires valid session (credentials: "include")
- * - CSRF + nsapiCT must be fresh
+ * @async
+ * @function createScriptDeployRecord
+ * @memberof window
+ *
+ * @param {Object} N
+ * NetSuite `N` namespace (reserved for future use or consistency with SuiteScript patterns).
+ *
+ * @param {Object} options
+ * Configuration object for the deployment.
+ *
+ * @param {string} options.name
+ * Internal name of the script deployment. Used as fallback for title if not provided.
+ *
+ * @param {string} options.scriptId
+ * Script ID (string identifier, e.g. `customscript_my_script`).
+ *
+ * @param {string|number} options.scriptInternalId
+ * Internal ID of the script record in NetSuite.
+ *
+ * @param {string} [options.title]
+ * Display title of the deployment. Defaults to `name` if omitted.
+ *
+ * @param {string} [options.status="RELEASED"]
+ * Deployment status. Typical values:
+ * - `"RELEASED"`
+ * - `"TESTING"`
+ *
+ * @param {string} [options.logLevel="DEBUG"]
+ * Logging level for the deployment. Common values:
+ * - `"DEBUG"`
+ * - `"AUDIT"`
+ * - `"ERROR"`
+ * - `"EMERGENCY"`
+ *
+ * @param {string|number} [options.runAsRole="3"]
+ * Internal ID of the role used to execute the script (e.g. `"3"` = Administrator).
+ *
+ * @param {string} csrfToken
+ * NetSuite CSRF token (`_csrf`) required for authenticated POST requests.
+ *
+ * @returns {Promise<Object>} Result object containing:
+ * @returns {number} returns.status
+ * HTTP response status code (e.g. `200` for success).
+ *
+ * @returns {string} returns.body
+ * Raw HTML response body returned by NetSuite.
+ *
+ * @returns {Response} returns.response
+ * Native Fetch API `Response` object.
+ *
+ * @example
+ * // Example usage in browser console or client script
+ * const result = await window.createScriptDeployRecord(
+ *   N,
+ *   {
+ *     name: 'My Deployment',
+ *     scriptId: 'customscript_my_script',
+ *     scriptInternalId: '123',
+ *     title: 'My Script Deployment',
+ *     status: 'RELEASED',
+ *     logLevel: 'DEBUG',
+ *     runAsRole: '3'
+ *   },
+ *   csrfToken
+ * );
+ *
+ * console.log(result.status); // 200 if successful
+ *
+ * @throws {TypeError}
+ * May throw if required parameters are missing or invalid.
+ *
+ * @description
+ * - Automatically derives the account ID from the current hostname.
+ * - Builds a NetSuite-compatible `_nlKey` required for submission.
+ * - Mimics a standard form submission to create a script deployment record.
+ * - Requires an active NetSuite session in the browser.
+ *
+ * @see https://system.netsuite.com/app/common/scripting/scriptrecord.nl
  */
 window.createScriptDeployRecord = async (
   N,

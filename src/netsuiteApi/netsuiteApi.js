@@ -117,8 +117,14 @@ const handlers = {
       ];
     }
   },
-  RUN_QUICK_SCRIPT_SERVER: async ({ modules, payload: { code, userId } }) => {
+  RUN_QUICK_SCRIPT_SERVER: async ({
+    modules,
+    payload: { code, userId },
+    csrfToken
+  }) => {
     console.log("Run Quick Script Server action received", { userId });
+
+    return window.runQuickScriptServer(modules, { code, userId }, csrfToken);
 
     try {
       const N = modules;
@@ -164,103 +170,11 @@ const handlers = {
     }
   },
   CHECK_SERVER_COMPONENTS: async ({ modules }) => {
-    const { query } = modules;
-
-    const CONFIG = {
-      folderName: "MagicNetsuiteScripts",
-      handlerFile: "magic_netsuite_handlers.js",
-      serverFile: "magic_netsuite_server.js",
-      scriptId: "customscript_magic_netsuite_server"
-    };
-
-    // Helper to run SuiteQL safely
-    const runQuery = async (sql, params = []) => {
-      const result = await query.runSuiteQL.promise({ query: sql, params });
-      return result.asMappedResults();
-    };
-
-    try {
-      console.log("Checking server components...");
-
-      // 1. Check folder
-      const [folder] = await runQuery(
-        `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
-        [CONFIG.folderName]
-      );
-
-      if (!folder) {
-        return {
-          folderExists: false,
-          handlerFileExists: false,
-          serverFileExists: false,
-          suiteletScriptExists: false,
-          suiteletDeployed: false,
-          allReady: false
-        };
-      }
-
-      const folderId = folder.id;
-
-      // 2. Check both files in one query
-      const files = await runQuery(
-        `SELECT name FROM file WHERE folder = ? AND name IN (?, ?)`,
-        [folderId, CONFIG.handlerFile, CONFIG.serverFile]
-      );
-
-      const fileSet = new Set(files.map((f) => f.name));
-
-      const handlerFileExists = fileSet.has(CONFIG.handlerFile);
-      const serverFileExists = fileSet.has(CONFIG.serverFile);
-
-      // 3. Check script
-      const [script] = await runQuery(
-        `SELECT id FROM script WHERE scriptid = ?`,
-        [CONFIG.scriptId]
-      );
-
-      const suiteletScriptExists = !!script;
-
-      // 4. Check deployment (only if script exists)
-      let suiteletDeployed = false;
-
-      if (suiteletScriptExists) {
-        const deployments = await runQuery(
-          `SELECT id FROM scriptdeployment WHERE script = ?`,
-          [script.id]
-        );
-        suiteletDeployed = deployments.length > 0;
-      }
-
-      // Final result
-      const allReady =
-        handlerFileExists &&
-        serverFileExists &&
-        suiteletScriptExists &&
-        suiteletDeployed;
-
-      return {
-        folderExists: true,
-        handlerFileExists,
-        serverFileExists,
-        suiteletScriptExists,
-        suiteletDeployed,
-        allReady
-      };
-    } catch (err) {
-      console.error("[CHECK_SERVER_COMPONENTS] Error:", err);
-      return { error: err.message };
-    }
+    return window.checkMagicNetsuiteComponents(modules);
   },
   REMOVE_SERVER_COMPONENTS: async ({ modules }) => {
     console.log("Remove Server Components action received");
-
-    try {
-      const result = await window.removeMagicNetsuiteComponents(modules);
-      return result;
-    } catch (err) {
-      console.error("[REMOVE_SERVER_COMPONENTS] Error:", err);
-      return { error: err.message };
-    }
+    return await window.removeMagicNetsuiteComponents(modules);
   },
   SCRIPTS_DEPLOYED: async ({ modules, payload: { recordType } }) => {
     console.log("Scripts Deployed action received");
