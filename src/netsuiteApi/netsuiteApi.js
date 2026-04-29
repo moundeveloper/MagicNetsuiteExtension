@@ -164,62 +164,87 @@ const handlers = {
     }
   },
   CHECK_SERVER_COMPONENTS: async ({ modules }) => {
-    console.log("Check Server Components action received");
+    const { query } = modules;
+
+    const CONFIG = {
+      folderName: "MagicNetsuiteScripts",
+      handlerFile: "magic_netsuite_handlers.js",
+      serverFile: "magic_netsuite_server.js",
+      scriptId: "customscript_magic_netsuite_server"
+    };
+
+    // Helper to run SuiteQL safely
+    const runQuery = async (sql, params = []) => {
+      const result = await query.runSuiteQL.promise({ query: sql, params });
+      return result.asMappedResults();
+    };
 
     try {
-      const { query } = modules;
+      console.log("Checking server components...");
 
-      // Check folder (must be in SuiteScripts root, parent = -15)
-      const folderResults = await query.runSuiteQL
-        .promise({
-          query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
-          params: ["MagicNetsuiteScripts"]
-        })
-        .asMappedResults();
+      // 1. Check folder
+      const [folder] = await runQuery(
+        `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+        [CONFIG.folderName]
+      );
 
-      const { id: folderId } = folderResults;
-      const folderExists = folderResults.length > 0;
-
-      if (!folderExists) {
-        return { folderExists };
+      if (!folder) {
+        return {
+          folderExists: false,
+          handlerFileExists: false,
+          serverFileExists: false,
+          suiteletScriptExists: false,
+          suiteletDeployed: false,
+          allReady: false
+        };
       }
 
-      // Check handler module file
-      const handlerResult = await query.runSuiteQL.promise({
-        query: `SELECT file.id, file.name FROM file WHERE file.name = ?`,
-        params: [`${HANDLER_MODULE_NAME}.js`, folderId]
-      });
-      const handlerFileExists = handlerResult.asMappedResults().length > 0;
+      const folderId = folder.id;
 
-      // Check suitelet script
-      const suiteletResult = await query.runSuiteQL.promise({
-        query: `SELECT id, scriptid FROM script WHERE scriptid = ?`,
-        params: ["customscript_magic_netsuite_server"]
-      });
-      const suiteletScriptExists = suiteletResult.asMappedResults().length > 0;
+      // 2. Check both files in one query
+      const files = await runQuery(
+        `SELECT name FROM file WHERE folder = ? AND name IN (?, ?)`,
+        [folderId, CONFIG.handlerFile, CONFIG.serverFile]
+      );
 
-      // Check deployments
+      const fileSet = new Set(files.map((f) => f.name));
+
+      const handlerFileExists = fileSet.has(CONFIG.handlerFile);
+      const serverFileExists = fileSet.has(CONFIG.serverFile);
+
+      // 3. Check script
+      const [script] = await runQuery(
+        `SELECT id FROM script WHERE scriptid = ?`,
+        [CONFIG.scriptId]
+      );
+
+      const suiteletScriptExists = !!script;
+
+      // 4. Check deployment (only if script exists)
       let suiteletDeployed = false;
 
       if (suiteletScriptExists) {
-        const suiteletDeploy = await query.runSuiteQL.promise({
-          query: `SELECT id FROM scriptdeployment WHERE script = ?`,
-          params: [suiteletResult.asMappedResults()[0].id]
-        });
-        suiteletDeployed = suiteletDeploy.asMappedResults().length > 0;
+        const deployments = await runQuery(
+          `SELECT id FROM scriptdeployment WHERE script = ?`,
+          [script.id]
+        );
+        suiteletDeployed = deployments.length > 0;
       }
 
+      // Final result
+      const allReady =
+        handlerFileExists &&
+        serverFileExists &&
+        suiteletScriptExists &&
+        suiteletDeployed;
+
       return {
-        folderExists,
-        handlerScriptExists,
+        folderExists: true,
+        handlerFileExists,
+        serverFileExists,
         suiteletScriptExists,
-        handlerDeployed,
         suiteletDeployed,
-        allReady:
-          folderExists &&
-          handlerFileExists &&
-          suiteletScriptExists &&
-          suiteletDeployed
+        allReady
       };
     } catch (err) {
       console.error("[CHECK_SERVER_COMPONENTS] Error:", err);

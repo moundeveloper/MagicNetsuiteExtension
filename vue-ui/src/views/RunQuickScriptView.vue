@@ -85,20 +85,31 @@
                   Check Server
                 </Button>
 
-                <div v-if="serverStatus.components" class="text-xs space-y-1">
-                  <div :class="serverStatus.components.folderExists ? 'text-green-600' : 'text-red-600'">
-                    Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
-                  </div>
-                  <div :class="serverStatus.components.handlerScriptExists ? 'text-green-600' : 'text-red-600'">
-                    Handler Module: {{ serverStatus.components.handlerScriptExists ? '✓' : '✗' }}
-                  </div>
-                  <div :class="serverStatus.components.suiteletScriptExists ? 'text-green-600' : 'text-red-600'">
-                    Suitelet: {{ serverStatus.components.suiteletScriptExists ? '✓' : '✗' }}
-                  </div>
-                  <div :class="serverStatus.components.allReady ? 'text-green-600' : 'text-red-600'">
-                    All Ready: {{ serverStatus.components.allReady ? '✓' : '✗' }}
-                  </div>
-                </div>
+               <div v-if="serverStatus.components" class="text-xs space-y-1">
+  <div :class="serverStatus.components.folderExists ? 'text-green-600' : 'text-red-600'">
+    Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
+  </div>
+
+  <div :class="serverStatus.components.handlerFileExists ? 'text-green-600' : 'text-red-600'">
+    Handler Module: {{ serverStatus.components.handlerFileExists ? '✓' : '✗' }}
+  </div>
+
+  <div :class="serverStatus.components.serverFileExists ? 'text-green-600' : 'text-red-600'">
+    Server File: {{ serverStatus.components.serverFileExists ? '✓' : '✗' }}
+  </div>
+
+  <div :class="serverStatus.components.suiteletScriptExists ? 'text-green-600' : 'text-red-600'">
+    Suitelet Script: {{ serverStatus.components.suiteletScriptExists ? '✓' : '✗' }}
+  </div>
+
+  <div :class="serverStatus.components.suiteletDeployed ? 'text-green-600' : 'text-red-600'">
+    Suitelet Deployed: {{ serverStatus.components.suiteletDeployed ? '✓' : '✗' }}
+  </div>
+
+  <div :class="serverStatus.components.allReady ? 'text-green-600' : 'text-red-600'">
+    All Ready: {{ serverStatus.components.allReady ? '✓' : '✗' }}
+  </div>
+</div>
 
                 <div v-if="serverStatus.error" class="text-red-500 mt-2">
                   {{ serverStatus.error }}
@@ -639,6 +650,12 @@ watch(
 );
 
 watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
+
+watch(executionMode, async (mode) => {
+  if (mode === "server" && !serverStatus.value.checking) {
+    await checkServerComponents();
+  }
+});
 
 onMounted(async () => {
   const onHide = () => {

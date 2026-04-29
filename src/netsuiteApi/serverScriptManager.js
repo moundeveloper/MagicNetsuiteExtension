@@ -4,10 +4,9 @@
  */
 
 const MAGIC_FOLDER_NAME = "MagicNetsuiteScripts";
-const SUITELET_SCRIPT_NAME = "MagicNetsuiteServer";
-const SUITELET_SCRIPT_ID = "customscript_magic_netsuite_server";
+const SUITELET_SCRIPT_NAME = "magic_netsuite_server";
+const SUITELET_SCRIPT_ID = "_magic_netsuite_server";
 const HANDLER_MODULE_NAME = "magic_netsuite_handlers";
-const HANDLER_MODULE_SCRIPT_ID = "customscript_magic_netsuite_handlers";
 
 /**
  * Get or create the MagicNetsuiteScripts folder
@@ -113,10 +112,10 @@ window.getOrCreateSuitelet = async (N, folderId, handlerScriptId) => {
 
   try {
     // Check if script record exists
-const scriptResult = await query.runSuiteQL.promise({
-  query: `SELECT id, scriptid FROM script WHERE LOWER(scriptid) = LOWER(?)`,
-  params: [SUITELET_SCRIPT_ID]
-});
+    const scriptResult = await query.runSuiteQL.promise({
+      query: `SELECT id, scriptid FROM script WHERE LOWER(scriptid) = LOWER(?)`,
+      params: [SUITELET_SCRIPT_ID]
+    });
 
     const scripts = scriptResult.asMappedResults();
     console.log("[getOrCreateSuitelet] Script check result:", scripts);
@@ -138,7 +137,8 @@ const scriptResult = await query.runSuiteQL.promise({
       });
 
       const deployments = deployResult.asMappedResults();
-      const deploymentId = deployments.length > 0 ? deployments[0].scriptid : null;
+      const deploymentId =
+        deployments.length > 0 ? deployments[0].scriptid : null;
 
       return {
         fileId,
@@ -173,8 +173,9 @@ const scriptResult = await query.runSuiteQL.promise({
         name: "Magic Netsuite Server",
         scriptId: SUITELET_SCRIPT_ID,
         fileId,
-        scriptType: "SUITELET",
-        description: "Suitelet for Magic Netsuite extension server-side script execution",
+        scriptType: "SCRIPTLET",
+        description:
+          "Suitelet for Magic Netsuite extension server-side script execution",
         apiVersion: "2.1"
       },
       csrfToken
@@ -240,7 +241,8 @@ window.createScriptDeployment = async (
         mode: "cors",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
-          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "accept-language": "it-IT,it;q=0.6",
           "cache-control": "max-age=0",
           "sec-fetch-dest": "document",
@@ -300,7 +302,9 @@ window.updateUserHandler = async (N, folderId, userId, code) => {
     }
 
     const fileId = results[0].id;
-    const domain = N.url.resolveDomain({ hostType: N.url.HostType.APPLICATION });
+    const domain = N.url.resolveDomain({
+      hostType: N.url.HostType.APPLICATION
+    });
     const fileUrl = `https://${domain}${results[0].url}`;
 
     // Fetch current content
@@ -497,10 +501,7 @@ define([], () => {
     return {
       // User handlers will be added here dynamically
       ${Object.entries(initialHandlers)
-        .map(
-          ([key, code]) =>
-            `${key}: () => {\n        ${code}\n      }`
-        )
+        .map(([key, code]) => `${key}: () => {\n        ${code}\n      }`)
         .join(",\n      ")}
     };
   };

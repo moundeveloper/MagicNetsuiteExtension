@@ -338,8 +338,7 @@ window.saveScriptlet = async ({
   domain,
   csrf
 }) => {
-  const resolvedDomain =
-    domain || window.location.host;
+  const resolvedDomain = domain || window.location.host;
   const formEncode = (str) => encodeURIComponent(str).replace(/%20/g, "+");
   const encodedScriptType = encodeURIComponent(scriptType);
   let body = `submitter=Save&scripttype=__SCRIPTTYPE__&name=__NAME__&package=&scriptid=__SCRIPTID__&nsutils-automated-ids=on&apiversion=__APIVERSION__&description=__DESCRIPTION__&inpt_owner=__OWNERNAME__&owner=__OWNERID__&_eml_nkey_=__NKEY__&_multibtnstate_=&selectedtab=&nsapiPI=&nsapiSR=&nsapiVF=&nsapiFC=&nsapiPS=&nsapiVI=&nsapiVD=&nsapiPD=&nsapiVL=&nsapiRC=&nsapiLI=&nsapiLC=&nsapiCT=__NSAPICT__&nsbrowserenv=istop%3DT&wfPI=&wfSR=&wfVF=&wfFC=&wfPS=&type=script&id=&externalid=&whence=&customwhence=&entryformquerystring=scriptfile%3D__SCRIPTFILE__%26scripttype%3D__ENCODEDSCRIPTTYPE__%26apiversion%3D__APIVERSION__&_csrf=__CSRF__&wfinstances=&customplugintype=&scriptfile=__SCRIPTFILE__&defaultfunction=&defaultfunction_v2=F&notifyuser=F&notifyowner=T&notifyadmins=F&notifygroup=&notifyemails=&submitted=T&formdisplayview=NONE&_button=&customplugintypesfields=plugintype&customplugintypesflags=1&customplugintypesfieldsets=&customplugintypestypes=select&customplugintypesorigtypes=&customplugintypesparents=&customplugintypeslabels=Custom+Plug-In+Type&customplugintypesdata=&nextcustomplugintypesidx=1&customplugintypesvalid=T&parametersfields=label%01internalid%01fieldtype%01selectrecordtype%01setting%01accesslevel%01searchlevel&parametersflags=1%010%010%010%010%010%010&parametersfieldsets=%01%01%01%01%01%01&parameterstypes=text%01identifier%01select%01select%01select%01text%01text&parametersorigtypes=%01%01%01%01%01%01&parametersparents=%01%01%01%01%01%01&parameterslabels=Label%01ID%01Type%01List%2FRecord%01Preference%01%01&parametersdata=&nextparametersidx=1&parametersvalid=T&parametersloaded=F&deploymentsfields=id%01seqnum%01oldrecordtype%01scripttype%01title%01scriptid%01primarykey%01deploymentid%01version%01isdeployed%01status%01eventtype%01loglevel&deploymentsflags=0%010%010%010%011%010%010%010%010%010%011%010%010&deploymentsfieldsets=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentstypes=text%01text%01text%01text%01text%01identifier%01text%01text%01text%01checkbox%01select%01select%01select&deploymentsorigtypes=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentsparents=%01%01%01%01%01%01%01%01%01%01%01%01&deploymentslabels=%01%01%01%01Title%01ID%01%01%01%01Deployed%01Status%01Event+Type%01Log+Level&deploymentsdata=&nextdeploymentsidx=1&deploymentsvalid=T&deploymentsloaded=F`;
@@ -358,32 +357,28 @@ window.saveScriptlet = async ({
     .replace(/__NSAPICT__/g, Date.now().toString())
     .replace(/__NKEY__/g, "1964539~56~3~N");
 
-  return fetch(
-    `https://${resolvedDomain}/app/common/scripting/script.nl`,
-    {
-      method: "POST",
-      credentials: "include",
-      mode: "cors",
-      headers: {
-        accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "accept-language": "it-IT,it;q=0.6",
-        "cache-control": "max-age=0",
-        "content-type": "application/x-www-form-urlencoded",
-        priority: "u=0, i",
+  return fetch(`https://${resolvedDomain}/app/common/scripting/script.nl`, {
+    method: "POST",
+    credentials: "include",
+    mode: "cors",
+    headers: {
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "accept-language": "it-IT,it;q=0.6",
+      "cache-control": "max-age=0",
+      "content-type": "application/x-www-form-urlencoded",
+      priority: "u=0, i",
 
-        // critical headers
-        "sec-fetch-dest": "document",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "same-origin",
-        "sec-fetch-user": "?1",
+      // critical headers
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
 
-        "upgrade-insecure-requests": "1"
-      },
-      referrer: `https://${resolvedDomain}/app/common/scripting/script.nl?scriptfile=${scriptFile}&scripttype=${scriptType}&apiversion=${apiVersion}&package=&whence=`,
-      body
-    }
-  );
+      "upgrade-insecure-requests": "1"
+    },
+    referrer: `https://${resolvedDomain}/app/common/scripting/script.nl?scriptfile=${scriptFile}&scripttype=${scriptType}&apiversion=${apiVersion}&package=&whence=`,
+    body
+  });
 };
 
 /**
@@ -421,7 +416,7 @@ function extractScriptIdFromHtml(html) {
  * @param {string}  options.name        - Human-readable script name
  * @param {string}  options.scriptId    - Script ID (e.g. "customscript_my_suitelet")
  * @param {string|number} options.fileId - Internal ID of the uploaded .js file
- * @param {string}  [options.scriptType] - NetSuite script type constant (default: "SUITELET")
+ * @param {string}  [options.scriptType] - NetSuite script type constant (default: "SCRIPTLET")
  * @param {string}  [options.description]
  * @param {string}  [options.apiVersion] - default "2.1"
  * @param {string}  csrfToken
@@ -429,7 +424,14 @@ function extractScriptIdFromHtml(html) {
  */
 window.createScriptRecord = async (
   N,
-  { name, scriptId, fileId, scriptType = "SUITELET", description = "", apiVersion = "2.1" },
+  {
+    name,
+    scriptId,
+    fileId,
+    scriptType = "SCRIPTLET",
+    description = "",
+    apiVersion = "2.1"
+  },
   csrfToken
 ) => {
   const { url, runtime } = N;
@@ -441,7 +443,13 @@ window.createScriptRecord = async (
   const ownerId = String(currentUser.id);
   const ownerName = currentUser.name || "";
 
-  console.log("[createScriptRecord]", { name, scriptId, fileId, scriptType, ownerId });
+  console.log("[createScriptRecord]", {
+    name,
+    scriptId,
+    fileId,
+    scriptType,
+    ownerId
+  });
 
   const response = await window.saveScriptlet({
     name,
@@ -458,7 +466,11 @@ window.createScriptRecord = async (
 
   if (!response.ok) {
     const text = await response.text();
-    console.error("[createScriptRecord] HTTP error", response.status, text.slice(0, 500));
+    console.error(
+      "[createScriptRecord] HTTP error",
+      response.status,
+      text.slice(0, 500)
+    );
     throw new Error(`createScriptRecord: HTTP ${response.status}`);
   }
 
@@ -472,4 +484,159 @@ window.createScriptRecord = async (
     : null;
 
   return { scriptRecordId, scriptUrl };
+};
+
+/**
+ * Save a NetSuite Script Record (UI POST emulation)
+ *
+ * Use case:
+ * - Programmatically create/update a Script record via the same endpoint
+ *   used by the NetSuite UI (scriptrecord.nl)
+ *
+ * NOTE:
+ * - Requires valid session (credentials: "include")
+ * - CSRF + nsapiCT must be fresh
+ */
+window.createScriptDeployRecord = async (
+  N,
+  {
+    name,
+    scriptId,
+    scriptInternalId,
+    title,
+    status = "RELEASED",
+    logLevel = "DEBUG",
+    runAsRole = "3"
+  },
+  csrfToken
+) => {
+  // Derive accountId from current URL: 1964539-sb1 → 1964539_SB1
+  const accountId = window.location.hostname
+    .split(".")[0]
+    .replace(/-/g, "_")
+    .toUpperCase();
+
+  const _nlKey = `${accountId}~56~3~N`;
+
+  const body = new URLSearchParams({
+    submitter: "Save",
+    script: scriptInternalId,
+    title: title ?? name,
+    scriptid: scriptId,
+    "nsutils-automated-ids": "on",
+    isdeployed: "T",
+    inpt_status: "Released",
+    status,
+    inpt_eventtype: " ",
+    eventtype: "",
+    inpt_loglevel: "Debug",
+    loglevel: logLevel,
+    inpt_runasrole: "Administrator",
+    runasrole: runAsRole,
+    _eml_nkey_: _nlKey,
+    _multibtnstate_: "",
+    selectedtab: "",
+    nsapiPI: "",
+    nsapiSR: "",
+    nsapiVF: "",
+    nsapiFC: "",
+    nsapiPS: "",
+    nsapiVI: "",
+    nsapiVD: "",
+    nsapiPD: "",
+    nsapiVL: "",
+    nsapiRC: "",
+    nsapiLI: "",
+    nsapiLC: "",
+    nsapiCT: Date.now().toString(),
+    nsbrowserenv: "istop=T",
+    wfPI: "",
+    wfSR: "",
+    wfVF: "",
+    wfFC: "",
+    wfPS: "",
+    type: "scriptrecord",
+    id: "",
+    externalid: "",
+    whence: `/app/common/scripting/script.nl?id=${scriptInternalId}`,
+    customwhence: "",
+    entryformquerystring: `scripttype=${scriptInternalId}`,
+    _csrf: csrfToken,
+    wfinstances: "",
+    primarykey: "",
+    deploymentid: "",
+    version: "",
+    hascodeaccess: "T",
+    audience: "",
+    audslctrole: "",
+    allroles: "T",
+    audslctextrole: "",
+    auddepartment: "",
+    audsubsidiary: "",
+    audgroup: "",
+    audemployee: "",
+    allemployees: "F",
+    audpartner: "",
+    allpartners: "F",
+    submitted: "T",
+    formdisplayview: "NONE",
+    _button: "",
+    linksfields:
+      "linkcenter\x01linksection_display\x01linksection\x01linkcategory_display\x01linkcategory\x01linklabel\x01linklabel_term_ref\x01linklabel_translations\x01linklabel_en\x01linklabel_fr_fr\x01linklabel_de_de\x01linklabel_it_it\x01linkinsertbefore_display\x01linkinsertbefore\x01linkseqnum",
+    linksflags:
+      "1\x018\x011\x018\x011\x011\x010\x010\x010\x010\x010\x010\x018\x010\x010",
+    linksfieldsets:
+      "\x01\x01\x01\x01\x01\x01\x01\x01linklabel_translations\x01linklabel_translations\x01linklabel_translations\x01linklabel_translations\x01\x01\x01",
+    linkstypes:
+      "select\x01text\x01slaveselect\x01text\x01slaveselect\x01text\x01text\x01fieldset\x01text\x01text\x01text\x01text\x01text\x01slaveselect\x01integer",
+    linksorigtypes: "\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01",
+    linksparents:
+      "\x01links.linkcenter\x01links.linkcenter\x01links.linksection\x01links.linksection\x01\x01\x01\x01\x01\x01\x01\x01links.linkcategory\x01links.linkcategory\x01",
+    linkslabels:
+      "Centre\x01Section\x01\x01Category\x01\x01Label\x01\x01Translation\x01English+(International)\x01French+(France)\x01German\x01Italian\x01Insert+Before\x01\x01",
+    linksdata: "",
+    nextlinksidx: "1",
+    linksvalid: "T",
+    linksloaded: "F",
+    scriptnoteloaded: "T",
+    scriptnotedotted: "T"
+  });
+
+  const response = await fetch(
+    `https://${window.location.hostname}/app/common/scripting/scriptrecord.nl`,
+    {
+      method: "POST",
+      mode: "cors",
+      credentials: "include",
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "accept-language": "it-IT,it;q=0.6",
+        "cache-control": "max-age=0",
+        "content-type": "application/x-www-form-urlencoded",
+        priority: "u=0, i",
+        "sec-ch-ua": '"Brave";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+        "sec-gpc": "1",
+        "upgrade-insecure-requests": "1",
+        referer: `https://${window.location.hostname}/app/common/scripting/scriptrecord.nl?scripttype=${scriptInternalId}`
+      },
+      body: body.toString()
+    }
+  );
+
+  const text = await response.text();
+  console.log(
+    `[${response.status}]`,
+    response.status === 200 ? "✅ OK" : "❌ ERROR",
+    response
+  );
+  console.log("Response body:", text);
+
+  return { status: response.status, body: text, response };
 };
