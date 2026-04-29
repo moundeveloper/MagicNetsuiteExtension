@@ -50,6 +50,7 @@
         "netsuiteApi/scripts.js",
         "netsuiteApi/suiteQL.js",
         "netsuiteApi/netsuiteApi.js",
+        "netsuiteApi/serverScriptManager.js",
         "netsuiteApi/content.js",
         "netsuiteApi/customRecords.js",
         "netsuiteApi/sandboxCode.js",

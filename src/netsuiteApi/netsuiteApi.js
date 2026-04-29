@@ -117,6 +117,126 @@ const handlers = {
       ];
     }
   },
+  RUN_QUICK_SCRIPT_SERVER: async ({ modules, payload: { code, userId } }) => {
+    console.log("Run Quick Script Server action received", { userId });
+
+    try {
+      const N = modules;
+      const { query, url } = N;
+
+      // Step 1: Get or create Magic folder
+      const { folderId } = await window.getOrCreateMagicFolder(N);
+      console.log("[RUN_QUICK_SCRIPT_SERVER] Folder ID:", folderId);
+
+      if (!folderId) {
+        throw new Error("Failed to get or create Magic folder");
+      }
+
+      // Step 2: Get or create handler module
+      const handlerInfo = await window.getOrCreateHandlerModule(N, folderId);
+      console.log("[RUN_QUICK_SCRIPT_SERVER] Handler module:", handlerInfo);
+
+      // Step 3: Get or create suitelet
+      const suiteletInfo = await window.getOrCreateSuitelet(
+        N,
+        folderId,
+        handlerInfo.scriptRecordId
+      );
+      console.log("[RUN_QUICK_SCRIPT_SERVER] Suitelet:", suiteletInfo);
+
+      // Step 4: Update user handler
+      await window.updateUserHandler(N, folderId, userId, code);
+      console.log("[RUN_QUICK_SCRIPT_SERVER] User handler updated");
+
+      // Step 5: Execute server script
+      const result = await window.executeServerScript(
+        N,
+        SUITELET_SCRIPT_ID,
+        suiteletInfo.deploymentId,
+        userId
+      );
+
+      console.log("[RUN_QUICK_SCRIPT_SERVER] Execution result:", result);
+      return result;
+    } catch (err) {
+      console.error("[RUN_QUICK_SCRIPT_SERVER] Error:", err);
+      return { error: err.message };
+    }
+  },
+  CHECK_SERVER_COMPONENTS: async ({ modules }) => {
+    console.log("Check Server Components action received");
+
+    try {
+      const { query } = modules;
+
+      // Check folder (must be in SuiteScripts root, parent = -15)
+      const folderResults = await query.runSuiteQL
+        .promise({
+          query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+          params: ["MagicNetsuiteScripts"]
+        })
+        .asMappedResults();
+
+      const { id: folderId } = folderResults;
+      const folderExists = folderResults.length > 0;
+
+      if (!folderExists) {
+        return { folderExists };
+      }
+
+      // Check handler module file
+      const handlerResult = await query.runSuiteQL.promise({
+        query: `SELECT file.id, file.name FROM file WHERE file.name = ?`,
+        params: [`${HANDLER_MODULE_NAME}.js`, folderId]
+      });
+      const handlerFileExists = handlerResult.asMappedResults().length > 0;
+
+      // Check suitelet script
+      const suiteletResult = await query.runSuiteQL.promise({
+        query: `SELECT id, scriptid FROM script WHERE scriptid = ?`,
+        params: ["customscript_magic_netsuite_server"]
+      });
+      const suiteletScriptExists = suiteletResult.asMappedResults().length > 0;
+
+      // Check deployments
+      let suiteletDeployed = false;
+
+      if (suiteletScriptExists) {
+        const suiteletDeploy = await query.runSuiteQL.promise({
+          query: `SELECT id FROM scriptdeployment WHERE script = ?`,
+          params: [suiteletResult.asMappedResults()[0].id]
+        });
+        suiteletDeployed = suiteletDeploy.asMappedResults().length > 0;
+      }
+
+      return {
+        folderExists,
+        handlerScriptExists,
+        suiteletScriptExists,
+        handlerDeployed,
+        suiteletDeployed,
+        allReady:
+          folderExists &&
+          handlerFileExists &&
+          suiteletScriptExists &&
+          suiteletDeployed
+      };
+    } catch (err) {
+      console.error("[CHECK_SERVER_COMPONENTS] Error:", err);
+      return { error: err.message };
+    }
+  },
+  REMOVE_SERVER_COMPONENTS: async ({ modules }) => {
+    console.log("Remove Server Components action received");
+
+    try {
+      const result = await window.removeMagicNetsuiteComponents(modules);
+      return result;
+    } catch (err) {
+      console.error("[REMOVE_SERVER_COMPONENTS] Error:", err);
+      return { error: err.message };
+    }
+  },
   SCRIPTS_DEPLOYED: async ({ modules, payload: { recordType } }) => {
     console.log("Scripts Deployed action received");
     return window.getDeployedScriptFiles(modules, { recordType });
@@ -224,7 +344,12 @@ const handlers = {
     payload: { name, scriptId, fileId, scriptType, description, apiVersion },
     csrfToken
   }) => {
-    console.log("Create Script action received", { name, scriptId, fileId, scriptType });
+    console.log("Create Script action received", {
+      name,
+      scriptId,
+      fileId,
+      scriptType
+    });
     return await window.createScriptRecord(
       modules,
       { name, scriptId, fileId, scriptType, description, apiVersion },

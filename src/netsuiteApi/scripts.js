@@ -352,10 +352,11 @@ window.saveScriptlet = async ({
     .replace(/__OWNERNAME__/g, formEncode(ownerName))
     .replace(/__DESCRIPTION__/g, formEncode(description))
     .replace(/__APIVERSION__/g, formEncode(apiVersion))
-    .replace(/__SCRIPTTYPE__/g, formEncode(scriptType))
+    .replace(/__SCRIPTTYPE__/g, scriptType)
     .replace(/__ENCODEDSCRIPTTYPE__/g, encodedScriptType)
     .replace(/__CSRF__/g, csrf)
-    .replace(/__NSAPICT__/g, Date.now().toString());
+    .replace(/__NSAPICT__/g, Date.now().toString())
+    .replace(/__NKEY__/g, "1964539~56~3~N");
 
   return fetch(
     `https://${resolvedDomain}/app/common/scripting/script.nl`,

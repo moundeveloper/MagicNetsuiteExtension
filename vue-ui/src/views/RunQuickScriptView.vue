@@ -7,7 +7,7 @@
     padding=""
     outlined
     elevated
-    :style="{ height: `90vh` }"
+    :style="{ height: '90vh' }"
   >
     <template #default>
       <ExpandableSidebar>
@@ -47,6 +47,76 @@
               </div>
             </div>
           </div>
+
+          <div class="sidebar-section">
+            <h4>Execution Mode</h4>
+            <div class="flex flex-col gap-2">
+              <div class="flex gap-2">
+                <Button
+                  size="small"
+                  :severity="executionMode === 'client' ? 'primary' : 'secondary'"
+                  @click="executionMode = 'client'"
+                  class="flex-1"
+                >
+                  Client
+                </Button>
+                <Button
+                  size="small"
+                  :severity="executionMode === 'server' ? 'primary' : 'secondary'"
+                  @click="executionMode = 'server'"
+                  class="flex-1"
+                >
+                  Server
+                </Button>
+              </div>
+
+              <div v-if="executionMode === 'server'" class="text-xs">
+                <div class="mb-2">
+                  <span class="text-gray-600">User ID:</span>
+                  <code class="ml-1 text-xs bg-slate-200 px-1 rounded">{{ userId.slice(-8) }}</code>
+                </div>
+
+                <Button
+                  size="small"
+                  @click="checkServerComponents"
+                  :loading="serverStatus.checking"
+                  class="w-full mb-2"
+                >
+                  Check Server
+                </Button>
+
+                <div v-if="serverStatus.components" class="text-xs space-y-1">
+                  <div :class="serverStatus.components.folderExists ? 'text-green-600' : 'text-red-600'">
+                    Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
+                  </div>
+                  <div :class="serverStatus.components.handlerScriptExists ? 'text-green-600' : 'text-red-600'">
+                    Handler Module: {{ serverStatus.components.handlerScriptExists ? '✓' : '✗' }}
+                  </div>
+                  <div :class="serverStatus.components.suiteletScriptExists ? 'text-green-600' : 'text-red-600'">
+                    Suitelet: {{ serverStatus.components.suiteletScriptExists ? '✓' : '✗' }}
+                  </div>
+                  <div :class="serverStatus.components.allReady ? 'text-green-600' : 'text-red-600'">
+                    All Ready: {{ serverStatus.components.allReady ? '✓' : '✗' }}
+                  </div>
+                </div>
+
+                <div v-if="serverStatus.error" class="text-red-500 mt-2">
+                  {{ serverStatus.error }}
+                </div>
+
+                <Button
+                  v-if="serverStatus.components?.allReady"
+                  size="small"
+                  severity="danger"
+                  @click="removeServerComponents"
+                  class="w-full mt-2"
+                >
+                  Remove Server Components
+                </Button>
+              </div>
+            </div>
+          </div>
+
           <div class="sidebar-section">
             <h4>Files</h4>
             <InputText
@@ -117,6 +187,9 @@
               <Button @click="runCurrentFile" :disabled="currentFile?.isExecuting">
                 {{ currentFile?.isExecuting ? "Running..." : "Run" }}
               </Button>
+              <span class="text-xs text-gray-500 ml-auto">
+                Mode: {{ executionMode }}
+              </span>
             </div>
           </template>
 
@@ -126,7 +199,7 @@
               :key="file.id"
               v-show="activeTabName === file.id"
               class="h-full"
-              :style="{ height: `${contentHeight}px` }"
+              :style="{ height: contentHeight + 'px' }"
             >
               <vue-splitter is-horizontal data-ignore class="h-full">
                 <template #top-pane>
@@ -200,6 +273,7 @@ import {
   getRQSUiState,
   setRQSUiState
 } from "../utils/runQuickScriptDb";
+import { getExtensionUserId } from "../utils/extensionUser";
 
 type Log = {
   type: "log" | "warn" | "error";
@@ -224,6 +298,17 @@ const activeFileId = ref("");
 const fileSearchTerm = ref("");
 const commandSearchTerm = ref("");
 const isRestoring = ref(true);
+const executionMode = ref<"client" | "server">("client");
+const serverStatus = ref<{
+  checking: boolean;
+  components: any;
+  error: string | null;
+}>({
+  checking: false,
+  components: null,
+  error: null
+});
+const userId = ref<string>("");
 
 const tabs = computed(() =>
   openTabs.value
@@ -289,12 +374,12 @@ const openFileInTab = (fileId: string) => {
 
 const removeFile = (fileId: string) => {
   openTabs.value = openTabs.value.filter((id) => id !== fileId);
-  
+
   const index = files.value.findIndex((f) => f.id === fileId);
   if (index > -1) {
     files.value.splice(index, 1);
   }
-  
+
   if (activeFileId.value === fileId) {
     activeFileId.value = openTabs.value[0] || files.value[0]?.id || "";
   }
@@ -304,7 +389,7 @@ const removeFile = (fileId: string) => {
 
 const removeFileByTab = ({ tabId, nextTabId }: { tabId: string; nextTabId: string | null }) => {
   openTabs.value = openTabs.value.filter((id) => id !== tabId);
-  
+
   if (activeFileId.value === tabId) {
     activeFileId.value = nextTabId || openTabs.value[0] || files.value[0]?.id || "";
   }
@@ -411,20 +496,50 @@ const runFile = async (fileId: string) => {
   file.logs = [];
 
   try {
-    await callApi(
-      RequestRoutes.RUN_QUICK_SCRIPT,
-      {
-        code: file.code
-      },
-      ApiRequestType.STREAM,
-      (message: any) => {
-        try {
-          handleStreamingResponse(message, fileId);
-        } catch (error) {
-          if (file) file.isExecuting = false;
+    if (executionMode.value === "client") {
+      await callApi(
+        RequestRoutes.RUN_QUICK_SCRIPT,
+        {
+          code: file.code
+        },
+        ApiRequestType.STREAM,
+        (message: any) => {
+          try {
+            handleStreamingResponse(message, fileId);
+          } catch (error) {
+            if (file) file.isExecuting = false;
+          }
         }
+      );
+    } else {
+      // Server-side execution
+      if (!userId.value) {
+        userId.value = await getExtensionUserId();
       }
-    );
+
+      const response = await callApi(
+        RequestRoutes.RUN_QUICK_SCRIPT_SERVER,
+        {
+          code: file.code,
+          userId: userId.value
+        },
+        ApiRequestType.NORMAL
+      );
+
+      const result = (response as ApiResponse)?.message || response;
+
+      if (result?.error) {
+        file.logs.push({
+          type: "error",
+          values: [`Server execution error: ${result.error}`]
+        });
+      } else {
+        file.logs.push({
+          type: "log",
+          values: [`Server execution result: ${JSON.stringify(result)}`]
+        });
+      }
+    }
   } catch (error) {
     console.error("Execution error:", error);
     if (file) {
@@ -442,6 +557,34 @@ const runFile = async (fileId: string) => {
 const runCurrentFile = () => {
   if (activeFileId.value) {
     runFile(activeFileId.value);
+  }
+};
+
+const checkServerComponents = async () => {
+  serverStatus.value.checking = true;
+  serverStatus.value.error = null;
+
+  try {
+    const response = await callApi(RequestRoutes.CHECK_SERVER_COMPONENTS);
+    const result = (response as ApiResponse)?.message || response;
+    serverStatus.value.components = result;
+  } catch (err: any) {
+    serverStatus.value.error = err.message || "Failed to check server components";
+  } finally {
+    serverStatus.value.checking = false;
+  }
+};
+
+const removeServerComponents = async () => {
+  if (!confirm("Are you sure you want to remove all server components?")) return;
+
+  try {
+    const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
+    const result = (response as ApiResponse)?.message || response;
+    alert(`Removed: ${result?.removed?.join(", ") || "none"}`);
+    await checkServerComponents();
+  } catch (err: any) {
+    alert(`Error: ${err.message}`);
   }
 };
 
@@ -563,6 +706,9 @@ onMounted(async () => {
       typeof storedActiveTab === "string" && validTabs.includes(storedActiveTab)
         ? storedActiveTab
         : validTabs[0] || "";
+
+    // Get or generate user ID
+    userId.value = await getExtensionUserId();
   } catch (error) {
     console.error("Restore from IndexedDB failed:", error);
     openTabs.value = [];
