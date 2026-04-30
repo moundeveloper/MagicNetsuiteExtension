@@ -169,12 +169,12 @@ const handlers = {
       return { error: err.message };
     }
   },
-  CHECK_SERVER_COMPONENTS: async ({ modules }) => {
-    return window.checkMagicNetsuiteComponents(modules);
+  CHECK_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
+    return window.checkMagicNetsuiteComponents(modules, {}, csrfToken);
   },
-  REMOVE_SERVER_COMPONENTS: async ({ modules }) => {
+  REMOVE_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
     console.log("Remove Server Components action received");
-    return await window.removeMagicNetsuiteComponents(modules);
+    return await window.removeMagicNetsuiteComponents(modules, {}, csrfToken);
   },
   SCRIPTS_DEPLOYED: async ({ modules, payload: { recordType } }) => {
     console.log("Scripts Deployed action received");

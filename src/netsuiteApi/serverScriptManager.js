@@ -15,19 +15,16 @@ const CONFIG = {
 };
 
 window.checkMagicNetsuiteComponents = async ({ query }) => {
-  const runQuery = async (sql, params = []) => {
-    const result = await query.runSuiteQL.promise({ query: sql, params });
-    return result.asMappedResults();
-  };
-
   try {
     console.log("Checking server components...");
 
     // 1. Check folder
-    const [folder] = await runQuery(
-      `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
-      [CONFIG.FOLDER_NAME]
-    );
+    const [folder] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+        params: [CONFIG.FOLDER_NAME]
+      })
+    ).asMappedResults();
 
     if (!folder) {
       return {
@@ -43,10 +40,12 @@ window.checkMagicNetsuiteComponents = async ({ query }) => {
     const folderId = folder.id;
 
     // 2. Check both files in one query
-    const files = await runQuery(
-      `SELECT name FROM file WHERE folder = ? AND name IN (?, ?)`,
-      [folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
-    );
+    const files = (
+      await query.runSuiteQL.promise({
+        query: `SELECT name FROM file WHERE folder = ? AND name IN (?, ?)`,
+        params: [folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
+      })
+    ).asMappedResults();
 
     const fileSet = new Set(files.map((f) => f.name));
 
@@ -54,10 +53,12 @@ window.checkMagicNetsuiteComponents = async ({ query }) => {
     const serverFileExists = fileSet.has(CONFIG.SERVER_FILE);
 
     // 3. Check script
-    const [script] = await runQuery(
-      `SELECT id FROM script WHERE scriptid = ?`,
-      [CONFIG.scriptId]
-    );
+    const [script] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM script WHERE scriptid = ?`,
+        params: [CONFIG.scriptId]
+      })
+    ).asMappedResults();
 
     const suiteletScriptExists = !!script;
 
@@ -65,10 +66,12 @@ window.checkMagicNetsuiteComponents = async ({ query }) => {
     let suiteletDeployed = false;
 
     if (suiteletScriptExists) {
-      const deployments = await runQuery(
-        `SELECT id FROM scriptdeployment WHERE script = ?`,
-        [script.id]
-      );
+      const deployments = (
+        await query.runSuiteQL.promise({
+          query: `SELECT id FROM scriptdeployment WHERE script = ?`,
+          params: [script.id]
+        })
+      ).asMappedResults();
       suiteletDeployed = deployments.length > 0;
     }
 
@@ -96,11 +99,6 @@ window.checkMagicNetsuiteComponents = async ({ query }) => {
 window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   const { query } = N;
 
-  const runQuery = async (sql, params = []) => {
-    const result = await query.runSuiteQL.promise({ query: sql, params });
-    return result.asMappedResults();
-  };
-
   const {
     folderExists,
     handlerFileExists,
@@ -124,10 +122,12 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.folderId = folderId;
   } else {
     // hydrate existing folder
-    const [folder] = await runQuery(
-      `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
-      [CONFIG.FOLDER_NAME]
-    );
+    const [folder] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+        params: [CONFIG.FOLDER_NAME]
+      })
+    ).asMappedResults();
 
     mutation.folderId = folder?.id;
   }
@@ -137,10 +137,12 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   // -------------------------
   // FILES
   // -------------------------
-  const files = await runQuery(
-    `SELECT id, name FROM file WHERE folder = ? AND name IN (?, ?)`,
-    [mutation.folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
-  );
+  const files = (
+    await query.runSuiteQL.promise({
+      query: `SELECT id, name FROM file WHERE folder = ? AND name IN (?, ?)`,
+      params: [mutation.folderId, CONFIG.HANDLER_FILE, CONFIG.SERVER_FILE]
+    })
+  ).asMappedResults();
 
   console.log("files", files);
 
@@ -204,10 +206,12 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
 
     mutation.scriptRecordId = scriptRecordId;
   } else {
-    const [script] = await runQuery(
-      `SELECT id FROM script WHERE scriptid = ?`,
-      [CONFIG.scriptId]
-    );
+    const [script] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM script WHERE scriptid = ?`,
+        params: [CONFIG.scriptId]
+      })
+    ).asMappedResults();
 
     mutation.scriptRecordId = script?.id;
   }
@@ -249,12 +253,12 @@ window.getOrCreateHandlerModule = async (N, folderId) => {
 
   try {
     // Check if handler module file already exists
-    const fileResult = await query.runSuiteQL.promise({
-      query: `SELECT file.id, file.name FROM file WHERE file.name = ?`,
-      params: [`${HANDLER_MODULE_NAME}.js`]
-    });
-
-    const files = fileResult.asMappedResults();
+    const files = (
+      await query.runSuiteQL.promise({
+        query: `SELECT file.id, file.name FROM file WHERE file.name = ?`,
+        params: [`${HANDLER_MODULE_NAME}.js`]
+      })
+    ).asMappedResults();
 
     if (files.length > 0) {
       return { fileId: files[0].id };
@@ -295,12 +299,13 @@ window.getOrCreateSuitelet = async (N, folderId, handlerScriptId) => {
 
   try {
     // Check if script record exists
-    const scriptResult = await query.runSuiteQL.promise({
-      query: `SELECT id, scriptid FROM script WHERE LOWER(scriptid) = LOWER(?)`,
-      params: [SUITELET_SCRIPT_ID]
-    });
+    const scripts = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id, scriptid FROM script WHERE LOWER(scriptid) = LOWER(?)`,
+        params: [SUITELET_SCRIPT_ID]
+      })
+    ).asMappedResults();
 
-    const scripts = scriptResult.asMappedResults();
     console.log("[getOrCreateSuitelet] Script check result:", scripts);
 
     if (scripts.length > 0) {
@@ -596,9 +601,29 @@ window.executeServerScript = async (
  * @param {object} N - NetSuite modules
  * @returns {Promise<{removed: string[]}>}
  */
-window.removeMagicNetsuiteComponents = async (N) => {
+window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
   const { query, record } = N;
   const removed = [];
+
+  const [{ id: scriptId } = {}] = (
+    await query.runSuiteQL.promise({
+      query: `SELECT id FROM script WHERE scriptid = ?`,
+      params: [CONFIG.scriptId]
+    })
+  ).asMappedResults();
+
+  return await window.deleteNetsuiteScript(
+    N,
+    {
+      scriptId,
+      scriptName: "Magic Netsuite Server",
+      apiVersion: "2.1",
+      ownerName: "Abdelmounaim Sabri",
+      ownerId: "56",
+      defaultFunction: "onRequest"
+    },
+    csrfToken
+  );
 
   try {
     // Find and delete deployments

@@ -717,12 +717,19 @@ window.createScriptDeployRecord = async (
     response.status === 200 ? "✅ OK" : "❌ ERROR",
     response
   );
-  console.log("Response body:", text);
 
   const deploymentId = extractDeploymentIdFromHtml(text);
   const deployUrl = extractDeployUrlFromHtml(text);
 
-  return { status: response.status, body: text, deploymentId, deployUrl, response };
+  console.log("createScriptDeployment", { deploymentId, deployUrl });
+
+  return {
+    status: response.status,
+    body: text,
+    deploymentId,
+    deployUrl,
+    response
+  };
 };
 
 /**
@@ -734,13 +741,17 @@ window.createScriptDeployRecord = async (
 function extractDeployUrlFromHtml(html) {
   const doc = new DOMParser().parseFromString(html, "text/html");
 
-  const urlAnchor = doc.querySelector('a[href*="/app/site/hosting/scriptlet.nl"]');
+  const urlAnchor = doc.querySelector(
+    'a[href*="/app/site/hosting/scriptlet.nl"]'
+  );
   if (urlAnchor && urlAnchor.href) {
     const m = urlAnchor.href.match(/deploy=(\d+)/);
     if (m) return urlAnchor.href;
   }
 
-  const m = html.match(/href="(\/app\/site\/hosting\/scriptlet\.nl\?script=\d+&deploy=\d+)"/);
+  const m = html.match(
+    /href="(\/app\/site\/hosting\/scriptlet\.nl\?script=\d+&deploy=\d+)"/
+  );
   if (m) return m[1];
 
   return null;
@@ -761,7 +772,9 @@ function extractDeploymentIdFromHtml(html) {
   const depInput = doc.querySelector('input[name="deploymentid"]');
   if (depInput && depInput.value) return depInput.value;
 
-  const urlAnchor = doc.querySelector('a[href*="/app/site/hosting/scriptlet.nl"]');
+  const urlAnchor = doc.querySelector(
+    'a[href*="/app/site/hosting/scriptlet.nl"]'
+  );
   if (urlAnchor) {
     const m = urlAnchor.href.match(/[?&]deploy=(\d+)/);
     if (m) return m[1];
@@ -778,3 +791,135 @@ function extractDeploymentIdFromHtml(html) {
 
   return null;
 }
+
+window.deleteNetsuiteScript = async (
+  N,
+  {
+    scriptId,
+    scriptName = "Magic Netsuite Server",
+    apiVersion = "2.1",
+    description = "Suitelet for Magic Netsuite extension server-side script execution",
+    ownerName = "Abdelmounaim Sabri",
+    ownerId = "56",
+    defaultFunction = "onRequest"
+  },
+  csrfToken
+) => {
+  const accountId = window.location.hostname
+    .split(".")[0]
+    .replace(/-/g, "_")
+    .toUpperCase();
+
+  const url = `https://${accountId}.app.netsuite.com/app/common/scripting/script.nl`;
+
+  const body = {
+    delete: "Delete",
+    scripttype: "SCRIPTLET",
+    name: scriptName,
+    apiversion: apiVersion,
+    description,
+    inpt_owner: ownerName,
+    owner: ownerId,
+    _eml_nkey_: `${accountId}~56~3~N`,
+    _multibtnstate_: "",
+    selectedtab: "",
+    nsapiPI: "",
+    nsapiSR: "",
+    nsapiVF: "",
+    nsapiFC: "",
+    nsapiPS: "",
+    nsapiVI: "",
+    nsapiVD: "",
+    nsapiPD: "",
+    nsapiVL: "",
+    nsapiRC: "",
+    nsapiLI: "",
+    nsapiLC: "",
+    nsapiCT: String(Date.now()),
+    nsbrowserenv: "istop=T",
+    wfPI: "",
+    wfSR: "",
+    wfVF: "",
+    wfFC: "",
+    wfPS: "",
+    type: "script",
+    id: scriptId,
+    externalid: "",
+    whence: `/app/common/scripting/script.nl?id=${scriptId}&scrollid=${scriptId}`,
+    customwhence: "",
+    entryformquerystring: `id=${scriptId}&e=T`,
+    _csrf: csrfToken,
+    wfinstances: "",
+    customplugintype: "",
+    scriptfile: "",
+    defaultfunction: defaultFunction,
+    defaultfunction_v2: "",
+    notifyuser: "",
+    notifyowner: "",
+    notifyadmins: "",
+    notifygroup: "",
+    notifyemails: "",
+    submitted: "",
+    formdisplayview: "NONE",
+    _button: "",
+    customplugintypesfields: "plugintype",
+    customplugintypesflags: "1",
+    customplugintypesfieldsets: "",
+    customplugintypestypes: "select",
+    customplugintypesorigtypes: "",
+    customplugintypesparents: "",
+    customplugintypeslabels: "Custom Plug-In Type",
+    customplugintypesdata: "",
+    nextcustomplugintypesidx: "1",
+    customplugintypesvalid: "T",
+    parametersfields: "id\x01fieldurl",
+    parametersflags: "0\x010",
+    parametersfieldsets: "\x01",
+    parameterstypes: "text\x01text",
+    parametersorigtypes: "\x01",
+    parametersparents: "\x01",
+    parameterslabels: "\x01",
+    parametersdata: "",
+    nextparametersidx: "1",
+    parametersvalid: "T",
+    parameterssortidx: "-1",
+    parameterssorttype: "",
+    parameterssortdir: "",
+    parameterssortname: "",
+    parameterssort2dir: "",
+    parameterssort2name: "",
+    scriptnoteloaded: "F",
+    scriptnotedotted: "F",
+    deploymentsloaded: "F",
+    deploymentsdotted: "F",
+    systemnotesloaded: "F",
+    systemnotesdotted: "F"
+  };
+
+  const { status } = await fetch(url, {
+    method: "POST",
+    mode: "cors",
+    credentials: "include",
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "accept-language": "it-IT,it;q=0.6",
+      "cache-control": "max-age=0",
+      "content-type": "application/x-www-form-urlencoded",
+      priority: "u=0, i",
+      "sec-ch-ua": '"Brave";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
+      "sec-gpc": "1",
+      "upgrade-insecure-requests": "1"
+    },
+    referrer: `${url}?id=${scriptId}&e=T`,
+    body: new URLSearchParams(body).toString()
+  });
+
+  return status === 200 ? "success" : `failed (${status})`;
+};
