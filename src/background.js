@@ -488,6 +488,80 @@ async function handleRequest({ requestId, method, params }) {
                 }
               }
             }
+          },
+          // ── SuiteQL Tools ──
+          {
+            name: "suiteql_search_tables",
+            description: "Search available SuiteQL tables by keyword. Returns table IDs and labels matching the search term.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "Search keyword to filter tables (e.g. 'customer', 'transaction'). Leave empty to list all tables."
+                }
+              }
+            }
+          },
+          {
+            name: "suiteql_get_table_fields",
+            description: "Get all columns/fields for a specific SuiteQL table. Returns field IDs, labels, and data types.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tableName: {
+                  type: "string",
+                  description: "The exact table ID (e.g. 'customer', 'transaction', 'item')."
+                }
+              },
+              required: ["tableName"]
+            }
+          },
+          {
+            name: "suiteql_get_table_joins",
+            description: "Get available joins/relationships for a specific SuiteQL table. Returns join labels, target tables, and join conditions.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tableName: {
+                  type: "string",
+                  description: "The exact table ID to get joins for."
+                }
+              },
+              required: ["tableName"]
+            }
+          },
+          {
+            name: "suiteql_execute_query",
+            description: "Execute a SuiteQL query and return the results (limited to 5 rows for preview).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                sql: {
+                  type: "string",
+                  description: "The SuiteQL query to execute."
+                }
+              },
+              required: ["sql"]
+            }
+          },
+          {
+            name: "suiteql_discover_field_values",
+            description: "Sample DISTINCT actual values for a specific column in a table. Use this to discover exact values for WHERE clauses.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tableName: {
+                  type: "string",
+                  description: "The exact table ID (e.g. 'transaction', 'customrecord_foo')."
+                },
+                fieldId: {
+                  type: "string",
+                  description: "The column ID to sample values for (e.g. 'status', 'custrecord_ctkc_enrichment_status')."
+                }
+              },
+              required: ["tableName", "fieldId"]
+            }
           }
         ]
       };
@@ -497,6 +571,8 @@ async function handleRequest({ requestId, method, params }) {
       if (name === "ping") {
         const text = args.message ? `pong: ${args.message}` : "pong";
         result = { content: [{ type: "text", text }] };
+      } else if (name.startsWith("suiteql_")) {
+        result = await handleSuiteQLTool(name, args);
       } else {
         throw new Error(`Unknown tool: ${name}`);
       }
@@ -508,4 +584,170 @@ async function handleRequest({ requestId, method, params }) {
   } catch (err) {
     return { requestId, success: false, error: err.message };
   }
+}
+
+// -----------------------------
+// SuiteQL Tool Handler
+// -----------------------------
+async function handleSuiteQLTool(toolName, args) {
+  const actionMap = {
+    "suiteql_search_tables": "FETCH_SUITEQL_TABLES",
+    "suiteql_get_table_fields": "FETCH_SUITEQL_TABLE_DETAIL",
+    "suiteql_get_table_joins": "FETCH_SUITEQL_TABLE_DETAIL",
+    "suiteql_execute_query": "RUN_SUITEQL_QUERY",
+    "suiteql_discover_field_values": "RUN_SUITEQL_QUERY"
+  };
+
+  const action = actionMap[toolName];
+  if (!action) {
+    throw new Error(`Unknown SuiteQL tool: ${toolName}`);
+  }
+
+  // Get active NetSuite tab
+  const tab = await getActiveNetsuiteTab();
+  if (!tab) {
+    throw new Error("No active NetSuite tab found");
+  }
+
+  // Prepare payload based on tool
+  let payload = {};
+  if (toolName === "suiteql_search_tables") {
+    // No specific payload needed, the API returns all tables and we filter
+  } else if (toolName === "suiteql_get_table_fields" || toolName === "suiteql_get_table_joins") {
+    payload = { tableName: args.tableName };
+  } else if (toolName === "suiteql_execute_query") {
+    payload = { sql: args.sql, limit: 5 };
+  } else if (toolName === "suiteql_discover_field_values") {
+    const sql = `SELECT DISTINCT ${args.fieldId} FROM ${args.tableName} WHERE ${args.fieldId} IS NOT NULL AND ROWNUM <= 20`;
+    payload = { sql, limit: 20 };
+  }
+
+  // Send message to content script
+  const response = await sendMessageToTab(tab.id, {
+    action,
+    data: payload,
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message || "Failed to execute SuiteQL tool");
+  }
+
+  // Process response based on tool
+  let resultData = response.message;
+
+  if (toolName === "suiteql_search_tables") {
+    const data = resultData?.data ?? (Array.isArray(resultData) ? resultData : []);
+    const query = (args.query || "").toLowerCase();
+    const filtered = query
+      ? data.filter(t =>
+          t.id.toLowerCase().includes(query) ||
+          t.label.toLowerCase().includes(query)
+        )
+      : data;
+
+    resultData = {
+      total: data.length,
+      matched: filtered.length,
+      tables: filtered.slice(0, 50)
+    };
+  } else if (toolName === "suiteql_get_table_fields") {
+    const data = resultData?.data ?? resultData ?? {};
+    const fields = (data.fields ?? [])
+      .filter(f => f.isColumn)
+      .map(f => ({
+        id: f.id,
+        label: f.label,
+        dataType: f.dataType
+      }));
+
+    resultData = {
+      table: args.tableName,
+      fieldCount: fields.length,
+      fields
+    };
+  } else if (toolName === "suiteql_get_table_joins") {
+    const data = resultData?.data ?? resultData ?? {};
+    const joins = (data.joins ?? []).map(j => ({
+      id: j.id,
+      label: j.label,
+      joinType: j.joinType,
+      cardinality: j.cardinality,
+      targetTable: j.sourceTargetType?.id ?? null,
+      joinCondition: j.sourceTargetType?.joinPairs?.[0]?.label ?? null
+    }));
+
+    resultData = {
+      table: args.tableName,
+      joinCount: joins.length,
+      joins
+    };
+  } else if (toolName === "suiteql_execute_query") {
+    const payload = resultData?.results ?? resultData ?? [];
+    const results = Array.isArray(payload) ? payload : (payload.results ?? []);
+    const totalCount = Array.isArray(payload)
+      ? results.length
+      : (payload.totalCount ?? results.length);
+    const columns = results.length > 0 ? Object.keys(results[0]) : [];
+
+    resultData = {
+      success: true,
+      columns,
+      rowCount: results.length,
+      totalCount,
+      results,
+      note: totalCount > 5
+        ? `Showing 5 of ${totalCount} total rows (preview mode).`
+        : undefined
+    };
+  } else if (toolName === "suiteql_discover_field_values") {
+    const payload = resultData?.results ?? resultData ?? [];
+    const results = Array.isArray(payload) ? payload : (payload.results ?? []);
+    const values = results
+      .map(r => r[args.fieldId] ?? Object.values(r)[0])
+      .filter(v => v !== null && v !== undefined && v !== "");
+
+    resultData = {
+      success: true,
+      table: args.tableName,
+      field: args.fieldId,
+      sampleCount: values.length,
+      distinctValues: values
+    };
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(resultData, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// Tab Helpers
+// -----------------------------
+function getActiveNetsuiteTab() {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id || !tab.url?.includes("app.netsuite.com")) {
+        reject(new Error("No active NetSuite tab"));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function sendMessageToTab(tabId, message) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
 }

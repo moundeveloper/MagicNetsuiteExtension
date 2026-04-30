@@ -8,7 +8,7 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 
 // -----------------------------------------------
-// IMPORTANT FIX: write next to exe (pkg-safe)
+// LOG (pkg-safe)
 // -----------------------------------------------
 const LOG_FILE = path.join(process.cwd(), "host.log");
 
@@ -22,16 +22,12 @@ function log(...args) {
       "\n";
 
     fs.appendFileSync(LOG_FILE, line);
-  } catch (e) {
-    // NEVER crash MCP server because logging fails
-    process.stderr.write("[log-error] " + e.message + "\n");
-  }
+  } catch {}
 }
 
 // -----------------------------------------------
-// WebSocket server
+// WS SERVER
 // -----------------------------------------------
-
 const PORT_RANGE_START = 9700;
 const PORT_RANGE_END = 9720;
 
@@ -43,9 +39,7 @@ let pending = new Map();
 let idCounter = 0;
 
 wss.on("connection", (ws) => {
-  process.stderr.write("[host] Chrome extension connected\n");
   log("extension connected");
-
   extensionSocket = ws;
 
   ws.on("message", (data) => {
@@ -68,19 +62,17 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
-    process.stderr.write("[host] Chrome extension disconnected\n");
     log("extension disconnected");
     extensionSocket = null;
   });
 });
 
 // -----------------------------------------------
-// Port binding
+// PORT BIND
 // -----------------------------------------------
-
 function listenOnFreePort(port) {
   if (port > PORT_RANGE_END) {
-    log("no free port found");
+    log("no free port");
     process.exit(1);
   }
 
@@ -94,7 +86,6 @@ function listenOnFreePort(port) {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    process.stderr.write(`[host] listening ${port}\n`);
     log("listening", port);
   });
 }
@@ -102,13 +93,12 @@ function listenOnFreePort(port) {
 listenOnFreePort(PORT_RANGE_START);
 
 // -----------------------------------------------
-// Extension call
+// EXTENSION CALL (NON-BLOCKING SAFE)
 // -----------------------------------------------
-
 function callExtension(method, params) {
   return new Promise((resolve, reject) => {
     if (!extensionSocket) {
-      return reject(new Error("Chrome extension not connected"));
+      return reject(new Error("Extension not connected"));
     }
 
     const requestId = ++idCounter;
@@ -116,7 +106,7 @@ function callExtension(method, params) {
     const timer = setTimeout(() => {
       if (pending.has(requestId)) {
         pending.delete(requestId);
-        reject(new Error("timeout"));
+        reject(new Error("Extension timeout"));
       }
     }, 10000);
 
@@ -131,14 +121,16 @@ function callExtension(method, params) {
       }
     });
 
-    extensionSocket.send(JSON.stringify({ requestId, method, params }));
+    const payload = { requestId, method, params };
+    log("→ extension", payload);
+
+    extensionSocket.send(JSON.stringify(payload));
   });
 }
 
 // -----------------------------------------------
 // MCP STDIO
 // -----------------------------------------------
-
 process.stdin.setEncoding("utf8");
 let buffer = "";
 
@@ -164,22 +156,22 @@ process.stdin.on("data", (chunk) => {
 });
 
 // -----------------------------------------------
-// MCP HANDLER
+// MCP HANDLER (CRITICAL FIX)
 // -----------------------------------------------
-
 async function handleMcp(req) {
   const { id, method, params } = req;
 
   try {
     let result = null;
 
+    // -------------------------
+    // REQUIRED MCP METHODS
+    // -------------------------
     if (method === "initialize") {
       result = {
         protocolVersion: params.protocolVersion,
         capabilities: {
-          tools: {},
-          resources: {},
-          prompts: {}
+          tools: {}
         },
         serverInfo: {
           name: "chrome-extension-bridge",
@@ -188,7 +180,10 @@ async function handleMcp(req) {
       };
     } else if (method === "notifications/initialized") {
       return;
-    } else if (method === "tools/list") {
+    }
+
+    // ✅ CRITICAL: DO NOT WAIT FOR EXTENSION HERE
+    else if (method === "tools/list") {
       result = {
         tools: [
           {
@@ -200,24 +195,30 @@ async function handleMcp(req) {
                 message: { type: "string" }
               }
             }
+          },
+          {
+            name: "suiteql_execute_query",
+            description: "Execute SuiteQL query",
+            inputSchema: {
+              type: "object",
+              properties: {
+                sql: { type: "string" }
+              },
+              required: ["sql"]
+            }
           }
         ]
       };
-    } else if (method === "tools/call") {
-      const { name, arguments: args = {} } = params;
+    }
 
-      if (name === "ping") {
-        const text = args.message ? `pong: ${args.message}` : "pong";
-        result = { content: [{ type: "text", text }] };
-      } else {
-        throw new Error(`Unknown tool: ${name}`);
-      }
+    // ✅ ONLY HERE we depend on extension
+    else if (method === "tools/call") {
+      result = await callExtension("tools/call", params);
     } else if (method === "resources/list") {
       result = { resources: [] };
     } else if (method === "prompts/list") {
       result = { prompts: [] };
     } else {
-      log("ignored method", method);
       return;
     }
 
@@ -237,11 +238,7 @@ async function handleMcp(req) {
 }
 
 // -----------------------------------------------
-// EXIT
-// -----------------------------------------------
-
 process.on("SIGINT", () => process.exit(0));
 process.on("SIGTERM", () => process.exit(0));
 
-process.stderr.write("[host] started\n");
 log("host started");
