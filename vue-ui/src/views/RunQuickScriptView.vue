@@ -116,7 +116,7 @@
                 </div>
 
                 <Button
-                  v-if="serverStatus.components?.allReady"
+                 
                   size="small"
                   severity="danger"
                   @click="removeServerComponents"

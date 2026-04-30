@@ -288,3 +288,104 @@ function extractFileIdFromHtml(html, fileName) {
 
   return null;
 }
+
+window.deleteNetsuiteFile = async (N, { fileId, folderId }, csrfToken) => {
+  const accountId = window.getAccountId();
+
+  const url = `https://${accountId}.app.netsuite.com/app/common/media/mediaitem.nl`;
+
+  const fields = {
+    delete_media: "Delete",
+    folder: folderId,
+    description: "",
+    _multibtnstate_: "",
+    selectedtab: "",
+    nsapiPI: "",
+    nsapiSR: "",
+    nsapiVF: "",
+    nsapiFC: "",
+    nsapiPS: "",
+    nsapiVI: "",
+    nsapiVD: "",
+    nsapiPD: "",
+    nsapiVL: "",
+    nsapiRC: "",
+    nsapiLI: "",
+    nsapiLC: "",
+    nsapiCT: String(Date.now()),
+    nsbrowserenv: "istop=T",
+    type: "filecabinet",
+    id: fileId,
+    externalid: "",
+    customwhence: "",
+    entryformquerystring: `id=${fileId}&e=T`,
+    _csrf: csrfToken,
+    uploadrectype: "filecabinet",
+    package: "",
+    oldfolder: folderId,
+    caption: "",
+    storedisplaythumbnail: "",
+    sitedescription: "",
+    featureddescription: "",
+    submitted: "",
+    formdisplayview: "NONE",
+    _button: "",
+    sitecategoryfields:
+      "website\x01category_display\x01category\x01isdefault\x01categorydescription",
+    sitecategoryflags: "1\x018\x011\x010\x010",
+    sitecategoryfieldsets: "\x01\x01\x01\x01",
+    sitecategorytypes: "select\x01text\x01slaveselect\x01checkbox\x01text",
+    sitecategoryorigtypes: "\x01\x01\x01\x01",
+    sitecategoryparents:
+      "\x01sitecategory.website\x01sitecategory.website\x01\x01sitecategory.category",
+    sitecategorylabels:
+      "Site\x01Site Category\x01\x01Preferred Category\x01Description",
+    sitecategorydata: "",
+    nextsitecategoryidx: "1",
+    sitecategoryvalid: "T",
+    usernotesloaded: "F",
+    usernotesdotted: "F",
+    systemnotesloaded: "F",
+    systemnotesdotted: "F"
+  };
+
+  // Must use FormData to match original multipart/form-data encoding
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    formData.append(key, value);
+  }
+  // Empty file field (required by original request)
+  formData.append("mediafile", new Blob([]), "");
+
+  const { status } = await fetch(url, {
+    method: "POST",
+    mode: "cors",
+    credentials: "include",
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "accept-language": "it-IT,it;q=0.6",
+      "cache-control": "max-age=0",
+      priority: "u=0, i",
+      "sec-ch-ua": '"Brave";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
+      "sec-gpc": "1",
+      "upgrade-insecure-requests": "1"
+      // Note: content-type is intentionally omitted — the browser sets it
+      // automatically with the correct multipart boundary when using FormData
+    },
+    referrer: `${url}?id=${fileId}&e=T`,
+    body: formData
+  });
+
+  return status === 200 ? "success" : `failed (${status})`;
+};
+
+window.deleteFolder = async ({ record }, { folderId }) => {
+  record.delete({ id: folderId, type: record.Type.FOLDER });
+};

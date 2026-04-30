@@ -798,9 +798,6 @@ window.deleteNetsuiteScript = async (
     scriptId,
     scriptName = "Magic Netsuite Server",
     apiVersion = "2.1",
-    description = "Suitelet for Magic Netsuite extension server-side script execution",
-    ownerName = "Abdelmounaim Sabri",
-    ownerId = "56",
     defaultFunction = "onRequest"
   },
   csrfToken
@@ -817,9 +814,6 @@ window.deleteNetsuiteScript = async (
     scripttype: "SCRIPTLET",
     name: scriptName,
     apiversion: apiVersion,
-    description,
-    inpt_owner: ownerName,
-    owner: ownerId,
     _eml_nkey_: `${accountId}~56~3~N`,
     _multibtnstate_: "",
     selectedtab: "",

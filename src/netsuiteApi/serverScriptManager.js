@@ -602,99 +602,84 @@ window.executeServerScript = async (
  * @returns {Promise<{removed: string[]}>}
  */
 window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
-  const { query, record } = N;
-  const removed = [];
-
-  const [{ id: scriptId } = {}] = (
-    await query.runSuiteQL.promise({
-      query: `SELECT id FROM script WHERE scriptid = ?`,
-      params: [CONFIG.scriptId]
-    })
-  ).asMappedResults();
-
-  return await window.deleteNetsuiteScript(
-    N,
-    {
-      scriptId,
-      scriptName: "Magic Netsuite Server",
-      apiVersion: "2.1",
-      ownerName: "Abdelmounaim Sabri",
-      ownerId: "56",
-      defaultFunction: "onRequest"
-    },
-    csrfToken
-  );
-
   try {
-    // Find and delete deployments
-    const deployments = await query.runSuiteQL.promise({
-      query: `SELECT id FROM scriptdeployment WHERE script IN (SELECT id FROM script WHERE scriptid IN (?, ?))`,
-      params: [SUITELET_SCRIPT_ID, HANDLER_MODULE_SCRIPT_ID]
-    });
+    const { query, record } = N;
+    const removed = [];
 
-    const deploymentIds = deployments.asMappedResults();
-    for (const dep of deploymentIds) {
-      try {
-        record.delete({ type: "scriptdeployment", id: dep.id });
-        removed.push(`deployment_${dep.id}`);
-      } catch (e) {
-        console.warn("Failed to delete deployment", dep.id, e);
-      }
+    const [{ id: scriptId } = {}] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM script WHERE scriptid = ?`,
+        params: [CONFIG.scriptId]
+      })
+    ).asMappedResults();
+
+    if (scriptId) {
+      await window.deleteNetsuiteScript(
+        N,
+        {
+          scriptId,
+          scriptName: "Magic Netsuite Server",
+          apiVersion: "2.1",
+          defaultFunction: "onRequest"
+        },
+        csrfToken
+      );
     }
 
-    // Find and delete script records
-    const scripts = await query.runSuiteQL.promise({
-      query: `SELECT id, scriptid FROM script WHERE scriptid IN (?, ?)`,
-      params: [SUITELET_SCRIPT_ID, HANDLER_MODULE_SCRIPT_ID]
+    const [{ id: folderId } = {}] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
+        params: [CONFIG.FOLDER_NAME]
+      })
+    ).asMappedResults();
+
+    const [{ id: serverFileId } = {}] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM file WHERE folder = ? AND name = ?`,
+        params: [folderId, CONFIG.SERVER_FILE]
+      })
+    ).asMappedResults();
+
+    console.log("removing", {
+      folderId,
+      serverFileId
     });
 
-    const scriptRecords = scripts.asMappedResults();
-    for (const scr of scriptRecords) {
-      try {
-        record.delete({ type: "script", id: scr.id });
-        removed.push(scr.scriptid);
-      } catch (e) {
-        console.warn("Failed to delete script record", scr.scriptid, e);
-      }
+    if (serverFileId) {
+      await window.deleteNetsuiteFile(
+        N,
+        {
+          fileId: serverFileId,
+          folderId
+        },
+        csrfToken
+      );
     }
 
-    // Find and delete files
-    const files = await query.runSuiteQL.promise({
-      query: `SELECT file.id FROM file WHERE file.name IN (?, ?)`,
-      params: [`${SUITELET_SCRIPT_NAME}.js`, `${HANDLER_MODULE_NAME}.js`]
-    });
+    const [{ id: handlerFileId } = {}] = (
+      await query.runSuiteQL.promise({
+        query: `SELECT id FROM file WHERE folder = ? AND name = ?`,
+        params: [folderId, CONFIG.HANDLER_FILE]
+      })
+    ).asMappedResults();
 
-    const fileRecords = files.asMappedResults();
-    for (const f of fileRecords) {
-      try {
-        record.delete({ type: "file", id: f.id });
-        removed.push(`file_${f.id}`);
-      } catch (e) {
-        console.warn("Failed to delete file", f.id, e);
-      }
+    if (handlerFileId) {
+      await window.deleteNetsuiteFile(
+        N,
+        {
+          fileId: handlerFileId,
+          folderId
+        },
+        csrfToken
+      );
     }
 
-    // Find and delete folder
-    const folders = await query.runSuiteQL.promise({
-      query: `SELECT id FROM MediaItemFolder WHERE name = ?`,
-      params: [MAGIC_FOLDER_NAME]
-    });
-
-    const folderRecords = folders.asMappedResults();
-    for (const f of folderRecords) {
-      try {
-        record.delete({ type: "folder", id: f.id });
-        removed.push(`folder_${f.id}`);
-      } catch (e) {
-        console.warn("Failed to delete folder", f.id, e);
-      }
+    if (folderId) {
+      window.deleteFolder(N, { folderId });
     }
 
-    return { removed };
-  } catch (error) {
-    console.error("[removeMagicNetsuiteComponents]", error);
-    throw error;
-  }
+    return {};
+  } catch (error) {}
 };
 
 // ─── Helper Functions ──────────────────────────────────────────────────────────

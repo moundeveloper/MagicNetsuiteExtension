@@ -8,5 +8,6 @@ export const INJECTABLE_SCRIPTS = [
   "netsuiteApi/advancedPdfTemplates.js",
   "netsuiteApi/suiteQL.js",
   "netsuiteApi/netsuiteApi.js",
-  "netsuiteApi/serverScriptManager.js"
+  "netsuiteApi/serverScriptManager.js",
+  "globalUtils.js"
 ];

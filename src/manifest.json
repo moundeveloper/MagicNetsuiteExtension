@@ -66,7 +66,8 @@
         "content/utils/*.js",
         "content/ui/**/*.js",
         "content/keyboard/*.js",
-        "content/modules/*.js"
+        "content/modules/*.js",
+        "globalUtils.js"
       ],
       "matches": ["<all_urls>"]
     }
