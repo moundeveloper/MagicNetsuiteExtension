@@ -222,7 +222,7 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   // DEPLOYMENT
   // -------------------------
   if (!suiteletDeployed) {
-    const response = await window.createScriptDeployRecord(
+    const { deployUrl } = await window.createScriptDeployRecord(
       N,
       {
         name: CONFIG.SUITELET_DEPLOYMENT_NAME,
@@ -235,161 +235,32 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
       },
       csrfToken
     );
+
+    mutation.deployUrl = deployUrl;
+  }
+
+  // generate handler for user
+  const isUpdated = await updateUserHandler(
+    N,
+    mutation.handlerFileId,
+    mutation.folderId,
+    userId,
+    code
+  );
+
+  if (isUpdated) {
+    // Execute server-side script
+    window.executeServerScript(N, {
+      suiteletScriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
+      deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
+      userId
+    });
   }
 
   return {
     success: true,
     mutation // optional but VERY useful for debugging / chaining
   };
-};
-/**
- * Get or create the handler module file
- * @param {object} N - NetSuite modules
- * @param {string} folderId - Target folder ID
- * @returns {Promise<{fileId: string|null}>}
- */
-window.getOrCreateHandlerModule = async (N, folderId) => {
-  const { query } = N;
-
-  try {
-    // Check if handler module file already exists
-    const files = (
-      await query.runSuiteQL.promise({
-        query: `SELECT file.id, file.name FROM file WHERE file.name = ?`,
-        params: [`${HANDLER_MODULE_NAME}.js`]
-      })
-    ).asMappedResults();
-
-    if (files.length > 0) {
-      return { fileId: files[0].id };
-    }
-
-    // Upload the handler module file
-    const initialContent = buildHandlerModuleContent({});
-    const uploadResult = await window.uploadFile(
-      N,
-      {
-        fileName: `${HANDLER_MODULE_NAME}.js`,
-        fileContent: initialContent,
-        folderId
-      },
-      document.querySelector('input[name="_csrf"]')?.value
-    );
-
-    if (!uploadResult.uploaded.length) {
-      throw new Error("Failed to upload handler module file");
-    }
-
-    return { fileId: uploadResult.uploaded[0].fileId };
-  } catch (error) {
-    console.error("[getOrCreateHandlerModule]", error);
-    throw error;
-  }
-};
-
-/**
- * Get or create the suitelet script
- * @param {object} N - NetSuite modules
- * @param {string} folderId - Target folder ID
- * @param {string} handlerFileId - Handler module file ID (for dependencies)
- * @returns {Promise<{fileId: string|null, scriptRecordId: string|null, deploymentId: string|null}>}
- */
-window.getOrCreateSuitelet = async (N, folderId, handlerScriptId) => {
-  const { query, url } = N;
-
-  try {
-    // Check if script record exists
-    const scripts = (
-      await query.runSuiteQL.promise({
-        query: `SELECT id, scriptid FROM script WHERE LOWER(scriptid) = LOWER(?)`,
-        params: [SUITELET_SCRIPT_ID]
-      })
-    ).asMappedResults();
-
-    console.log("[getOrCreateSuitelet] Script check result:", scripts);
-
-    if (scripts.length > 0) {
-      const scriptRecordId = scripts[0].id;
-
-      // Get the file ID associated with this script
-      const fileResult = await query.runSuiteQL.promise({
-        query: `SELECT script.scriptfile FROM script WHERE id = ?`,
-        params: [scriptRecordId]
-      });
-      const fileId = fileResult.asMappedResults()[0]?.scriptfile || null;
-
-      // Get deployment
-      const deployResult = await query.runSuiteQL.promise({
-        query: `SELECT id, scriptid FROM scriptdeployment WHERE script = ?`,
-        params: [scriptRecordId]
-      });
-
-      const deployments = deployResult.asMappedResults();
-      const deploymentId =
-        deployments.length > 0 ? deployments[0].scriptid : null;
-
-      return {
-        fileId,
-        scriptRecordId,
-        deploymentId
-      };
-    }
-
-    // Need to create - first upload the file
-    const suiteletContent = buildSuiteletContent();
-    const uploadResult = await window.uploadFile(
-      N,
-      {
-        fileName: `${SUITELET_SCRIPT_NAME}.js`,
-        fileContent: suiteletContent,
-        folderId
-      },
-      document.querySelector('input[name="_csrf"]')?.value
-    );
-
-    if (!uploadResult.uploaded.length) {
-      throw new Error("Failed to upload suitelet file");
-    }
-
-    const fileId = uploadResult.uploaded[0].fileId;
-
-    // Create script record with dependency on handler module
-    const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
-    const { scriptRecordId } = await window.createScriptRecord(
-      N,
-      {
-        name: "Magic Netsuite Server",
-        scriptId: SUITELET_SCRIPT_ID,
-        fileId,
-        scriptType: "SCRIPTLET",
-        description:
-          "Suitelet for Magic Netsuite extension server-side script execution",
-        apiVersion: "2.1"
-      },
-      csrfToken
-    );
-
-    if (!scriptRecordId) {
-      throw new Error("Failed to create suitelet script record");
-    }
-
-    // Create deployment
-    const deployment = await window.createScriptDeployment(
-      N,
-      scriptRecordId,
-      "customdeploy_magic_netsuite_server",
-      "Magic Netsuite Server Deployment"
-    );
-
-    return {
-      fileId,
-      scriptRecordId,
-      deploymentId: deployment?.deploymentId || null
-    };
-  } catch (error) {
-    console.error("[getOrCreateSuitelet]", error);
-    throw error;
-  }
 };
 
 /**
@@ -466,88 +337,93 @@ window.createScriptDeployment = async (
  * @param {string} code - User's script code
  * @returns {Promise<boolean>}
  */
-window.updateUserHandler = async (N, folderId, userId, code) => {
-  const { query } = N;
-
+const updateUserHandler = async (N, handlerFileId, folderId, userId, code) => {
   try {
-    // Find the handler module file
-    const sql = `
-      SELECT file.id, file.name, file.url
-      FROM file
-      INNER JOIN script ON script.scriptfile = file.id
-      WHERE script.scriptid = ?
-    `;
-
-    const resultSet = await query.runSuiteQL.promise({
-      query: sql,
-      params: [HANDLER_MODULE_SCRIPT_ID]
+    const [{ fileContent } = {}] = await window.getFilesContent(N, {
+      fileIds: [handlerFileId]
     });
 
-    const results = resultSet.asMappedResults();
-
-    if (!results.length) {
-      throw new Error("Handler module file not found");
-    }
-
-    const fileId = results[0].id;
-    const domain = N.url.resolveDomain({
-      hostType: N.url.HostType.APPLICATION
-    });
-    const fileUrl = `https://${domain}${results[0].url}`;
-
-    // Fetch current content
-    const response = await fetch(fileUrl, { credentials: "include" });
-    if (!response.ok) {
-      throw new Error("Failed to fetch handler module content");
-    }
-
-    let currentContent = await response.text();
-
-    // Build the new handler
-    const handlerName = `handle_${userId}`;
+    let currentContent = fileContent;
     const newHandler = buildUserHandler(userId, code);
+    // newHandler should be the full "userId: () => { ... }" string
 
-    // Check if handler already exists
-    const handlerRegex = new RegExp(
-      `\\b${handlerName}\\s*:\\s*\\(?\\)?\\s*=>\\s*{`
+    // Find ALL occurrences of this handler key and remove duplicates
+    const escapedId = userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const startRegex = new RegExp(
+      `${escapedId}\\s*:\\s*(?:async\\s*)?\\(?\\)?\\s*=>\\s*{`
     );
 
-    if (handlerRegex.test(currentContent)) {
-      // Replace existing handler
-      const replaceRegex = new RegExp(
-        `(${handlerName}\\s*:\\s*\\(?\\)?\\s*=>\\s*{)[^}]*(})`,
-        "m"
+    const findHandlerBounds = (content, fromIndex = 0) => {
+      const match = startRegex.exec(content.slice(fromIndex));
+      if (!match) return null;
+
+      const startIndex = fromIndex + match.index;
+      const braceOpenIndex = content.indexOf(
+        "{",
+        startIndex + match[0].length - 1
       );
+
+      let depth = 0;
+      let endIndex = -1;
+      for (let i = braceOpenIndex; i < content.length; i++) {
+        if (content[i] === "{") depth++;
+        else if (content[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            endIndex = i;
+            break;
+          }
+        }
+      }
+
+      if (endIndex === -1) return null;
+
+      // Also consume trailing comma + whitespace if present
+      let afterEnd = endIndex + 1;
+      while (afterEnd < content.length && /[\s,]/.test(content[afterEnd])) {
+        afterEnd++;
+      }
+
+      return { startIndex, endIndex: afterEnd - 1 };
+    };
+
+    // Remove ALL existing occurrences of this handler
+    let bounds;
+    while ((bounds = findHandlerBounds(currentContent)) !== null) {
+      currentContent =
+        currentContent.slice(0, bounds.startIndex) +
+        currentContent.slice(bounds.endIndex + 1);
+    }
+
+    // Now insert the single clean version before the comment marker
+    if (
+      currentContent.includes("// User handlers will be added here dynamically")
+    ) {
       currentContent = currentContent.replace(
-        replaceRegex,
-        `$1\n    ${newHandler}\n  $2`
+        /(\s*\/\/ User handlers will be added here dynamically)/,
+        `\n    ${newHandler},\n$1`
       );
     } else {
-      // Add new handler - find the handlers object and add to it
+      // Fallback: insert into return block
       currentContent = currentContent.replace(
         /(const handlers\s*=\s*\(\)\s*=>\s*{\s*return\s*{)/,
         `$1\n    ${newHandler},`
       );
     }
 
-    // Upload updated file
-    const uploadResult = await window.uploadFile(
-      N,
-      {
-        fileName: `${HANDLER_MODULE_NAME}.js`,
-        fileContent: currentContent,
-        folderId
-      },
-      document.querySelector('input[name="_csrf"]')?.value
-    );
+    const { isUpdated } = await window.updateNetsuiteFileContent(N, {
+      fileId: handlerFileId,
+      fileContent: currentContent,
+      fileName: CONFIG.HANDLER_FILE,
+      folderId
+    });
 
-    return uploadResult.uploaded.length > 0;
+    return isUpdated;
   } catch (error) {
     console.error("[updateUserHandler]", error);
     throw error;
   }
 };
-
 /**
  * Execute server-side script via suitelet
  * @param {object} N - NetSuite modules
@@ -558,18 +434,18 @@ window.updateUserHandler = async (N, folderId, userId, code) => {
  */
 window.executeServerScript = async (
   N,
-  suiteletScriptId,
-  deploymentId,
-  userId
+  { suiteletScriptId, deploymentId, userId, deployUrl }
 ) => {
   const { url } = N;
 
   try {
-    const suiteletUrl = url.resolveScript({
-      scriptId: suiteletScriptId,
-      deploymentId: deploymentId,
-      returnExternalUrl: false
-    });
+    const suiteletUrl =
+      deployUrl ||
+      url.resolveScript({
+        scriptId: suiteletScriptId,
+        deploymentId: deploymentId,
+        returnExternalUrl: false
+      });
 
     const fullUrl = `https://${url.resolveDomain({
       hostType: url.HostType.APPLICATION
@@ -587,6 +463,10 @@ window.executeServerScript = async (
     if (!response.ok) {
       throw new Error(`Server script failed: ${response.status}`);
     }
+
+    console.log(
+      `[executeServerScript] Server script executed successfully: ${await response.text()}`
+    );
 
     const result = await response.json();
     return result;
@@ -624,6 +504,8 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
         },
         csrfToken
       );
+
+      removed.push("Script");
     }
 
     const [{ id: folderId } = {}] = (
@@ -654,6 +536,8 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
         },
         csrfToken
       );
+
+      removed.push("Server File");
     }
 
     const [{ id: handlerFileId } = {}] = (
@@ -672,13 +556,17 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
         },
         csrfToken
       );
+
+      removed.push("Handler File");
     }
 
     if (folderId) {
       window.deleteFolder(N, { folderId });
+
+      removed.push("Folder");
     }
 
-    return {};
+    return removed;
   } catch (error) {}
 };
 

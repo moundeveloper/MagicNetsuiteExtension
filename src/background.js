@@ -333,3 +333,179 @@ chrome.webRequest.onCompleted.addListener(
 
 let activeTabId = null;
  */
+
+/* MCP SERVER */
+// background.js — Chrome Extension Service Worker
+// Polls ports 9700–9720 to find whichever one host.js bound to.
+const PORT_RANGE_START = 9700;
+const PORT_RANGE_END = 9720;
+
+let ws = null;
+let isConnecting = false;
+
+// -----------------------------
+// Entry point
+// -----------------------------
+findAndConnect();
+
+// -----------------------------
+// Connection loop
+// -----------------------------
+async function findAndConnect() {
+  if (isConnecting) return;
+  isConnecting = true;
+
+  // Try preferred port first (fast path)
+  const preferred = await tryConnect(9700);
+  if (preferred) {
+    isConnecting = false;
+    return;
+  }
+
+  // Fallback scan
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    const connected = await tryConnect(port);
+    if (connected) {
+      isConnecting = false;
+      return;
+    }
+  }
+
+  console.warn(
+    `[MCP Bridge] No host found on ports ${PORT_RANGE_START}–${PORT_RANGE_END}, retrying in 3s`
+  );
+
+  isConnecting = false;
+  setTimeout(findAndConnect, 3000);
+}
+
+// -----------------------------
+// Try single port
+// -----------------------------
+function tryConnect(port) {
+  return new Promise((resolve) => {
+    const url = `ws://127.0.0.1:${port}`;
+    const sock = new WebSocket(url);
+
+    let settled = false;
+
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        sock.close();
+      } catch {}
+      resolve(false);
+    }, 2000);
+
+    sock.onopen = () => {
+      if (settled) return;
+      settled = true;
+
+      clearTimeout(timeout);
+
+      console.log(`[MCP Bridge] connected on port ${port}`);
+
+      ws = sock;
+      attachHandlers(sock, port);
+
+      resolve(true);
+    };
+
+    sock.onerror = () => {
+      if (settled) return;
+      settled = true;
+
+      clearTimeout(timeout);
+      resolve(false);
+    };
+
+    sock.onclose = () => {
+      if (settled) return;
+      settled = true;
+
+      clearTimeout(timeout);
+      resolve(false);
+    };
+  });
+}
+
+// -----------------------------
+// Message handling
+// -----------------------------
+function attachHandlers(sock, port) {
+  sock.onmessage = async (event) => {
+    let msg;
+
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    console.log("[MCP Bridge] ←", msg);
+
+    const response = await handleRequest(msg);
+
+    console.log("[MCP Bridge] →", response);
+
+    sock.send(JSON.stringify(response));
+  };
+
+  sock.onclose = () => {
+    console.warn(`[MCP Bridge] disconnected from port ${port}`);
+
+    ws = null;
+
+    // retry with backoff
+    setTimeout(findAndConnect, 2000);
+  };
+
+  sock.onerror = (err) => {
+    console.error("[MCP Bridge] error", err);
+  };
+}
+
+// -----------------------------
+// MCP tool handling
+// -----------------------------
+async function handleRequest({ requestId, method, params }) {
+  try {
+    let result;
+
+    if (method === "tools/list") {
+      result = {
+        tools: [
+          {
+            name: "ping",
+            description: "Ping the Chrome extension. Returns pong.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                message: {
+                  type: "string",
+                  description: "Optional message to echo back"
+                }
+              }
+            }
+          }
+        ]
+      };
+    } else if (method === "tools/call") {
+      const { name, arguments: args = {} } = params;
+
+      if (name === "ping") {
+        const text = args.message ? `pong: ${args.message}` : "pong";
+        result = { content: [{ type: "text", text }] };
+      } else {
+        throw new Error(`Unknown tool: ${name}`);
+      }
+    } else {
+      throw new Error(`Unknown method: ${method}`);
+    }
+
+    return { requestId, success: true, result };
+  } catch (err) {
+    return { requestId, success: false, error: err.message };
+  }
+}

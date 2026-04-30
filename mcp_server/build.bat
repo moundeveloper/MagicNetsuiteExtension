@@ -1,0 +1,1 @@
+call pkg host.js -t node18-win-x64
