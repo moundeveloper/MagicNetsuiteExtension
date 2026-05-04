@@ -23,6 +23,10 @@ export interface ShortcutsSettings {
   compactionMode: CompactionMode;
   /** Token threshold at which context compaction triggers */
   compactionThreshold: number;
+  /** Preferred NetSuite account ID for MCP server tab selection (e.g. "9937091_SB1") */
+  mcpPreferredAccount: string;
+  /** Whether the MCP server WebSocket bridge is enabled */
+  mcpEnabled: boolean;
 }
 
 const defaultSettings: ShortcutsSettings = {
@@ -39,7 +43,9 @@ const defaultSettings: ShortcutsSettings = {
   githubToken: "",
   copilotModel: "gpt-4o",
   compactionMode: "auto",
-  compactionThreshold: 80000
+  compactionThreshold: 80000,
+  mcpPreferredAccount: "",
+  mcpEnabled: true
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -69,6 +75,8 @@ export function useSettings() {
         settings.copilotModel = stored.copilotModel || defaultSettings.copilotModel;
         settings.compactionMode = stored.compactionMode ?? defaultSettings.compactionMode;
         settings.compactionThreshold = stored.compactionThreshold ?? defaultSettings.compactionThreshold;
+        settings.mcpPreferredAccount = stored.mcpPreferredAccount ?? defaultSettings.mcpPreferredAccount;
+        settings.mcpEnabled = stored.mcpEnabled ?? defaultSettings.mcpEnabled;
       }
       isLoaded = true;
       isSettingsLoaded.value = true;

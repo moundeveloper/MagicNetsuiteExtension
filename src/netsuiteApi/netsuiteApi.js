@@ -322,5 +322,68 @@ const handlers = {
   GET_SUITEQL_COUNT: async ({ modules, payload: { sql } }) => {
     console.log("Get SuiteQL Count action received");
     return window.getSuiteQLCount(modules, sql);
+  },
+  FETCH_ACCOUNTS: async () => {
+    console.log("Fetch Accounts action received");
+    try {
+      const currentHost = window.location.hostname;
+      const myRolesUrl = `${window.location.protocol}//${currentHost}/app/login/secure/myroles/myroles.nl?whence=`;
+      const response = await fetch(myRolesUrl, {
+        headers: {
+          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+          "accept-language": "en-US,en;q=0.9",
+          "cache-control": "max-age=0",
+          "sec-fetch-dest": "document",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-site": "same-origin",
+          "upgrade-insecure-requests": "1"
+        },
+        credentials: "include"
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const scripts = doc.querySelectorAll("script");
+      for (const script of scripts) {
+        const content = script.textContent;
+        if (!content.includes("allAccounts")) continue;
+        try {
+          const data = JSON.parse(content);
+          const findContainer = (obj) => {
+            if (!obj || typeof obj !== "object") return null;
+            for (const key of Object.keys(obj)) {
+              if (key.trim() === "allAccounts" && Array.isArray(obj[key])) return obj;
+            }
+            for (const key of Object.keys(obj)) {
+              const result = findContainer(obj[key]);
+              if (result) return result;
+            }
+            return null;
+          };
+          const container = findContainer(data);
+          if (!container) continue;
+          const getVal = (obj, key) => obj[key] || obj[` ${key}`] || obj[`  ${key}`];
+          const allAccounts = getVal(container, "allAccounts") || [];
+          const allRoles = getVal(container, "allRoles") || [];
+          return {
+            accounts: allAccounts.map((acc) => ({
+              id: (getVal(acc, "accountId") || "").trim(),
+              name: (getVal(acc, "accountName") || "").trim(),
+              type: (getVal(acc, "accountType") || "").trim()
+            })),
+            roles: allRoles.map((r) => ({
+              id: r?.entityRoleId?.rol || r?.["entityRoleId"]?.["rol"],
+              name: (getVal(r, "roleName") || "").trim()
+            }))
+          };
+        } catch (e) {
+          // JSON parse failed for this script tag, continue
+        }
+      }
+      return { accounts: [], roles: [] };
+    } catch (error) {
+      console.error("Fetch accounts failed:", error);
+      return { accounts: [], roles: [], error: error.message };
+    }
   }
 };

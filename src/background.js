@@ -125,7 +125,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     OPEN_MAIN_SETUP: createTabOnMainSetup,
     OPEN_NON_ACTIVE_TAB: openNonActiveTab,
     UI_INJECTED: isUIInjectAllowed,
-    UI_SOURCE: setUISource
+    UI_SOURCE: setUISource,
+    MCP_CONNECT: handleMcpConnect,
+    MCP_DISCONNECT: handleMcpDisconnect,
+    MCP_STATUS: handleMcpStatus
   };
 
   const messageHandler = messageMap[message.type];
@@ -191,6 +194,27 @@ const setUISource = ({ message }) => {
   uiSource = message.source;
 
   return true; // True to allow Asyncronous message
+};
+
+// MCP MESSAGE HANDLERS
+const handleMcpConnect = ({ sendResponse }) => {
+  mcpConnect().then(() => {
+    sendResponse({ status: ws ? "connected" : "disconnected" });
+  });
+  return true; // async
+};
+
+const handleMcpDisconnect = ({ sendResponse }) => {
+  mcpDisconnect();
+  sendResponse({ status: "disconnected" });
+  return true;
+};
+
+const handleMcpStatus = ({ sendResponse }) => {
+  sendResponse({
+    status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected"
+  });
+  return true;
 };
 
 // TAB LISTENERS
@@ -339,44 +363,107 @@ let activeTabId = null;
 // Polls ports 9700–9720 to find whichever one host.js bound to.
 const PORT_RANGE_START = 9700;
 const PORT_RANGE_END = 9720;
+const MCP_RECONNECT_ALARM = "mcp-reconnect";
 
 let ws = null;
 let isConnecting = false;
 
 // -----------------------------
-// Entry point
+// Entry point: check settings and connect if enabled
 // -----------------------------
-findAndConnect();
+(async () => {
+  const mcpEnabled = await isMcpEnabled();
+  if (mcpEnabled) {
+    mcpConnect();
+  }
+})();
+
+// Also handle alarm-based reconnection (survives service worker sleep)
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === MCP_RECONNECT_ALARM) {
+    console.log("[MCP Bridge] Alarm-based reconnect check");
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      mcpConnect();
+    }
+  }
+});
+
+// -----------------------------
+// MCP enabled check
+// -----------------------------
+async function isMcpEnabled() {
+  try {
+    const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    return result?.magic_netsuite_settings?.mcpEnabled !== false; // default true
+  } catch {
+    return true;
+  }
+}
+
+// -----------------------------
+// Public connect/disconnect
+// -----------------------------
+async function mcpConnect() {
+  // Clear any existing reconnect alarm
+  await chrome.alarms.clear(MCP_RECONNECT_ALARM);
+
+  await findAndConnect();
+
+  // Set up periodic reconnect alarm (every 30s) to survive service worker sleep
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    chrome.alarms.create(MCP_RECONNECT_ALARM, { periodInMinutes: 0.5 });
+  }
+}
+
+function mcpDisconnect() {
+  // Clear reconnect alarm
+  chrome.alarms.clear(MCP_RECONNECT_ALARM);
+
+  // Close existing connection
+  if (ws) {
+    try {
+      ws.close();
+    } catch {}
+    ws = null;
+  }
+  isConnecting = false;
+  console.log("[MCP Bridge] Manually disconnected");
+}
 
 // -----------------------------
 // Connection loop
 // -----------------------------
 async function findAndConnect() {
   if (isConnecting) return;
+  if (ws && ws.readyState === WebSocket.OPEN) return; // already connected
   isConnecting = true;
 
   // Try preferred port first (fast path)
   const preferred = await tryConnect(9700);
   if (preferred) {
     isConnecting = false;
+    // Connected — clear the reconnect alarm
+    await chrome.alarms.clear(MCP_RECONNECT_ALARM);
     return;
   }
 
   // Fallback scan
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+  for (let port = PORT_RANGE_START + 1; port <= PORT_RANGE_END; port++) {
     const connected = await tryConnect(port);
     if (connected) {
       isConnecting = false;
+      await chrome.alarms.clear(MCP_RECONNECT_ALARM);
       return;
     }
   }
 
   console.warn(
-    `[MCP Bridge] No host found on ports ${PORT_RANGE_START}–${PORT_RANGE_END}, retrying in 3s`
+    `[MCP Bridge] No host found on ports ${PORT_RANGE_START}–${PORT_RANGE_END}`
   );
 
   isConnecting = false;
-  setTimeout(findAndConnect, 3000);
+  // Ensure alarm is set for retry
+  chrome.alarms.create(MCP_RECONNECT_ALARM, { periodInMinutes: 0.5 });
 }
 
 // -----------------------------
@@ -457,8 +544,11 @@ function attachHandlers(sock, port) {
 
     ws = null;
 
-    // retry with backoff
-    setTimeout(findAndConnect, 2000);
+    // Use alarm-based reconnect (survives service worker sleep)
+    chrome.alarms.create(MCP_RECONNECT_ALARM, {
+      delayInMinutes: 0.05, // ~3 seconds initial delay
+      periodInMinutes: 0.5   // then every 30 seconds
+    });
   };
 
   sock.onerror = (err) => {
@@ -603,10 +693,10 @@ async function handleSuiteQLTool(toolName, args) {
     throw new Error(`Unknown SuiteQL tool: ${toolName}`);
   }
 
-  // Get active NetSuite tab
-  const tab = await getActiveNetsuiteTab();
+  // Get preferred NetSuite tab (account-aware for MCP)
+  const tab = await getPreferredNetsuiteTab();
   if (!tab) {
-    throw new Error("No active NetSuite tab found");
+    throw new Error("No suitable NetSuite tab found");
   }
 
   // Prepare payload based on tool
@@ -727,6 +817,96 @@ async function handleSuiteQLTool(toolName, args) {
 // -----------------------------
 // Tab Helpers
 // -----------------------------
+
+/**
+ * Extracts the NetSuite account ID from a tab URL.
+ * E.g., "https://9937091-sb1.app.netsuite.com/..." -> "9937091_SB1"
+ * The subdomain portion is uppercased and hyphens are replaced with underscores.
+ */
+function extractAccountIdFromUrl(url) {
+  try {
+    const hostname = new URL(url).hostname; // e.g. "9937091-sb1.app.netsuite.com"
+    const parts = hostname.split(".");
+    if (parts.length < 3) return null;
+    const subdomain = parts[0]; // e.g. "9937091-sb1"
+    return subdomain.toUpperCase().replace(/-/g, "_"); // e.g. "9937091_SB1"
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Discovers all NetSuite tabs with app.netsuite.com, checks which ones have
+ * the content script connected (CHECK_CONNECTION), and returns the first tab
+ * that matches the preferred account from settings.
+ *
+ * Fallback behavior:
+ *  - If no preferredAccount is set -> falls back to active tab (legacy behavior)
+ *  - If preferredAccount is set but no matching connected tab -> throws error
+ */
+async function getPreferredNetsuiteTab() {
+  // Read preferred account from settings
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const preferredAccount = storageResult?.magic_netsuite_settings?.mcpPreferredAccount || "";
+
+  // If no preference is set, fall back to the active tab (legacy behavior)
+  if (!preferredAccount) {
+    return getActiveNetsuiteTab();
+  }
+
+  // Query ALL tabs (not just active)
+  const allTabs = await chrome.tabs.query({});
+  const netsuiteTabs = allTabs.filter(
+    (tab) => tab.url && tab.url.includes("app.netsuite.com") && tab.id
+  );
+
+  if (netsuiteTabs.length === 0) {
+    throw new Error("No NetSuite tabs found in any window");
+  }
+
+  // Check connection status for each NS tab in parallel
+  const connectionChecks = netsuiteTabs.map(async (tab) => {
+    try {
+      const response = await sendMessageToTab(tab.id, {
+        action: "CHECK_CONNECTION",
+        data: {},
+        mode: "normal"
+      });
+      return {
+        tab,
+        connected: response?.message === "connected",
+        accountId: extractAccountIdFromUrl(tab.url)
+      };
+    } catch {
+      return { tab, connected: false, accountId: null };
+    }
+  });
+
+  const results = await Promise.all(connectionChecks);
+  const connectedTabs = results.filter((r) => r.connected);
+
+  if (connectedTabs.length === 0) {
+    throw new Error(
+      "No connected NetSuite tabs found. Open a NetSuite page and ensure the extension is loaded."
+    );
+  }
+
+  // Find the first tab whose account ID matches the preferred account
+  const matchingTab = connectedTabs.find((r) => r.accountId === preferredAccount);
+
+  if (!matchingTab) {
+    const availableAccounts = connectedTabs
+      .map((r) => r.accountId)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      `No connected tab found for account "${preferredAccount}". Available connected accounts: ${availableAccounts || "none detected"}`
+    );
+  }
+
+  return matchingTab.tab;
+}
+
 function getActiveNetsuiteTab() {
   return new Promise((resolve, reject) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

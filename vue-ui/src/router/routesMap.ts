@@ -18,6 +18,7 @@ import AiAssistantView from "../views/AiAssistantView.vue";
 import SkillsView from "../views/SkillsView.vue";
 import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
 import SuiteQLView from "../views/SuiteQLView.vue";
+import McpServerView from "../views/McpServerView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -226,6 +227,14 @@ export const routes: FullRoute[] = [
     component: SuiteQLView,
     status: RouteStatus.release,
     breadcrumb: "SuiteQL Editor"
+  },
+  {
+    route: "/mcp-server",
+    name: "MCP Server",
+    icon: "pi pi-link",
+    component: McpServerView,
+    status: RouteStatus.release,
+    breadcrumb: "MCP Server"
   }
 ];
 
