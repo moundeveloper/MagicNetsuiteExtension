@@ -439,6 +439,32 @@ const saveCurrentSession = async () => {
 const deleteSession = async (sessionId: string) => {
   chatSessions.value = chatSessions.value.filter((s) => s.id !== sessionId);
   await deleteChatSession(sessionId);
+
+  // If we deleted the active chat, switch to another or start fresh
+  if (sessionId === activeChatId.value) {
+    if (chatSessions.value.length > 0) {
+      const next = chatSessions.value[0]!;
+      activeChatId.value = next.id;
+      messages.value = next.messages.map((m) => ({ ...m }));
+      agent.setHistory(next.agentHistory ?? []);
+      runningTools.value = [];
+      toolMessageToAssistant.value.clear();
+      let lastAssistantId = 0;
+      for (const m of messages.value) {
+        if (m.role === "assistant") lastAssistantId = m.id;
+        if (m.role === "tool" && lastAssistantId) {
+          toolMessageToAssistant.value.set(m.id, lastAssistantId);
+        }
+      }
+    } else {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      activeChatId.value = id;
+      messages.value = [];
+      agent.clearHistory();
+      runningTools.value = [];
+      toolMessageToAssistant.value.clear();
+    }
+  }
 };
 
 const filteredSessions = computed(() => {

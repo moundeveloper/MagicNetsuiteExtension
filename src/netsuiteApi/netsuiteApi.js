@@ -326,12 +326,22 @@ const handlers = {
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {
-      const currentHost = window.location.hostname;
-      const myRolesUrl = `${window.location.protocol}//${currentHost}/app/login/secure/myroles/myroles.nl?whence=`;
-      const response = await fetch(myRolesUrl, {
+      // Extract account ID from current domain (e.g., "1964539" from "1964539.app.netsuite.com")
+      const getCurrentAccountIdFromDomain = () => {
+        const hostname = window.location.hostname;
+        const parts = hostname.split(".");
+        // Expected format: [accountId].app.netsuite.com
+        if (parts.length >= 4 && parts[1] === "app" && parts[2] === "netsuite" && parts[3] === "com") {
+          return parts[0];
+        }
+        return parts[0]; // Fallback to first segment
+      };
+      const accountId = getCurrentAccountIdFromDomain();
+      const url = `https://${accountId}.app.netsuite.com/app/login/secure/myroles/myroles.nl?whence=`;
+      const response = await fetch(url, {
         headers: {
-          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-          "accept-language": "en-US,en;q=0.9",
+          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "accept-language": "it-IT,it;q=0.6",
           "cache-control": "max-age=0",
           "sec-fetch-dest": "document",
           "sec-fetch-mode": "navigate",
@@ -363,14 +373,31 @@ const handlers = {
           const container = findContainer(data);
           if (!container) continue;
           const getVal = (obj, key) => obj[key] || obj[` ${key}`] || obj[`  ${key}`];
+
+          const currentAccount = container["account"] || container[" account"];
           const allAccounts = getVal(container, "allAccounts") || [];
           const allRoles = getVal(container, "allRoles") || [];
-          return {
-            accounts: allAccounts.map((acc) => ({
+          const accounts = [];
+          // Add current account first
+          if (currentAccount) {
+            accounts.push({
+              id: (getVal(currentAccount, "accountId") || "").trim(),
+              name: (getVal(currentAccount, "accountName") || "").trim(),
+              type: (getVal(currentAccount, "accountType") || "").trim(),
+              isCurrent: true
+            });
+          }
+          // Add all other accounts
+          allAccounts.forEach((acc) => {
+            accounts.push({
               id: (getVal(acc, "accountId") || "").trim(),
               name: (getVal(acc, "accountName") || "").trim(),
-              type: (getVal(acc, "accountType") || "").trim()
-            })),
+              type: (getVal(acc, "accountType") || "").trim(),
+              isCurrent: false
+            });
+          });
+          return {
+            accounts,
             roles: allRoles.map((r) => ({
               id: r?.entityRoleId?.rol || r?.["entityRoleId"]?.["rol"],
               name: (getVal(r, "roleName") || "").trim()

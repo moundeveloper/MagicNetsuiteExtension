@@ -113,6 +113,9 @@ const nordTheme = EditorView.theme(
     "&.cm-focused .cm-selectionBackground": {
       backgroundColor: "#4C566A !important",
     },
+    ".cm-content ::selection": {
+      backgroundColor: "#4C566A !important",
+    },
     ".cm-selectionMatch": {
       backgroundColor: "#3B4252",
       outline: "1px solid #4C566A",
@@ -421,5 +424,17 @@ defineExpose({ getValue, setValue, insertText, focus, getEditor });
 .suiteql-editor :deep(.cm-scroller) {
   height: 100%;
   overflow: auto;
+}
+
+.suiteql-editor :deep(.cm-selectionBackground) {
+  background-color: #4C566A !important;
+}
+
+.suiteql-editor :deep(.cm-focused .cm-selectionBackground) {
+  background-color: #4C566A !important;
+}
+
+.suiteql-editor :deep(.cm-content ::selection) {
+  background-color: #4C566A !important;
 }
 </style>

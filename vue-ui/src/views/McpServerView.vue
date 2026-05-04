@@ -5,6 +5,7 @@ import { callApi } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import Select from "primevue/select";
 import Button from "primevue/button";
+import MCard from "../components/universal/card/MCard.vue";
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -83,6 +84,7 @@ interface AccountInfo {
   id: string;
   name: string;
   type: string;
+  isCurrent: boolean;
 }
 
 interface RoleInfo {
@@ -126,7 +128,7 @@ const fetchAccounts = async () => {
 
 const accountOptions = () =>
   accounts.value.map((acc) => ({
-    label: `${acc.name} (${acc.id}) [${acc.type}]`,
+    label: `${acc.name} (${acc.id}) [${acc.type}]${acc.isCurrent ? " - Current" : ""}`,
     value: acc.id
   }));
 
@@ -180,10 +182,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div
-    :style="{ height: `${vhOffset}vh` }"
-    class="flex flex-col gap-4 overflow-y-auto p-2"
+  <MCard
+    outlined
+    elevated
+    flex
+    direction="column"
+    padding="0"
+    autoHeight
   >
+    <div
+      class="flex flex-col gap-4 overflow-y-auto p-2"
+      style="flex: 1; min-height: 0"
+    >
     <!-- MCP Connection Section -->
     <div class="mcp-section">
       <h2>MCP Server</h2>
@@ -344,12 +354,16 @@ onBeforeUnmount(() => {
           <span class="col-id">Account ID</span>
           <span class="col-name">Name</span>
           <span class="col-type">Type</span>
+          <span class="col-status">Status</span>
         </div>
         <div
           v-for="acc in accounts"
           :key="acc.id"
           class="accounts-row"
-          :class="{ active: acc.id === settings.mcpPreferredAccount }"
+          :class="{
+            active: acc.id === settings.mcpPreferredAccount,
+            current: acc.isCurrent
+          }"
         >
           <span class="col-id">
             <code>{{ acc.id }}</code>
@@ -360,10 +374,16 @@ onBeforeUnmount(() => {
               {{ acc.type }}
             </span>
           </span>
+          <span class="col-status">
+            <span v-if="acc.isCurrent" class="current-badge">
+              <i class="pi pi-check-circle" /> Logged in
+            </span>
+          </span>
         </div>
       </div>
     </div>
-  </div>
+    </div>
+  </MCard>
 </template>
 
 <style scoped>
@@ -586,9 +606,31 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.col-status {
+  flex: 0 0 90px;
+  text-align: right;
+}
+
 .col-id code {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.75rem;
+}
+
+.current-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--p-green-700);
+}
+
+.current-badge i {
+  font-size: 0.6rem;
+}
+
+.accounts-row.current {
+  background: var(--p-green-50);
 }
 
 .type-badge {
