@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onMounted, onBeforeUnmount } from "vue";
 import { useSettings } from "../states/settingsState";
 import { callApi } from "../utils/api";
 import { RequestRoutes } from "../types/request";
@@ -137,6 +137,11 @@ const accountOptions = () =>
 
 const mcpTools = [
   {
+    name: "suiteql_get_guide",
+    description:
+      "Returns the complete SuiteQL usage guide including syntax rules, the discovery workflow, and worked examples. Call this first before any SuiteQL work."
+  },
+  {
     name: "ping",
     description: "Ping the Chrome extension. Returns pong."
   },
@@ -167,17 +172,79 @@ const mcpTools = [
   }
 ];
 
+// ── MCP Usage Tracking ──
+
+interface UsageEntry {
+  tool: string;
+  timestamp: string;
+  success: boolean;
+  error: string | null;
+}
+
+interface ToolStats {
+  calls: number;
+  errors: number;
+}
+
+const usageLog = ref<UsageEntry[]>([]);
+const usageStats = ref<Record<string, ToolStats>>({});
+const usageFetching = ref(false);
+let usagePollTimer: ReturnType<typeof setInterval> | null = null;
+
+const totalCalls = computed(() => usageLog.value.length);
+const totalErrors = computed(() => usageLog.value.filter((e) => !e.success).length);
+
+const fetchUsage = async () => {
+  usageFetching.value = true;
+  try {
+    const resp = await new Promise<{ log: UsageEntry[]; stats: Record<string, ToolStats> }>(
+      (resolve) => {
+        chrome.runtime.sendMessage({ type: "MCP_USAGE" }, (r) => {
+          resolve(r ?? { log: [], stats: {} });
+        });
+      }
+    );
+    usageLog.value = resp.log ?? [];
+    usageStats.value = resp.stats ?? {};
+  } finally {
+    usageFetching.value = false;
+  }
+};
+
+const clearUsage = async () => {
+  await new Promise<void>((resolve) => {
+    chrome.runtime.sendMessage({ type: "MCP_USAGE_CLEAR" }, () => resolve());
+  });
+  usageLog.value = [];
+  usageStats.value = {};
+};
+
+const formatTime = (iso: string) => {
+  try {
+    return new Date(iso).toLocaleTimeString();
+  } catch {
+    return iso;
+  }
+};
+
 onMounted(() => {
   checkMcpStatus();
   fetchAccounts();
+  fetchUsage();
   // Poll status every 5s
   statusPollTimer = setInterval(checkMcpStatus, 5000);
+  // Poll usage every 10s
+  usagePollTimer = setInterval(fetchUsage, 10000);
 });
 
 onBeforeUnmount(() => {
   if (statusPollTimer) {
     clearInterval(statusPollTimer);
     statusPollTimer = null;
+  }
+  if (usagePollTimer) {
+    clearInterval(usagePollTimer);
+    usagePollTimer = null;
   }
 });
 </script>
@@ -339,6 +406,84 @@ onBeforeUnmount(() => {
             </div>
             <div class="tool-description">{{ tool.description }}</div>
           </div>
+        </div>
+      </div>
+
+      <!-- Usage Tracking Section -->
+      <div class="mcp-section">
+        <div class="section-header">
+          <h2>Tool Usage</h2>
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            :disabled="totalCalls === 0"
+            @click="clearUsage"
+            title="Clear usage log"
+          >
+            <i class="pi pi-trash" /> Clear
+          </Button>
+        </div>
+        <p class="section-description">
+          Tool calls made by AI agents through the MCP server this session.
+        </p>
+
+        <!-- Summary stats -->
+        <div class="usage-stats">
+          <div class="usage-stat">
+            <span class="stat-value">{{ totalCalls }}</span>
+            <span class="stat-label">Total calls</span>
+          </div>
+          <div class="usage-stat error" v-if="totalErrors > 0">
+            <span class="stat-value">{{ totalErrors }}</span>
+            <span class="stat-label">Errors</span>
+          </div>
+          <div
+            v-for="(stat, toolName) in usageStats"
+            :key="toolName"
+            class="usage-stat tool-stat"
+          >
+            <span class="stat-value">{{ stat.calls }}</span>
+            <span class="stat-label">
+              <code>{{ toolName }}</code>
+              <span v-if="stat.errors > 0" class="stat-errors">
+                ({{ stat.errors }} err)
+              </span>
+            </span>
+          </div>
+        </div>
+
+        <!-- Call log -->
+        <div v-if="usageLog.length > 0" class="usage-log">
+          <div class="usage-log-header">
+            <span class="log-col-time">Time</span>
+            <span class="log-col-tool">Tool</span>
+            <span class="log-col-status">Status</span>
+            <span class="log-col-error">Error</span>
+          </div>
+          <div
+            v-for="(entry, i) in usageLog"
+            :key="i"
+            class="usage-log-row"
+            :class="{ 'log-error': !entry.success }"
+          >
+            <span class="log-col-time">{{ formatTime(entry.timestamp) }}</span>
+            <span class="log-col-tool"><code>{{ entry.tool }}</code></span>
+            <span class="log-col-status">
+              <span v-if="entry.success" class="log-ok">
+                <i class="pi pi-check" /> OK
+              </span>
+              <span v-else class="log-fail">
+                <i class="pi pi-times" /> Fail
+              </span>
+            </span>
+            <span class="log-col-error" :title="entry.error ?? ''">
+              {{ entry.error ?? "" }}
+            </span>
+          </div>
+        </div>
+        <div v-else class="usage-empty">
+          No tool calls recorded yet. AI agents will appear here when they use the MCP tools.
         </div>
       </div>
 
@@ -657,5 +802,171 @@ onBeforeUnmount(() => {
 .type-badge.development {
   background: var(--p-purple-100);
   color: var(--p-purple-700);
+}
+
+/* ── Section header with action ── */
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
+}
+
+/* ── Usage stats ── */
+
+.usage-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.4rem;
+  background: var(--surface-card);
+  min-width: 60px;
+}
+
+.usage-stat.error {
+  border-color: var(--p-red-300);
+  background: var(--p-red-50);
+}
+
+.usage-stat.tool-stat {
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--p-primary-color);
+  line-height: 1.2;
+}
+
+.usage-stat.error .stat-value {
+  color: var(--p-red-600);
+}
+
+.stat-label {
+  font-size: 0.65rem;
+  color: var(--p-slate-500);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.stat-label code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  color: var(--p-primary-color);
+}
+
+.stat-errors {
+  color: var(--p-red-500);
+}
+
+/* ── Usage log ── */
+
+.usage-log {
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.4rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.usage-log-header {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  background: var(--p-slate-100);
+  font-weight: 600;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--p-slate-600);
+  position: sticky;
+  top: 0;
+}
+
+.usage-log-row {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.3rem 0.65rem;
+  border-top: 1px solid var(--p-slate-100);
+  align-items: center;
+}
+
+.usage-log-row.log-error {
+  background: var(--p-red-50);
+}
+
+.log-col-time {
+  flex: 0 0 68px;
+  color: var(--p-slate-500);
+  font-size: 0.7rem;
+}
+
+.log-col-tool {
+  flex: 0 0 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-col-tool code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--p-primary-color);
+}
+
+.log-col-status {
+  flex: 0 0 50px;
+}
+
+.log-col-error {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--p-red-600);
+  font-size: 0.7rem;
+}
+
+.log-ok {
+  color: var(--p-green-600);
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.log-fail {
+  color: var(--p-red-600);
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.usage-empty {
+  font-size: 0.78rem;
+  color: var(--p-slate-500);
+  padding: 0.6rem 0;
+  font-style: italic;
 }
 </style>

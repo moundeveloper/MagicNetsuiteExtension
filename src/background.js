@@ -23,6 +23,106 @@ const UI_VIEWS = {
 let uiSource = UI_SOURCE.PANEL;
 let panelState = PANEL_STATE.CLOSE;
 
+// ── MCP: SuiteQL Agent Guide ──
+// Returned by the suiteql_get_guide tool so AI agents know exactly
+// how to use these tools without guessing or producing invalid SQL.
+const SUITEQL_GUIDE = `
+# SuiteQL Agent Guide — NetSuite MCP Server
+
+## CRITICAL RULES
+
+### 1. NEVER USE \`LIMIT\`
+SuiteQL is built on Oracle SQL. \`LIMIT\` does NOT exist and will throw an error.
+Use ROWNUM in a WHERE clause instead:
+  CORRECT: SELECT id, name FROM customer WHERE ROWNUM <= 10
+  WRONG:   SELECT id, name FROM customer LIMIT 10
+
+### 2. ALWAYS FOLLOW THE DISCOVERY WORKFLOW
+Never guess table names or column names — always verify first:
+  Step 1: suiteql_search_tables        — find the right table
+  Step 2: suiteql_get_table_fields     — get valid column names + types
+  Step 3: suiteql_discover_field_values — get valid values for WHERE filters
+  Step 4: suiteql_execute_query        — run the final verified query
+
+### 3. ALWAYS LIMIT ROWS
+Every query must include a ROWNUM guard to prevent runaway results:
+  WHERE ROWNUM <= 25
+
+## SYNTAX REFERENCE
+
+Row limiting (mandatory):
+  WHERE ROWNUM <= 25
+
+Date filtering:
+  WHERE trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+
+NULL checks:
+  WHERE fieldname IS NOT NULL
+  WHERE fieldname IS NULL
+
+String comparison (case-sensitive in SuiteQL):
+  WHERE status = 'A'
+
+Numeric ID join pattern:
+  JOIN customer ON transaction.entity = customer.id
+
+Text search (slow — use only when necessary):
+  WHERE LOWER(name) LIKE '%keyword%'
+
+## COMMON TABLES
+  customer            Customer master records
+  transaction         All transaction types (invoices, bills, POs, etc.)
+  item                Inventory / non-inventory / service items
+  vendor              Vendor records
+  employee            Employee records
+  account             Chart of accounts
+  contact             Contact records
+  customrecord_*      Custom record types — discover with suiteql_search_tables
+
+## FULL WORKFLOW EXAMPLE
+Goal: Find open invoices for customer ID 123
+
+  1. suiteql_search_tables("transaction")
+     → confirms table name is "transaction"
+
+  2. suiteql_get_table_fields("transaction")
+     → reveals columns: id, tranid, entity, status, type, trandate, amount
+
+  3. suiteql_discover_field_values("transaction", "type")
+     → invoice type value = "CustInvc"
+
+  4. suiteql_discover_field_values("transaction", "status")
+     → open invoice status = "CustInvc:A"
+
+  5. suiteql_execute_query:
+       SELECT t.id, t.tranid, t.trandate, t.amount
+       FROM transaction t
+       WHERE t.type = 'CustInvc'
+         AND t.status = 'CustInvc:A'
+         AND t.entity = 123
+         AND ROWNUM <= 25
+
+## JOINS
+Always call suiteql_get_table_joins before writing JOIN clauses.
+The join column names are not always obvious.
+`.trim();
+
+// ── MCP: Usage Tracking ──
+const mcpUsageLog = [];
+const MCP_USAGE_MAX = 100;
+
+const recordMcpUsage = (toolName, success, errorMsg) => {
+  mcpUsageLog.unshift({
+    tool: toolName,
+    timestamp: new Date().toISOString(),
+    success,
+    error: errorMsg || null
+  });
+  if (mcpUsageLog.length > MCP_USAGE_MAX) {
+    mcpUsageLog.length = MCP_USAGE_MAX;
+  }
+};
+
 // PORT LISTENERS
 chrome.runtime.onConnect.addListener((port) => {
   const connectPortMap = {
@@ -128,7 +228,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     UI_SOURCE: setUISource,
     MCP_CONNECT: handleMcpConnect,
     MCP_DISCONNECT: handleMcpDisconnect,
-    MCP_STATUS: handleMcpStatus
+    MCP_STATUS: handleMcpStatus,
+    MCP_USAGE: handleMcpUsage,
+    MCP_USAGE_CLEAR: handleMcpUsageClear
   };
 
   const messageHandler = messageMap[message.type];
@@ -214,6 +316,27 @@ const handleMcpStatus = ({ sendResponse }) => {
   sendResponse({
     status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected"
   });
+  return true;
+};
+
+const handleMcpUsage = ({ sendResponse }) => {
+  const stats = {};
+  mcpUsageLog.forEach((entry) => {
+    if (!stats[entry.tool]) {
+      stats[entry.tool] = { calls: 0, errors: 0 };
+    }
+    stats[entry.tool].calls++;
+    if (!entry.success) {
+      stats[entry.tool].errors++;
+    }
+  });
+  sendResponse({ log: mcpUsageLog, stats });
+  return true;
+};
+
+const handleMcpUsageClear = ({ sendResponse }) => {
+  mcpUsageLog.length = 0;
+  sendResponse({ ok: true });
   return true;
 };
 
@@ -589,6 +712,15 @@ async function handleRequest({ requestId, method, params }) {
               }
             }
           },
+          {
+            name: "suiteql_get_guide",
+            description:
+              "CALL THIS FIRST before any SuiteQL work. Returns the complete usage guide: correct syntax rules (no LIMIT — use ROWNUM), the mandatory discovery workflow, common table names, and worked examples.",
+            inputSchema: {
+              type: "object",
+              properties: {}
+            }
+          },
           // ── SuiteQL Tools ──
           {
             name: "suiteql_search_tables",
@@ -633,13 +765,13 @@ async function handleRequest({ requestId, method, params }) {
           },
           {
             name: "suiteql_execute_query",
-            description: "Execute a SuiteQL query and return the results (limited to 5 rows for preview).",
+            description: "Execute a SuiteQL query. NEVER use LIMIT — it is not valid SuiteQL syntax and will error. Use ROWNUM in a WHERE clause to limit rows: WHERE ROWNUM <= 25",
             inputSchema: {
               type: "object",
               properties: {
                 sql: {
                   type: "string",
-                  description: "The SuiteQL query to execute."
+                  description: "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT."
                 }
               },
               required: ["sql"]
@@ -668,13 +800,21 @@ async function handleRequest({ requestId, method, params }) {
     } else if (method === "tools/call") {
       const { name, arguments: args = {} } = params;
 
-      if (name === "ping") {
-        const text = args.message ? `pong: ${args.message}` : "pong";
-        result = { content: [{ type: "text", text }] };
-      } else if (name.startsWith("suiteql_")) {
-        result = await handleSuiteQLTool(name, args);
-      } else {
-        throw new Error(`Unknown tool: ${name}`);
+      try {
+        if (name === "ping") {
+          const text = args.message ? `pong: ${args.message}` : "pong";
+          result = { content: [{ type: "text", text }] };
+        } else if (name === "suiteql_get_guide") {
+          result = { content: [{ type: "text", text: SUITEQL_GUIDE }] };
+        } else if (name.startsWith("suiteql_")) {
+          result = await handleSuiteQLTool(name, args);
+        } else {
+          throw new Error(`Unknown tool: ${name}`);
+        }
+        recordMcpUsage(name, true, null);
+      } catch (toolErr) {
+        recordMcpUsage(name, false, toolErr.message);
+        throw toolErr;
       }
     } else {
       throw new Error(`Unknown method: ${method}`);
@@ -716,7 +856,15 @@ async function handleSuiteQLTool(toolName, args) {
   } else if (toolName === "suiteql_get_table_fields" || toolName === "suiteql_get_table_joins") {
     payload = { tableName: args.tableName };
   } else if (toolName === "suiteql_execute_query") {
-    payload = { sql: args.sql, limit: 5 };
+    // Guard: LIMIT is not valid SuiteQL syntax (Oracle SQL uses ROWNUM)
+    if (/\bLIMIT\b/i.test(args.sql)) {
+      throw new Error(
+        "LIMIT is not valid SuiteQL syntax and will cause an error. " +
+        "Use ROWNUM in a WHERE clause instead. " +
+        "Example: SELECT id, name FROM customer WHERE ROWNUM <= 10"
+      );
+    }
+    payload = { sql: args.sql };
   } else if (toolName === "suiteql_discover_field_values") {
     const sql = `SELECT DISTINCT ${args.fieldId} FROM ${args.tableName} WHERE ${args.fieldId} IS NOT NULL AND ROWNUM <= 20`;
     payload = { sql, limit: 20 };
