@@ -379,11 +379,17 @@ let isConnecting = false;
 })();
 
 // Also handle alarm-based reconnection (survives service worker sleep)
-chrome.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === MCP_RECONNECT_ALARM) {
     console.log("[MCP Bridge] Alarm-based reconnect check");
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      mcpConnect();
+      const enabled = await isMcpEnabled();
+      if (enabled) {
+        mcpConnect();
+      } else {
+        // MCP disabled — clear stale alarm and stop
+        chrome.alarms.clear(MCP_RECONNECT_ALARM);
+      }
     }
   }
 });
@@ -539,16 +545,20 @@ function attachHandlers(sock, port) {
     sock.send(JSON.stringify(response));
   };
 
-  sock.onclose = () => {
+  sock.onclose = async () => {
     console.warn(`[MCP Bridge] disconnected from port ${port}`);
 
     ws = null;
 
-    // Use alarm-based reconnect (survives service worker sleep)
-    chrome.alarms.create(MCP_RECONNECT_ALARM, {
-      delayInMinutes: 0.05, // ~3 seconds initial delay
-      periodInMinutes: 0.5   // then every 30 seconds
-    });
+    // Only reschedule reconnect if MCP is still enabled (prevents reconnect loop after manual disable)
+    const stillEnabled = await isMcpEnabled();
+    if (stillEnabled) {
+      // Use alarm-based reconnect (survives service worker sleep)
+      chrome.alarms.create(MCP_RECONNECT_ALARM, {
+        delayInMinutes: 0.05, // ~3 seconds initial delay
+        periodInMinutes: 0.5   // then every 30 seconds
+      });
+    }
   };
 
   sock.onerror = (err) => {

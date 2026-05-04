@@ -23,7 +23,8 @@ const checkMcpStatus = async () => {
         resolve(resp ?? { status: "disconnected" });
       });
     });
-    mcpStatus.value = response.status === "connected" ? "connected" : "disconnected";
+    mcpStatus.value =
+      response.status === "connected" ? "connected" : "disconnected";
   } catch {
     mcpStatus.value = "disconnected";
   }
@@ -37,7 +38,8 @@ const connectMcp = async () => {
         resolve(resp ?? { status: "disconnected" });
       });
     });
-    mcpStatus.value = response.status === "connected" ? "connected" : "disconnected";
+    mcpStatus.value =
+      response.status === "connected" ? "connected" : "disconnected";
   } catch {
     mcpStatus.value = "disconnected";
   }
@@ -120,8 +122,7 @@ const fetchAccounts = async () => {
     roles.value = data?.roles ?? [];
     accountsFetchState.value = "idle";
   } catch (err) {
-    accountsFetchError.value =
-      err instanceof Error ? err.message : String(err);
+    accountsFetchError.value = err instanceof Error ? err.message : String(err);
     accountsFetchState.value = "error";
   }
 };
@@ -182,206 +183,201 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <MCard
-    outlined
-    elevated
-    flex
-    direction="column"
-    padding="0"
-    autoHeight
-  >
+  <MCard outlined elevated flex direction="column" autoHeight>
     <div
       class="flex flex-col gap-4 overflow-y-auto p-2"
       style="flex: 1; min-height: 0"
     >
-    <!-- MCP Connection Section -->
-    <div class="mcp-section">
-      <h2>MCP Server</h2>
-      <p class="section-description">
-        The MCP server allows AI assistants (OpenCode, Claude, etc.) to interact
-        with your NetSuite account via a WebSocket bridge.
-      </p>
+      <!-- MCP Connection Section -->
+      <div class="mcp-section">
+        <h2>MCP Server</h2>
+        <p class="section-description">
+          The MCP server allows AI assistants (OpenCode, Claude, etc.) to
+          interact with your NetSuite account via a WebSocket bridge.
+        </p>
 
-      <div class="connection-bar">
-        <div class="connection-status">
-          <span
-            class="status-dot"
-            :class="{
-              connected: mcpStatus === 'connected',
-              disconnected: mcpStatus === 'disconnected',
-              checking: mcpStatus === 'checking'
-            }"
-          />
-          <span class="status-text">
-            <template v-if="mcpStatus === 'connected'">Connected</template>
-            <template v-else-if="mcpStatus === 'checking'">
-              <i class="pi pi-spin pi-spinner" /> Checking...
-            </template>
-            <template v-else>Disconnected</template>
-          </span>
-        </div>
-
-        <div class="connection-actions">
-          <Button
-            v-if="settings.mcpEnabled"
-            size="small"
-            severity="secondary"
-            outlined
-            @click="connectMcp"
-            :disabled="mcpStatus === 'checking'"
-            title="Reconnect"
-          >
-            <i class="pi pi-refresh" />
-            Reconnect
-          </Button>
-          <Button
-            :size="'small'"
-            :severity="settings.mcpEnabled ? 'danger' : 'success'"
-            :outlined="settings.mcpEnabled"
-            @click="settings.mcpEnabled = !settings.mcpEnabled"
-          >
-            <i :class="settings.mcpEnabled ? 'pi pi-power-off' : 'pi pi-play'" />
-            {{ settings.mcpEnabled ? "Disable" : "Enable" }}
-          </Button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Account Preference Section -->
-    <div class="mcp-section">
-      <h2>Account Preference</h2>
-      <p class="section-description">
-        Select which NetSuite account the MCP server should target. The
-        extension will find a connected tab matching this account instead of
-        using the active tab.
-      </p>
-
-      <div class="setting-row">
-        <label for="mcp-account">Preferred Account:</label>
-
-        <template v-if="accountsFetchState === 'loading'">
-          <span class="fetch-status">
-            <i class="pi pi-spin pi-spinner" /> Fetching accounts...
-          </span>
-        </template>
-
-        <template v-else-if="accountsFetchState === 'error'">
-          <span class="fetch-error">
-            <i class="pi pi-exclamation-triangle" />
-            {{ accountsFetchError }}
-          </span>
-          <Button
-            size="small"
-            severity="secondary"
-            @click="fetchAccounts"
-            title="Retry"
-          >
-            <i class="pi pi-refresh" />
-          </Button>
-        </template>
-
-        <template v-else-if="accounts.length > 0">
-          <Select
-            id="mcp-account"
-            v-model="settings.mcpPreferredAccount"
-            :options="accountOptions()"
-            option-label="label"
-            option-value="value"
-            placeholder="Select an account (empty = active tab)"
-            class="account-select"
-            showClear
-            filter
-          />
-          <Button
-            size="small"
-            severity="secondary"
-            @click="fetchAccounts"
-            title="Refresh accounts"
-          >
-            <i class="pi pi-refresh" />
-          </Button>
-        </template>
-
-        <template v-else>
-          <span class="fetch-status">No accounts found</span>
-          <Button
-            size="small"
-            severity="secondary"
-            @click="fetchAccounts"
-            title="Retry"
-          >
-            <i class="pi pi-refresh" />
-          </Button>
-        </template>
-      </div>
-
-      <div v-if="settings.mcpPreferredAccount" class="current-preference">
-        <i class="pi pi-check-circle" />
-        <span>
-          MCP will target account:
-          <strong>{{ settings.mcpPreferredAccount }}</strong>
-        </span>
-      </div>
-      <div v-else class="current-preference fallback">
-        <i class="pi pi-info-circle" />
-        <span>No account selected -- MCP will use the active tab</span>
-      </div>
-    </div>
-
-    <!-- Available Tools Section -->
-    <div class="mcp-section">
-      <h2>Available Tools</h2>
-      <p class="section-description">
-        These tools are exposed to AI assistants via the MCP protocol.
-      </p>
-
-      <div class="tools-list">
-        <div v-for="tool in mcpTools" :key="tool.name" class="tool-card">
-          <div class="tool-name">
-            <i class="pi pi-wrench" />
-            <code>{{ tool.name }}</code>
+        <div class="connection-bar">
+          <div class="connection-status">
+            <span
+              class="status-dot"
+              :class="{
+                connected: mcpStatus === 'connected',
+                disconnected: mcpStatus === 'disconnected',
+                checking: mcpStatus === 'checking'
+              }"
+            />
+            <span class="status-text">
+              <template v-if="mcpStatus === 'connected'">Connected</template>
+              <template v-else-if="mcpStatus === 'checking'">
+                <i class="pi pi-spin pi-spinner" /> Checking...
+              </template>
+              <template v-else>Disconnected</template>
+            </span>
           </div>
-          <div class="tool-description">{{ tool.description }}</div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Accounts Table -->
-    <div v-if="accounts.length > 0" class="mcp-section">
-      <h2>Available Accounts</h2>
-      <div class="accounts-table">
-        <div class="accounts-header">
-          <span class="col-id">Account ID</span>
-          <span class="col-name">Name</span>
-          <span class="col-type">Type</span>
-          <span class="col-status">Status</span>
-        </div>
-        <div
-          v-for="acc in accounts"
-          :key="acc.id"
-          class="accounts-row"
-          :class="{
-            active: acc.id === settings.mcpPreferredAccount,
-            current: acc.isCurrent
-          }"
-        >
-          <span class="col-id">
-            <code>{{ acc.id }}</code>
-          </span>
-          <span class="col-name">{{ acc.name }}</span>
-          <span class="col-type">
-            <span class="type-badge" :class="acc.type.toLowerCase()">
-              {{ acc.type }}
-            </span>
-          </span>
-          <span class="col-status">
-            <span v-if="acc.isCurrent" class="current-badge">
-              <i class="pi pi-check-circle" /> Logged in
-            </span>
-          </span>
+          <div class="connection-actions">
+            <Button
+              v-if="settings.mcpEnabled"
+              size="small"
+              severity="secondary"
+              outlined
+              @click="connectMcp"
+              :disabled="mcpStatus === 'checking'"
+              title="Reconnect"
+            >
+              <i class="pi pi-refresh" />
+              Reconnect
+            </Button>
+            <Button
+              :size="'small'"
+              :severity="settings.mcpEnabled ? 'danger' : 'success'"
+              :outlined="settings.mcpEnabled"
+              @click="settings.mcpEnabled = !settings.mcpEnabled"
+            >
+              <i
+                :class="settings.mcpEnabled ? 'pi pi-power-off' : 'pi pi-play'"
+              />
+              {{ settings.mcpEnabled ? "Disable" : "Enable" }}
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+
+      <!-- Account Preference Section -->
+      <div class="mcp-section">
+        <h2>Account Preference</h2>
+        <p class="section-description">
+          Select which NetSuite account the MCP server should target. The
+          extension will find a connected tab matching this account instead of
+          using the active tab.
+        </p>
+
+        <div class="setting-row">
+          <label for="mcp-account">Preferred Account:</label>
+
+          <template v-if="accountsFetchState === 'loading'">
+            <span class="fetch-status">
+              <i class="pi pi-spin pi-spinner" /> Fetching accounts...
+            </span>
+          </template>
+
+          <template v-else-if="accountsFetchState === 'error'">
+            <span class="fetch-error">
+              <i class="pi pi-exclamation-triangle" />
+              {{ accountsFetchError }}
+            </span>
+            <Button
+              size="small"
+              severity="secondary"
+              @click="fetchAccounts"
+              title="Retry"
+            >
+              <i class="pi pi-refresh" />
+            </Button>
+          </template>
+
+          <template v-else-if="accounts.length > 0">
+            <Select
+              id="mcp-account"
+              v-model="settings.mcpPreferredAccount"
+              :options="accountOptions()"
+              option-label="label"
+              option-value="value"
+              placeholder="Select an account (empty = active tab)"
+              class="account-select"
+              showClear
+              filter
+            />
+            <Button
+              size="small"
+              severity="secondary"
+              @click="fetchAccounts"
+              title="Refresh accounts"
+            >
+              <i class="pi pi-refresh" />
+            </Button>
+          </template>
+
+          <template v-else>
+            <span class="fetch-status">No accounts found</span>
+            <Button
+              size="small"
+              severity="secondary"
+              @click="fetchAccounts"
+              title="Retry"
+            >
+              <i class="pi pi-refresh" />
+            </Button>
+          </template>
+        </div>
+
+        <div v-if="settings.mcpPreferredAccount" class="current-preference">
+          <i class="pi pi-check-circle" />
+          <span>
+            MCP will target account:
+            <strong>{{ settings.mcpPreferredAccount }}</strong>
+          </span>
+        </div>
+        <div v-else class="current-preference fallback">
+          <i class="pi pi-info-circle" />
+          <span>No account selected -- MCP will use the active tab</span>
+        </div>
+      </div>
+
+      <!-- Available Tools Section -->
+      <div class="mcp-section">
+        <h2>Available Tools</h2>
+        <p class="section-description">
+          These tools are exposed to AI assistants via the MCP protocol.
+        </p>
+
+        <div class="tools-list">
+          <div v-for="tool in mcpTools" :key="tool.name" class="tool-card">
+            <div class="tool-name">
+              <i class="pi pi-wrench" />
+              <code>{{ tool.name }}</code>
+            </div>
+            <div class="tool-description">{{ tool.description }}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Accounts Table -->
+      <div v-if="accounts.length > 0" class="mcp-section">
+        <h2>Available Accounts</h2>
+        <div class="accounts-table">
+          <div class="accounts-header">
+            <span class="col-id">Account ID</span>
+            <span class="col-name">Name</span>
+            <span class="col-type">Type</span>
+            <span class="col-status">Status</span>
+          </div>
+          <div
+            v-for="acc in accounts"
+            :key="acc.id"
+            class="accounts-row"
+            :class="{
+              active: acc.id === settings.mcpPreferredAccount,
+              current: acc.isCurrent
+            }"
+          >
+            <span class="col-id">
+              <code>{{ acc.id }}</code>
+            </span>
+            <span class="col-name">{{ acc.name }}</span>
+            <span class="col-type">
+              <span class="type-badge" :class="acc.type.toLowerCase()">
+                {{ acc.type }}
+              </span>
+            </span>
+            <span class="col-status">
+              <span v-if="acc.isCurrent" class="current-badge">
+                <i class="pi pi-check-circle" /> Logged in
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   </MCard>
 </template>
@@ -443,8 +439,13 @@ onBeforeUnmount(() => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .status-text {
