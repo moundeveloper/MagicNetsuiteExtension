@@ -10,7 +10,7 @@ const { WebSocketServer } = require("ws");
 // -----------------------------------------------
 // LOG (pkg-safe)
 // -----------------------------------------------
-const LOG_FILE = path.join(process.cwd(), "host.log");
+const LOG_FILE = path.join(__dirname, "host.log");
 
 function log(...args) {
   try {
