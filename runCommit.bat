@@ -26,6 +26,15 @@ if %ERRORLEVEL% NEQ 0 goto :error
 
 echo.
 echo ====================================
+echo Step 1.5: Building MCP Server
+echo ====================================
+cd /d "%~dp0mcp_server"
+call build.bat
+if %ERRORLEVEL% NEQ 0 goto :error
+cd /d "%~dp0"
+
+echo.
+echo ====================================
 echo Step 2: Cleaning destination folder
 echo ====================================
 
@@ -50,11 +59,27 @@ if exist "%DEST_FOLDER%" (
 )
 
 :: =========================
-:: STEP 2.5 - Git Init
+:: STEP 2.5 - MCP Server
 :: =========================
 echo.
 echo ====================================
-echo Step 2.5: Initialising git repo
+echo Step 2.5: Creating mcpServer folder and copying exe
+echo ====================================
+
+set "MCP_DEST=%DEST_FOLDER%\mcpServer"
+if not exist "%MCP_DEST%" (
+    mkdir "%MCP_DEST%"
+)
+
+copy /y "%~dp0mcp_server\host.exe" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 goto :error
+
+:: =========================
+:: STEP 3 - Git Init
+:: =========================
+echo.
+echo ====================================
+echo Step 3: Initialising git repo
 echo ====================================
 cd /d "%DEST_FOLDER%"
 
@@ -81,7 +106,7 @@ if not exist ".git" (
 :: =========================
 echo.
 echo ====================================
-echo Step 3: Copying files to production
+echo Step 4: Copying files to production
 echo ====================================
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0moveToProd.ps1" ^
     -SourceFolder "C:\Projects\MagicNetsuiteExtension\src" ^
@@ -94,7 +119,7 @@ if %ERRORLEVEL% NEQ 0 goto :error
 :: =========================
 echo.
 echo ====================================
-echo Step 4: Committing and pushing to GitHub
+echo Step 5: Committing and pushing to GitHub
 echo ====================================
 cd /d "%DEST_FOLDER%"
 

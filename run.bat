@@ -11,6 +11,18 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo ====================================
+echo Step 1.5: Building MCP Server
+echo ====================================
+cd /d "%~dp0mcp_server"
+call build.bat
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: MCP Server build failed!
+    exit /b 1
+)
+cd /d "%~dp0"
+
+echo.
+echo ====================================
 echo Step 2: Cleaning destination folder
 echo ====================================
 
@@ -32,6 +44,22 @@ if exist "%DEST_FOLDER%" (
         echo ERROR: Failed to create destination folder!
         exit /b 1
     )
+)
+
+echo.
+echo ====================================
+echo Step 2.5: Creating mcpServer folder and copying exe
+echo ====================================
+
+set "MCP_DEST=%DEST_FOLDER%\mcpServer"
+if not exist "%MCP_DEST%" (
+    mkdir "%MCP_DEST%"
+)
+
+copy /y "%~dp0mcp_server\host.exe" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy MCP Server exe!
+    exit /b 1
 )
 
 echo.
