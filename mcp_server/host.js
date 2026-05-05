@@ -8,20 +8,30 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 
 // -----------------------------------------------
-// LOG (pkg-safe)
+// LOG (pkg-safe, per-process)
 // -----------------------------------------------
-const LOG_FILE = path.join(__dirname, "host.log");
+// Each host.js instance writes to its own log file named host_<pid>.log.
+// Previously all instances shared host.log; on Windows, concurrent
+// fs.appendFileSync calls from two processes race for the file lock and
+// the losers are silently swallowed, making async events (port binds,
+// extension connect/disconnect) invisible in the logs.
+const LOG_FILE = path.join(__dirname, `host_${process.pid}.log`);
+
+// Also maintain a rolling "latest" symlink-style copy for quick tailing.
+const LOG_FILE_LATEST = path.join(__dirname, "host.log");
 
 function log(...args) {
   try {
     const line =
-      `[${new Date().toISOString()}] ` +
+      `[${new Date().toISOString()}] [pid:${process.pid}] ` +
       args
         .map((a) => (typeof a === "string" ? a : JSON.stringify(a)))
         .join(" ") +
       "\n";
 
     fs.appendFileSync(LOG_FILE, line);
+    // Best-effort write to the shared latest log; ignore lock conflicts.
+    try { fs.appendFileSync(LOG_FILE_LATEST, line); } catch {}
   } catch {}
 }
 
@@ -31,66 +41,94 @@ function log(...args) {
 const PORT_RANGE_START = 9700;
 const PORT_RANGE_END = 9720;
 
-const server = http.createServer();
-const wss = new WebSocketServer({ server });
-
 let extensionSocket = null;
 let pending = new Map();
 let idCounter = 0;
 
-wss.on("connection", (ws) => {
-  log("extension connected");
-  extensionSocket = ws;
-
-  ws.on("message", (data) => {
-    let msg;
-    try {
-      msg = JSON.parse(data);
-    } catch {
-      return;
-    }
-
-    log("← extension", msg);
-
-    const cb = pending.get(msg.requestId);
-    if (!cb) return;
-
-    pending.delete(msg.requestId);
-
-    if (msg.success) cb.resolve(msg.result);
-    else cb.reject(new Error(msg.error || "Extension error"));
-  });
-
-  ws.on("close", () => {
-    log("extension disconnected");
-    extensionSocket = null;
-  });
-});
-
 // -----------------------------------------------
 // PORT BIND
+//
+// Uses an async loop with explicit cleanup so each failed port attempt
+// is fully torn down before trying the next one.  The previous approach
+// (recursive calls with fresh servers) still left unreleased handles on
+// Windows when the listen() callback never fired.
 // -----------------------------------------------
-function listenOnFreePort(port) {
-  if (port > PORT_RANGE_END) {
-    log("no free port");
-    process.exit(1);
-  }
+function tryPort(port) {
+  return new Promise((resolve) => {
+    log("trying port", port);
 
-  server.once("error", (err) => {
-    if (err.code === "EADDRINUSE") {
-      listenOnFreePort(port + 1);
-    } else {
-      log("server error", err.message);
-      process.exit(1);
-    }
-  });
+    const server = http.createServer();
+    const wss = new WebSocketServer({ server });
 
-  server.listen(port, "127.0.0.1", () => {
-    log("listening", port);
+    const cleanup = () => {
+      try { wss.close(); } catch {}
+      try { server.close(); } catch {}
+    };
+
+    // ws v8.x registers server.on('error', (err) => wss.emit('error', err)).
+    // Its listener fires BEFORE any server.once('error', ...) we register, and
+    // if the wss has no error handler Node throws the re-emitted error as an
+    // uncaught exception — killing the process before the port-retry loop can
+    // move to the next port.  Handle errors on the wss directly; ws's
+    // forwarding ensures we receive all server-level errors here.
+    wss.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        log("port", port, "in use");
+        cleanup();
+        resolve(null);
+      } else {
+        log("server error on port", port, err.message);
+        cleanup();
+        process.exit(1);
+      }
+    });
+
+    server.listen(port, "127.0.0.1", () => {
+      log("listening", port);
+
+      // Wire up WebSocket connection handler
+      wss.on("connection", (ws) => {
+        log("extension connected");
+        extensionSocket = ws;
+
+        ws.on("message", (data) => {
+          let msg;
+          try {
+            msg = JSON.parse(data);
+          } catch {
+            return;
+          }
+
+          log("← extension", msg);
+
+          const cb = pending.get(msg.requestId);
+          if (!cb) return;
+
+          pending.delete(msg.requestId);
+
+          if (msg.success) cb.resolve(msg.result);
+          else cb.reject(new Error(msg.error || "Extension error"));
+        });
+
+        ws.on("close", () => {
+          log("extension disconnected");
+          extensionSocket = null;
+        });
+      });
+
+      resolve({ server, wss, port });
+    });
   });
 }
 
-listenOnFreePort(PORT_RANGE_START);
+(async () => {
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    const result = await tryPort(port);
+    if (result) return; // bound successfully
+  }
+  log("no free port in range", PORT_RANGE_START, "-", PORT_RANGE_END);
+  process.exit(1);
+})();
 
 // -----------------------------------------------
 // EXTENSION CALL (NON-BLOCKING SAFE)
@@ -423,5 +461,19 @@ async function handleMcp(req) {
 // -----------------------------------------------
 process.on("SIGINT", () => process.exit(0));
 process.on("SIGTERM", () => process.exit(0));
+
+// Catch any unhandled errors so the process doesn't die silently.
+// Without these, a pkg-specific require failure or an uncaught promise
+// rejection would kill the process with no log entry, making it look like
+// the port was never bound (background.js scan finds nothing on 9701+).
+process.on("uncaughtException", (err) => {
+  log("UNCAUGHT EXCEPTION — process will exit", err.message, err.stack || "");
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  log("UNHANDLED REJECTION", reason instanceof Error ? reason.message : String(reason));
+  // Don't exit — keep running so the extension can still reconnect.
+});
 
 log("host started");

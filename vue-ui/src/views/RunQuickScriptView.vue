@@ -550,6 +550,9 @@ const runFile = async (fileId: string) => {
           values: [`Server execution result: ${JSON.stringify(result)}`]
         });
       }
+
+      // Refresh server component status after execution (same as switching to server mode)
+      await checkServerComponents();
     }
   } catch (error) {
     console.error("Execution error:", error);

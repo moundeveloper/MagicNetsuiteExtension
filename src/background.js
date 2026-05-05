@@ -301,7 +301,7 @@ const setUISource = ({ message }) => {
 // MCP MESSAGE HANDLERS
 const handleMcpConnect = ({ sendResponse }) => {
   mcpConnect().then(() => {
-    sendResponse({ status: ws ? "connected" : "disconnected" });
+    sendResponse({ status: connections.size > 0 ? "connected" : "disconnected" });
   });
   return true; // async
 };
@@ -313,9 +313,10 @@ const handleMcpDisconnect = ({ sendResponse }) => {
 };
 
 const handleMcpStatus = ({ sendResponse }) => {
-  sendResponse({
-    status: ws && ws.readyState === WebSocket.OPEN ? "connected" : "disconnected"
-  });
+  const isConnected = [...connections.values()].some(
+    (s) => s.readyState === WebSocket.OPEN
+  );
+  sendResponse({ status: isConnected ? "connected" : "disconnected" });
   return true;
 };
 
@@ -483,13 +484,19 @@ let activeTabId = null;
 
 /* MCP SERVER */
 // background.js — Chrome Extension Service Worker
-// Polls ports 9700–9720 to find whichever one host.js bound to.
+// Connects to ALL host.js instances across ports 9700–9720 simultaneously,
+// so multiple AI harnesses can each have their own MCP server and all receive
+// extension responses in parallel.
 const PORT_RANGE_START = 9700;
 const PORT_RANGE_END = 9720;
 const MCP_RECONNECT_ALARM = "mcp-reconnect";
 
-let ws = null;
-let isConnecting = false;
+// Map of port → WebSocket for every active host.js connection.
+// Replacing the old single `ws` variable is the core fix: previously only
+// the first port found was connected, leaving any additional host instances
+// without an extension socket and causing "Extension not connected" errors.
+const connections = new Map();
+let isRefreshing = false;
 
 // -----------------------------
 // Entry point: check settings and connect if enabled
@@ -501,18 +508,19 @@ let isConnecting = false;
   }
 })();
 
-// Also handle alarm-based reconnection (survives service worker sleep)
+// Alarm-based refresh: reconnects dropped sockets AND discovers new host
+// instances that started after the extension was already connected.
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === MCP_RECONNECT_ALARM) {
-    console.log("[MCP Bridge] Alarm-based reconnect check");
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      const enabled = await isMcpEnabled();
-      if (enabled) {
-        mcpConnect();
-      } else {
-        // MCP disabled — clear stale alarm and stop
-        chrome.alarms.clear(MCP_RECONNECT_ALARM);
-      }
+    console.log("[MCP Bridge] Alarm-based connection refresh");
+    const enabled = await isMcpEnabled();
+    if (enabled) {
+      // await is intentional: keeps the service worker alive for the full
+      // 2-second connection attempt window so ports with new host instances
+      // are not missed due to early SW termination.
+      await refreshConnections();
+    } else {
+      mcpDisconnect();
     }
   }
 });
@@ -533,70 +541,71 @@ async function isMcpEnabled() {
 // Public connect/disconnect
 // -----------------------------
 async function mcpConnect() {
-  // Clear any existing reconnect alarm
   await chrome.alarms.clear(MCP_RECONNECT_ALARM);
 
-  await findAndConnect();
+  await refreshConnections();
 
-  // Set up periodic reconnect alarm (every 30s) to survive service worker sleep
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    chrome.alarms.create(MCP_RECONNECT_ALARM, { periodInMinutes: 0.5 });
-  }
+  // Keep alarm running permanently while enabled:
+  // it both reconnects dropped sockets and discovers newly-started host instances.
+  // 5-second interval (periodInMinutes: 0.083) ensures a newly-started host on
+  // port 9701+ is discovered quickly instead of waiting up to 30 seconds.
+  chrome.alarms.create(MCP_RECONNECT_ALARM, { periodInMinutes: 0.083 });
 }
 
 function mcpDisconnect() {
-  // Clear reconnect alarm
   chrome.alarms.clear(MCP_RECONNECT_ALARM);
 
-  // Close existing connection
-  if (ws) {
-    try {
-      ws.close();
-    } catch {}
-    ws = null;
+  for (const [, sock] of connections) {
+    try { sock.close(); } catch {}
   }
-  isConnecting = false;
+  connections.clear();
+  isRefreshing = false;
   console.log("[MCP Bridge] Manually disconnected");
 }
 
 // -----------------------------
-// Connection loop
+// Connection refresh — connects to every listening port in parallel
 // -----------------------------
-async function findAndConnect() {
-  if (isConnecting) return;
-  if (ws && ws.readyState === WebSocket.OPEN) return; // already connected
-  isConnecting = true;
+async function refreshConnections() {
+  if (isRefreshing) return;
+  isRefreshing = true;
 
-  // Try preferred port first (fast path)
-  const preferred = await tryConnect(9700);
-  if (preferred) {
-    isConnecting = false;
-    // Connected — clear the reconnect alarm
-    await chrome.alarms.clear(MCP_RECONNECT_ALARM);
-    return;
-  }
+  const portsScanned = [];
+  const portsSkipped = [];
+  const portsConnected = [];
 
-  // Fallback scan
-  for (let port = PORT_RANGE_START + 1; port <= PORT_RANGE_END; port++) {
-    const connected = await tryConnect(port);
-    if (connected) {
-      isConnecting = false;
-      await chrome.alarms.clear(MCP_RECONNECT_ALARM);
-      return;
+  const promises = [];
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    const existing = connections.get(port);
+    if (existing && existing.readyState === WebSocket.OPEN) {
+      portsSkipped.push(port);
+      continue;
     }
+    // Clean up stale entry if socket is no longer open
+    if (existing) connections.delete(port);
+    portsScanned.push(port);
+    promises.push(
+      tryConnect(port).then((connected) => {
+        if (connected) portsConnected.push(port);
+      })
+    );
   }
 
-  console.warn(
-    `[MCP Bridge] No host found on ports ${PORT_RANGE_START}–${PORT_RANGE_END}`
+  await Promise.all(promises);
+
+  console.log(
+    `[MCP Bridge] Scan complete — ` +
+    `skipped(already open): [${portsSkipped}], ` +
+    `scanned: ${portsScanned.length}, ` +
+    `new: [${portsConnected}], ` +
+    `total active: ${connections.size} (ports: ${[...connections.keys()].join(", ") || "none"})`
   );
 
-  isConnecting = false;
-  // Ensure alarm is set for retry
-  chrome.alarms.create(MCP_RECONNECT_ALARM, { periodInMinutes: 0.5 });
+  isRefreshing = false;
 }
 
 // -----------------------------
-// Try single port
+// Try single port — adds to connections Map on success, returns true/false
 // -----------------------------
 function tryConnect(port) {
   return new Promise((resolve) => {
@@ -608,9 +617,11 @@ function tryConnect(port) {
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try {
-        sock.close();
-      } catch {}
+      // A timeout (rather than immediate refusal) means the port accepted
+      // the TCP connection but never completed the WebSocket handshake.
+      // Use debug level so it doesn't pollute the DevTools console by default.
+      console.debug(`[MCP Bridge] port ${port} WebSocket handshake timed out`);
+      try { sock.close(); } catch {}
       resolve(false);
     }, 2000);
 
@@ -619,27 +630,27 @@ function tryConnect(port) {
       settled = true;
 
       clearTimeout(timeout);
-
       console.log(`[MCP Bridge] connected on port ${port}`);
 
-      ws = sock;
+      connections.set(port, sock);
       attachHandlers(sock, port);
 
       resolve(true);
     };
 
-    sock.onerror = () => {
+    sock.onerror = (err) => {
       if (settled) return;
       settled = true;
-
       clearTimeout(timeout);
+      // Typically "connection refused" — nothing listening on this port.
+      // Only log at debug level to keep noise down.
+      // console.debug(`[MCP Bridge] port ${port} refused`);
       resolve(false);
     };
 
     sock.onclose = () => {
       if (settled) return;
       settled = true;
-
       clearTimeout(timeout);
       resolve(false);
     };
@@ -668,24 +679,14 @@ function attachHandlers(sock, port) {
     sock.send(JSON.stringify(response));
   };
 
-  sock.onclose = async () => {
+  sock.onclose = () => {
     console.warn(`[MCP Bridge] disconnected from port ${port}`);
-
-    ws = null;
-
-    // Only reschedule reconnect if MCP is still enabled (prevents reconnect loop after manual disable)
-    const stillEnabled = await isMcpEnabled();
-    if (stillEnabled) {
-      // Use alarm-based reconnect (survives service worker sleep)
-      chrome.alarms.create(MCP_RECONNECT_ALARM, {
-        delayInMinutes: 0.05, // ~3 seconds initial delay
-        periodInMinutes: 0.5   // then every 30 seconds
-      });
-    }
+    connections.delete(port);
+    // The alarm will reconnect and discover new hosts — no manual reschedule needed.
   };
 
   sock.onerror = (err) => {
-    console.error("[MCP Bridge] error", err);
+    console.error(`[MCP Bridge] error on port ${port}`, err);
   };
 }
 
