@@ -8,6 +8,34 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 
 // -----------------------------------------------
+// BASE DIR (pkg-safe)
+// -----------------------------------------------
+// When compiled with pkg, __dirname points to the internal snapshot
+// filesystem bundled inside the exe — not the real folder on disk.
+// process.pkg is set by pkg at runtime, so we can detect which mode
+// we are in and resolve external files (config, logs) correctly.
+const BASE_DIR = process.pkg
+  ? path.dirname(process.execPath)
+  : __dirname;
+
+// -----------------------------------------------
+// CONFIG
+// -----------------------------------------------
+// Reads host.config.json from the same folder as the exe / host.js.
+// Supported keys:
+//   shouldLog  boolean  — write log files (default: true)
+let shouldLog = true;
+try {
+  const configPath = path.join(BASE_DIR, "host.config.json");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (typeof config.shouldLog === "boolean") {
+    shouldLog = config.shouldLog;
+  }
+} catch {
+  // No config file or parse error — default to logging enabled.
+}
+
+// -----------------------------------------------
 // LOG (pkg-safe, per-process)
 // -----------------------------------------------
 // Each host.js instance writes to its own log file named host_<pid>.log.
@@ -15,12 +43,13 @@ const { WebSocketServer } = require("ws");
 // fs.appendFileSync calls from two processes race for the file lock and
 // the losers are silently swallowed, making async events (port binds,
 // extension connect/disconnect) invisible in the logs.
-const LOG_FILE = path.join(__dirname, `host_${process.pid}.log`);
+const LOG_FILE = path.join(BASE_DIR, `host_${process.pid}.log`);
 
 // Also maintain a rolling "latest" symlink-style copy for quick tailing.
-const LOG_FILE_LATEST = path.join(__dirname, "host.log");
+const LOG_FILE_LATEST = path.join(BASE_DIR, "host.log");
 
 function log(...args) {
+  if (!shouldLog) return;
   try {
     const line =
       `[${new Date().toISOString()}] [pid:${process.pid}] ` +

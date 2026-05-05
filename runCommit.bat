@@ -28,6 +28,11 @@ echo.
 echo ====================================
 echo Step 1.5: Building MCP Server
 echo ====================================
+
+echo Writing host.config.json (shouldLog=false)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "@{shouldLog=$false} | ConvertTo-Json | Set-Content '%~dp0mcp_server\host.config.json' -Encoding UTF8"
+if %ERRORLEVEL% NEQ 0 goto :error
+
 cd /d "%~dp0mcp_server"
 call build.bat
 if %ERRORLEVEL% NEQ 0 goto :error
@@ -72,6 +77,9 @@ if not exist "%MCP_DEST%" (
 )
 
 copy /y "%~dp0mcp_server\host.exe" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 goto :error
+
+copy /y "%~dp0mcp_server\host.config.json" "%MCP_DEST%\"
 if %ERRORLEVEL% NEQ 0 goto :error
 
 :: =========================
