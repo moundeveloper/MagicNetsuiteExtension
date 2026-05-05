@@ -60,7 +60,7 @@
             </div>
           </div>
 
-          <div class="sidebar-section">
+          <div class="sidebar-section sidebar-section-files">
             <h4>Query Files</h4>
             <InputText
               v-model="fileSearchTerm"
@@ -70,8 +70,7 @@
               class="w-full mb-2"
             />
             <div
-              class="flex flex-col gap-1 overflow-y-auto pr-1"
-              style="max-height: calc(90vh - 300px)"
+              class="flex flex-col gap-1 overflow-y-auto pr-1 flex-1 min-h-0"
             >
               <div
                 v-for="file in filteredFiles"
@@ -2182,6 +2181,13 @@ onBeforeUnmount(async () => {
 /* Sidebar input sizing */
 .sidebar-section :deep(.p-inputtext) {
   font-size: 0.75rem;
+}
+
+/* Query Files section fills remaining vertical space */
+.sidebar-section-files {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── AI Editor toggle ── */

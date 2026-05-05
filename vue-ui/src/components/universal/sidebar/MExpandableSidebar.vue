@@ -93,6 +93,8 @@ const sidebarStyles = computed(() => ({
   flex: 1;
   overflow-y: auto;
   padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
   transition:
     opacity 0.2s ease,
     visibility 0.2s ease;

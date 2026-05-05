@@ -118,17 +118,17 @@
                 <Button
                  
                   size="small"
-                  severity="danger"
+                  :severity="removeConfirmPending ? 'warn' : 'danger'"
                   @click="removeServerComponents"
                   class="w-full mt-2"
                 >
-                  Remove Server Components
+                  {{ removeConfirmPending ? 'Click Again to Confirm' : 'Remove Server Components' }}
                 </Button>
               </div>
             </div>
           </div>
 
-          <div class="sidebar-section">
+          <div class="sidebar-section sidebar-section-files">
             <h4>Files</h4>
             <InputText
               v-model="fileSearchTerm"
@@ -137,7 +137,7 @@
               size="small"
               class="w-full mb-2"
             />
-            <div class="flex flex-col gap-1 max-h-32 overflow-y-auto pr-2" >
+            <div class="flex flex-col gap-1 overflow-y-auto pr-2 flex-1 min-h-0" >
               <div
                 v-for="file in filteredFiles"
                 :key="file.id"
@@ -264,7 +264,7 @@
 import { onBeforeUnmount, onMounted, ref, watch, computed, nextTick } from "vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button } from "primevue";
+import { Button, useToast } from "primevue";
 import { InputText } from "primevue";
 import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
@@ -320,6 +320,7 @@ const serverStatus = ref<{
   error: null
 });
 const userId = ref<string>("");
+const toast = useToast();
 
 const tabs = computed(() =>
   openTabs.value
@@ -524,6 +525,38 @@ const runFile = async (fileId: string) => {
       );
     } else {
       // Server-side execution
+
+      // ── Pre-run validation ──
+      // SuiteScript server-side does not support async/await or Promises.
+      const asyncPatterns = [
+        { regex: /\basync\b/, label: "async" },
+        { regex: /\bawait\b/, label: "await" },
+        { regex: /new\s+Promise\b/, label: "new Promise" },
+        { regex: /\.then\s*\(/, label: ".then()" },
+        { regex: /\.catch\s*\(/, label: ".catch()" }
+      ];
+
+      const violations = asyncPatterns.filter((p) => p.regex.test(file.code));
+      if (violations.length > 0) {
+        const labels = violations.map((v) => v.label).join(", ");
+        file.logs.push({
+          type: "error",
+          values: [
+            `Server-side SuiteScript does not support asynchronous patterns: ${labels}. ` +
+            `Remove them or switch to Client mode.`
+          ]
+        });
+        file.isExecuting = false;
+        return;
+      }
+
+      // Auto-convert console calls to N/log equivalents
+      let serverCode = file.code;
+      serverCode = serverCode.replace(/\bconsole\.log\b/g, "log.debug");
+      serverCode = serverCode.replace(/\bconsole\.warn\b/g, "log.audit");
+      serverCode = serverCode.replace(/\bconsole\.error\b/g, "log.error");
+      serverCode = serverCode.replace(/\bconsole\.info\b/g, "log.debug");
+
       if (!userId.value) {
         userId.value = await getExtensionUserId();
       }
@@ -531,7 +564,7 @@ const runFile = async (fileId: string) => {
       const response = await callApi(
         RequestRoutes.RUN_QUICK_SCRIPT_SERVER,
         {
-          code: file.code,
+          code: serverCode,
           userId: userId.value
         },
         ApiRequestType.NORMAL
@@ -611,16 +644,50 @@ const checkServerComponents = async () => {
   }
 };
 
+const removeConfirmPending = ref(false);
+let removeConfirmTimer: number | undefined;
+
 const removeServerComponents = async () => {
-  if (!confirm("Are you sure you want to remove all server components?")) return;
+  // First click: show a warning toast and arm the confirmation window
+  if (!removeConfirmPending.value) {
+    removeConfirmPending.value = true;
+    toast.add({
+      severity: "warn",
+      summary: "Confirm Removal",
+      detail: "Click the button again within 3 seconds to confirm",
+      life: 3000
+    });
+    removeConfirmTimer = window.setTimeout(() => {
+      removeConfirmPending.value = false;
+    }, 3000);
+    return;
+  }
+
+  // Second click (within window): proceed with removal
+  removeConfirmPending.value = false;
+  if (removeConfirmTimer) {
+    clearTimeout(removeConfirmTimer);
+    removeConfirmTimer = undefined;
+  }
 
   try {
     const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
     const result = (response as ApiResponse)?.message || response;
-    alert(`Removed: ${result?.removed?.join(", ") || "none"}`);
+    const removedItems = result?.removed?.join(", ") || result?.join?.(", ") || "none";
+    toast.add({
+      severity: "success",
+      summary: "Components Removed",
+      detail: `Removed: ${removedItems}`,
+      life: 4000
+    });
     await checkServerComponents();
   } catch (err: any) {
-    alert(`Error: ${err.message}`);
+    toast.add({
+      severity: "error",
+      summary: "Removal Failed",
+      detail: err.message || "Unknown error",
+      life: 5000
+    });
   }
 };
 
@@ -832,7 +899,10 @@ onBeforeUnmount(async () => {
   font-size: 0.75rem;
 }
 
-.sidebar-section :deep(.max-h-32) {
-  max-height: 8rem;
+/* Files section fills remaining vertical space */
+.sidebar-section-files {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 </style>

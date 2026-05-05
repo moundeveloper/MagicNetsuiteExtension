@@ -202,6 +202,8 @@ process.stdin.on("data", (chunk) => {
 const SUITEQL_GUIDE = `
 # SuiteQL Agent Guide — NetSuite MCP Server
 
+You are connected to a live NetSuite account via the MCP Connector. Apply every rule in this guide to every query — no exceptions. Execute immediately. Show your reasoning throughout the process.
+
 ## CRITICAL RULES
 
 ### 1. NEVER USE \`LIMIT\`
@@ -210,16 +212,30 @@ Use ROWNUM in a WHERE clause instead:
   CORRECT: SELECT id, name FROM customer WHERE ROWNUM <= 10
   WRONG:   SELECT id, name FROM customer LIMIT 10
 
-### 2. ALWAYS FOLLOW THE DISCOVERY WORKFLOW
-Never guess table names or column names — always verify first:
+### 2. ALWAYS FOLLOW THE MANDATORY DISCOVERY WORKFLOW
+Never guess table names, column names, or field values — always verify first:
   Step 1: suiteql_search_tables        — find the right table
   Step 2: suiteql_get_table_fields     — get valid column names + types
   Step 3: suiteql_discover_field_values — get valid values for WHERE filters
-  Step 4: suiteql_execute_query        — run the final verified query
+  Step 4: suiteql_get_table_joins      — discover JOIN relationships (if joins needed)
+  Step 5: Build the query              — using ONLY verified tables, columns, and values
+  Step 6: suiteql_execute_query        — run the final verified query
 
 ### 3. ALWAYS LIMIT ROWS
 Every query must include a ROWNUM guard to prevent runaway results:
   WHERE ROWNUM <= 25
+
+## HARD RULES — NO EXCEPTIONS
+- ALWAYS call suiteql_search_tables before assuming a table name
+- ALWAYS call suiteql_get_table_fields before writing SELECT or WHERE clauses
+- ALWAYS call suiteql_discover_field_values before filtering on status, type, category, class, or any enum-like field — never assume values from general knowledge
+- ALWAYS call suiteql_get_table_joins before writing any JOIN clause
+- ALWAYS include WHERE ROWNUM <= N on every query
+- NEVER use LIMIT — it is invalid SuiteQL syntax
+- NEVER guess or assume table names, column names, or enum values
+- NEVER skip the discovery workflow steps
+- NEVER repeat a tool call if you already have its result — extract from previous results
+- If a query fails, analyze the error, fix the issue from the relevant discovery step, and retry
 
 ## SYNTAX REFERENCE
 
@@ -241,6 +257,10 @@ Numeric ID join pattern:
 
 Text search (slow — use only when necessary):
   WHERE LOWER(name) LIKE '%keyword%'
+
+Custom records:
+  Table name = customrecord_<scriptid_lowercase>
+  Discover with suiteql_search_tables
 
 ## COMMON TABLES
   customer            Customer master records

@@ -11,7 +11,12 @@
           <i class="pi pi-clipboard"></i>
         </button>
         <div :class="['log-entry', log.type]">
-          <span v-for="(value, i) in log.values" :key="i">{{ value }}</span>
+          <template v-if="log.values.length > 1">
+            <span>{{ log.values[0] }}</span>
+            <span class="log-separator"> &rarr; </span>
+            <span v-for="(value, i) in log.values.slice(1)" :key="i">{{ value }}</span>
+          </template>
+          <span v-else v-for="(value, i) in log.values" :key="i">{{ value }}</span>
         </div>
       </div>
     </div>
@@ -315,6 +320,11 @@ function copyLog(log: Log) {
 
 .log-entry.error {
   color: #f48771;
+}
+
+.log-separator {
+  color: #569cd6;
+  opacity: 0.7;
 }
 
 /* Mark.js highlight styles */
