@@ -539,16 +539,38 @@ const runFile = async (fileId: string) => {
 
       const result = (response as ApiResponse)?.message || response;
 
-      if (result?.error) {
+      if (result?.error && !result?.success) {
         file.logs.push({
           type: "error",
           values: [`Server execution error: ${result.error}`]
         });
       } else {
-        file.logs.push({
-          type: "log",
-          values: [`Server execution result: ${JSON.stringify(result)}`]
-        });
+        // Replay every log entry collected server-side into the terminal
+        if (Array.isArray(result?.logs) && result.logs.length > 0) {
+          for (const entry of result.logs) {
+            file.logs.push(entry as Log);
+          }
+        }
+
+        // Show the return value (if any)
+        if (result?.result !== undefined) {
+          const display =
+            typeof result.result === "object"
+              ? JSON.stringify(result.result, null, 2)
+              : String(result.result);
+          file.logs.push({ type: "log", values: [`→ ${display}`] });
+        }
+
+        // Fallback when the script produced no output at all
+        if (
+          (!result?.logs || result.logs.length === 0) &&
+          result?.result === undefined
+        ) {
+          file.logs.push({
+            type: "log",
+            values: ["Script executed successfully (no output)"]
+          });
+        }
       }
 
       // Refresh server component status after execution (same as switching to server mode)

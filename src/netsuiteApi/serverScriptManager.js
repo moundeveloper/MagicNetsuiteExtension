@@ -182,6 +182,15 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.serverFileId = serverFileId;
   } else {
     mutation.serverFileId = fileMap.get(CONFIG.SERVER_FILE);
+
+    // Always refresh the server file so the deployed suitelet stays current.
+    const suiteletContent = buildSuiteletContent();
+    await window.updateNetsuiteFileContent(N, {
+      fileId: mutation.serverFileId,
+      fileContent: suiteletContent,
+      fileName: CONFIG.SERVER_FILE,
+      folderId: mutation.folderId
+    });
   }
 
   console.log("mutation", mutation);
@@ -249,17 +258,26 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   );
 
   if (isUpdated) {
-    // Execute server-side script
-    window.executeServerScript(N, {
+    // Execute server-side script and wait for the response
+    const execResult = await window.executeServerScript(N, {
       suiteletScriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
       deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
       userId
     });
+
+    return {
+      success: true,
+      logs: execResult?.logs || [],
+      result: execResult?.result,
+      error: execResult?.error,
+      mutation
+    };
   }
 
   return {
-    success: true,
-    mutation // optional but VERY useful for debugging / chaining
+    success: false,
+    logs: [{ type: "error", values: ["Failed to update user handler — script was not executed"] }],
+    mutation
   };
 };
 
@@ -456,7 +474,7 @@ window.executeServerScript = async (
       headers: {
         "content-type": "application/x-www-form-urlencoded"
       },
-      body: `action=handle_${userId}`,
+      body: `action=${userId}`,
       credentials: "include"
     });
 
@@ -464,11 +482,11 @@ window.executeServerScript = async (
       throw new Error(`Server script failed: ${response.status}`);
     }
 
-    console.log(
-      `[executeServerScript] Server script executed successfully: ${await response.text()}`
-    );
+    // Read body once as text then parse — avoids "body stream already read" error
+    const responseText = await response.text();
+    console.log("[executeServerScript] Raw response:", responseText);
 
-    const result = await response.json();
+    const result = JSON.parse(responseText);
     return result;
   } catch (error) {
     console.error("[executeServerScript]", error);
@@ -578,11 +596,12 @@ function buildHandlerModuleContent(initialHandlers = {}) {
  * @NModuleScope SameAccount
  */
 define([], () => {
-  const handlers = () => {
+  // N is injected by the suitelet so every handler has access to record, search, etc.
+  const handlers = (N) => {
     return {
       // User handlers will be added here dynamically
       ${Object.entries(initialHandlers)
-        .map(([key, code]) => `${key}: () => {\n        ${code}\n      }`)
+        .map(([key, code]) => `${key}: function(__N) {\n        ${code}\n      }`)
         .join(",\n      ")}
     };
   };
@@ -596,23 +615,45 @@ function buildSuiteletContent() {
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(["./${CONFIG.HANDLER_FILE}"], (handler) => {
+define(
+  ['N/record', 'N/search', 'N/query', 'N/log', 'N/file', 'N/url', 'N/runtime', './${CONFIG.HANDLER_FILE}'],
+  (record, search, query, log, file, url, runtime, handlerModule) => {
+
   const onRequest = (context) => {
     try {
-      const { method } = context.request;
-      const handlers = handler.handlers();
-
-      if (method !== "POST") return;
-
-      const { action } = context.request.parameters;
-
-      const handlerFn = handlers[action];
-      if (handlerFn) {
-        const result = handlerFn();
-        context.response.write(JSON.stringify(result));
+      if (context.request.method !== 'POST') {
+        context.response.write(JSON.stringify({ success: false, error: 'Only POST requests are supported', logs: [] }));
+        return;
       }
+
+      const action = context.request.parameters.action;
+      if (!action) {
+        context.response.write(JSON.stringify({ success: false, error: 'Missing action parameter', logs: [] }));
+        return;
+      }
+
+      const N = { record: record, search: search, query: query, log: log, file: file, url: url, runtime: runtime, context: context };
+      const handlers = handlerModule.handlers(N);
+      const handlerFn = handlers[action];
+
+      if (!handlerFn) {
+        context.response.write(JSON.stringify({ success: false, error: 'No handler registered for action: ' + action, logs: [] }));
+        return;
+      }
+
+      const handlerResult = handlerFn(N);
+      context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
+      context.response.write(JSON.stringify({
+        success: true,
+        logs: handlerResult.logs || [],
+        result: handlerResult.result
+      }));
     } catch (error) {
-      context.response.write(JSON.stringify(error));
+      context.response.write(JSON.stringify({
+        success: false,
+        error: error.message || String(error),
+        logs: []
+      }));
     }
   };
 
@@ -621,8 +662,29 @@ define(["./${CONFIG.HANDLER_FILE}"], (handler) => {
 }
 
 function buildUserHandler(userId, code) {
-  return `${userId}: () => {
-    ${code}
+  return `${userId}: function(__N) {
+    var __logs = [];
+    var __serialize = function(a) {
+      try { return typeof a === 'object' && a !== null ? JSON.stringify(a) : String(a); }
+      catch(e) { return String(a); }
+    };
+    var console = {
+      log:   function() { __logs.push({ type: 'log',   values: Array.prototype.slice.call(arguments).map(__serialize) }); },
+      warn:  function() { __logs.push({ type: 'warn',  values: Array.prototype.slice.call(arguments).map(__serialize) }); },
+      error: function() { __logs.push({ type: 'error', values: Array.prototype.slice.call(arguments).map(__serialize) }); },
+      info:  function() { __logs.push({ type: 'log',   values: Array.prototype.slice.call(arguments).map(__serialize) }); }
+    };
+    var __result;
+    try {
+      // Destructure N so user code can reference record, search, etc. directly.
+      // The fake console shadows the global to capture all log calls.
+      __result = (function(record, search, query, log, file, url, runtime, context, console) {
+        ${code}
+      })(__N.record, __N.search, __N.query, __N.log, __N.file, __N.url, __N.runtime, __N.context, console);
+    } catch (__err) {
+      __logs.push({ type: 'error', values: [__err.message || String(__err)] });
+    }
+    return { logs: __logs, result: __result };
   }`;
 }
 
