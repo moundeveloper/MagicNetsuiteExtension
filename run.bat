@@ -64,7 +64,7 @@ if not exist "%MCP_DEST%" (
     mkdir "%MCP_DEST%"
 )
 
-copy /y "%~dp0mcp_server\host.exe" "%MCP_DEST%\"
+copy /y "%~dp0mcp_server\magiNetsuiteMCPServer.exe" "%MCP_DEST%\"
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Failed to copy MCP Server exe!
     exit /b 1

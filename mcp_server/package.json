@@ -2,10 +2,10 @@
   "name": "mcp_server",
   "version": "1.0.0",
   "description": "",
-  "main": "host.js",
+  "main": "magiNetsuiteMCPServer.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node host.js"
+    "start": "node magiNetsuiteMCPServer.js"
   },
   "keywords": [],
   "author": "",

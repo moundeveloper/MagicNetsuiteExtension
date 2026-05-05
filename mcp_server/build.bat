@@ -1,1 +1,1 @@
-call pkg host.js -t node18-win-x64
+call pkg magiNetsuiteMCPServer.js -t node18-win-x64

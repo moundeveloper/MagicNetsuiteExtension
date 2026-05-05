@@ -16,7 +16,7 @@ const { WebSocketServer } = require("ws");
 //   pkg-compiled exe  →  process.execPath is the .exe itself, so
 //                        path.dirname(process.execPath) is its folder.
 //
-//   plain node host.js →  process.execPath is the node binary (wrong),
+//   plain node magiNetsuiteMCPServer.js →  process.execPath is the node binary (wrong),
 //                         so __dirname (the script's own folder) is correct.
 //
 // We avoid relying on process.pkg (not guaranteed across all pkg versions)
@@ -45,15 +45,15 @@ for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
 // -----------------------------------------------
 // LOG (pkg-safe, per-process)
 // -----------------------------------------------
-// Each host.js instance writes to its own log file named host_<pid>.log.
-// Previously all instances shared host.log; on Windows, concurrent
+// Each magiNetsuiteMCPServer.js instance writes to its own log file named magiNetsuiteMCPServer_<pid>.log.
+// Previously all instances shared magiNetsuiteMCPServer.log; on Windows, concurrent
 // fs.appendFileSync calls from two processes race for the file lock and
 // the losers are silently swallowed, making async events (port binds,
 // extension connect/disconnect) invisible in the logs.
-const LOG_FILE = path.join(BASE_DIR, `host_${process.pid}.log`);
+const LOG_FILE = path.join(BASE_DIR, `magiNetsuiteMCPServer_${process.pid}.log`);
 
 // Also maintain a rolling "latest" symlink-style copy for quick tailing.
-const LOG_FILE_LATEST = path.join(BASE_DIR, "host.log");
+const LOG_FILE_LATEST = path.join(BASE_DIR, "magiNetsuiteMCPServer.log");
 
 function log(...args) {
   if (!shouldLog) return;
