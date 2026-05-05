@@ -8,31 +8,38 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 
 // -----------------------------------------------
-// BASE DIR (pkg-safe)
+// CONFIG + BASE DIR
 // -----------------------------------------------
-// When compiled with pkg, __dirname points to the internal snapshot
-// filesystem bundled inside the exe — not the real folder on disk.
-// process.pkg is set by pkg at runtime, so we can detect which mode
-// we are in and resolve external files (config, logs) correctly.
-const BASE_DIR = process.pkg
-  ? path.dirname(process.execPath)
-  : __dirname;
-
-// -----------------------------------------------
-// CONFIG
-// -----------------------------------------------
-// Reads host.config.json from the same folder as the exe / host.js.
-// Supported keys:
+// We need to find host.config.json on the real filesystem.
+// Two execution modes require different base directories:
+//
+//   pkg-compiled exe  →  process.execPath is the .exe itself, so
+//                        path.dirname(process.execPath) is its folder.
+//
+//   plain node host.js →  process.execPath is the node binary (wrong),
+//                         so __dirname (the script's own folder) is correct.
+//
+// We avoid relying on process.pkg (not guaranteed across all pkg versions)
+// and instead probe both candidate directories, using whichever one actually
+// contains host.config.json.
+//
+// Supported config keys:
 //   shouldLog  boolean  — write log files (default: true)
 let shouldLog = true;
-try {
-  const configPath = path.join(BASE_DIR, "host.config.json");
-  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  if (typeof config.shouldLog === "boolean") {
-    shouldLog = config.shouldLog;
+let BASE_DIR = __dirname; // fallback
+
+for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
+  try {
+    const configPath = path.join(candidateDir, "host.config.json");
+    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    if (typeof config.shouldLog === "boolean") {
+      shouldLog = config.shouldLog;
+    }
+    BASE_DIR = candidateDir;
+    break;
+  } catch {
+    // Not found here — try next candidate.
   }
-} catch {
-  // No config file or parse error — default to logging enabled.
 }
 
 // -----------------------------------------------
