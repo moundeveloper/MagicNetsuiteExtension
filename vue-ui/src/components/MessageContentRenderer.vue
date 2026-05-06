@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import CodeViewer from "./CodeViewer.vue";
+import DiffViewer from "./DiffViewer.vue";
+import QuestionBlock from "./QuestionBlock.vue";
 import {
   processCollapsibleSections,
   processCalloutBoxes,
@@ -18,14 +20,21 @@ interface Props {
 }
 
 interface ContentBlock {
-  type: "text" | "code";
+  type: "text" | "code" | "diff" | "question";
   content: string;
   language?: string;
+  /** Only for diff blocks */
+  original?: string;
+  modified?: string;
+  /** Only for question blocks */
+  questionText?: string;
+  questionOptions?: string[];
 }
 
 const props = defineProps<Props>();
 const emit = defineEmits<{
   openInSqlEditor: [code: string];
+  questionAnswer: [answer: string];
 }>();
 
 const copyStates = ref<Record<number, boolean>>({});
@@ -52,9 +61,56 @@ const copyCode = async (code: string, index: number) => {
   }
 };
 
+/**
+ * Regex patterns for detecting diff-like two-section separators.
+ * Matches markers like:
+ *   ---ORIGINAL---  /  ---MODIFIED---
+ *   ---PREVIOUS---  /  ---LATEST---
+ *   ---PREVIOUS (v33)---  /  ---LATEST (v34)---
+ *   ---OLD---  /  ---NEW---
+ *   ---BEFORE---  /  ---AFTER---
+ */
+const DIFF_FIRST_RE = /^---\s*(ORIGINAL|PREVIOUS|OLD|BEFORE)(?:\s*\([^)]*\))?\s*---$/m;
+const DIFF_SECOND_RE = /^---\s*(MODIFIED|LATEST|NEW|AFTER)(?:\s*\([^)]*\))?\s*---$/m;
+
+const parseDiffBlock = (raw: string, lang: string): ContentBlock => {
+  const firstMatch = DIFF_FIRST_RE.exec(raw);
+  const secondMatch = DIFF_SECOND_RE.exec(raw);
+
+  if (firstMatch && secondMatch && secondMatch.index > firstMatch.index) {
+    const original = raw.slice(firstMatch.index + firstMatch[0].length, secondMatch.index).trim();
+    const modified = raw.slice(secondMatch.index + secondMatch[0].length).trim();
+    return { type: "diff", content: raw, language: lang, original, modified };
+  }
+  // Fallback: treat whole block as code if no markers found
+  return { type: "code", content: raw, language: lang };
+};
+
+/**
+ * Check if a code block body contains diff-style markers and should be
+ * rendered as a diff rather than a plain code block.
+ */
+const looksLikeDiff = (body: string): boolean =>
+  DIFF_FIRST_RE.test(body) && DIFF_SECOND_RE.test(body);
+
+const parseQuestionBlock = (raw: string): ContentBlock => {
+  const lines = raw.split("\n");
+  const sepIdx = lines.findIndex((l) => l.trim() === "---");
+  if (sepIdx !== -1) {
+    const questionText = lines.slice(0, sepIdx).join("\n").trim();
+    const options = lines
+      .slice(sepIdx + 1)
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    return { type: "question", content: raw, questionText, questionOptions: options };
+  }
+  // No separator: treat entire body as question text with no options
+  return { type: "question", content: raw, questionText: raw.trim(), questionOptions: [] };
+};
+
 const parseContent = (text: string): ContentBlock[] => {
   const blocks: ContentBlock[] = [];
-  const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
+  const codeBlockRegex = /```(\w[\w-]*)?\n?([\s\S]*?)```/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -67,11 +123,19 @@ const parseContent = (text: string): ContentBlock[] => {
       });
     }
 
-    blocks.push({
-      type: "code",
-      language: match[1] || "javascript",
-      content: (match[2] || "").trimEnd()
-    });
+    const lang = match[1] || "javascript";
+    const body = (match[2] || "").trimEnd();
+
+    if (lang === "diff-view") {
+      blocks.push(parseDiffBlock(body, "javascript"));
+    } else if (lang === "question") {
+      blocks.push(parseQuestionBlock(body));
+    } else if (looksLikeDiff(body)) {
+      // Auto-detect diff markers inside any code block
+      blocks.push(parseDiffBlock(body, lang === "javascript" ? "javascript" : lang));
+    } else {
+      blocks.push({ type: "code", language: lang, content: body });
+    }
 
     lastIndex = match.index + match[0].length;
   }
@@ -108,7 +172,35 @@ const renderText = (text: string): string => {
 <template>
   <div class="content-blocks">
     <template v-for="(block, index) in blocks" :key="index">
-      <div v-if="block.type === 'code'" class="code-block-container">
+      <!-- ── Question block ── -->
+      <QuestionBlock
+        v-if="block.type === 'question'"
+        :question="block.questionText ?? ''"
+        :options="block.questionOptions ?? []"
+        @answer="(a) => emit('questionAnswer', a)"
+      />
+
+      <!-- ── Diff block ── -->
+      <div v-else-if="block.type === 'diff'" class="code-block-container">
+        <div class="code-block-header">
+          <span class="code-lang diff-label">
+            <i class="pi pi-code" style="font-size:0.6rem" />
+            diff
+          </span>
+        </div>
+        <div class="diff-pane-labels">
+          <span class="diff-label-original">Original</span>
+          <span class="diff-label-modified">Modified</span>
+        </div>
+        <DiffViewer
+          :original="block.original ?? ''"
+          :modified="block.modified ?? ''"
+          :language="block.language === 'sql' ? 'sql' : 'javascript'"
+        />
+      </div>
+
+      <!-- ── Code block ── -->
+      <div v-else-if="block.type === 'code'" class="code-block-container">
         <div class="code-block-header">
           <span class="code-lang">{{ block.language || "code" }}</span>
           <div class="code-block-actions">
@@ -143,6 +235,7 @@ const renderText = (text: string): string => {
           :auto-height="true"
         />
       </div>
+
       <span
         v-else-if="block.content.trim()"
         class="text-block"
@@ -157,6 +250,39 @@ const renderText = (text: string): string => {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+/* ── Diff labels ── */
+.diff-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.diff-pane-labels {
+  display: flex;
+  background: var(--p-slate-700);
+  border-bottom: 1px solid var(--p-slate-600);
+}
+
+.diff-label-original,
+.diff-label-modified {
+  flex: 1;
+  text-align: center;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0;
+}
+
+.diff-label-original {
+  color: rgba(239, 68, 68, 0.8);
+  border-right: 1px solid var(--p-slate-600);
+}
+
+.diff-label-modified {
+  color: rgba(34, 197, 94, 0.8);
 }
 
 /* ── Code blocks ── */

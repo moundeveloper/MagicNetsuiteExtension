@@ -445,7 +445,8 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_current_user",
-    description: "Get the currently logged-in NetSuite user's information (id, name, email, role, location, department, subsidiary).",
+    description:
+      "Get the currently logged-in NetSuite user's information (id, name, email, role, location, department, subsidiary).",
     parameters: {
       type: "object",
       properties: {},
@@ -474,7 +475,8 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_template_content",
-    description: "Get the content of a specific PDF/HTML template.",
+    description:
+      "Get the content of a specific PDF/HTML template. For transaction templates, always provide 'transactionType'. For custom record templates, provide 'customRecordType'. Omitting these may result in empty or incorrect output, even though they are technically optional.",
     parameters: {
       type: "object",
       properties: {
@@ -485,19 +487,22 @@ export const tools: ToolDefinition[] = [
         },
         transactionType: {
           type: "string",
-          description: "Transaction type (optional)"
+          description:
+            "Transaction type (e.g., 'CustInvc' for invoices). Strongly recommended for transaction templates."
         },
         customRecordType: {
           type: "string",
-          description: "Custom record type (optional)"
+          description:
+            "Custom record type (required for custom record templates)."
         },
         savedSearch: {
           type: "string",
-          description: "Saved search ID (optional)"
+          description:
+            "Saved search ID for templates based on a search (optional)."
         },
         version: {
           type: "number",
-          description: "Template version (optional)"
+          description: "Template version (optional, defaults to current)."
         }
       },
       required: ["templateId", "printType"]
@@ -777,15 +782,18 @@ export const tools: ToolDefinition[] = [
       properties: {
         name: {
           type: "string",
-          description: "Human-readable name for the script record (e.g. 'Customer Dashboard Suitelet')."
+          description:
+            "Human-readable name for the script record (e.g. 'Customer Dashboard Suitelet')."
         },
         scriptId: {
           type: "string",
-          description: "Script ID in NetSuite format (e.g. 'customscript_customer_dashboard')."
+          description:
+            "Script ID in NetSuite format (e.g. 'customscript_customer_dashboard')."
         },
         fileId: {
           type: "string",
-          description: "Internal ID of the uploaded .js file in the File Cabinet."
+          description:
+            "Internal ID of the uploaded .js file in the File Cabinet."
         },
         scriptType: {
           type: "string",
@@ -945,8 +953,12 @@ export const tools: ToolDefinition[] = [
       }
 
       const query = String(input.query ?? "");
-      const moduleName = input.moduleName ? String(input.moduleName) : undefined;
-      const memberType = input.memberType ? String(input.memberType) : undefined;
+      const moduleName = input.moduleName
+        ? String(input.moduleName)
+        : undefined;
+      const memberType = input.memberType
+        ? String(input.memberType)
+        : undefined;
 
       const results = await searchMembers(query, {
         moduleName,
@@ -955,7 +967,10 @@ export const tools: ToolDefinition[] = [
       });
 
       if (results.length === 0) {
-        return { message: `No documentation found for "${query}".`, results: [] };
+        return {
+          message: `No documentation found for "${query}".`,
+          results: []
+        };
       }
 
       return {

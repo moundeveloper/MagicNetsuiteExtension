@@ -135,6 +135,73 @@
       :draggable="false"
     >
       <div class="dialog-form">
+        <!-- ── Mode toggle ── -->
+        <div class="skill-mode-bar">
+          <div class="skill-mode-toggle">
+            <button
+              class="skill-mode-btn"
+              :class="{ 'skill-mode-btn-active': skillGenMode === 'manual' }"
+              type="button"
+              @click="skillGenMode = 'manual'"
+            >
+              <i class="pi pi-pencil" />
+              Manual
+            </button>
+            <button
+              class="skill-mode-btn"
+              :class="{ 'skill-mode-btn-active': skillGenMode === 'ai' }"
+              type="button"
+              @click="skillGenMode = 'ai'"
+            >
+              <i class="pi pi-sparkles" />
+              {{ isEditing ? 'AI Improve' : 'AI Generate' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- ── AI Generate / Improve panel ── -->
+        <template v-if="skillGenMode === 'ai'">
+          <div class="form-field">
+            <label for="ai-skill-prompt">
+              {{ isEditing ? 'What to improve or add' : 'Describe the skill' }}
+              <span class="label-hint">
+                {{ isEditing
+                  ? 'the AI will update only what needs changing'
+                  : 'the AI will generate all fields automatically' }}
+              </span>
+            </label>
+            <Textarea
+              id="ai-skill-prompt"
+              v-model="aiSkillPrompt"
+              :placeholder="isEditing
+                ? 'e.g., Add more examples for sublist operations and update the description to mention sublists.'
+                : 'e.g., A skill covering SuiteScript 2.1 record search patterns, filters, columns, and pagination.'"
+              rows="5"
+              class="w-full"
+              autoResize
+            />
+          </div>
+          <div v-if="skillGenerateError" class="generate-error">
+            <i class="pi pi-exclamation-triangle" />
+            {{ skillGenerateError }}
+          </div>
+          <div class="generate-row">
+            <Button
+              :label="isGeneratingSkill ? 'Generating...' : (isEditing ? 'Improve Skill' : 'Generate Skill')"
+              :disabled="!aiSkillPrompt.trim() || isGeneratingSkill"
+              :loading="isGeneratingSkill"
+              @click="generateSkillFromAi"
+            />
+            <span class="generate-hint">
+              {{ isEditing
+                ? 'Fields will be updated — review before saving.'
+                : 'All fields will be filled in — review before saving.' }}
+            </span>
+          </div>
+        </template>
+
+        <!-- ── Manual form ── -->
+        <template v-if="skillGenMode === 'manual'">
         <div class="form-field">
           <label for="skill-name">Name</label>
           <InputText
@@ -201,6 +268,7 @@
             autoResize
           />
         </div>
+        </template><!-- end manual -->
       </div>
 
       <template #footer>
@@ -246,6 +314,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { useAiProvider, type ChatMessage } from "../composables/useAiProvider";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -275,6 +344,12 @@ const editingId = ref<number | null>(null);
 const deleteTarget = ref<Skill | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const props = defineProps<{ vhOffset: number }>();
+
+// ── AI Generate state ──────────────────────
+const skillGenMode = ref<"manual" | "ai">("manual");
+const aiSkillPrompt = ref("");
+const isGeneratingSkill = ref(false);
+const skillGenerateError = ref("");
 
 const formData = ref<{
   name: string;
@@ -322,6 +397,9 @@ const openCreateDialog = () => {
   isEditing.value = false;
   editingId.value = null;
   formData.value = { name: "", description: "", tags: "", content: "", domain: "global" };
+  skillGenMode.value = "manual";
+  aiSkillPrompt.value = "";
+  skillGenerateError.value = "";
   dialogVisible.value = true;
 };
 
@@ -335,6 +413,9 @@ const openEditDialog = (skill: Skill) => {
     content: skill.content,
     domain: skill.domain ?? "global"
   };
+  skillGenMode.value = "manual";
+  aiSkillPrompt.value = "";
+  skillGenerateError.value = "";
   dialogVisible.value = true;
 };
 
@@ -350,6 +431,91 @@ const saveSkill = async () => {
 
   dialogVisible.value = false;
   await refreshSkills();
+};
+
+// ── AI Skill Generation ────────────────────
+const generateSkillFromAi = async () => {
+  const prompt = aiSkillPrompt.value.trim();
+  if (!prompt) return;
+
+  isGeneratingSkill.value = true;
+  skillGenerateError.value = "";
+
+  try {
+    const { chatCompletion } = useAiProvider();
+
+    const isEdit = isEditing.value;
+    const existing = isEdit ? formData.value : null;
+
+    const systemPrompt = isEdit
+      ? `You are a skill content improver for a NetSuite SuiteScript AI assistant browser extension.
+A skill is a knowledge document injected into the AI's context to help it specialise in a topic.
+The user will provide guidance on what to improve or add to the existing skill.
+Return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
+
+Current skill data:
+name: "${existing?.name}"
+description: "${existing?.description}"
+tags: "${existing?.tags}"
+domain: "${existing?.domain}"
+content:
+${existing?.content}
+
+JSON schema (only include fields you want to change):
+{
+  "name": "...",
+  "description": "...",
+  "tags": "comma, separated, tags",
+  "domain": "global" | "sql",
+  "content": "Full improved skill content..."
+}
+
+Keep fields you don't need to change exactly as-is.`
+      : `You are a skill generator for a NetSuite SuiteScript AI assistant browser extension.
+A skill is a knowledge document injected into the AI's context to help it specialise in a topic.
+Generate a complete skill from the user's description.
+Return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
+
+JSON schema:
+{
+  "name": "Short descriptive skill name",
+  "description": "One sentence for AI search",
+  "tags": "comma, separated, tags",
+  "domain": "global" | "sql",
+  "content": "Detailed skill body — instructions, patterns, examples, documentation..."
+}
+
+domain "sql" means the skill is only injected into the SQL Editor AI context.
+domain "global" means the skill is available to all AI agents.`;
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: prompt }
+    ];
+
+    const result = await chatCompletion(messages);
+
+    let raw = (result.content ?? "").trim();
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    const parsed = JSON.parse(raw);
+
+    formData.value = {
+      name: String(parsed.name ?? formData.value.name),
+      description: String(parsed.description ?? formData.value.description),
+      tags: String(parsed.tags ?? formData.value.tags),
+      content: String(parsed.content ?? formData.value.content),
+      domain: (["global", "sql"] as const).includes(parsed.domain)
+        ? parsed.domain
+        : formData.value.domain
+    };
+
+    skillGenMode.value = "manual";
+  } catch (err) {
+    skillGenerateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    isGeneratingSkill.value = false;
+  }
 };
 
 const selectSkill = (id: number) => {
@@ -797,5 +963,84 @@ const formatSize = (chars: number): string => {
   color: var(--p-slate-700);
   margin: 0;
   line-height: 1.6;
+}
+
+/* ── Skill Mode Toggle ── */
+.skill-mode-bar {
+  display: flex;
+  align-items: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+
+.skill-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+
+.skill-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.skill-mode-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+}
+
+.skill-mode-btn-active {
+  background: var(--p-slate-700);
+  color: white;
+}
+
+.skill-mode-btn i {
+  font-size: 0.75rem;
+}
+
+/* ── AI Generate Panel ── */
+.generate-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.generate-hint {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+}
+
+.generate-error {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--p-red-500);
+  background: var(--p-red-50);
+  border: 1px solid var(--p-red-200);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.generate-error i {
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.label-hint {
+  font-weight: 400;
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
 }
 </style>

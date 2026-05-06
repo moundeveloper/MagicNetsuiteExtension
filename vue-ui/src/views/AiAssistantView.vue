@@ -105,15 +105,19 @@
                     <i class="pi pi-chevron-down compaction-chevron" />
                   </summary>
                   <div class="compaction-content">
-                    <MessageContentRenderer :content="msg.content" @open-in-sql-editor="openInSqlEditor" />
+                    <MessageContentRenderer :content="msg.content" @open-in-sql-editor="openInSqlEditor" @question-answer="handleQuestionAnswer" />
                   </div>
                 </details>
               </div>
 
               <!-- User message -->
               <div v-else-if="msg.role === 'user'" class="msg msg-user">
-                <div v-if="msg.agentContext" class="msg-agent-badge" :style="{ '--agent-color': msg.agentContext.color }">
-                  <span class="agent-badge-dot" :style="{ background: msg.agentContext.color }" />
+                <div
+                  v-if="msg.agentContext"
+                  class="msg-agent-chip"
+                  :style="chipStyle(msg.agentContext.color)"
+                >
+                  <span class="chip-dot" :style="{ background: msg.agentContext.color }" />
                   /{{ msg.agentContext.slug }}
                 </div>
                 <div class="msg-user-content">{{ msg.content }}</div>
@@ -124,9 +128,13 @@
                 v-else-if="msg.role === 'assistant'"
                 class="msg msg-assistant"
               >
-                <!-- Agent badge on assistant response -->
-                <div v-if="msg.agentContext" class="msg-agent-response-badge" :style="{ borderColor: msg.agentContext.color }">
-                  <span class="agent-badge-dot" :style="{ background: msg.agentContext.color }" />
+                <!-- Agent chip on assistant response -->
+                <div
+                  v-if="msg.agentContext"
+                  class="msg-agent-chip msg-agent-chip--assistant"
+                  :style="chipStyle(msg.agentContext.color)"
+                >
+                  <span class="chip-dot" :style="{ background: msg.agentContext.color }" />
                   {{ msg.agentContext.name }}
                 </div>
                 <!-- Skill usage (shown above tools with distinct styling) -->
@@ -351,7 +359,7 @@
                     <span class="thinking-dot" />
                     <span class="thinking-dot" />
                   </div>
-                  <MessageContentRenderer v-else :content="msg.content" @open-in-sql-editor="openInSqlEditor" />
+                  <MessageContentRenderer v-else :content="msg.content" @open-in-sql-editor="openInSqlEditor" @question-answer="handleQuestionAnswer" />
                 </div>
               </div>
             </template>
@@ -398,11 +406,12 @@
             </div>
 
             <!-- Slash command suggestions -->
-            <div v-if="showSlashSuggestions && slashSuggestions.length > 0" class="slash-suggestions">
+            <div v-if="showSlashSuggestions && slashSuggestions.length > 0" ref="suggestionListRef" class="slash-suggestions">
               <div
-                v-for="ag in slashSuggestions"
+                v-for="(ag, idx) in slashSuggestions"
                 :key="ag.agentId"
                 class="slash-suggestion-item"
+                :class="{ 'slash-suggestion-active': idx === selectedSuggestionIndex }"
                 @mousedown.prevent="applySlashSuggestion(ag)"
               >
                 <span class="slash-dot" :style="{ background: ag.color }" />
@@ -412,16 +421,15 @@
             </div>
 
             <div class="input-row">
-              <textarea
-                ref="textareaRef"
-                v-model="prompt"
-                placeholder="Message... (type / for agents)"
-                rows="1"
+              <div
+                ref="inputRef"
                 class="chat-input"
-                :disabled="loading"
-                @keydown.enter.exact.prevent="sendMessage"
+                :contenteditable="!loading"
+                data-placeholder="Message... (type / for agents)"
+                @keydown="onInputKeydown"
                 @input="onPromptInput"
                 @blur="onPromptBlur"
+                @paste.prevent="onInputPaste"
               />
               <button
                 v-if="loading"
@@ -434,8 +442,8 @@
               <button
                 v-else
                 class="send-btn"
-                :disabled="!prompt.trim()"
-                @click="sendMessage"
+                :disabled="!inputHasContent"
+                @click="() => sendMessage()"
               >
                 <i class="pi pi-arrow-up" />
               </button>
@@ -834,8 +842,39 @@ Format responses using standard markdown:
 
 Keep responses concise and well-structured.
 
+## Diff View — Code Changes
+When you are **modifying, refactoring, or showing an updated version of existing code**, use the \`diff-view\` fence to show a side-by-side diff instead of a plain code block:
+
+\`\`\`diff-view
+---ORIGINAL---
+// the original code here
+---MODIFIED---
+// the updated code here
+\`\`\`
+
+Use this ONLY when you have both the original and the modified version. For new code (no original exists), use a regular code block.
+
 ## File Upload — Folder ID Rules
 When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.
+
+## Clarifying Questions
+When you need the user to choose between options before you can proceed (e.g. ambiguous intent, multiple valid approaches), use the \`question\` fence instead of asking in plain text:
+
+\`\`\`question
+What type of script do you want to create?
+---
+UserEventScript
+Suitelet
+RESTlet
+MapReduceScript
+\`\`\`
+
+Rules:
+- The question text goes **before** the \`---\` separator.
+- Each answer option goes on its own line **after** the separator.
+- Provide 2–6 meaningful options. The UI automatically adds a "Type your own answer" field.
+- Use this **only** when you genuinely cannot proceed without the user's choice. Do NOT use it for rhetorical follow-ups.
+- After the user selects or types an answer, continue the task using their response.
 
 ## Chained Tools — Pipeline Priority
 When a chained tool is available (e.g. \`generate_script_deployment\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.
@@ -983,8 +1022,12 @@ const tokenCounterClass = computed(() => {
 const messages = ref<ChatMessage[]>([]);
 const prompt = ref("");
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
+const inputRef = ref<HTMLDivElement | null>(null);
+const suggestionListRef = ref<HTMLDivElement | null>(null);
 const messageListRef = ref<HTMLElement | null>(null);
 const activeTools = ref<string[]>([]);
+const selectedSuggestionIndex = ref(-1);
+const activeChipAgent = ref<Agent | null>(null);
 
 interface InProgressTool {
   name: string;
@@ -1498,27 +1541,114 @@ const getSkillDisplayName = (toolName: string): string => {
   return toolName;
 };
 
-const autoResize = () => {
-  const el = textareaRef.value;
+// ── Contenteditable input helpers ──────────
+/** Returns a rgba string from hex + alpha (0-1). */
+const hexAlpha = (hex: string, alpha: number): string => {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+};
+
+/** Inline style object for an agent chip given its color. */
+const chipStyle = (color: string) => ({
+  background: hexAlpha(color, 0.12),
+  border: `1px solid ${hexAlpha(color, 0.4)}`
+});
+
+/** Extract plain text from the contenteditable, skipping chip spans. */
+const getInputText = (): string => {
+  const el = inputRef.value;
+  if (!el) return "";
+  let text = "";
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      text += node.textContent ?? "";
+    } else if (node.nodeName === "BR") {
+      text += "\n";
+    } else if ((node as HTMLElement).classList?.contains("agent-chip")) {
+      // skip chip
+    } else {
+      text += (node as HTMLElement).textContent ?? "";
+    }
+  }
+  return text.replace(/\u200B/g, "").replace(/\u00A0/g, " ");
+};
+
+const hasChip = (): boolean =>
+  !!inputRef.value &&
+  Array.from(inputRef.value.childNodes).some((n) =>
+    (n as HTMLElement).classList?.contains("agent-chip")
+  );
+
+const clearInput = () => {
+  if (inputRef.value) inputRef.value.innerHTML = "";
+  activeChipAgent.value = null;
+  prompt.value = "";
+};
+
+const insertAgentChip = (ag: Agent) => {
+  const el = inputRef.value;
   if (!el) return;
-  el.style.height = "auto";
-  el.style.height = Math.min(el.scrollHeight, 160) + "px";
+
+  el.innerHTML = "";
+
+  const chip = document.createElement("span");
+  chip.className = "agent-chip";
+  chip.contentEditable = "false";
+  chip.dataset.slug = ag.slug;
+  chip.style.background = hexAlpha(ag.color, 0.12);
+  chip.style.border = `1px solid ${hexAlpha(ag.color, 0.4)}`;
+
+  const dot = document.createElement("span");
+  dot.className = "chip-dot";
+  dot.style.background = ag.color;
+  chip.appendChild(dot);
+  chip.appendChild(document.createTextNode(`/${ag.slug}`));
+  el.appendChild(chip);
+
+  // Zero-width space so cursor lands after the chip
+  const spacer = document.createTextNode("\u200B");
+  el.appendChild(spacer);
+
+  const range = document.createRange();
+  range.setStartAfter(chip);
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+
+  activeChipAgent.value = ag;
+  prompt.value = "";
+};
+
+const inputHasContent = computed(
+  () => !!prompt.value.trim() || !!activeChipAgent.value
+);
+
+const autoResize = () => {
+  // contenteditable grows via CSS min/max-height — no JS needed
 };
 
 // ── Slash-command autocomplete ──
 const onPromptInput = () => {
-  autoResize();
+  const text = getInputText();
+  prompt.value = text;
 
-  const text = prompt.value;
-  // Show suggestions when user types "/" at the start
-  if (text.startsWith("/")) {
+  // Detect chip removal
+  if (activeChipAgent.value && !hasChip()) {
+    activeChipAgent.value = null;
+  }
+
+  if (!activeChipAgent.value && text.startsWith("/")) {
     const partial = text.slice(1).split(/\s/)[0]?.toLowerCase() ?? "";
     if (!text.includes(" ")) {
-      // Still typing the slug part
       slashSuggestions.value = availableAgents.value.filter((a) =>
         a.slug.toLowerCase().includes(partial)
       );
       showSlashSuggestions.value = slashSuggestions.value.length > 0;
+      selectedSuggestionIndex.value = -1;
     } else {
       showSlashSuggestions.value = false;
     }
@@ -1528,16 +1658,104 @@ const onPromptInput = () => {
 };
 
 const onPromptBlur = () => {
-  // Delay hiding so mousedown on suggestion can fire first
   setTimeout(() => {
     showSlashSuggestions.value = false;
   }, 150);
 };
 
 const applySlashSuggestion = (ag: Agent) => {
-  prompt.value = `/${ag.slug} `;
+  insertAgentChip(ag);
   showSlashSuggestions.value = false;
-  textareaRef.value?.focus();
+  selectedSuggestionIndex.value = -1;
+  inputRef.value?.focus();
+};
+
+const onInputKeydown = (e: KeyboardEvent) => {
+  // ── Arrow / Tab / Enter inside suggestion dropdown ──
+  if (showSlashSuggestions.value && slashSuggestions.value.length > 0) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      selectedSuggestionIndex.value = Math.min(
+        selectedSuggestionIndex.value + 1,
+        slashSuggestions.value.length - 1
+      );
+      scrollSuggestionIntoView();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      selectedSuggestionIndex.value = Math.max(
+        selectedSuggestionIndex.value - 1,
+        -1
+      );
+      scrollSuggestionIntoView();
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const target =
+        selectedSuggestionIndex.value >= 0
+          ? slashSuggestions.value[selectedSuggestionIndex.value]
+          : slashSuggestions.value[0];
+      if (target) applySlashSuggestion(target);
+      return;
+    }
+    if (e.key === "Enter" && selectedSuggestionIndex.value >= 0) {
+      e.preventDefault();
+      const sel = slashSuggestions.value[selectedSuggestionIndex.value];
+      if (sel) applySlashSuggestion(sel);
+      return;
+    }
+    if (e.key === "Escape") {
+      showSlashSuggestions.value = false;
+      selectedSuggestionIndex.value = -1;
+      return;
+    }
+  }
+
+  // ── Alt+Enter = newline ──
+  if (e.key === "Enter" && e.altKey) {
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (sel?.rangeCount) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const br = document.createElement("br");
+      range.insertNode(br);
+      range.setStartAfter(br);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      onPromptInput();
+    }
+    return;
+  }
+
+  // ── Send on Enter (Shift+Enter = newline) ──
+  if (e.key === "Enter" && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+};
+
+const onInputPaste = (e: ClipboardEvent) => {
+  const text = e.clipboardData?.getData("text/plain") ?? "";
+  const sel = window.getSelection();
+  if (!sel?.rangeCount) return;
+  sel.deleteFromDocument();
+  sel.getRangeAt(0).insertNode(document.createTextNode(text));
+  sel.collapseToEnd();
+  onPromptInput();
+};
+
+const scrollSuggestionIntoView = () => {
+  const list = suggestionListRef.value;
+  if (!list) return;
+  const idx = selectedSuggestionIndex.value;
+  const items = list.querySelectorAll<HTMLElement>(".slash-suggestion-item");
+  items[idx]?.scrollIntoView({ block: "nearest" });
 };
 
 // ── Agent display helpers ──
@@ -1677,35 +1895,49 @@ const stopAgent = () => {
   currentAssistantMsgId.value = 0;
 };
 
-const sendMessage = async () => {
-  const text = prompt.value.trim();
-  if (!text || loading.value) return;
+const sendMessage = async (overrideText?: string) => {
+  const rawText = overrideText !== undefined ? overrideText : getInputText().trim();
+  const chipAgent = activeChipAgent.value;
+  const hasAgent = overrideText === undefined && !!chipAgent;
+  if (!rawText && !hasAgent) return;
+  if (loading.value) return;
 
   inProgressTools.value = [];
-  prompt.value = "";
-  if (textareaRef.value) textareaRef.value.style.height = "auto";
-  showSlashSuggestions.value = false;
+  if (overrideText === undefined) {
+    clearInput();
+    showSlashSuggestions.value = false;
+  }
 
-  // ── Parse /agent-slug commands ──
-  const slashCmd = parseSlashCommand(text);
+  // ── Resolve agent config ──
   let agentConfig: Agent | undefined;
-  let actualPrompt = text;
+  let actualPrompt = rawText;
 
-  if (slashCmd) {
-    agentConfig = await getAgentBySlug(slashCmd.slug);
-    if (agentConfig && agentConfig.enabled) {
-      actualPrompt = slashCmd.prompt;
-      activeAgentSlug.value = slashCmd.slug;
+  if (hasAgent && chipAgent) {
+    agentConfig = await getAgentBySlug(chipAgent.slug);
+    if (agentConfig?.enabled) {
+      activeAgentSlug.value = agentConfig.slug;
     } else {
-      // Unknown slug — treat entire text as normal prompt
       agentConfig = undefined;
+    }
+    // actualPrompt is rawText (without the slug prefix)
+  } else {
+    // Fall back to parsing a manually typed /slug
+    const slashCmd = parseSlashCommand(rawText);
+    if (slashCmd) {
+      agentConfig = await getAgentBySlug(slashCmd.slug);
+      if (agentConfig?.enabled) {
+        actualPrompt = slashCmd.prompt;
+        activeAgentSlug.value = slashCmd.slug;
+      } else {
+        agentConfig = undefined;
+      }
     }
   }
 
   const userMsg: ChatMessage = {
     id: Date.now() + Math.random(),
     role: "user",
-    content: text,
+    content: actualPrompt,
     agentContext: agentConfig
       ? { name: agentConfig.name, slug: agentConfig.slug, color: agentConfig.color }
       : undefined
@@ -1747,7 +1979,7 @@ const sendMessage = async () => {
       });
     } else {
       // ── Normal run (with passive agent awareness) ──
-      finalText = await agent.run(text, {
+      finalText = await agent.run(actualPrompt, {
         maxIterations: 6,
         signal: abortController.signal
       });
@@ -1791,6 +2023,10 @@ const sendMessage = async () => {
     abortController = null;
     await scrollToBottom();
   }
+};
+
+const handleQuestionAnswer = (answer: string) => {
+  sendMessage(answer);
 };
 </script>
 
@@ -2472,8 +2708,8 @@ const sendMessage = async () => {
   font-size: 0.85rem;
   color: var(--p-slate-800);
   background: white;
-  resize: none;
   outline: none;
+  min-height: 2.5rem;
   max-height: 160px;
   overflow-y: auto;
   transition:
@@ -2481,6 +2717,9 @@ const sendMessage = async () => {
     box-shadow 0.15s ease;
   line-height: 1.5;
   scrollbar-width: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
 }
 
 .chat-input::-webkit-scrollbar {
@@ -2492,13 +2731,67 @@ const sendMessage = async () => {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-blue-400) 15%, transparent);
 }
 
-.chat-input::placeholder {
+/* Placeholder via data attribute (CSS :empty doesn't work reliably after DOM ops) */
+.chat-input:empty::before {
+  content: attr(data-placeholder);
   color: var(--p-slate-400);
+  pointer-events: none;
 }
 
-.chat-input:disabled {
+/* Disabled state when loading */
+.chat-input[contenteditable="false"] {
   opacity: 0.5;
   cursor: not-allowed;
+  user-select: none;
+}
+
+/* ── Agent Chip (inside input + in messages) ── */
+.agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: 20px;
+  padding: 1px 8px 1px 5px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+  vertical-align: middle;
+  margin-right: 4px;
+  user-select: none;
+  cursor: default;
+  white-space: nowrap;
+  /* border and background set inline by JS */
+}
+
+.chip-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Agent Chip in Messages ── */
+.msg-agent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 20px;
+  padding: 0.1rem 0.55rem 0.1rem 0.4rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+  margin-bottom: 0.25rem;
+  white-space: nowrap;
+  /* border and background set inline */
+}
+
+.msg-agent-chip.msg-agent-chip--assistant {
+  font-family: inherit;
+  font-size: 0.72rem;
+  letter-spacing: 0;
 }
 
 .send-btn {
@@ -2940,6 +3233,16 @@ const sendMessage = async () => {
   background: var(--p-slate-50);
 }
 
+.slash-suggestion-active {
+  background: var(--p-blue-50) !important;
+  outline: 1px solid var(--p-blue-200);
+  outline-offset: -1px;
+}
+
+.slash-suggestion-active .slash-cmd {
+  color: var(--p-blue-700);
+}
+
 .slash-dot {
   width: 8px;
   height: 8px;
@@ -2964,39 +3267,8 @@ const sendMessage = async () => {
   min-width: 0;
 }
 
-/* ── Agent Badge on Messages ── */
-.msg-agent-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--p-slate-500);
-  margin-left: auto;
-  margin-bottom: 0.2rem;
-  width: fit-content;
-}
-
-.msg-agent-response-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--p-slate-600);
-  padding: 0.2rem 0.5rem;
-  border-radius: 0.3rem;
-  border-left: 3px solid;
-  background: var(--p-slate-50);
-  margin-bottom: 0.4rem;
-  width: fit-content;
-}
-
-.agent-badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+/* ── Legacy badge refs removed — replaced by .msg-agent-chip ── */
+.agent-badge-dot { display: none; }
+.msg-agent-badge { display: none; }
+.msg-agent-response-badge { display: none; }
 </style>
