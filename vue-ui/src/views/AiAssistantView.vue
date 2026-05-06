@@ -1598,11 +1598,31 @@ const insertAgentChip = (ag: Agent) => {
   chip.className = "agent-chip";
   chip.contentEditable = "false";
   chip.dataset.slug = ag.slug;
+  // All visual styles inline — scoped CSS does not reach dynamically injected nodes
+  chip.style.display = "inline-flex";
+  chip.style.alignItems = "center";
+  chip.style.gap = "3px";
+  chip.style.borderRadius = "20px";
+  chip.style.padding = "1px 8px 1px 5px";
+  chip.style.fontFamily = '"JetBrains Mono", monospace';
+  chip.style.fontSize = "0.72rem";
+  chip.style.fontWeight = "600";
+  chip.style.color = "#334155";
+  chip.style.verticalAlign = "middle";
+  chip.style.marginRight = "4px";
+  chip.style.userSelect = "none";
+  chip.style.cursor = "default";
+  chip.style.whiteSpace = "nowrap";
   chip.style.background = hexAlpha(ag.color, 0.12);
   chip.style.border = `1px solid ${hexAlpha(ag.color, 0.4)}`;
 
   const dot = document.createElement("span");
   dot.className = "chip-dot";
+  dot.style.display = "inline-block";
+  dot.style.width = "7px";
+  dot.style.height = "7px";
+  dot.style.borderRadius = "50%";
+  dot.style.flexShrink = "0";
   dot.style.background = ag.color;
   chip.appendChild(dot);
   chip.appendChild(document.createTextNode(`/${ag.slug}`));
@@ -1676,20 +1696,20 @@ const onInputKeydown = (e: KeyboardEvent) => {
     if (e.key === "ArrowDown") {
       e.preventDefault();
       e.stopPropagation();
-      selectedSuggestionIndex.value = Math.min(
-        selectedSuggestionIndex.value + 1,
-        slashSuggestions.value.length - 1
-      );
+      const max = slashSuggestions.value.length - 1;
+      selectedSuggestionIndex.value =
+        selectedSuggestionIndex.value >= max ? 0 : selectedSuggestionIndex.value + 1;
       scrollSuggestionIntoView();
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
       e.stopPropagation();
-      selectedSuggestionIndex.value = Math.max(
-        selectedSuggestionIndex.value - 1,
-        -1
-      );
+      if (selectedSuggestionIndex.value <= -1) {
+        selectedSuggestionIndex.value = slashSuggestions.value.length - 1;
+      } else {
+        selectedSuggestionIndex.value = selectedSuggestionIndex.value - 1;
+      }
       scrollSuggestionIntoView();
       return;
     }

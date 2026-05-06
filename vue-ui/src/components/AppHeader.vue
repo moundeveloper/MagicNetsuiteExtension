@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import { useRoute } from "vue-router";
 import { Button, Breadcrumb, Drawer, InputText } from "primevue";
 import { useSettings } from "../states/settingsState";
@@ -106,6 +106,37 @@ const breadcrumbs = computed(() => {
   }
   items.push({ label: foundRoute.breadcrumb || foundRoute.name });
   return items;
+});const parseShortcut = (shortcut: string) => {
+  const parts = shortcut.toLowerCase().split("+");
+  const modifiers = parts.slice(0, -1);
+  const key = parts[parts.length - 1];
+  return { modifiers, key };
+};
+
+const handleKeydown = (e: KeyboardEvent) => {
+  const { modifiers, key } = parseShortcut(settings.drawerOpen);
+  const ctrlPressed = e.ctrlKey || e.metaKey;
+  const altPressed = e.altKey;
+  const shiftPressed = e.shiftKey;
+
+  let match = true;
+  if (modifiers.includes("ctrl") && !ctrlPressed) match = false;
+  if (modifiers.includes("alt") && !altPressed) match = false;
+  if (modifiers.includes("shift") && !shiftPressed) match = false;
+  if (e.key.toLowerCase() !== key) match = false;
+
+  if (match) {
+    e.preventDefault();
+    visibleBottom.value = !visibleBottom.value;
+  }
+};
+
+onMounted(() => {
+  window.addEventListener("keydown", handleKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleKeydown);
 });
 </script>
 

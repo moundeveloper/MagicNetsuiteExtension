@@ -209,7 +209,7 @@
               <span class="sql-ai-thinking-dot" />
               <span class="sql-ai-thinking-dot" />
             </div>
-            <MessageContentRenderer v-else :content="msg.content" />
+            <MessageContentRenderer v-else :content="msg.content" :hide-open-in-sql-editor="true" />
           </div>
         </div>
       </template>

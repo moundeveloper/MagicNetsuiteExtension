@@ -17,6 +17,7 @@ import {
 
 interface Props {
   content: string;
+  hideOpenInSqlEditor?: boolean;
 }
 
 interface ContentBlock {
@@ -205,7 +206,7 @@ const renderText = (text: string): string => {
           <span class="code-lang">{{ block.language || "code" }}</span>
           <div class="code-block-actions">
             <button
-              v-if="block.language === 'sql'"
+              v-if="block.language === 'sql' && !props.hideOpenInSqlEditor"
               class="code-action-btn"
               @click="emit('openInSqlEditor', block.content)"
               title="Open in SQL Editor"
@@ -261,8 +262,8 @@ const renderText = (text: string): string => {
 
 .diff-pane-labels {
   display: flex;
-  background: var(--p-slate-700);
-  border-bottom: 1px solid var(--p-slate-600);
+  background: var(--p-slate-100);
+  border-bottom: 1px solid var(--p-slate-200);
 }
 
 .diff-label-original,
@@ -277,12 +278,12 @@ const renderText = (text: string): string => {
 }
 
 .diff-label-original {
-  color: rgba(239, 68, 68, 0.8);
-  border-right: 1px solid var(--p-slate-600);
+  color: rgba(220, 38, 38, 0.9);
+  border-right: 1px solid var(--p-slate-200);
 }
 
 .diff-label-modified {
-  color: rgba(34, 197, 94, 0.8);
+  color: rgba(22, 163, 74, 0.9);
 }
 
 /* ── Code blocks ── */
