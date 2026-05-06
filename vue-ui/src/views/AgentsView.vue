@@ -130,6 +130,65 @@
       :draggable="false"
     >
       <div class="dialog-form">
+        <!-- ── Creation mode toggle (create only) ── -->
+        <div v-if="!isEditing" class="creation-mode-bar">
+          <div class="creation-mode-toggle">
+            <button
+              class="creation-mode-btn"
+              :class="{ 'creation-mode-btn-active': creationMode === 'manual' }"
+              type="button"
+              @click="creationMode = 'manual'"
+            >
+              <i class="pi pi-pencil" />
+              Manual
+            </button>
+            <button
+              class="creation-mode-btn"
+              :class="{ 'creation-mode-btn-active': creationMode === 'ai' }"
+              type="button"
+              @click="creationMode = 'ai'"
+            >
+              <i class="pi pi-sparkles" />
+              AI Generate
+            </button>
+          </div>
+        </div>
+
+        <!-- ── AI Generate panel ── -->
+        <template v-if="!isEditing && creationMode === 'ai'">
+          <div class="form-field">
+            <label for="ai-gen-prompt">
+              Describe the agent
+              <span class="label-hint">the AI will configure all fields automatically</span>
+            </label>
+            <Textarea
+              id="ai-gen-prompt"
+              v-model="aiPromptText"
+              placeholder="e.g., An expert at writing and running SuiteQL queries against NetSuite. Should be invoked manually via /suiteql and only use read-only tools."
+              rows="5"
+              class="w-full"
+              autoResize
+            />
+          </div>
+          <div v-if="generateError" class="generate-error">
+            <i class="pi pi-exclamation-triangle" />
+            {{ generateError }}
+          </div>
+          <div class="generate-row">
+            <Button
+              :label="isGenerating ? 'Generating...' : 'Generate'"
+              :disabled="!aiPromptText.trim() || isGenerating"
+              :loading="isGenerating"
+              @click="generateFromAi"
+            />
+            <span class="generate-hint">
+              All fields will be pre-filled — you can review and tweak before saving.
+            </span>
+          </div>
+        </template>
+
+        <!-- ── Manual form (always shown when editing; toggled on create) ── -->
+        <template v-if="isEditing || creationMode === 'manual'">
         <!-- Name -->
         <div class="form-field">
           <label for="agent-name">Name</label>
@@ -319,6 +378,7 @@
             </Button>
           </div>
         </div>
+        </template><!-- end manual form -->
       </div>
 
       <template #footer>
@@ -364,6 +424,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { useAiProvider, type ChatMessage } from "../composables/useAiProvider";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -415,6 +476,12 @@ const deleteTarget = ref<Agent | null>(null);
 const toolSearch = ref("");
 const slugError = ref("");
 const blockedToolsInput = ref("");
+
+// ── AI Generation ──────────────────────────
+const creationMode = ref<"manual" | "ai">("manual");
+const aiPromptText = ref("");
+const isGenerating = ref(false);
+const generateError = ref("");
 
 const defaultLimits: AgentLimits = {
   maxIterations: 6,
@@ -528,6 +595,120 @@ const regenerateColor = () => {
   );
 };
 
+// ── AI Agent Generation ────────────────────
+const generateFromAi = async () => {
+  const prompt = aiPromptText.value.trim();
+  if (!prompt) return;
+
+  isGenerating.value = true;
+  generateError.value = "";
+
+  try {
+    const { chatCompletion } = useAiProvider();
+
+    const toolList = allToolNames.value.join("\n");
+    const skillList = availableSkills.value
+      .map((s) => `id=${s.id} "${s.name}": ${s.description ?? ""}`)
+      .join("\n");
+
+    const systemPrompt = `You are an agent configuration generator for a NetSuite SuiteScript AI assistant browser extension.
+Given a natural-language description, produce a complete agent configuration as a single raw JSON object.
+Do NOT wrap in markdown code blocks. Return ONLY the JSON.
+
+Available tool names (only pick from this exact list):
+${toolList}
+
+Available skills (only pick IDs from this list):
+${skillList || "(none available)"}
+
+JSON schema to follow exactly:
+{
+  "name": "Short human-readable name (2-5 words)",
+  "slug": "lowercase-kebab-case-slug",
+  "description": "One sentence describing what the agent specialises in",
+  "systemPrompt": "Detailed system prompt that instructs the agent how to behave and what it knows",
+  "mode": "active" | "passive" | "both",
+  "tools": ["exact_tool_name"],
+  "skillIds": [],
+  "limits": {
+    "maxIterations": 6,
+    "canExecuteDestructive": false,
+    "blockedTools": []
+  },
+  "color": "#RRGGBB"
+}
+
+Rules:
+- mode "active"  → only invoked manually via /slug command
+- mode "passive" → only auto-delegated by the main agent
+- mode "both"    → either way
+- Only include tools genuinely needed for this agent's purpose
+- canExecuteDestructive true only if the agent needs to create / update / delete records
+- maxIterations: 4–10 depending on task complexity
+- color: pastel, desaturated hex that visually fits the domain`;
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: prompt }
+    ];
+
+    const result = await chatCompletion(messages);
+
+    let raw = (result.content ?? "").trim();
+    // Strip any accidental markdown code fences
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+    const parsed = JSON.parse(raw);
+
+    const validModes = ["active", "passive", "both"] as const;
+    const parsedMode = validModes.includes(parsed.mode) ? parsed.mode : "both";
+
+    const validTools = allToolNames.value;
+    const filteredTools = Array.isArray(parsed.tools)
+      ? (parsed.tools as string[]).filter((t) => validTools.includes(t))
+      : [];
+
+    const validSkillIds = availableSkills.value.map((s) => s.id!);
+    const filteredSkillIds = Array.isArray(parsed.skillIds)
+      ? (parsed.skillIds as number[]).filter((id) => validSkillIds.includes(id))
+      : [];
+
+    const parsedColor =
+      typeof parsed.color === "string" && /^#[0-9a-fA-F]{6}$/.test(parsed.color)
+        ? parsed.color
+        : generateAgentColor(String(parsed.name ?? ""), String(parsed.description ?? ""));
+
+    const parsedBlockedTools = Array.isArray(parsed.limits?.blockedTools)
+      ? (parsed.limits.blockedTools as string[])
+      : [];
+
+    formData.value = {
+      name: String(parsed.name ?? ""),
+      slug: String(parsed.slug ?? nameToSlug(parsed.name ?? "")),
+      description: String(parsed.description ?? ""),
+      systemPrompt: String(parsed.systemPrompt ?? ""),
+      mode: parsedMode,
+      tools: filteredTools,
+      skillIds: filteredSkillIds,
+      limits: {
+        maxIterations: Math.min(20, Math.max(1, Number(parsed.limits?.maxIterations ?? 6))),
+        canExecuteDestructive: Boolean(parsed.limits?.canExecuteDestructive ?? false),
+        blockedTools: parsedBlockedTools
+      },
+      color: parsedColor
+    };
+
+    blockedToolsInput.value = parsedBlockedTools.join(", ");
+
+    // Switch to manual so the user can review and tweak before saving
+    creationMode.value = "manual";
+  } catch (err) {
+    generateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    isGenerating.value = false;
+  }
+};
+
 // ── CRUD ───────────────────────────────────
 const openCreateDialog = () => {
   isEditing.value = false;
@@ -535,6 +716,9 @@ const openCreateDialog = () => {
   toolSearch.value = "";
   slugError.value = "";
   blockedToolsInput.value = "";
+  creationMode.value = "manual";
+  aiPromptText.value = "";
+  generateError.value = "";
   formData.value = {
     name: "",
     slug: "",
@@ -591,10 +775,11 @@ const saveAgent = async () => {
     description: description.trim(),
     systemPrompt: systemPrompt.trim(),
     mode,
-    tools,
-    skillIds,
+    tools: [...tools],
+    skillIds: [...skillIds],
     limits: {
-      ...limits,
+      maxIterations: limits.maxIterations,
+      canExecuteDestructive: limits.canExecuteDestructive,
       blockedTools: parsedBlockedTools
     },
     color,
@@ -1172,5 +1357,78 @@ const formatDate = (dateStr: string): string => {
   color: var(--p-slate-700);
   margin: 0;
   line-height: 1.6;
+}
+
+/* ── Creation Mode Toggle ── */
+.creation-mode-bar {
+  display: flex;
+  align-items: center;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+
+.creation-mode-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.375rem;
+  overflow: hidden;
+}
+
+.creation-mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.875rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.creation-mode-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+}
+
+.creation-mode-btn-active {
+  background: var(--p-slate-700);
+  color: white;
+}
+
+.creation-mode-btn i {
+  font-size: 0.75rem;
+}
+
+/* ── AI Generate Panel ── */
+.generate-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.generate-hint {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+}
+
+.generate-error {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--p-red-500);
+  background: var(--p-red-50);
+  border: 1px solid var(--p-red-200);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.generate-error i {
+  font-size: 0.8rem;
+  flex-shrink: 0;
 }
 </style>
