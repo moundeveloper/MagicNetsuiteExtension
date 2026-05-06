@@ -112,6 +112,10 @@
 
               <!-- User message -->
               <div v-else-if="msg.role === 'user'" class="msg msg-user">
+                <div v-if="msg.agentContext" class="msg-agent-badge" :style="{ '--agent-color': msg.agentContext.color }">
+                  <span class="agent-badge-dot" :style="{ background: msg.agentContext.color }" />
+                  /{{ msg.agentContext.slug }}
+                </div>
                 <div class="msg-user-content">{{ msg.content }}</div>
               </div>
 
@@ -120,6 +124,11 @@
                 v-else-if="msg.role === 'assistant'"
                 class="msg msg-assistant"
               >
+                <!-- Agent badge on assistant response -->
+                <div v-if="msg.agentContext" class="msg-agent-response-badge" :style="{ borderColor: msg.agentContext.color }">
+                  <span class="agent-badge-dot" :style="{ background: msg.agentContext.color }" />
+                  {{ msg.agentContext.name }}
+                </div>
                 <!-- Skill usage (shown above tools with distinct styling) -->
                 <div
                   v-if="
@@ -371,21 +380,48 @@
           <!-- Input wrapper (bg + border) -->
           <div class="input-wrapper">
             <div class="chat-toolbar">
+              <!-- Active agent indicator -->
+              <span
+                v-if="activeAgentSlug && loading"
+                class="agent-indicator"
+              >
+                <span
+                  class="agent-indicator-dot"
+                  :style="{ background: currentAgentColor }"
+                />
+                {{ currentAgentName }}
+              </span>
               <span v-if="tokenCounterLabel" :class="tokenCounterClass">
                 <i class="pi pi-database" style="font-size: 0.6rem" />
                 {{ tokenCounterLabel }} tokens (Context-Window)
               </span>
             </div>
+
+            <!-- Slash command suggestions -->
+            <div v-if="showSlashSuggestions && slashSuggestions.length > 0" class="slash-suggestions">
+              <div
+                v-for="ag in slashSuggestions"
+                :key="ag.agentId"
+                class="slash-suggestion-item"
+                @mousedown.prevent="applySlashSuggestion(ag)"
+              >
+                <span class="slash-dot" :style="{ background: ag.color }" />
+                <span class="slash-cmd">/{{ ag.slug }}</span>
+                <span class="slash-desc">{{ ag.description }}</span>
+              </div>
+            </div>
+
             <div class="input-row">
               <textarea
                 ref="textareaRef"
                 v-model="prompt"
-                placeholder="Message..."
+                placeholder="Message... (type / for agents)"
                 rows="1"
                 class="chat-input"
                 :disabled="loading"
                 @keydown.enter.exact.prevent="sendMessage"
-                @input="autoResize"
+                @input="onPromptInput"
+                @blur="onPromptBlur"
               />
               <button
                 v-if="loading"
@@ -463,6 +499,7 @@ import { useRouter } from "vue-router";
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent, ToolRejectedError } from "../composables/useAgent";
+import type { ToolDefinition } from "../composables/useAgent";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
@@ -478,6 +515,13 @@ import {
   getAiAssistantUiState,
   setAiAssistantUiState
 } from "../utils/aiAssistantDb";
+import {
+  getEnabledAgents,
+  getAgentBySlug,
+  getPassiveAgents,
+  type Agent
+} from "../utils/agentsDb";
+import { getSkillContent } from "../utils/skillsDb";
 
 const { settings } = useSettings();
 const router = useRouter();
@@ -497,6 +541,12 @@ interface ChatMessage {
     totalSteps: number;
     stepLabel: string;
   };
+  /** Present when this message was routed through a specific agent */
+  agentContext?: {
+    name: string;
+    slug: string;
+    color: string;
+  };
 }
 
 interface Chat {
@@ -508,6 +558,62 @@ interface Chat {
 }
 
 const props = defineProps<{ vhOffset: number }>();
+
+// ── Agent state ──
+const availableAgents = ref<Agent[]>([]);
+const activeAgentSlug = ref<string | null>(null);
+const slashSuggestions = ref<Agent[]>([]);
+const showSlashSuggestions = ref(false);
+
+const loadAgents = async () => {
+  availableAgents.value = await getEnabledAgents();
+};
+
+/**
+ * Parse a /slash-command from the start of a prompt.
+ * Returns { slug, prompt } if found, null otherwise.
+ */
+const parseSlashCommand = (text: string): { slug: string; prompt: string } | null => {
+  const match = text.match(/^\/([a-z0-9][-a-z0-9]*)\s+([\s\S]+)/i);
+  if (!match) return null;
+  return { slug: match[1]!, prompt: match[2]!.trim() };
+};
+
+/**
+ * Build an agent-specific system prompt by combining the agent's
+ * system prompt with any loaded skills.
+ */
+const buildAgentSystemPrompt = async (agentConfig: Agent): Promise<string> => {
+  const parts: string[] = [agentConfig.systemPrompt];
+
+  // Load agent-specific skills
+  if (agentConfig.skillIds.length > 0) {
+    const skillContents: string[] = [];
+    for (const skillId of agentConfig.skillIds) {
+      const skill = await getSkillContent(skillId);
+      if (skill) {
+        skillContents.push(`## Skill: ${skill.name}\n${skill.content}`);
+      }
+    }
+    if (skillContents.length > 0) {
+      parts.push("\n\n# Loaded Skills\n" + skillContents.join("\n\n---\n\n"));
+    }
+  }
+
+  // Add limits context
+  const limitNotes: string[] = [];
+  if (!agentConfig.limits.canExecuteDestructive) {
+    limitNotes.push("You are NOT allowed to execute destructive operations (creating, modifying, or deleting data).");
+  }
+  if (agentConfig.limits.blockedTools.length > 0) {
+    limitNotes.push(`You must NOT use the following tools: ${agentConfig.limits.blockedTools.join(", ")}.`);
+  }
+  if (limitNotes.length > 0) {
+    parts.push("\n\n# Restrictions\n" + limitNotes.join("\n"));
+  }
+
+  return parts.join("\n");
+};
 
 // ── Tool approval state ──
 const approvalVisible = ref(false);
@@ -567,6 +673,94 @@ const handleCompactionReject = () => {
   compactionApprovalVisible.value = false;
   compactionApprovalResolve?.(false);
   compactionApprovalResolve = null;
+};
+
+// ── Delegate-to-agent tool ──
+// This tool allows the main agent to delegate tasks to specialized agents.
+// It runs a sub-call through the agent's system prompt with filtered tools.
+const delegateToAgentTool: ToolDefinition = {
+  name: "delegate_to_agent",
+  description:
+    "Delegate a task to a specialized agent, or list available agents. " +
+    "Call with just agent_slug='list' to see available agents and their capabilities. " +
+    "Call with agent_slug and task to delegate work. " +
+    "The agent will handle the task with its own system prompt, tools, and skills, and return the result.",
+  parameters: {
+    type: "object",
+    properties: {
+      agent_slug: {
+        type: "string",
+        description:
+          "The slug of the agent to delegate to (e.g. 'sql-expert'), or 'list' to see available agents."
+      },
+      task: {
+        type: "string",
+        description:
+          "The task description to send to the agent. Not required when listing agents."
+      }
+    },
+    required: ["agent_slug"]
+  },
+  execute: async (input) => {
+    const slug = String(input.agent_slug ?? "");
+    const task = String(input.task ?? "");
+
+    // List mode
+    if (slug === "list") {
+      const passive = await getPassiveAgents();
+      if (passive.length === 0) {
+        return { message: "No passive agents available. Agents can be created in the Agents view." };
+      }
+      return {
+        agents: passive.map((a) => ({
+          slug: a.slug,
+          name: a.name,
+          description: a.description,
+          mode: a.mode,
+          tools: a.tools.length,
+          skills: a.skillIds.length
+        }))
+      };
+    }
+
+    const agentConfig = await getAgentBySlug(slug);
+    if (!agentConfig) {
+      return { error: `No agent found with slug "${slug}". Call with agent_slug='list' to see available agents.` };
+    }
+    if (!agentConfig.enabled) {
+      return { error: `Agent "${agentConfig.name}" is disabled.` };
+    }
+    if (agentConfig.mode === "active") {
+      return { error: `Agent "${agentConfig.name}" is set to active-only mode. It can only be invoked directly by the user via /${agentConfig.slug}.` };
+    }
+
+    if (!task) {
+      return { error: "A task description is required when delegating to an agent." };
+    }
+
+    const agentSystemPrompt = await buildAgentSystemPrompt(agentConfig);
+
+    try {
+      const result = await agent.run(task, {
+        systemPrompt: agentSystemPrompt,
+        maxIterations: agentConfig.limits.maxIterations,
+        allowedTools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
+        blockedTools: agentConfig.limits.blockedTools.length > 0
+          ? agentConfig.limits.blockedTools
+          : undefined,
+        blockDestructive: !agentConfig.limits.canExecuteDestructive
+      });
+      return {
+        agent: agentConfig.name,
+        response: result
+      };
+    } catch (err) {
+      return {
+        agent: agentConfig.name,
+        error: `Agent failed: ${String(err)}`
+      };
+    }
+  }
 };
 
 const agent = useAgent({
@@ -644,8 +838,11 @@ Keep responses concise and well-structured.
 When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.
 
 ## Chained Tools — Pipeline Priority
-When a chained tool is available (e.g. \`generate_script_deployment\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.`,
-  tools: [...tools, ...skillTools, ...createSqlAiTools()],
+When a chained tool is available (e.g. \`generate_script_deployment\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.
+
+## Agent Delegation
+You may have specialized agents available via the \`delegate_to_agent\` tool. When a task clearly falls within a specialized agent's domain, delegate to it by calling the tool with the agent's slug and the task description. The agent will handle the task with its own specialized tools and skills, and return the result. Only delegate when the agent's specialization is a strong match — otherwise handle the task yourself.`,
+  tools: [...tools, ...skillTools, ...createSqlAiTools(), delegateToAgentTool],
   chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,
@@ -1230,6 +1427,7 @@ const formatDate = (dateStr: string) => {
 
 onMounted(() => {
   loadChatHistory();
+  loadAgents();
 
   const onHide = () => {
     if (document.visibilityState === "hidden") {
@@ -1306,6 +1504,54 @@ const autoResize = () => {
   el.style.height = "auto";
   el.style.height = Math.min(el.scrollHeight, 160) + "px";
 };
+
+// ── Slash-command autocomplete ──
+const onPromptInput = () => {
+  autoResize();
+
+  const text = prompt.value;
+  // Show suggestions when user types "/" at the start
+  if (text.startsWith("/")) {
+    const partial = text.slice(1).split(/\s/)[0]?.toLowerCase() ?? "";
+    if (!text.includes(" ")) {
+      // Still typing the slug part
+      slashSuggestions.value = availableAgents.value.filter((a) =>
+        a.slug.toLowerCase().includes(partial)
+      );
+      showSlashSuggestions.value = slashSuggestions.value.length > 0;
+    } else {
+      showSlashSuggestions.value = false;
+    }
+  } else {
+    showSlashSuggestions.value = false;
+  }
+};
+
+const onPromptBlur = () => {
+  // Delay hiding so mousedown on suggestion can fire first
+  setTimeout(() => {
+    showSlashSuggestions.value = false;
+  }, 150);
+};
+
+const applySlashSuggestion = (ag: Agent) => {
+  prompt.value = `/${ag.slug} `;
+  showSlashSuggestions.value = false;
+  textareaRef.value?.focus();
+};
+
+// ── Agent display helpers ──
+const currentAgentName = computed(() => {
+  if (!activeAgentSlug.value) return "";
+  const ag = availableAgents.value.find((a) => a.slug === activeAgentSlug.value);
+  return ag?.name ?? activeAgentSlug.value;
+});
+
+const currentAgentColor = computed(() => {
+  if (!activeAgentSlug.value) return "";
+  const ag = availableAgents.value.find((a) => a.slug === activeAgentSlug.value);
+  return ag?.color ?? "#B8C9D4";
+});
 
 const scrollToBottom = async () => {
   await nextTick();
@@ -1438,11 +1684,31 @@ const sendMessage = async () => {
   inProgressTools.value = [];
   prompt.value = "";
   if (textareaRef.value) textareaRef.value.style.height = "auto";
+  showSlashSuggestions.value = false;
+
+  // ── Parse /agent-slug commands ──
+  const slashCmd = parseSlashCommand(text);
+  let agentConfig: Agent | undefined;
+  let actualPrompt = text;
+
+  if (slashCmd) {
+    agentConfig = await getAgentBySlug(slashCmd.slug);
+    if (agentConfig && agentConfig.enabled) {
+      actualPrompt = slashCmd.prompt;
+      activeAgentSlug.value = slashCmd.slug;
+    } else {
+      // Unknown slug — treat entire text as normal prompt
+      agentConfig = undefined;
+    }
+  }
 
   const userMsg: ChatMessage = {
     id: Date.now() + Math.random(),
     role: "user",
-    content: text
+    content: text,
+    agentContext: agentConfig
+      ? { name: agentConfig.name, slug: agentConfig.slug, color: agentConfig.color }
+      : undefined
   };
   messages.value.push(userMsg);
   await scrollToBottom();
@@ -1451,7 +1717,10 @@ const sendMessage = async () => {
     id: Date.now() + Math.random(),
     role: "assistant",
     content: "",
-    isStreaming: true
+    isStreaming: true,
+    agentContext: agentConfig
+      ? { name: agentConfig.name, slug: agentConfig.slug, color: agentConfig.color }
+      : undefined
   };
   messages.value.push(assistantMsg);
   currentAssistantMsgId.value = assistantMsg.id;
@@ -1460,7 +1729,30 @@ const sendMessage = async () => {
 
   try {
     abortController = new AbortController();
-    const finalText = await agent.run(text, { maxIterations: 6, signal: abortController.signal });
+
+    let finalText: string;
+
+    if (agentConfig) {
+      // ── Agent-specific run ──
+      const agentSystemPrompt = await buildAgentSystemPrompt(agentConfig);
+      finalText = await agent.run(actualPrompt, {
+        systemPrompt: agentSystemPrompt,
+        maxIterations: agentConfig.limits.maxIterations,
+        signal: abortController.signal,
+        allowedTools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
+        blockedTools: agentConfig.limits.blockedTools.length > 0
+          ? agentConfig.limits.blockedTools
+          : undefined,
+        blockDestructive: !agentConfig.limits.canExecuteDestructive
+      });
+    } else {
+      // ── Normal run (with passive agent awareness) ──
+      finalText = await agent.run(text, {
+        maxIterations: 6,
+        signal: abortController.signal
+      });
+    }
+
     assistantMsg.content =
       typeof finalText === "string"
         ? finalText
@@ -1471,6 +1763,7 @@ const sendMessage = async () => {
     inProgressTools.value = [];
     activeTools.value = [];
     currentAssistantMsgId.value = 0;
+    activeAgentSlug.value = null;
 
     autoSaveCurrentChat();
   } catch (e) {
@@ -1479,7 +1772,7 @@ const sendMessage = async () => {
         assistantMsg.content = "Generation stopped.";
       }
     } else if (e instanceof ToolRejectedError) {
-      assistantMsg.content = `⛔ Stopped — tool **\`${e.toolName}\`** was rejected.`;
+      assistantMsg.content = `Stopped -- tool **\`${e.toolName}\`** was rejected.`;
     } else {
       assistantMsg.content =
         "An error occurred. Check the console for details.";
@@ -1491,6 +1784,7 @@ const sendMessage = async () => {
     inProgressTools.value = [];
     activeTools.value = [];
     currentAssistantMsgId.value = 0;
+    activeAgentSlug.value = null;
 
     autoSaveCurrentChat();
   } finally {
@@ -2601,5 +2895,108 @@ const sendMessage = async () => {
 
 .compaction-btn--compact:hover {
   background: var(--p-amber-600, #d97706);
+}
+
+/* ── Agent Indicator (toolbar) ── */
+.agent-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
+  padding: 0.15rem 0.5rem;
+  background: var(--p-slate-50);
+  border-radius: 0.25rem;
+  border: 1px solid var(--p-slate-200);
+}
+
+.agent-indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Slash Command Suggestions ── */
+.slash-suggestions {
+  border-bottom: 1px solid var(--p-slate-100);
+  padding: 0.25rem 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.slash-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 0.8rem;
+}
+
+.slash-suggestion-item:hover {
+  background: var(--p-slate-50);
+}
+
+.slash-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.slash-cmd {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.slash-desc {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Agent Badge on Messages ── */
+.msg-agent-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--p-slate-500);
+  margin-left: auto;
+  margin-bottom: 0.2rem;
+  width: fit-content;
+}
+
+.msg-agent-response-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.3rem;
+  border-left: 3px solid;
+  background: var(--p-slate-50);
+  margin-bottom: 0.4rem;
+  width: fit-content;
+}
+
+.agent-badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 </style>

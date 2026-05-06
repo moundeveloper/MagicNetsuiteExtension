@@ -68,6 +68,20 @@ export interface AgentRunOptions {
   systemPrompt?: string;
   maxIterations?: number;
   signal?: AbortSignal;
+  /**
+   * When set, only tools whose names are in this list are made available.
+   * Used by agent-specific runs to restrict tool access.
+   */
+  allowedTools?: string[];
+  /**
+   * When set, tools whose names are in this list are excluded.
+   * Applied after allowedTools filtering.
+   */
+  blockedTools?: string[];
+  /**
+   * When true, destructive tools are blocked even if they pass other filters.
+   */
+  blockDestructive?: boolean;
 }
 
 export interface AgentOptions {
@@ -1027,7 +1041,14 @@ export const useAgent = (options: AgentOptions = {}) => {
    *   - Skill tools (search_skills, load_skill): included when code generation detected
    *   - MCP tools (contain "__"): always included (user explicitly configured them)
    */
-  const selectRelevantTools = (prompt: string): ReturnType<typeof toExternalTool>[] => {
+  const selectRelevantTools = (
+    prompt: string,
+    filters?: {
+      allowedTools?: string[];
+      blockedTools?: string[];
+      blockDestructive?: boolean;
+    }
+  ): ReturnType<typeof toExternalTool>[] => {
     const allTools = Array.from(toolRegistry.value.values());
     const isCodeGen = CODE_GEN_PATTERNS.test(prompt);
     const ephemeralSet = new Set(ephemeralTools);
@@ -1046,7 +1067,20 @@ export const useAgent = (options: AgentOptions = {}) => {
       matchedChainDef?.steps.forEach((s) => excludedStepTools.add(s.toolName));
     }
 
+    // Build filter sets from agent-specific restrictions
+    const allowedSet = filters?.allowedTools
+      ? new Set(filters.allowedTools)
+      : null;
+    const blockedSet = filters?.blockedTools
+      ? new Set(filters.blockedTools)
+      : null;
+
     const selected = allTools.filter((tool) => {
+      // Agent-level tool restrictions
+      if (allowedSet && !allowedSet.has(tool.name)) return false;
+      if (blockedSet && blockedSet.has(tool.name)) return false;
+      if (filters?.blockDestructive && tool.destructive) return false;
+
       // Chained tools: include when intent matches, otherwise exclude
       if (chainedToolNames.has(tool.name)) {
         return tool.name === matchedChain;
@@ -1089,8 +1123,14 @@ export const useAgent = (options: AgentOptions = {}) => {
     prompt: string,
     runOptions: AgentRunOptions = {}
   ): Promise<string> => {
-    const { systemPrompt = defaultSystemPrompt, maxIterations = 10, signal } =
-      runOptions;
+    const {
+      systemPrompt = defaultSystemPrompt,
+      maxIterations = 10,
+      signal,
+      allowedTools,
+      blockedTools,
+      blockDestructive
+    } = runOptions;
 
     loading.value = true;
     error.value = null;
@@ -1103,7 +1143,10 @@ export const useAgent = (options: AgentOptions = {}) => {
 
       pushMessage({ role: "user", content: prompt });
 
-      const allTools = selectRelevantTools(prompt);
+      const toolFilters = (allowedTools || blockedTools || blockDestructive)
+        ? { allowedTools, blockedTools, blockDestructive }
+        : undefined;
+      const allTools = selectRelevantTools(prompt, toolFilters);
       console.log(
         `[useAgent] Registry: [${Array.from(toolRegistry.value.values()).map((t) => t.name).join(", ") || "no tools"}]`
       );

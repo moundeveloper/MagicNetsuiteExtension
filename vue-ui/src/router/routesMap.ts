@@ -19,6 +19,7 @@ import SkillsView from "../views/SkillsView.vue";
 import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
 import SuiteQLView from "../views/SuiteQLView.vue";
 import McpServerView from "../views/McpServerView.vue";
+import AgentsView from "../views/AgentsView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -227,6 +228,14 @@ export const routes: FullRoute[] = [
     component: SuiteQLView,
     status: RouteStatus.release,
     breadcrumb: "SuiteQL Editor"
+  },
+  {
+    route: "/agents",
+    name: "Agents",
+    icon: "pi pi-users",
+    component: AgentsView,
+    status: RouteStatus.release,
+    breadcrumb: "Agents"
   },
   {
     route: "/mcp-server",
