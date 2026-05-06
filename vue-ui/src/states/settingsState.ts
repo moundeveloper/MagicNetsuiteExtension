@@ -90,7 +90,11 @@ export function useSettings() {
     if (!isLoaded) {
       return;
     }
-    await chrome.storage.sync.set({ magic_netsuite_settings: JSON.parse(JSON.stringify(settings)) });
+    try {
+      await chrome.storage.sync.set({ magic_netsuite_settings: JSON.parse(JSON.stringify(settings)) });
+    } catch {
+      // Extension context may have been invalidated (e.g. after extension reload in dev mode)
+    }
   };
 
   watch(

@@ -11,6 +11,24 @@ const props = defineProps<{ vhOffset: number }>();
 
 const { settings } = useSettings();
 
+// ── Safe chrome.runtime wrapper ──
+// Guards every sendMessage call against "Extension context invalidated" which
+// occurs when the extension is reloaded while the side panel is still open.
+const safeSendMessage = <T = unknown>(msg: Record<string, unknown>): Promise<T | null> =>
+  new Promise((resolve) => {
+    try {
+      // chrome.runtime.id becomes undefined when the context is invalidated
+      if (!chrome.runtime?.id) { resolve(null); return; }
+      chrome.runtime.sendMessage(msg, (resp: T) => {
+        // Consume lastError to suppress Chrome's "unchecked" console warning
+        void chrome.runtime.lastError;
+        resolve(resp ?? null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+
 // ── MCP Connection status ──
 
 const mcpStatus = ref<"connected" | "disconnected" | "checking">("checking");
@@ -18,13 +36,8 @@ let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const checkMcpStatus = async () => {
   try {
-    const response = await new Promise<{ status: string }>((resolve) => {
-      chrome.runtime.sendMessage({ type: "MCP_STATUS" }, (resp) => {
-        resolve(resp ?? { status: "disconnected" });
-      });
-    });
-    mcpStatus.value =
-      response.status === "connected" ? "connected" : "disconnected";
+    const resp = await safeSendMessage<{ status: string }>({ type: "MCP_STATUS" });
+    mcpStatus.value = resp?.status === "connected" ? "connected" : "disconnected";
   } catch {
     mcpStatus.value = "disconnected";
   }
@@ -33,13 +46,8 @@ const checkMcpStatus = async () => {
 const connectMcp = async () => {
   mcpStatus.value = "checking";
   try {
-    const response = await new Promise<{ status: string }>((resolve) => {
-      chrome.runtime.sendMessage({ type: "MCP_CONNECT" }, (resp) => {
-        resolve(resp ?? { status: "disconnected" });
-      });
-    });
-    mcpStatus.value =
-      response.status === "connected" ? "connected" : "disconnected";
+    const resp = await safeSendMessage<{ status: string }>({ type: "MCP_CONNECT" });
+    mcpStatus.value = resp?.status === "connected" ? "connected" : "disconnected";
   } catch {
     mcpStatus.value = "disconnected";
   }
@@ -48,34 +56,24 @@ const connectMcp = async () => {
 const disconnectMcp = async () => {
   mcpStatus.value = "checking";
   try {
-    await new Promise<void>((resolve) => {
-      chrome.runtime.sendMessage({ type: "MCP_DISCONNECT" }, () => {
-        resolve();
-      });
-    });
-    mcpStatus.value = "disconnected";
-  } catch {
-    mcpStatus.value = "disconnected";
-  }
+    await safeSendMessage({ type: "MCP_DISCONNECT" });
+  } catch { /* context may be invalidated — ignore */ }
+  mcpStatus.value = "disconnected";
 };
 
-// Toggle MCP enabled and connect/disconnect accordingly
-const toggleMcpEnabled = async () => {
-  if (settings.mcpEnabled) {
-    await connectMcp();
-  } else {
-    await disconnectMcp();
-  }
-};
-
-// Watch settings.mcpEnabled to trigger connect/disconnect
+// Watch settings.mcpEnabled to trigger connect/disconnect and manage poll intervals
 watch(
   () => settings.mcpEnabled,
   (enabled) => {
     if (enabled) {
       connectMcp();
+      if (!statusPollTimer) statusPollTimer = setInterval(checkMcpStatus, 5000);
+      if (!usagePollTimer) usagePollTimer = setInterval(fetchUsage, 10000);
     } else {
       disconnectMcp();
+      // Stop all polling — no background activity while disabled
+      if (statusPollTimer) { clearInterval(statusPollTimer); statusPollTimer = null; }
+      if (usagePollTimer) { clearInterval(usagePollTimer); usagePollTimer = null; }
     }
   }
 );
@@ -197,24 +195,20 @@ const totalErrors = computed(() => usageLog.value.filter((e) => !e.success).leng
 const fetchUsage = async () => {
   usageFetching.value = true;
   try {
-    const resp = await new Promise<{ log: UsageEntry[]; stats: Record<string, ToolStats> }>(
-      (resolve) => {
-        chrome.runtime.sendMessage({ type: "MCP_USAGE" }, (r) => {
-          resolve(r ?? { log: [], stats: {} });
-        });
-      }
-    );
-    usageLog.value = resp.log ?? [];
-    usageStats.value = resp.stats ?? {};
+    const resp = await safeSendMessage<{ log: UsageEntry[]; stats: Record<string, ToolStats> }>({ type: "MCP_USAGE" });
+    usageLog.value = resp?.log ?? [];
+    usageStats.value = resp?.stats ?? {};
+  } catch {
+    // ignore — context may be invalidated
   } finally {
     usageFetching.value = false;
   }
 };
 
 const clearUsage = async () => {
-  await new Promise<void>((resolve) => {
-    chrome.runtime.sendMessage({ type: "MCP_USAGE_CLEAR" }, () => resolve());
-  });
+  try {
+    await safeSendMessage({ type: "MCP_USAGE_CLEAR" });
+  } catch { /* ignore */ }
   usageLog.value = [];
   usageStats.value = {};
 };
@@ -230,11 +224,12 @@ const formatTime = (iso: string) => {
 onMounted(() => {
   checkMcpStatus();
   fetchAccounts();
-  fetchUsage();
-  // Poll status every 5s
-  statusPollTimer = setInterval(checkMcpStatus, 5000);
-  // Poll usage every 10s
-  usagePollTimer = setInterval(fetchUsage, 10000);
+  if (settings.mcpEnabled) {
+    fetchUsage();
+    // Poll status every 5s and usage every 10s only while enabled
+    statusPollTimer = setInterval(checkMcpStatus, 5000);
+    usagePollTimer = setInterval(fetchUsage, 10000);
+  }
 });
 
 onBeforeUnmount(() => {
