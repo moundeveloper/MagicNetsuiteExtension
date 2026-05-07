@@ -114,7 +114,8 @@ const tryParseNodeRef = (text: string): NodeRef | null => {
         const label = inner
           .slice(0, closeIdx)
           .trim()
-          .replace(/^["']|["']$/g, "");
+          .replace(/^["']|["']$/g, "")
+          .replace(/<br\s*\/?>/gi, "\n");
         return {
           id,
           label: label || id,

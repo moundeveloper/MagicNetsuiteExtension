@@ -191,6 +191,14 @@ const renderText = (text: string): string => {
             <i class="pi pi-sitemap" style="font-size:0.6rem" />
             diagram
           </span>
+          <button
+            class="code-copy-btn"
+            @click="copyCode(block.content, index)"
+            :title="copyStates[index] ? 'Copied!' : 'Copy source'"
+          >
+            <i :class="copyStates[index] ? 'pi pi-check' : 'pi pi-copy'" />
+            <span>{{ copyStates[index] ? "Copied" : "Copy" }}</span>
+          </button>
         </div>
         <DiagramViewer :source="block.content" />
       </div>

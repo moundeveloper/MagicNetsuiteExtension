@@ -41,7 +41,7 @@ export const DIAGRAM_DOCS = [
   "- When in doubt: use \\`[text]\\` (rectangle).",
   "",
   "#### Edge styles",
-  "  --> solid arrow   .-> dashed arrow   ==> thick arrow   -->|label| labeled arrow   --- line (no arrow)",
+  "  --> solid arrow   -.-> dashed arrow   ==> thick arrow   -->|label| labeled arrow   --- line (no arrow)",
   "",
   "#### Subgraphs",
   "\\`\\`\\`diagram",

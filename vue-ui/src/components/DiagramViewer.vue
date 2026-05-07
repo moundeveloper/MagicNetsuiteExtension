@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watch, nextTick } from "vue";
 import { parseDiagram } from "../utils/diagramParser";
 import {
   calculateLayout,
@@ -26,6 +26,109 @@ const layout = computed(() => {
     return null;
   }
 });
+
+// ── Pan / zoom ──────────────────────────────────────
+
+const svgRef = ref<SVGSVGElement | null>(null);
+const isPanning = ref(false);
+const vb = ref({ x: 0, y: 0, w: 400, h: 300 });
+const vbString = computed(
+  () => `${vb.value.x} ${vb.value.y} ${vb.value.w} ${vb.value.h}`
+);
+
+const fitToContent = () => {
+  if (!layout.value) return;
+  const pad = 20;
+  vb.value = {
+    x: -pad,
+    y: -pad,
+    w: layout.value.width + pad * 2,
+    h: layout.value.height + pad * 2,
+  };
+};
+
+watch(layout, () => nextTick(fitToContent), { immediate: true });
+
+interface VBPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Convert a client-space coordinate to viewBox space,
+ * correctly accounting for xMidYMid meet letterboxing.
+ */
+const clientToVB = (clientX: number, clientY: number): VBPoint => {
+  const svg = svgRef.value;
+  if (!svg) return { x: 0, y: 0 };
+  const rect = svg.getBoundingClientRect();
+  const { x, y, w, h } = vb.value;
+  const scale = Math.min(rect.width / w, rect.height / h);
+  const renderW = w * scale;
+  const renderH = h * scale;
+  const offX = (rect.width - renderW) / 2;
+  const offY = (rect.height - renderH) / 2;
+  return {
+    x: x + (clientX - rect.left - offX) / scale,
+    y: y + (clientY - rect.top - offY) / scale,
+  };
+};
+
+/** Zoom by `factor` centered on the SVG center (used by buttons). */
+const zoom = (factor: number) => {
+  const svg = svgRef.value;
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const center = clientToVB(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  const { x, y, w, h } = vb.value;
+  vb.value = {
+    x: center.x - (center.x - x) * factor,
+    y: center.y - (center.y - y) * factor,
+    w: w * factor,
+    h: h * factor,
+  };
+};
+
+/** Wheel — zoom toward the cursor position. */
+const handleWheel = (e: WheelEvent) => {
+  e.preventDefault();
+  const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+  const cursor = clientToVB(e.clientX, e.clientY);
+  const { x, y, w, h } = vb.value;
+  vb.value = {
+    x: cursor.x - (cursor.x - x) * factor,
+    y: cursor.y - (cursor.y - y) * factor,
+    w: w * factor,
+    h: h * factor,
+  };
+};
+
+let panStart = { x: 0, y: 0, vbX: 0, vbY: 0 };
+
+const handleMouseDown = (e: MouseEvent) => {
+  if (e.button !== 0) return;
+  isPanning.value = true;
+  panStart = { x: e.clientX, y: e.clientY, vbX: vb.value.x, vbY: vb.value.y };
+  e.preventDefault();
+};
+
+const handleMouseMove = (e: MouseEvent) => {
+  if (!isPanning.value) return;
+  const svg = svgRef.value;
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const { w, h } = vb.value;
+  const scale = Math.min(rect.width / w, rect.height / h);
+  vb.value = {
+    ...vb.value,
+    x: panStart.vbX - (e.clientX - panStart.x) / scale,
+    y: panStart.vbY - (e.clientY - panStart.y) / scale,
+  };
+};
+
+const stopPan = () => {
+  isPanning.value = false;
+};
 
 // ── Shape color palette ──────────────────────────
 
@@ -78,7 +181,6 @@ const cylinderBodyPath = (n: LayoutNode): string => {
   const bot = n.y + hh;
   const left = n.x - hw;
   const right = n.x + hw;
-  // Body rect + bottom arc
   return `M ${left} ${top + ry} L ${left} ${bot - ry} A ${hw} ${ry} 0 0 0 ${right} ${bot - ry} L ${right} ${top + ry} Z`;
 };
 
@@ -89,7 +191,6 @@ const cylinderTopPath = (n: LayoutNode): string => {
   const top = n.y - hh;
   const left = n.x - hw;
   const right = n.x + hw;
-  // Full ellipse at top
   return `M ${left} ${top + ry} A ${hw} ${ry} 0 1 1 ${right} ${top + ry} A ${hw} ${ry} 0 1 1 ${left} ${top + ry} Z`;
 };
 
@@ -100,7 +201,20 @@ const edgeStroke = (e: LayoutEdge) => {
   return { width: 1.5, dash: "" };
 };
 
-/** Sequence message arrowhead points */
+/** Split a node label on \n for multi-line SVG rendering */
+const labelLines = (label: string): string[] => label.split("\n");
+
+/**
+ * Y baseline for the first line of a node label, vertically centered
+ * within the node. LINE_H must match the dy used in the template tspan.
+ */
+const LINE_H = 15;
+const nodeLabelStartY = (node: LayoutNode): number => {
+  const n = labelLines(node.label).length;
+  // Offset from center: shift up by half the total block height, then add
+  // a small baseline offset (+4) so single-line text stays centred.
+  return node.y - ((n - 1) * LINE_H) / 2 + 4;
+};
 const seqArrowPoints = (msg: LayoutSeqMessage): string => {
   const dir = msg.toX > msg.fromX ? 1 : -1;
   const tipX = msg.isSelf ? msg.fromX : msg.toX;
@@ -120,12 +234,26 @@ const selfMsgPath = (msg: LayoutSeqMessage): string => {
 
 <template>
   <div class="diagram-viewer" v-if="layout">
+    <!-- Zoom control buttons -->
+    <div class="diagram-controls">
+      <button class="zoom-btn" title="Zoom in" @click="zoom(1 / 1.25)">+</button>
+      <button class="zoom-btn" title="Fit to content" @click="fitToContent">⊞</button>
+      <button class="zoom-btn" title="Zoom out" @click="zoom(1.25)">−</button>
+    </div>
+
     <svg
-      :viewBox="`0 0 ${layout.width} ${layout.height}`"
-      :width="layout.width"
-      :style="{ maxWidth: '100%', height: 'auto' }"
+      ref="svgRef"
+      :viewBox="vbString"
+      width="100%"
+      height="420"
       preserveAspectRatio="xMidYMid meet"
       xmlns="http://www.w3.org/2000/svg"
+      :style="{ cursor: isPanning ? 'grabbing' : 'grab', display: 'block' }"
+      @wheel.prevent="handleWheel"
+      @mousedown="handleMouseDown"
+      @mousemove="handleMouseMove"
+      @mouseup="stopPan"
+      @mouseleave="stopPan"
     >
       <!-- ── Defs: arrowhead markers ── -->
       <defs>
@@ -302,13 +430,20 @@ const selfMsgPath = (msg: LayoutSeqMessage): string => {
             />
           </g>
 
-          <!-- Node label -->
+          <!-- Node label (supports \n multi-line via tspan) -->
           <text
             :x="node.x"
-            :y="node.y + 4"
+            :y="nodeLabelStartY(node)"
             text-anchor="middle"
             class="node-label"
-          >{{ node.label }}</text>
+          >
+            <tspan
+              v-for="(line, li) in labelLines(node.label)"
+              :key="li"
+              :x="node.x"
+              :dy="li === 0 ? 0 : LINE_H"
+            >{{ line }}</tspan>
+          </text>
         </g>
       </template>
 
@@ -437,15 +572,44 @@ const selfMsgPath = (msg: LayoutSeqMessage): string => {
 
 <style scoped>
 .diagram-viewer {
-  overflow-x: auto;
+  position: relative;
+  overflow: hidden;
   padding: 0.75rem;
   background: #fafbfc;
   border-radius: 0 0 0.5rem 0.5rem;
 }
 
-.diagram-viewer svg {
-  display: block;
-  margin: 0 auto;
+/* ── Zoom controls ── */
+.diagram-controls {
+  position: absolute;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.zoom-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #475569;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.zoom-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
 }
 
 .diagram-fallback {

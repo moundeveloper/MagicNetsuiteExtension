@@ -109,8 +109,11 @@ const SEQ_PAD = 30;
 
 // ── Text measurement ───────────────────────────────
 
-const estimateTextWidth = (text: string): number =>
-  text.length * CHAR_WIDTH;
+const estimateTextWidth = (text: string): number => {
+  // Use the longest line for width estimation (handles \n-split labels)
+  const lines = text.split("\n");
+  return Math.max(...lines.map((l) => l.length * CHAR_WIDTH));
+};
 
 // ── Node dimension calculation ─────────────────────
 
@@ -118,172 +121,203 @@ const getNodeDimensions = (
   node: DiagramNode
 ): { width: number; height: number } => {
   const textW = estimateTextWidth(node.label);
+  // Extra height per additional line (for \n-split multi-line labels)
+  const lineCount = (node.label.match(/\n/g) || []).length + 1;
+  const extraH = (lineCount - 1) * 16;
 
   switch (node.shape) {
     case "diamond": {
-      // Width = text width + generous padding; height proportional.
-      // Keep labels SHORT (≤5 words) — the diamond sizes to the label.
       const w = Math.max(textW + NODE_PAD_X * 2, 80);
-      return { width: w, height: Math.max(Math.round(w * 0.55), 44) };
+      return { width: w, height: Math.max(Math.round(w * 0.55), 44) + extraH };
     }
     case "circle": {
-      const d = Math.max(textW + NODE_PAD_X, 50);
+      const d = Math.max(textW + NODE_PAD_X, 50) + extraH;
       return { width: d, height: d };
     }
     case "hexagon":
       return {
         width: Math.max(textW + NODE_PAD_X * 2.5, NODE_MIN_WIDTH),
-        height: NODE_HEIGHT,
+        height: NODE_HEIGHT + extraH,
       };
     default:
       return {
         width: Math.max(textW + NODE_PAD_X * 2, NODE_MIN_WIDTH),
-        height: NODE_HEIGHT,
+        height: NODE_HEIGHT + extraH,
       };
   }
 };
 
-// ── Connection point on a node boundary ────────────
-
-interface Point {
-  x: number;
-  y: number;
-}
+// ── Edge path generation (orthogonal / right-angle routing) ──────
 
 /**
- * Given a node (center + dimensions + shape), compute the point on its
- * boundary that faces toward `target`.
+ * Build an orthogonal SVG path (only horizontal + vertical segments) that
+ * connects two nodes face-to-face.
+ *
+ * TD/TB layout  → primary flow is vertical:
+ *   forward edges  exit bottom face, enter top face   (Z-shape)
+ *   back/cycle     exit top face,   enter bottom face (Z-shape, or detour left)
+ *   same-rank      exit right/left, enter left/right  (Z-shape sideways)
+ *
+ * LR/RL layout  → primary flow is horizontal:
+ *   forward edges  exit right face, enter left face   (Z-shape)
+ *   back/cycle     exit left face,  enter right face  (Z-shape, or detour above)
+ *   same-column    exit bottom/top, enter top/bottom  (Z-shape vertically)
  */
-const getConnectionPoint = (
-  node: LayoutNode,
-  targetX: number,
-  targetY: number
-): Point => {
-  const { x: cx, y: cy, width: w, height: h, shape } = node;
-  const dx = targetX - cx;
-  const dy = targetY - cy;
-
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
-
-  if (shape === "circle") {
-    const radius = w / 2;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    return {
-      x: cx + (dx / dist) * radius,
-      y: cy + (dy / dist) * radius,
-    };
-  }
-
-  if (shape === "diamond") {
-    const hw = w / 2;
-    const hh = h / 2;
-    const angle = Math.atan2(dy, dx);
-    const t =
-      1 / (Math.abs(Math.cos(angle)) / hw + Math.abs(Math.sin(angle)) / hh);
-    return {
-      x: cx + Math.cos(angle) * t,
-      y: cy + Math.sin(angle) * t,
-    };
-  }
-
-  if (shape === "hexagon") {
-    const hw = w / 2;
-    const hh = h / 2;
-    const indent = w * 0.18;
-    // Approximate: use rectangle that's slightly narrower
-    const effHw = hw - indent / 2;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    const scale =
-      absDx * hh > absDy * effHw ? effHw / absDx : hh / absDy;
-    return { x: cx + dx * scale, y: cy + dy * scale };
-  }
-
-  // Default: rectangle (rect, rounded, cylinder, stadium)
-  const hw = w / 2;
-  const hh = h / 2;
-  const absDx = Math.abs(dx);
-  const absDy = Math.abs(dy);
-  const scale = absDx * hh > absDy * hw ? hw / absDx : hh / absDy;
-  return { x: cx + dx * scale, y: cy + dy * scale };
-};
-
-// ── Edge path generation ───────────────────────────
-
 const buildEdgePath = (
   fromNode: LayoutNode,
   toNode: LayoutNode,
   isVertical: boolean
 ): { path: string; labelX: number; labelY: number } => {
-  const fromPt = getConnectionPoint(fromNode, toNode.x, toNode.y);
-  const toPt = getConnectionPoint(toNode, fromNode.x, fromNode.y);
+  const fdx = toNode.x - fromNode.x;
+  const fdy = toNode.y - fromNode.y;
 
-  const midX = (fromPt.x + toPt.x) / 2;
-  const midY = (fromPt.y + toPt.y) / 2;
-
-  const dx = toPt.x - fromPt.x;
-  const dy = toPt.y - fromPt.y;
-  const dist = Math.sqrt(dx * dx + dy * dy);
-
-  // Straight line for very short edges
-  if (dist < 20) {
-    return {
-      path: `M ${fromPt.x} ${fromPt.y} L ${toPt.x} ${toPt.y}`,
-      labelX: midX,
-      labelY: midY - 8,
-    };
-  }
-
-  // Same rank (horizontal in TD, vertical in LR) — arc around
-  const sameRank = isVertical
-    ? Math.abs(fromNode.y - toNode.y) < 5
-    : Math.abs(fromNode.x - toNode.x) < 5;
-
-  if (sameRank) {
-    const offset = isVertical ? -45 : 45;
-    const cx1 = fromPt.x;
-    const cy1 = isVertical ? fromPt.y + offset : fromPt.y;
-    const cx2 = toPt.x;
-    const cy2 = isVertical ? toPt.y + offset : toPt.y;
-    return {
-      path: `M ${fromPt.x} ${fromPt.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${toPt.x} ${toPt.y}`,
-      labelX: midX,
-      labelY: midY + (isVertical ? offset * 0.5 : 0) - 8,
-    };
-  }
-
-  // Back edge (target is "before" source in flow direction)
-  const isBackEdge = isVertical
-    ? toNode.y < fromNode.y - 5
-    : toNode.x < fromNode.x - 5;
-
-  if (isBackEdge) {
-    const offset = isVertical ? 50 : -50;
-    const sideOffset = isVertical ? offset : 0;
-    const vertOffset = isVertical ? 0 : offset;
-    return {
-      path: `M ${fromPt.x} ${fromPt.y} C ${fromPt.x + sideOffset} ${fromPt.y + vertOffset}, ${toPt.x + sideOffset} ${toPt.y + vertOffset}, ${toPt.x} ${toPt.y}`,
-      labelX: midX + sideOffset * 0.4,
-      labelY: midY + vertOffset * 0.4 - 8,
-    };
-  }
-
-  // Normal forward edge — smooth Bezier
+  // ── TD / TB (vertical flow) ──────────────────────────────────────
   if (isVertical) {
-    const cy1 = fromPt.y + dy * 0.4;
-    const cy2 = toPt.y - dy * 0.4;
+    if (Math.abs(fdy) > 5) {
+      // Nodes at different vertical positions → use top/bottom faces
+      const fromFY = fdy > 0
+        ? fromNode.y + fromNode.height / 2   // exit bottom face
+        : fromNode.y - fromNode.height / 2;  // exit top face
+      const toFY = fdy > 0
+        ? toNode.y - toNode.height / 2       // enter top face
+        : toNode.y + toNode.height / 2;      // enter bottom face
+      const fromFX = fromNode.x;
+      const toFX   = toNode.x;
+
+      // Is there clear space in the primary direction?
+      const gap = fdy > 0 ? toFY - fromFY : fromFY - toFY;
+
+      if (gap > 4) {
+        if (Math.abs(fromFX - toFX) < 2) {
+          // Same column — straight vertical line
+          return {
+            path: `M ${fromFX} ${fromFY} L ${toFX} ${toFY}`,
+            labelX: fromFX,
+            labelY: (fromFY + toFY) / 2 - 8,
+          };
+        }
+        // Z-shape: vertical → horizontal jog → vertical
+        const midY = (fromFY + toFY) / 2;
+        return {
+          path: `M ${fromFX} ${fromFY} L ${fromFX} ${midY} L ${toFX} ${midY} L ${toFX} ${toFY}`,
+          labelX: (fromFX + toFX) / 2,
+          labelY: midY - 8,
+        };
+      }
+
+      // Nodes overlap on the primary axis (cycle / very tight back-edge)
+      // → detour around the left side
+      const detourX = Math.min(
+        fromNode.x - fromNode.width / 2,
+        toNode.x   - toNode.width  / 2
+      ) - 28;
+      const exitY  = fdy < 0 ? fromFY - 10 : fromFY + 10;
+      const entryY = fdy < 0 ? toFY   + 10 : toFY   - 10;
+      return {
+        path:
+          `M ${fromFX} ${fromFY} L ${fromFX} ${exitY} ` +
+          `L ${detourX} ${exitY} L ${detourX} ${entryY} ` +
+          `L ${toFX} ${entryY} L ${toFX} ${toFY}`,
+        labelX: detourX - 15,
+        labelY: (exitY + entryY) / 2,
+      };
+    }
+
+    // Same rank (lateral) → connect left/right faces
+    const goRight = fdx >= 0;
+    const fromFX  = goRight
+      ? fromNode.x + fromNode.width / 2
+      : fromNode.x - fromNode.width / 2;
+    const toFX    = goRight
+      ? toNode.x - toNode.width / 2
+      : toNode.x + toNode.width / 2;
+    const fromFY  = fromNode.y;
+    const toFY    = toNode.y;
+
+    if (Math.abs(fromFY - toFY) < 2) {
+      // Exactly same Y — straight horizontal line
+      return {
+        path: `M ${fromFX} ${fromFY} L ${toFX} ${toFY}`,
+        labelX: (fromFX + toFX) / 2,
+        labelY: fromFY - 8,
+      };
+    }
+    const midX = (fromFX + toFX) / 2;
     return {
-      path: `M ${fromPt.x} ${fromPt.y} C ${fromPt.x} ${cy1}, ${toPt.x} ${cy2}, ${toPt.x} ${toPt.y}`,
+      path: `M ${fromFX} ${fromFY} L ${midX} ${fromFY} L ${midX} ${toFY} L ${toFX} ${toFY}`,
       labelX: midX,
-      labelY: midY - 8,
+      labelY: (fromFY + toFY) / 2 - 8,
     };
   }
 
-  const cx1 = fromPt.x + dx * 0.4;
-  const cx2 = toPt.x - dx * 0.4;
+  // ── LR / RL (horizontal flow) ────────────────────────────────────
+  if (Math.abs(fdx) > 5) {
+    // Nodes at different horizontal positions → use left/right faces
+    const fromFX = fdx > 0
+      ? fromNode.x + fromNode.width  / 2   // exit right face
+      : fromNode.x - fromNode.width  / 2;  // exit left face
+    const toFX = fdx > 0
+      ? toNode.x - toNode.width  / 2       // enter left face
+      : toNode.x + toNode.width  / 2;      // enter right face
+    const fromFY = fromNode.y;
+    const toFY   = toNode.y;
+
+    const gap = fdx > 0 ? toFX - fromFX : fromFX - toFX;
+
+    if (gap > 4) {
+      if (Math.abs(fromFY - toFY) < 2) {
+        // Same row — straight horizontal line
+        return {
+          path: `M ${fromFX} ${fromFY} L ${toFX} ${toFY}`,
+          labelX: (fromFX + toFX) / 2,
+          labelY: fromFY - 8,
+        };
+      }
+      // Z-shape: horizontal → vertical jog → horizontal
+      const midX = (fromFX + toFX) / 2;
+      return {
+        path: `M ${fromFX} ${fromFY} L ${midX} ${fromFY} L ${midX} ${toFY} L ${toFX} ${toFY}`,
+        labelX: midX,
+        labelY: (fromFY + toFY) / 2 - 8,
+      };
+    }
+
+    // Horizontal overlap (back/cycle edge) → detour above
+    const detourY = Math.min(
+      fromNode.y - fromNode.height / 2,
+      toNode.y   - toNode.height  / 2
+    ) - 28;
+    return {
+      path:
+        `M ${fromFX} ${fromFY} L ${fromFX} ${detourY} ` +
+        `L ${toFX} ${detourY} L ${toFX} ${toFY}`,
+      labelX: (fromFX + toFX) / 2,
+      labelY: detourY - 8,
+    };
+  }
+
+  // Same column (lateral in LR) → connect top/bottom faces
+  const goDown = fdy >= 0;
+  const fromFY = goDown
+    ? fromNode.y + fromNode.height / 2
+    : fromNode.y - fromNode.height / 2;
+  const toFY = goDown
+    ? toNode.y - toNode.height / 2
+    : toNode.y + toNode.height / 2;
+  const fromFX = fromNode.x;
+  const toFX   = toNode.x;
+
+  if (Math.abs(fromFX - toFX) < 2) {
+    return {
+      path: `M ${fromFX} ${fromFY} L ${toFX} ${toFY}`,
+      labelX: fromFX,
+      labelY: (fromFY + toFY) / 2 - 8,
+    };
+  }
+  const midY = (fromFY + toFY) / 2;
   return {
-    path: `M ${fromPt.x} ${fromPt.y} C ${cx1} ${fromPt.y}, ${cx2} ${toPt.y}, ${toPt.x} ${toPt.y}`,
-    labelX: midX,
+    path: `M ${fromFX} ${fromFY} L ${fromFX} ${midY} L ${toFX} ${midY} L ${toFX} ${toFY}`,
+    labelX: (fromFX + toFX) / 2,
     labelY: midY - 8,
   };
 };
@@ -292,7 +326,7 @@ const buildEdgePath = (
 
 const layoutFlowchart = (diagram: ParsedDiagram): DiagramLayout => {
   const { nodes, edges, subgraphs, direction } = diagram;
-  const isVertical = direction === "TD" || direction === "TB";
+  const isVertical = direction === "TD" || direction === "TB" || direction === "BT";
   const isReversed = direction === "BT" || direction === "RL";
 
   if (nodes.size === 0) {
