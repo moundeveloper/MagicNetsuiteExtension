@@ -365,16 +365,67 @@ const opencodeChat = async (
 // Public composable
 // ─────────────────────────────────────────────
 
+/**
+ * Returns a user-facing error string if the active provider is not properly
+ * configured, or `null` if everything looks good.
+ * Called before every chatCompletion so callers get a clear message instead
+ * of a confusing network error.
+ */
+const getProviderConfigError = (settings: ReturnType<typeof useSettings>["settings"]): string | null => {
+  const provider = settings.aiProvider;
+
+  if (!provider) {
+    return "No AI provider is selected. Please go to Settings → AI Provider to configure one.";
+  }
+
+  if (provider === "ollama") {
+    if (!settings.ollamaBaseUrl?.trim()) {
+      return "Ollama is not configured: Base URL is missing. Please go to Settings → AI Provider.";
+    }
+    if (!settings.ollamaModel?.trim()) {
+      return "Ollama is not configured: no model selected. Please go to Settings → AI Provider.";
+    }
+    return null;
+  }
+
+  if (provider === "opencode") {
+    if (!settings.opencodeBaseUrl?.trim()) {
+      return "OpenCode is not configured: Base URL is missing. Please go to Settings → AI Provider.";
+    }
+    if (!settings.opencodeModel?.trim()) {
+      return "OpenCode is not configured: no model selected. Please go to Settings → AI Provider and pick a model.";
+    }
+    return null;
+  }
+
+  if (provider === "copilot") {
+    if (!settings.githubToken?.trim()) {
+      return "GitHub Copilot is not authenticated. Please go to Settings → AI Provider to connect your GitHub account.";
+    }
+    return null;
+  }
+
+  // "puter" — always available, no auth needed
+  return null;
+};
+
 export const useAiProvider = () => {
   const { settings } = useSettings();
 
   /**
    * Send a chat completion request using whichever provider is active in settings.
+   * Throws a descriptive Error immediately if the provider is not configured,
+   * rather than letting a confusing network failure surface later.
    */
   const chatCompletion = async (
     messages: ChatMessage[],
     options: ChatCompletionOptions = {}
   ): Promise<NormalisedResponse> => {
+    const configError = getProviderConfigError(settings);
+    if (configError) {
+      throw new Error(configError);
+    }
+
     const provider = settings.aiProvider;
 
     if (provider === "ollama") {
@@ -396,11 +447,6 @@ export const useAiProvider = () => {
     }
 
     if (provider === "copilot") {
-      if (!settings.githubToken) {
-        throw new Error(
-          "GitHub Copilot: not authenticated. Go to Settings → AI Provider to connect."
-        );
-      }
       return copilotChat(
         messages,
         options,
