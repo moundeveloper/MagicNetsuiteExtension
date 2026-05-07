@@ -276,6 +276,7 @@ import MessageContentRenderer from "./MessageContentRenderer.vue";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { useSettings } from "../states/settingsState";
 import { getSkillsByDomain } from "../utils/skillsDb";
+import { DIAGRAM_DOCS } from "../utils/diagramDocs";
 import {
   getChatSessionsForFile,
   upsertChatSession,
@@ -626,7 +627,8 @@ Custom records:              Table name = customrecord_<scriptid_lowercase>
 - Use markdown for formatting
 - Put SQL in \`\`\`sql code blocks
 - Keep responses short and focused — this is a side panel with limited space
-- Show the final query in a SQL code block so the user can copy it`;
+- Show the final query in a SQL code block so the user can copy it
+${DIAGRAM_DOCS}`;
 
 const buildSystemPrompt = () =>
   BASE_SYSTEM_PROMPT + sqlDomainSkillsContent.value;

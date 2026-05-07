@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import CodeViewer from "./CodeViewer.vue";
 import DiffViewer from "./DiffViewer.vue";
+import DiagramViewer from "./DiagramViewer.vue";
 import QuestionBlock from "./QuestionBlock.vue";
 import {
   processCollapsibleSections,
@@ -21,7 +22,7 @@ interface Props {
 }
 
 interface ContentBlock {
-  type: "text" | "code" | "diff" | "question";
+  type: "text" | "code" | "diff" | "question" | "diagram";
   content: string;
   language?: string;
   /** Only for diff blocks */
@@ -131,6 +132,8 @@ const parseContent = (text: string): ContentBlock[] => {
       blocks.push(parseDiffBlock(body, "javascript"));
     } else if (lang === "question") {
       blocks.push(parseQuestionBlock(body));
+    } else if (lang === "diagram") {
+      blocks.push({ type: "diagram", content: body });
     } else if (looksLikeDiff(body)) {
       // Auto-detect diff markers inside any code block
       blocks.push(parseDiffBlock(body, lang === "javascript" ? "javascript" : lang));
@@ -180,6 +183,17 @@ const renderText = (text: string): string => {
         :options="block.questionOptions ?? []"
         @answer="(a) => emit('questionAnswer', a)"
       />
+
+      <!-- ── Diagram block ── -->
+      <div v-else-if="block.type === 'diagram'" class="code-block-container">
+        <div class="code-block-header">
+          <span class="code-lang diagram-label">
+            <i class="pi pi-sitemap" style="font-size:0.6rem" />
+            diagram
+          </span>
+        </div>
+        <DiagramViewer :source="block.content" />
+      </div>
 
       <!-- ── Diff block ── -->
       <div v-else-if="block.type === 'diff'" class="code-block-container">
@@ -255,6 +269,12 @@ const renderText = (text: string): string => {
 
 /* ── Diff labels ── */
 .diff-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.diagram-label {
   display: flex;
   align-items: center;
   gap: 0.3rem;
