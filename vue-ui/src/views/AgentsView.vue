@@ -102,10 +102,6 @@
                   <i class="pi pi-book" />
                   {{ agent.skillIds.length }} skill{{ agent.skillIds.length !== 1 ? "s" : "" }}
                 </span>
-                <span class="agent-meta-item">
-                  <i class="pi pi-replay" />
-                  {{ agent.limits.maxIterations }} iters
-                </span>
                 <span v-if="!agent.limits.canExecuteDestructive" class="agent-meta-item meta-safe">
                   <i class="pi pi-shield" />
                   safe
@@ -336,17 +332,6 @@
           <label>Limits &amp; Permissions</label>
           <div class="limits-grid">
             <div class="limit-item">
-              <label for="max-iters" class="limit-label">Max iterations</label>
-              <input
-                id="max-iters"
-                v-model.number="formData.limits.maxIterations"
-                type="number"
-                min="1"
-                max="20"
-                class="limit-input"
-              />
-            </div>
-            <div class="limit-item">
               <label class="limit-label">Allow destructive tools</label>
               <ToggleSwitch v-model="formData.limits.canExecuteDestructive" />
             </div>
@@ -484,7 +469,6 @@ const isGenerating = ref(false);
 const generateError = ref("");
 
 const defaultLimits: AgentLimits = {
-  maxIterations: 6,
   canExecuteDestructive: false,
   blockedTools: []
 };
@@ -631,7 +615,6 @@ JSON schema to follow exactly:
   "tools": ["exact_tool_name"],
   "skillIds": [],
   "limits": {
-    "maxIterations": 6,
     "canExecuteDestructive": false,
     "blockedTools": []
   },
@@ -644,7 +627,6 @@ Rules:
 - mode "both"    → either way
 - Only include tools genuinely needed for this agent's purpose
 - canExecuteDestructive true only if the agent needs to create / update / delete records
-- maxIterations: 4–10 depending on task complexity
 - color: pastel, desaturated hex that visually fits the domain`;
 
     const messages: ChatMessage[] = [
@@ -691,7 +673,6 @@ Rules:
       tools: filteredTools,
       skillIds: filteredSkillIds,
       limits: {
-        maxIterations: Math.min(20, Math.max(1, Number(parsed.limits?.maxIterations ?? 6))),
         canExecuteDestructive: Boolean(parsed.limits?.canExecuteDestructive ?? false),
         blockedTools: parsedBlockedTools
       },
@@ -748,7 +729,6 @@ const openEditDialog = (agent: Agent) => {
     tools: [...agent.tools],
     skillIds: [...agent.skillIds],
     limits: {
-      maxIterations: agent.limits.maxIterations,
       canExecuteDestructive: agent.limits.canExecuteDestructive,
       blockedTools: [...agent.limits.blockedTools]
     },
@@ -778,7 +758,6 @@ const saveAgent = async () => {
     tools: [...tools],
     skillIds: [...skillIds],
     limits: {
-      maxIterations: limits.maxIterations,
       canExecuteDestructive: limits.canExecuteDestructive,
       blockedTools: parsedBlockedTools
     },

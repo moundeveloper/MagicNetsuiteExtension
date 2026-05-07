@@ -6,8 +6,6 @@ import Dexie, { type EntityTable } from "dexie";
 // ─────────────────────────────────────────────
 
 export interface AgentLimits {
-  /** Maximum tool-calling iterations per run (default: 6) */
-  maxIterations: number;
   /** Whether the agent may execute destructive tools (default: false) */
   canExecuteDestructive: boolean;
   /** Tool names explicitly blocked (empty = nothing blocked) */

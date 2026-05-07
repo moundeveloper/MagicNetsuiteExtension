@@ -752,7 +752,6 @@ const delegateToAgentTool: ToolDefinition = {
     try {
       const result = await agent.run(task, {
         systemPrompt: agentSystemPrompt,
-        maxIterations: agentConfig.limits.maxIterations,
         allowedTools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
         blockedTools: agentConfig.limits.blockedTools.length > 0
           ? agentConfig.limits.blockedTools
@@ -1991,7 +1990,6 @@ const sendMessage = async (overrideText?: string) => {
       const agentSystemPrompt = await buildAgentSystemPrompt(agentConfig);
       finalText = await agent.run(actualPrompt, {
         systemPrompt: agentSystemPrompt,
-        maxIterations: agentConfig.limits.maxIterations,
         signal: abortController.signal,
         allowedTools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
         blockedTools: agentConfig.limits.blockedTools.length > 0
@@ -2002,7 +2000,6 @@ const sendMessage = async (overrideText?: string) => {
     } else {
       // ── Normal run (with passive agent awareness) ──
       finalText = await agent.run(actualPrompt, {
-        maxIterations: 6,
         signal: abortController.signal
       });
     }

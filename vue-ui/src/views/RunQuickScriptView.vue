@@ -90,10 +90,6 @@
     Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
   </div>
 
-  <div :class="serverStatus.components.handlerFileExists ? 'text-green-600' : 'text-red-600'">
-    Handler Module: {{ serverStatus.components.handlerFileExists ? '✓' : '✗' }}
-  </div>
-
   <div :class="serverStatus.components.serverFileExists ? 'text-green-600' : 'text-red-600'">
     Server File: {{ serverStatus.components.serverFileExists ? '✓' : '✗' }}
   </div>
@@ -116,14 +112,34 @@
                 </div>
 
                 <Button
-                 
                   size="small"
                   :severity="removeConfirmPending ? 'warn' : 'danger'"
+                  :loading="isRemoving"
+                  :disabled="isRemoving"
                   @click="removeServerComponents"
                   class="w-full mt-2"
                 >
                   {{ removeConfirmPending ? 'Click Again to Confirm' : 'Remove Server Components' }}
                 </Button>
+
+                <!-- Inline removal step results -->
+                <div v-if="removeStatus" class="text-xs space-y-1 mt-2">
+                  <div
+                    v-for="step in removeStatus.steps"
+                    :key="step.name"
+                    :class="{
+                      'text-green-600': step.status === 'removed',
+                      'text-gray-500': step.status === 'skipped',
+                      'text-red-500': step.status === 'error'
+                    }"
+                  >
+                    <span v-if="step.status === 'removed'">✓</span>
+                    <span v-else-if="step.status === 'skipped'">–</span>
+                    <span v-else>✗</span>
+                    {{ step.name }}
+                    <span v-if="step.error" class="ml-1 opacity-75">({{ step.error }})</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -647,6 +663,15 @@ const checkServerComponents = async () => {
 const removeConfirmPending = ref(false);
 let removeConfirmTimer: number | undefined;
 
+const isRemoving = ref(false);
+
+interface RemoveStep {
+  name: string;
+  status: "removed" | "skipped" | "error";
+  error?: string;
+}
+const removeStatus = ref<{ steps: RemoveStep[] } | null>(null);
+
 const removeServerComponents = async () => {
   // First click: show a warning toast and arm the confirmation window
   if (!removeConfirmPending.value) {
@@ -670,16 +695,35 @@ const removeServerComponents = async () => {
     removeConfirmTimer = undefined;
   }
 
+  isRemoving.value = true;
+  removeStatus.value = null;
+
   try {
     const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
     const result = (response as ApiResponse)?.message || response;
-    const removedItems = result?.removed?.join(", ") || result?.join?.(", ") || "none";
-    toast.add({
-      severity: "success",
-      summary: "Components Removed",
-      detail: `Removed: ${removedItems}`,
-      life: 4000
-    });
+
+    // New structured format: { steps: [{name, status, error?}] }
+    if (result?.steps && Array.isArray(result.steps)) {
+      removeStatus.value = { steps: result.steps };
+      const removedCount = result.steps.filter((s: RemoveStep) => s.status === "removed").length;
+      const errorCount = result.steps.filter((s: RemoveStep) => s.status === "error").length;
+      toast.add({
+        severity: errorCount > 0 ? "warn" : "success",
+        summary: "Components Removed",
+        detail: `${removedCount} removed, ${errorCount} error(s)`,
+        life: 4000
+      });
+    } else {
+      // Legacy flat array fallback
+      const removedItems = Array.isArray(result) ? result.join(", ") : "none";
+      toast.add({
+        severity: "success",
+        summary: "Components Removed",
+        detail: `Removed: ${removedItems}`,
+        life: 4000
+      });
+    }
+
     await checkServerComponents();
   } catch (err: any) {
     toast.add({
@@ -688,6 +732,8 @@ const removeServerComponents = async () => {
       detail: err.message || "Unknown error",
       life: 5000
     });
+  } finally {
+    isRemoving.value = false;
   }
 };
 

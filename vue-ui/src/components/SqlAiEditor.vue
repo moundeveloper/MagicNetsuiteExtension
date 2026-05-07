@@ -735,7 +735,6 @@ const sendMessage = async (text: string) => {
     abortController = new AbortController();
     const result = await agent.run(text, {
       systemPrompt: buildSystemPrompt(),
-      maxIterations: 10,
       signal: abortController.signal
     });
 

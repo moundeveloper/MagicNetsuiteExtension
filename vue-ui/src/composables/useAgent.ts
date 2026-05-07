@@ -66,7 +66,6 @@ export interface AgentMessage {
 
 export interface AgentRunOptions {
   systemPrompt?: string;
-  maxIterations?: number;
   signal?: AbortSignal;
   /**
    * When set, only tools whose names are in this list are made available.
@@ -1125,7 +1124,6 @@ export const useAgent = (options: AgentOptions = {}) => {
   ): Promise<string> => {
     const {
       systemPrompt = defaultSystemPrompt,
-      maxIterations = 10,
       signal,
       allowedTools,
       blockedTools,
@@ -1156,7 +1154,7 @@ export const useAgent = (options: AgentOptions = {}) => {
 
       let iterations = 0;
 
-      while (iterations < maxIterations) {
+      while (true) {
         iterations++;
 
         // ── Check for cancellation ──
@@ -1306,11 +1304,8 @@ export const useAgent = (options: AgentOptions = {}) => {
         // Loop — tool results now in history, re-query model
       }
 
-      const fallback = "[Max iterations reached without a final answer.]";
-      console.warn("[useAgent]", fallback);
-      pushMessage({ role: "assistant", content: fallback });
-      currentResponse.value = fallback;
-      return fallback;
+      // Unreachable under normal operation — only exits via return or thrown error
+      return "";
     } catch (err) {
       error.value = err;
       console.error("[useAgent] run() fatal error:", err);
