@@ -85,8 +85,8 @@ const breadcrumbs = computed(() => {
         });
         if (child) {
           const items = [];
-          if (r.breadcrumbParents) {
-            for (const parent of r.breadcrumbParents) {
+          if (child.breadcrumbParents) {
+            for (const parent of child.breadcrumbParents) {
               items.push({ label: parent.label, route: parent.route });
             }
           }

@@ -123,6 +123,7 @@ const emit = defineEmits<{
   change: [value: string];
   blur: [];
   focus: [];
+  "ctrl-enter": [];
 }>();
 
 const editorContainer: Ref<HTMLElement | null> = ref(null);
@@ -213,6 +214,11 @@ onMounted(async () => {
       () => {}
     );
   }
+
+  editorInstance.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+    () => { emit("ctrl-enter"); }
+  );
 
   const disableAutoScrollOnFocus = () => {
     // Add listener to the scroll container itself, not individual editors

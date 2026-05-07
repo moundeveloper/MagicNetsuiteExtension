@@ -30,9 +30,11 @@
                 @click="runCurrentFile"
                 :disabled="currentFile?.isExecuting"
                 class="w-full"
+                title="Run (Ctrl+Enter)"
               >
                 <i class="pi pi-play font-medium"></i>
-                {{ currentFile?.isExecuting ? "Running..." : "Run" }}
+                <span class="flex-1 text-left">{{ currentFile?.isExecuting ? "Running..." : "Run" }}</span>
+                <kbd class="run-kbd">Ctrl+↵</kbd>
               </Button>
               <div class="text-xs text-gray-500">
                 <span v-if="saveStatus === 'saving'" class="text-yellow-500">
@@ -234,6 +236,7 @@
                     v-model="file.code"
                     :readonly="file.isExecuting"
                     :completion-items="completionItems"
+                    @ctrl-enter="runCurrentFile"
                   />
                 </template>
                 <template #bottom-pane>
@@ -277,7 +280,7 @@
 </template>
 
 <script lang="ts" setup>
-import { onBeforeUnmount, onMounted, ref, watch, computed, nextTick } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch, computed } from "vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, useToast } from "primevue";
@@ -795,7 +798,17 @@ watch(executionMode, async (mode) => {
   }
 });
 
+let _ctrlEnterHandler: ((e: KeyboardEvent) => void) | null = null;
+
 onMounted(async () => {
+  _ctrlEnterHandler = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      runCurrentFile();
+    }
+  };
+  window.addEventListener("keydown", _ctrlEnterHandler);
+
   const onHide = () => {
     if (document.visibilityState === "hidden") {
       if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
@@ -895,6 +908,10 @@ onMounted(async () => {
 
 
 onBeforeUnmount(async () => {
+  if (_ctrlEnterHandler) {
+    window.removeEventListener("keydown", _ctrlEnterHandler);
+    _ctrlEnterHandler = null;
+  }
   if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
   await flushFileSave();
   await saveTabState();
@@ -950,5 +967,17 @@ onBeforeUnmount(async () => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.run-kbd {
+  font-size: 0.6rem;
+  font-family: "JetBrains Mono", monospace;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: rgba(255, 255, 255, 0.8);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
 }
 </style>

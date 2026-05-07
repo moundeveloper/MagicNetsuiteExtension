@@ -90,12 +90,12 @@ export interface DiagramLayout {
 
 // ── Constants ──────────────────────────────────────
 
-const CHAR_WIDTH = 7.5;
-const NODE_PAD_X = 24;
+const CHAR_WIDTH = 8.0;
+const NODE_PAD_X = 28;
 const NODE_PAD_Y = 12;
 const NODE_MIN_WIDTH = 70;
 const NODE_HEIGHT = 38;
-const RANK_GAP = 60;   // min gap between the bottom of one rank and the top of the next
+const RANK_GAP = 80;   // min gap between the bottom of one rank and the top of the next
 const NODE_GAP = 54;   // horizontal gap between nodes in the same rank
 const PADDING = 40;    // canvas padding
 

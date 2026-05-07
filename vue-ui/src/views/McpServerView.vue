@@ -254,8 +254,10 @@ onBeforeUnmount(() => {
       <div class="mcp-section">
         <h2>MCP Server</h2>
         <p class="section-description">
-          The MCP server allows AI assistants (OpenCode, Claude, etc.) to
-          interact with your NetSuite account via a WebSocket bridge.
+          The MCP server allows <strong>locally-running</strong> AI assistants
+          (OpenCode, Claude Desktop, etc.) to interact with your NetSuite
+          account via a WebSocket bridge. Cloud-based assistants cannot reach
+          this server directly.
         </p>
 
         <div class="connection-bar">
