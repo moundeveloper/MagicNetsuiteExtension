@@ -530,9 +530,6 @@ window.createScriptRecord = async (
  * - `"ERROR"`
  * - `"EMERGENCY"`
  *
- * @param {string|number} [options.runAsRole="3"]
- * Internal ID of the role used to execute the script (e.g. `"3"` = Administrator).
- *
  * @param {string} csrfToken
  * NetSuite CSRF token (`_csrf`) required for authenticated POST requests.
  *
@@ -562,8 +559,7 @@ window.createScriptRecord = async (
  *     scriptInternalId: '123',
  *     title: 'My Script Deployment',
  *     status: 'RELEASED',
- *     logLevel: 'DEBUG',
- *     runAsRole: '3'
+ *     logLevel: 'DEBUG'
  *   },
  *   csrfToken
  * );
@@ -590,8 +586,7 @@ window.createScriptDeployRecord = async (
     title,
     status = "RELEASED",
     logLevel = "DEBUG"
-  },
-  csrfToken
+  }
 ) => {
   const { csrfToken, accountId } = getNetsiteParams();
 
@@ -611,7 +606,7 @@ window.createScriptDeployRecord = async (
     inpt_loglevel: "Debug",
     loglevel: logLevel,
     inpt_runasrole: "Administrator",
-    runasrole: runAsRole,
+    runasrole: role,
     _eml_nkey_: `${accountId}~${id}~${role}~N`,
     _multibtnstate_: "",
     selectedtab: "",

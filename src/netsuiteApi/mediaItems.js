@@ -11,7 +11,7 @@ window.getRootFolders = async ({ query }) => {
   return rootFolders;
 };
 
-window.createFolder = async ({}, { folderName, parentFolderId }) => {
+window.createFolder = async ({ runtime }, { folderName, parentFolderId }) => {
   const { csrfToken, accountId } = getNetsiteParams();
   const { id, role } = runtime.getCurrentUser();
   const baseUrl = `https://${accountId}.app.netsuite.com/app/common/media/mediaitemfolder.nl`;
