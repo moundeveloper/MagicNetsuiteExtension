@@ -35,7 +35,12 @@ const buildScriptletUrl = (scriptId, deployId) => {
   return `/app/site/hosting/scriptlet.nl?script=${scriptId}&deploy=${deployId}&compid=${compid}`;
 };
 
+let cachedScriptInfo = null;
+
 const discoverSuiteletScript = async (N) => {
+  // Return cached result if available
+  if (cachedScriptInfo) return cachedScriptInfo;
+
   try {
     const { query } = N;
     const result = await query.runSuiteQL.promise({
@@ -45,10 +50,11 @@ const discoverSuiteletScript = async (N) => {
     const rows = result.asMappedResults();
     if (rows && rows.length > 0) {
       const first = rows[0];
-      return {
+      cachedScriptInfo = {
         scriptId: first.id,
         deployId: first.deploy_id
       };
+      return cachedScriptInfo;
     }
     return null;
   } catch (err) {

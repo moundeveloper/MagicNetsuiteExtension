@@ -143,6 +143,13 @@
               />
               <button
                 class="fc-view-toggle"
+                title="New Folder"
+                @click="openNewFolderDialog"
+              >
+                <i class="pi pi-folder-plus text-xs"></i>
+              </button>
+              <button
+                class="fc-view-toggle"
                 :class="{ active: viewMode === 'grid' }"
                 @click="viewMode = 'grid'"
                 title="Grid view"
@@ -483,6 +490,16 @@
             <span v-if="selectedItems.length > 0" class="ml-4">
               {{ selectedItems.length }} selected
             </span>
+            <Button
+              v-if="selectedItems.length > 1"
+              size="small"
+              severity="danger"
+              class="ml-auto fc-bulk-delete-btn"
+              @click="confirmBulkDelete"
+            >
+              <i class="pi pi-trash text-xs mr-1"></i>
+              Delete {{ selectedItems.length }} Items
+            </Button>
           </div>
         </template>
       </div>
@@ -562,9 +579,11 @@
               <span class="label">Description</span>
               <span class="value">{{ detailItem.description }}</span>
             </div>
-            <div v-if="detailItem.type === 'file' && detailItem.url" class="fc-detail-field">
-              <span class="label">URL</span>
-              <a :href="detailItem.url" target="_blank" class="value text-blue-600 hover:underline text-xs break-all">{{ detailItem.url }}</a>
+            <div class="fc-detail-field">
+              <span class="label">Open in NetSuite</span>
+              <a :href="getNetsuiteEditUrl(detailItem)" target="_blank" class="value text-blue-600 hover:underline text-xs break-all">
+                {{ detailItem.type === 'file' ? 'Edit File' : 'Edit Folder' }} <i class="pi pi-external-link text-[10px]"></i>
+              </a>
             </div>
             <div v-if="detailItem.type === 'folder'" class="fc-detail-field">
               <span class="label">Files</span>
@@ -622,27 +641,54 @@
 
   <!-- Delete confirmation dialog -->
   <Teleport to="body">
-    <div v-if="showDeleteConfirm && deleteTarget" class="fc-confirm-overlay" @click.self="cancelDelete">
+    <div v-if="showDeleteConfirm" class="fc-confirm-overlay" @click.self="cancelDelete">
       <div class="fc-confirm-box">
         <div class="fc-confirm-header fc-confirm-danger">
           <i class="pi pi-exclamation-triangle text-red-500"></i>
-          <span>Delete {{ deleteTarget.type === 'folder' ? 'Folder' : 'File' }}</span>
+          <span v-if="deleteTargets.length === 1">Delete {{ deleteTargets[0]!.type === 'folder' ? 'Folder' : 'File' }}</span>
+          <span v-else>Delete {{ deleteTargets.length }} Items</span>
         </div>
-        <p class="fc-confirm-body">
-          Are you sure you want to delete <strong>{{ deleteTarget.name }}</strong>?
-          <template v-if="deleteTarget.type === 'file' && isTextFile(deleteTarget as any)">
-            The file content will be saved to trash for 15 days so you can restore it.
+        <div class="fc-confirm-body">
+          <!-- Single item -->
+          <template v-if="deleteTargets.length === 1">
+            <p>
+              Are you sure you want to delete <strong>{{ deleteTargets[0]!.name }}</strong>?
+            </p>
+            <p v-if="deleteTargets[0]!.type === 'file' && isTextFile(deleteTargets[0] as any)" class="text-xs text-gray-400 mt-1">
+              The file content will be saved to trash for 15 days so you can restore it.
+            </p>
+            <p v-else-if="deleteTargets[0]!.type === 'file'" class="text-xs text-gray-400 mt-1">
+              Binary files cannot be restored from trash.
+            </p>
           </template>
-          <template v-else-if="deleteTarget.type === 'file'">
-            Binary files cannot be restored from trash.
-          </template>
+          <!-- Bulk items -->
           <template v-else>
-            Empty folders can be re-created from trash.
+            <p>Are you sure you want to delete <strong>{{ deleteTargets.length }}</strong> items?</p>
+            <ul class="fc-delete-list">
+              <li v-for="t in deleteTargets.slice(0, 8)" :key="`${t.type}-${t.id}`">
+                <i :class="getItemIcon(t)" class="text-xs"></i>
+                {{ t.name }}
+              </li>
+              <li v-if="deleteTargets.length > 8" class="text-gray-400">
+                ... and {{ deleteTargets.length - 8 }} more
+              </li>
+            </ul>
+            <p class="text-xs text-gray-400 mt-1">Text file content will be saved to trash for 15 days.</p>
           </template>
-        </p>
+          <!-- Folder has contents info -->
+          <div v-if="folderContentWarning" class="fc-folder-warning">
+            <i class="pi pi-info-circle text-blue-400 text-xs"></i>
+            <span>{{ folderContentWarning }}</span>
+          </div>
+        </div>
         <div class="fc-confirm-actions">
           <Button size="small" severity="secondary" @click="cancelDelete">Cancel</Button>
-          <Button size="small" severity="danger" @click="executeDelete" :loading="isDeleting">
+          <Button
+            size="small"
+            severity="danger"
+            @click="executeDelete"
+            :loading="isDeleting"
+          >
             <i class="pi pi-trash text-xs mr-1"></i>
             Delete
           </Button>
@@ -651,7 +697,46 @@
     </div>
   </Teleport>
 
-  <!-- Trash panel -->
+  <!-- New Folder dialog -->
+  <Teleport to="body">
+    <div v-if="showNewFolderDialog" class="fc-confirm-overlay" @click.self="cancelNewFolder">
+      <div class="fc-confirm-box">
+        <div class="fc-confirm-header">
+          <i class="pi pi-folder-plus text-amber-500"></i>
+          <span>New Folder</span>
+        </div>
+        <div class="fc-confirm-body">
+          <p class="mb-2">
+            Create a new folder inside
+            <strong>{{ breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1]!.name : 'Root' }}</strong>.
+          </p>
+          <InputText
+            ref="newFolderInputRef"
+            v-model="newFolderName"
+            placeholder="Folder name"
+            size="small"
+            class="w-full"
+            @keydown.enter="executeNewFolder"
+            @keydown.escape="cancelNewFolder"
+          />
+        </div>
+        <div class="fc-confirm-actions">
+          <Button size="small" severity="secondary" @click="cancelNewFolder">Cancel</Button>
+          <Button
+            size="small"
+            @click="executeNewFolder"
+            :loading="isCreatingFolder"
+            :disabled="!newFolderName.trim()"
+          >
+            <i class="pi pi-check text-xs mr-1"></i>
+            Create
+          </Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+
   <Teleport to="body">
     <div v-if="showTrashPanel" class="fc-confirm-overlay" @click.self="closeTrashPanel">
       <div class="fc-trash-panel">
@@ -693,6 +778,13 @@
               <div class="fc-trash-item-name">{{ item.name }}</div>
               <div class="fc-trash-item-meta">
                 <span>{{ item.originalFolderName }}</span>
+                <template v-if="item.itemType === 'folder'">
+                  <span v-if="getFolderTrashInfo(item) as any" class="text-xs text-gray-400">
+                    &nbsp;·&nbsp;{{ (getFolderTrashInfo(item)!.files) }} file{{ getFolderTrashInfo(item)!.files !== 1 ? 's' : '' }}
+                    <template v-if="getFolderTrashInfo(item)!.folders > 0">, {{ getFolderTrashInfo(item)!.folders }} subfolder{{ getFolderTrashInfo(item)!.folders !== 1 ? 's' : '' }}</template>
+                    &nbsp;inside
+                  </span>
+                </template>
                 <span class="fc-trash-item-timer">{{ formatTimeRemaining(item.deletedAt) }}</span>
               </div>
             </div>
@@ -766,7 +858,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
@@ -828,6 +920,27 @@ interface FileItem {
 
 type CabinetItem = FolderItem | FileItem;
 
+// ── Snapshot types (for folder trash/restore) ───────────────────────────────
+
+interface FileSnapshot {
+  id: number;
+  name: string;
+  filetype: string;
+  filesize: number;
+  content: string | null;
+}
+
+interface SubfolderSnapshot {
+  id: number;
+  name: string;
+  snapshot: FolderSnapshot;
+}
+
+interface FolderSnapshot {
+  files: FileSnapshot[];
+  subfolders: SubfolderSnapshot[];
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 
 const isLoading = ref(false);
@@ -858,12 +971,14 @@ const uploadProgress = ref("");
 
 // ── Global search ──────────────────────────────────────────────────────────
 const globalSearchQuery = ref("");
-const globalSearchResults = ref<{ id: number; name: string; path: string; type: "file" | "folder" }[]>([]);
+const globalSearchResults = ref<{ id: number; name: string; path: string; type: "file" | "folder"; url?: string; folder?: number; filetype?: string; filesize?: number }[]>([]);
 const globalSearchLoading = ref(false);
 
 // ── Delete & Trash ─────────────────────────────────────────────────────────
 const showDeleteConfirm = ref(false);
-const deleteTarget = ref<CabinetItem | null>(null);
+const deleteTargets = ref<CabinetItem[]>([]);
+const deleteRecursive = ref(false);
+const folderContentWarning = ref<string | null>(null);
 const isDeleting = ref(false);
 const currentEnvironment = ref("unknown");
 
@@ -926,6 +1041,12 @@ const confirmDropCancel = () => {
 const confirmDropProceed = () => {
   if (dropConfirmResolve) dropConfirmResolve(true);
 };
+
+// ── New folder dialog ───────────────────────────────────────────────────────
+const showNewFolderDialog = ref(false);
+const newFolderName = ref("");
+const isCreatingFolder = ref(false);
+const newFolderInputRef = ref<any>(null);
 
 // ── File type helpers ──────────────────────────────────────────────────────
 
@@ -1480,6 +1601,11 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
       handler: () => navigateToFolder(item.id)
     });
     actions.push({
+      label: "Open in NetSuite",
+      icon: "pi pi-external-link",
+      handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
+    });
+    actions.push({
       label: "Copy Folder ID",
       icon: "pi pi-copy",
       handler: () => copyToClipboard(String(item.id))
@@ -1494,7 +1620,7 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
       actions.push({
         label: "Open in New Tab",
         icon: "pi pi-external-link",
-        handler: () => window.open(item.url, "_blank")
+        handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
       });
       actions.push({
         label: "Copy URL",
@@ -1515,11 +1641,14 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     handler: () => copyToClipboard(item.name)
   });
 
-  actions.push({
-    label: "Delete",
-    icon: "pi pi-trash text-red-500",
-    handler: () => confirmDeleteItem(item)
-  });
+  // System/root folders (negative IDs) cannot be deleted
+  if (item.id > 0) {
+    actions.push({
+      label: "Delete",
+      icon: "pi pi-trash text-red-500",
+      handler: () => confirmDeleteItem(item)
+    });
+  }
 
   contextMenu.value = {
     visible: true,
@@ -1552,6 +1681,14 @@ const toggleSort = (field: string) => {
 };
 
 // ── Formatting ─────────────────────────────────────────────────────────────
+
+const getNetsuiteEditUrl = (item: CabinetItem): string => {
+  const env = currentEnvironment.value !== "unknown" ? currentEnvironment.value : "system.netsuite.com";
+  if (item.type === "file") {
+    return `https://${env}/app/common/media/mediaitem.nl?id=${item.id}&e=T`;
+  }
+  return `https://${env}/app/common/media/mediaitemfolder.nl?id=${item.id}&e=T`;
+};
 
 const formatFileSize = (bytes: number | null | undefined): string => {
   if (!bytes) return "—";
@@ -1730,7 +1867,7 @@ const executeGlobalSearch = async (query: string) => {
 
     // Search files with folder path
     const filesSql = `
-      SELECT f.id, f.name, f.folder,
+      SELECT f.id, f.name, f.folder, f.url, f.fileType, f.fileSize,
              mf.name AS foldername
       FROM File f
       LEFT JOIN MediaItemFolder mf ON f.folder = mf.id
@@ -1771,7 +1908,11 @@ const executeGlobalSearch = async (query: string) => {
         id: Number(file.id),
         name: file.name || "Unnamed",
         path: file.foldername ? `/${file.foldername}/` : `(folder: ${file.folder})`,
-        type: "file"
+        type: "file",
+        url: file.url || undefined,
+        folder: file.folder ? Number(file.folder) : undefined,
+        filetype: file.filetype || undefined,
+        filesize: file.filesize ? Number(file.filesize) : undefined
       });
     }
 
@@ -1789,23 +1930,27 @@ const executeGlobalSearch = async (query: string) => {
   }
 };
 
-const handleSearchResultClick = (result: typeof globalSearchResults.value[0]) => {
+const handleSearchResultClick = async (result: typeof globalSearchResults.value[0]) => {
   globalSearchQuery.value = "";
   globalSearchResults.value = [];
 
   if (result.type === "folder") {
     navigateToFolder(result.id);
   } else {
-    // Navigate to the file's folder then open the file
-    // We need to construct a minimal FileItem to open it
+    // Navigate to the file's parent folder first, then open the file
+    if (result.folder) {
+      await navigateToFolder(result.folder);
+    }
+    // Build a proper FileItem with the data from search
     openFile({
       type: "file",
       id: result.id,
       name: result.name,
-      filetype: "",
-      filesize: 0,
-      folder: 0,
-      lastmodifieddate: null
+      filetype: result.filetype || "",
+      filesize: result.filesize || 0,
+      folder: result.folder || 0,
+      lastmodifieddate: null,
+      url: result.url
     } as FileItem);
   }
 };
@@ -1815,33 +1960,299 @@ const clearGlobalSearch = () => {
   globalSearchResults.value = [];
 };
 
+// ── New Folder ─────────────────────────────────────────────────────────────
+
+const openNewFolderDialog = () => {
+  newFolderName.value = "";
+  showNewFolderDialog.value = true;
+  nextTick(() => {
+    const el = newFolderInputRef.value?.$el ?? newFolderInputRef.value;
+    el?.focus?.();
+  });
+};
+
+const cancelNewFolder = () => {
+  showNewFolderDialog.value = false;
+  newFolderName.value = "";
+};
+
+const executeNewFolder = async () => {
+  const name = newFolderName.value.trim();
+  if (!name) return;
+
+  isCreatingFolder.value = true;
+  try {
+    const parentFolder = currentFolderId.value ?? null;
+
+    const response = await callApi(
+      RequestRoutes.CREATE_FOLDER,
+      { name, parentFolder },
+      ApiRequestType.NORMAL
+    );
+    const result = (response as ApiResponse)?.message || response;
+    const newId = result?.folderId || result?.id;
+
+    showNewFolderDialog.value = false;
+    newFolderName.value = "";
+
+    toast.add({
+      severity: "success",
+      summary: "Folder Created",
+      detail: `"${name}" created${newId ? ` (ID: ${newId})` : ""}`,
+      life: 3000
+    });
+
+    await refreshCurrentFolder();
+
+    // Expand tree node for parent so new folder shows
+    if (parentFolder !== null) {
+      expandedFolderIds.value.add(parentFolder);
+      expandedFolderIds.value = new Set(expandedFolderIds.value);
+    }
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Create Failed",
+      detail: err.message || "Failed to create folder",
+      life: 5000
+    });
+  } finally {
+    isCreatingFolder.value = false;
+  }
+};
+
 // ── Delete & Trash ─────────────────────────────────────────────────────────
 
-const confirmDeleteItem = (item: CabinetItem) => {
-  deleteTarget.value = item;
+const confirmDeleteItem = async (item: CabinetItem) => {
+  // System/root folders have negative IDs and cannot be deleted
+  if (item.id < 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Cannot Delete",
+      detail: `"${item.name}" is a system folder and cannot be deleted.`,
+      life: 4000
+    });
+    return;
+  }
+
+  deleteTargets.value = [item];
+  deleteRecursive.value = false;
+  folderContentWarning.value = null;
+
+  // If it's a folder, check for contents
+  if (item.type === "folder") {
+    await checkFolderContents([item as FolderItem]);
+  }
+
   showDeleteConfirm.value = true;
+};
+
+const confirmBulkDelete = async () => {
+  // Filter out system/root folders (negative IDs)
+  const eligible = selectedItems.value.filter((i) => i.id > 0);
+  const skipped = selectedItems.value.length - eligible.length;
+  if (skipped > 0 && eligible.length === 0) {
+    toast.add({
+      severity: "warn",
+      summary: "Cannot Delete",
+      detail: "Selected items include only system folders which cannot be deleted.",
+      life: 4000
+    });
+    return;
+  }
+  deleteTargets.value = eligible;
+  deleteRecursive.value = false;
+  folderContentWarning.value = null;
+
+  // Check if any folders have contents
+  const folders = deleteTargets.value.filter((t) => t.type === "folder") as FolderItem[];
+  if (folders.length > 0) {
+    await checkFolderContents(folders);
+  }
+
+  showDeleteConfirm.value = true;
+};
+
+const checkFolderContents = async (folders: FolderItem[]) => {
+  try {
+    const ids = folders.map((f) => f.id).join(",");
+    // Check for files in these folders
+    const fileRows = await runQuery(`
+      SELECT folder, COUNT(*) AS cnt FROM File WHERE folder IN (${ids}) GROUP BY folder
+    `);
+    // Check for subfolders
+    const subRows = await runQuery(`
+      SELECT parent, COUNT(*) AS cnt FROM MediaItemFolder WHERE parent IN (${ids}) GROUP BY parent
+    `);
+
+    let totalFiles = 0;
+    let totalSubfolders = 0;
+    for (const r of fileRows) totalFiles += Number(r.cnt);
+    for (const r of subRows) totalSubfolders += Number(r.cnt);
+
+    if (totalFiles > 0 || totalSubfolders > 0) {
+      const parts: string[] = [];
+      if (totalFiles > 0) parts.push(`${totalFiles} file${totalFiles !== 1 ? "s" : ""}`);
+      if (totalSubfolders > 0) parts.push(`${totalSubfolders} subfolder${totalSubfolders !== 1 ? "s" : ""}`);
+      folderContentWarning.value = `Contains ${parts.join(" and ")} — all will be saved to trash.`;
+    }
+  } catch {
+    // If check fails, allow delete anyway — NetSuite will reject if non-empty
+    folderContentWarning.value = null;
+  }
 };
 
 const cancelDelete = () => {
   showDeleteConfirm.value = false;
-  deleteTarget.value = null;
+  deleteTargets.value = [];
+  deleteRecursive.value = false;
+  folderContentWarning.value = null;
 };
 
 const executeDelete = async () => {
-  const item = deleteTarget.value;
-  if (!item) return;
+  const items = deleteTargets.value;
+  if (items.length === 0) return;
 
   isDeleting.value = true;
   showDeleteConfirm.value = false;
 
+  const folderName = breadcrumbs.value.length > 0
+    ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+    : "Root";
+
+  let deletedCount = 0;
+  const errors: string[] = [];
+
   try {
-    // For text files, fetch content before deleting so we can restore
+    for (const item of items) {
+      try {
+        if (item.type === "folder") {
+          // Build snapshot of all folder contents before deleting
+          const snapshot = await buildFolderSnapshot(item.id);
+
+          // Save folder + snapshot to trash as a single item
+          await trashItem({
+            environment: currentEnvironment.value,
+            itemType: "folder",
+            netsuiteId: item.id,
+            name: item.name,
+            originalFolderId: (item as FolderItem).parent,
+            originalFolderName: folderName,
+            content: JSON.stringify(snapshot),
+            fileType: null,
+            fileSize: null
+          });
+
+          // Delete all contents recursively from NetSuite
+          await deleteNetsuiteRecursive(item.id);
+
+          // Delete the folder itself
+          await callApi(
+            RequestRoutes.DELETE_FOLDER,
+            { folderId: item.id },
+            ApiRequestType.NORMAL
+          );
+        } else {
+          // For text files, fetch content before deleting so we can restore
+          let content: string | null = null;
+          if (isTextFile(item as FileItem)) {
+            try {
+              const resp = await callApi(
+                RequestRoutes.FETCH_FILE_CONTENT,
+                { fileUrl: (item as FileItem).url },
+                ApiRequestType.NORMAL
+              );
+              const result = (resp as ApiResponse)?.message || resp;
+              if (result?.content && !result?.binary) {
+                content = result.content;
+              }
+            } catch {
+              // Best effort — proceed even if we can't save content
+            }
+          }
+
+          // Save to trash before deleting from NetSuite
+          await trashItem({
+            environment: currentEnvironment.value,
+            itemType: "file",
+            netsuiteId: item.id,
+            name: item.name,
+            originalFolderId: (item as FileItem).folder,
+            originalFolderName: folderName,
+            content,
+            fileType: (item as FileItem).filetype,
+            fileSize: (item as FileItem).filesize
+          });
+
+          await callApi(
+            RequestRoutes.DELETE_FILE,
+            { fileId: item.id, folderId: (item as FileItem).folder },
+            ApiRequestType.NORMAL
+          );
+        }
+
+        deletedCount++;
+      } catch (err: any) {
+        errors.push(`${item.name}: ${err.message || "failed"}`);
+      }
+    }
+
+    // Update trash count
+    trashCount.value = await getTrashCount(currentEnvironment.value);
+
+    if (deletedCount > 0) {
+      toast.add({
+        severity: "success",
+        summary: "Deleted",
+        detail: `${deletedCount} item${deletedCount !== 1 ? "s" : ""} moved to trash`,
+        life: 3000
+      });
+    }
+
+    if (errors.length > 0) {
+      toast.add({
+        severity: "error",
+        summary: "Some Deletions Failed",
+        detail: errors.slice(0, 3).join("\n") + (errors.length > 3 ? `\n...and ${errors.length - 3} more` : ""),
+        life: 6000
+      });
+    }
+
+    // Refresh current folder
+    selectedItems.value = [];
+    await refreshCurrentFolder();
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Delete Failed",
+      detail: err.message || "Failed to delete items",
+      life: 5000
+    });
+  } finally {
+    isDeleting.value = false;
+    deleteTargets.value = [];
+    deleteRecursive.value = false;
+    folderContentWarning.value = null;
+  }
+};
+
+/**
+ * Build a full recursive snapshot of all files and subfolders inside a folder.
+ * Text file content is fetched; binary files are stored with content: null.
+ */
+const buildFolderSnapshot = async (folderId: number): Promise<FolderSnapshot> => {
+  const fileRows = await runQuery(`
+    SELECT id, name, fileType, fileSize, url FROM File WHERE folder = ${folderId}
+  `);
+
+  const files: FileSnapshot[] = [];
+  for (const f of fileRows) {
     let content: string | null = null;
-    if (item.type === "file" && isTextFile(item as FileItem)) {
+    if (f.filetype && TEXT_FILE_TYPES.has(f.filetype)) {
       try {
         const resp = await callApi(
           RequestRoutes.FETCH_FILE_CONTENT,
-          { fileUrl: (item as FileItem).url },
+          { fileUrl: f.url },
           ApiRequestType.NORMAL
         );
         const result = (resp as ApiResponse)?.message || resp;
@@ -1849,68 +2260,115 @@ const executeDelete = async () => {
           content = result.content;
         }
       } catch {
-        // Best effort — proceed even if we can't save content
+        // Best effort — proceed without content
       }
     }
-
-    // Save to trash before deleting from NetSuite
-    const folderName = breadcrumbs.value.length > 0
-      ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
-      : "Root";
-
-    await trashItem({
-      environment: currentEnvironment.value,
-      itemType: item.type,
-      netsuiteId: item.id,
-      name: item.name,
-      originalFolderId: item.type === "file" ? (item as FileItem).folder : (item as FolderItem).parent,
-      originalFolderName: folderName,
-      content,
-      fileType: item.type === "file" ? (item as FileItem).filetype : null,
-      fileSize: item.type === "file" ? (item as FileItem).filesize : null
+    files.push({
+      id: Number(f.id),
+      name: f.name,
+      filetype: f.filetype || "",
+      filesize: f.filesize ? Number(f.filesize) : 0,
+      content
     });
+  }
 
-    // Delete from NetSuite
-    if (item.type === "file") {
+  const subfolderRows = await runQuery(`
+    SELECT id, name FROM MediaItemFolder WHERE parent = ${folderId}
+  `);
+
+  const subfolders: SubfolderSnapshot[] = [];
+  for (const sf of subfolderRows) {
+    const childSnapshot = await buildFolderSnapshot(Number(sf.id));
+    subfolders.push({ id: Number(sf.id), name: sf.name, snapshot: childSnapshot });
+  }
+
+  return { files, subfolders };
+};
+
+/**
+ * Recursively delete all files and subfolders inside a folder from NetSuite.
+ * No trashing — call buildFolderSnapshot first if you need to preserve contents.
+ */
+const deleteNetsuiteRecursive = async (folderId: number) => {
+  const fileRows = await runQuery(`
+    SELECT id FROM File WHERE folder = ${folderId}
+  `);
+  for (const f of fileRows) {
+    await callApi(
+      RequestRoutes.DELETE_FILE,
+      { fileId: Number(f.id), folderId },
+      ApiRequestType.NORMAL
+    );
+  }
+
+  const subfolderRows = await runQuery(`
+    SELECT id FROM MediaItemFolder WHERE parent = ${folderId}
+  `);
+  for (const sf of subfolderRows) {
+    await deleteNetsuiteRecursive(Number(sf.id));
+    await callApi(
+      RequestRoutes.DELETE_FOLDER,
+      { folderId: Number(sf.id) },
+      ApiRequestType.NORMAL
+    );
+  }
+};
+
+/**
+ * Restore a FolderSnapshot tree into a parent folder in NetSuite.
+ * Creates subfolders via CREATE_FOLDER and uploads files via UPLOAD_FILE.
+ */
+const restoreFolderSnapshot = async (snapshot: FolderSnapshot, parentFolderId: number) => {
+  for (const f of snapshot.files) {
+    if (!f.content) continue; // Binary — skip, can't restore without content
+    try {
       await callApi(
-        RequestRoutes.DELETE_FILE,
-        { fileId: item.id, folderId: (item as FileItem).folder },
+        RequestRoutes.UPLOAD_FILE,
+        { fileName: f.name, fileContent: f.content, folderId: parentFolderId },
         ApiRequestType.NORMAL
       );
-    } else {
-      await callApi(
-        RequestRoutes.DELETE_FOLDER,
-        { folderId: item.id },
-        ApiRequestType.NORMAL
-      );
+    } catch {
+      // Best effort per file
     }
+  }
 
-    // Update trash count
-    trashCount.value = await getTrashCount(currentEnvironment.value);
-
-    toast.add({
-      severity: "success",
-      summary: "Deleted",
-      detail: `${item.name} moved to trash`,
-      life: 3000
-    });
-
-    // Refresh current folder
-    await refreshCurrentFolder();
-  } catch (err: any) {
-    toast.add({
-      severity: "error",
-      summary: "Delete Failed",
-      detail: err.message || "Failed to delete item",
-      life: 5000
-    });
-  } finally {
-    isDeleting.value = false;
-    deleteTarget.value = null;
+  for (const sf of snapshot.subfolders) {
+    try {
+      const resp = await callApi(
+        RequestRoutes.CREATE_FOLDER,
+        { name: sf.name, parentFolder: parentFolderId },
+        ApiRequestType.NORMAL
+      );
+      const result = (resp as ApiResponse)?.message || resp;
+      const newFolderId = result?.folderId ?? result?.id;
+      if (newFolderId) {
+        await restoreFolderSnapshot(sf.snapshot, Number(newFolderId));
+      }
+    } catch {
+      // Best effort per subfolder
+    }
   }
 };
 
 // ── Trash panel ────────────────────────────────────────────────────────────
+
+/**
+ * Parse a trashed folder's snapshot and return total file/folder counts.
+ * Returns null if the item is not a folder or has no snapshot content.
+ */
+const getFolderTrashInfo = (item: TrashedItem): { files: number; folders: number } | null => {
+  if (item.itemType !== "folder" || !item.content) return null;
+  try {
+    const snapshot = JSON.parse(item.content) as FolderSnapshot;
+    const countFiles = (s: FolderSnapshot): number =>
+      s.files.length + s.subfolders.reduce((acc, sf) => acc + countFiles(sf.snapshot), 0);
+    const countFolders = (s: FolderSnapshot): number =>
+      s.subfolders.length + s.subfolders.reduce((acc, sf) => acc + countFolders(sf.snapshot), 0);
+    return { files: countFiles(snapshot), folders: countFolders(snapshot) };
+  } catch {
+    return null;
+  }
+};
 
 const openTrashPanel = async () => {
   showTrashPanel.value = true;
@@ -2033,15 +2491,27 @@ const doRestore = async (item: TrashedItem, folderId: number) => {
         throw new Error("Upload failed during restore");
       }
     } else if (item.itemType === "folder") {
-      // Re-create folder
-      await callApi(
+      // Re-create the folder with the correct key (parentFolder, not parentId)
+      const createResp = await callApi(
         RequestRoutes.CREATE_FOLDER,
-        { name: item.name, parentId: folderId },
+        { name: item.name, parentFolder: folderId },
         ApiRequestType.NORMAL
       );
+      const createResult = (createResp as ApiResponse)?.message || createResp;
+      const newFolderId = createResult?.folderId ?? createResult?.id;
+
+      // Restore all contents from the snapshot stored in content
+      if (newFolderId && item.content) {
+        try {
+          const snapshot = JSON.parse(item.content) as FolderSnapshot;
+          await restoreFolderSnapshot(snapshot, Number(newFolderId));
+        } catch {
+          // Snapshot parse failure — folder itself still restored
+        }
+      }
     }
 
-    // Remove from trash
+    // Remove the parent item from trash
     await removeFromTrash(item.id);
     trashedItems.value = trashedItems.value.filter((t) => t.id !== item.id);
     trashCount.value = trashedItems.value.length;
@@ -2328,6 +2798,13 @@ onBeforeUnmount(() => {
   font-size: 0.7rem;
   color: var(--p-slate-500);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.fc-bulk-delete-btn {
+  font-size: 0.65rem !important;
+  padding: 0.2rem 0.5rem !important;
 }
 
 /* ── Detail panel ─────────────────────────────────────────────────────────── */
@@ -2895,6 +3372,39 @@ onBeforeUnmount(() => {
   color: var(--p-slate-600);
   line-height: 1.5;
   margin-bottom: 1rem;
+}
+
+.fc-delete-list {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+  padding: 0.4rem;
+}
+
+.fc-delete-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
+}
+
+.fc-folder-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--p-amber-50, #fffbeb);
+  border: 1px solid var(--p-amber-200, #fde68a);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: var(--p-amber-800, #92400e);
+  line-height: 1.4;
 }
 
 .fc-confirm-actions {
