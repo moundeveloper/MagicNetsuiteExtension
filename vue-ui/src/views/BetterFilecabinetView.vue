@@ -170,18 +170,124 @@
             </div>
           </div>
 
-          <!-- File content: Image -->
+          <!-- File content: Image (no edit) -->
           <div v-else-if="fileIsBinary && fileContent" class="fc-file-view fc-file-image">
             <img :src="fileContent" :alt="openedFile.name" class="fc-image-content" />
           </div>
 
           <!-- File content: Text/Code -->
-          <div v-else-if="fileContent !== null" class="fc-file-view fc-file-code">
-            <CodeViewer
-              :code="fileContent"
-              :language="getCodeLanguage(openedFile)"
-            />
-          </div>
+          <template v-else-if="fileContent !== null && !fileIsBinary">
+            <!-- Edit toolbar -->
+            <div v-if="isTextFile(openedFile)" class="fc-edit-toolbar">
+              <div class="fc-edit-toolbar-left">
+                <label class="fc-edit-toggle">
+                  <input type="checkbox" v-model="isEditing" />
+                  <span class="fc-toggle-slider"></span>
+                  <span class="fc-toggle-label">{{ isEditing ? 'Editing' : 'Read-only' }}</span>
+                </label>
+              </div>
+              <div class="fc-edit-toolbar-right">
+                <template v-if="isEditing">
+                  <Button
+                    size="small"
+                    :disabled="isSaving || !hasUnsavedChanges"
+                    @click="saveFile"
+                  >
+                    <i class="pi pi-save text-xs mr-1"></i>
+                    {{ isSaving ? 'Saving...' : 'Save' }}
+                    <kbd v-if="!isSaving" class="fc-kbd">Ctrl+S</kbd>
+                  </Button>
+
+                  <!-- Version history dropdown -->
+                  <div class="fc-history-wrapper">
+                    <Button
+                      size="small"
+                      severity="secondary"
+                      @click="toggleHistoryDropdown"
+                      :disabled="versionHistory.length === 0"
+                    >
+                      <i class="pi pi-history text-xs mr-1"></i>
+                      History
+                      <span v-if="versionHistory.length > 0" class="fc-history-badge">{{ versionHistory.length }}</span>
+                    </Button>
+
+                    <!-- History dropdown panel -->
+                    <div v-if="historyDropdownOpen" class="fc-history-dropdown">
+                      <div class="fc-history-header">
+                        <span>Version History</span>
+                        <button class="fc-history-close" @click="historyDropdownOpen = false">
+                          <i class="pi pi-times text-xs"></i>
+                        </button>
+                      </div>
+                      <div class="fc-history-list">
+                        <div
+                          v-for="ver in versionHistory"
+                          :key="ver.id"
+                          class="fc-history-item"
+                          :class="{ active: selectedVersionId === ver.id }"
+                          @click="selectVersion(ver)"
+                        >
+                          <div class="fc-history-item-time">{{ formatVersionDate(ver.savedAt) }}</div>
+                          <div class="fc-history-item-name">{{ ver.fileName }}</div>
+                        </div>
+                      </div>
+                      <div v-if="versionHistory.length > 0" class="fc-history-footer">
+                        <Button
+                          size="small"
+                          severity="danger"
+                          class="w-full"
+                          @click="commitHistory"
+                        >
+                          <i class="pi pi-check text-xs mr-1"></i>
+                          Commit (Clear History)
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Diff view (when viewing a version) -->
+            <div v-if="showingDiff && selectedVersionContent !== null" class="fc-file-view fc-file-diff">
+              <div class="fc-diff-bar">
+                <span class="text-xs text-gray-600">
+                  <i class="pi pi-clock text-xs mr-1"></i>
+                  Comparing: <strong>{{ selectedVersionLabel }}</strong> vs Current
+                </span>
+                <div class="flex items-center gap-2">
+                  <Button size="small" severity="secondary" @click="revertToVersion">
+                    <i class="pi pi-undo text-xs mr-1"></i>
+                    Revert to This
+                  </Button>
+                  <Button size="small" severity="secondary" @click="closeDiff">
+                    <i class="pi pi-times text-xs mr-1"></i>
+                    Close Diff
+                  </Button>
+                </div>
+              </div>
+              <DiffViewer
+                :original="selectedVersionContent"
+                :modified="editorContent"
+                :language="getCodeLanguage(openedFile)"
+              />
+            </div>
+
+            <!-- Editor / Viewer -->
+            <div v-else class="fc-file-view fc-file-code">
+              <FileCodeEditor
+                v-if="isEditing"
+                v-model="editorContent"
+                :language="getCodeLanguage(openedFile)"
+                @ctrl-s="saveFile"
+              />
+              <CodeViewer
+                v-else
+                :code="fileContent"
+                :language="getCodeLanguage(openedFile)"
+              />
+            </div>
+          </template>
 
           <!-- No content -->
           <div v-else class="flex-1 flex items-center justify-center">
@@ -434,6 +540,17 @@ import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import FolderTreeNode from "../components/FolderTreeNode.vue";
 import CodeViewer from "../components/CodeViewer.vue";
+import FileCodeEditor from "../components/FileCodeEditor.vue";
+import DiffViewer from "../components/DiffViewer.vue";
+import {
+  getVersionsForFile,
+  saveVersion,
+  wouldDropVersion,
+  clearVersionHistory,
+  getVersionContent,
+  formatVersionDate,
+  type FileVersion
+} from "../utils/fileVersionsDb";
 
 const toast = useToast();
 
@@ -510,6 +627,21 @@ const fileLoadError = ref<string | null>(null);
 // Preview in detail panel
 const previewContent = ref<string | null>(null);
 const previewLoading = ref(false);
+
+// ── Edit mode state ────────────────────────────────────────────────────────
+
+const isEditing = ref(false);
+const editorContent = ref("");
+const isSaving = ref(false);
+const hasUnsavedChanges = computed(() => editorContent.value !== fileContent.value);
+
+// Version history
+const versionHistory = ref<FileVersion[]>([]);
+const historyDropdownOpen = ref(false);
+const selectedVersionId = ref<number | null>(null);
+const selectedVersionContent = ref<string | null>(null);
+const selectedVersionLabel = ref("");
+const showingDiff = ref(false);
 
 // ── File type helpers ──────────────────────────────────────────────────────
 
@@ -828,6 +960,12 @@ const openFile = async (file: FileItem) => {
   fileContentType.value = "";
   fileLoadError.value = null;
   fileLoading.value = true;
+  isEditing.value = false;
+  editorContent.value = "";
+  showingDiff.value = false;
+  selectedVersionContent.value = null;
+  selectedVersionId.value = null;
+  historyDropdownOpen.value = false;
 
   try {
     const result = await fetchFileContent(file);
@@ -835,7 +973,10 @@ const openFile = async (file: FileItem) => {
       fileContent.value = result.content;
       fileContentType.value = result.contentType;
       fileIsBinary.value = result.binary;
+      editorContent.value = result.content;
     }
+    // Load version history
+    await loadVersionHistory(file.id);
   } catch (err: any) {
     fileLoadError.value = err.message || "Failed to load file";
   } finally {
@@ -847,6 +988,13 @@ const closeFile = () => {
   openedFile.value = null;
   fileContent.value = null;
   fileLoadError.value = null;
+  isEditing.value = false;
+  editorContent.value = "";
+  showingDiff.value = false;
+  selectedVersionContent.value = null;
+  selectedVersionId.value = null;
+  historyDropdownOpen.value = false;
+  versionHistory.value = [];
 };
 
 const loadPreview = async (file: FileItem) => {
@@ -874,6 +1022,129 @@ const loadPreview = async (file: FileItem) => {
   } finally {
     previewLoading.value = false;
   }
+};
+
+// ── Edit / Save / Version History ──────────────────────────────────────────
+
+const loadVersionHistory = async (fileId: number) => {
+  versionHistory.value = await getVersionsForFile(fileId);
+};
+
+const saveFile = async () => {
+  if (!openedFile.value || isSaving.value || !hasUnsavedChanges.value) return;
+
+  const file = openedFile.value;
+  isSaving.value = true;
+
+  try {
+    // Check if oldest version will be dropped
+    const willDrop = await wouldDropVersion(file.id);
+    if (willDrop) {
+      toast.add({
+        severity: "warn",
+        summary: "History Full",
+        detail: `Oldest version (${formatVersionDate(willDrop.savedAt)}) was removed to make room.`,
+        life: 4000
+      });
+    }
+
+    // Save the PREVIOUS content as a version (before overwriting)
+    if (fileContent.value !== null) {
+      await saveVersion(file.id, file.name, fileContent.value);
+    }
+
+    // Save to NetSuite
+    const response = await callApi(
+      RequestRoutes.UPDATE_FILE_CONTENT,
+      {
+        fileId: file.id,
+        fileContent: editorContent.value,
+        fileName: file.name,
+        folderId: file.folder,
+        mediaType: file.filetype || "JAVASCRIPT"
+      },
+      ApiRequestType.NORMAL
+    );
+
+    const result = (response as ApiResponse)?.message || response;
+    if (result?.isUpdated === false) {
+      throw new Error("NetSuite returned failure status");
+    }
+
+    // Update local state to match saved content
+    fileContent.value = editorContent.value;
+
+    // Reload version history
+    await loadVersionHistory(file.id);
+
+    toast.add({
+      severity: "success",
+      summary: "Saved",
+      detail: `${file.name} saved to NetSuite`,
+      life: 3000
+    });
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Save Failed",
+      detail: err.message || "Failed to save file",
+      life: 5000
+    });
+  } finally {
+    isSaving.value = false;
+  }
+};
+
+const toggleHistoryDropdown = () => {
+  historyDropdownOpen.value = !historyDropdownOpen.value;
+  if (historyDropdownOpen.value && openedFile.value) {
+    loadVersionHistory(openedFile.value.id);
+  }
+};
+
+const selectVersion = async (ver: FileVersion) => {
+  selectedVersionId.value = ver.id ?? null;
+  selectedVersionLabel.value = formatVersionDate(ver.savedAt);
+  const content = await getVersionContent(ver.id!);
+  selectedVersionContent.value = content;
+  showingDiff.value = true;
+  historyDropdownOpen.value = false;
+};
+
+const revertToVersion = () => {
+  if (selectedVersionContent.value !== null) {
+    editorContent.value = selectedVersionContent.value;
+    showingDiff.value = false;
+    selectedVersionContent.value = null;
+    selectedVersionId.value = null;
+    toast.add({
+      severity: "info",
+      summary: "Reverted",
+      detail: "Editor content restored. Save to apply changes to NetSuite.",
+      life: 4000
+    });
+  }
+};
+
+const closeDiff = () => {
+  showingDiff.value = false;
+  selectedVersionContent.value = null;
+  selectedVersionId.value = null;
+};
+
+const commitHistory = async () => {
+  if (!openedFile.value) return;
+
+  const count = await clearVersionHistory(openedFile.value.id);
+  versionHistory.value = [];
+  historyDropdownOpen.value = false;
+
+  toast.add({
+    severity: "success",
+    summary: "History Cleared",
+    detail: `${count} version${count !== 1 ? "s" : ""} removed. Current content in NetSuite is unchanged.`,
+    life: 4000
+  });
 };
 
 // ── Selection & interaction ────────────────────────────────────────────────
@@ -1505,5 +1776,210 @@ onBeforeUnmount(() => {
 
 .fc-detail-actions {
   margin-bottom: 0.75rem;
+}
+
+/* ── Edit toolbar ─────────────────────────────────────────────────────────── */
+.fc-edit-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  flex-shrink: 0;
+  gap: 0.5rem;
+}
+
+.fc-edit-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.fc-edit-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Toggle switch */
+.fc-edit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fc-edit-toggle input {
+  display: none;
+}
+
+.fc-toggle-slider {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--p-slate-300);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.fc-toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.fc-edit-toggle input:checked + .fc-toggle-slider {
+  background: var(--p-indigo-500);
+}
+
+.fc-edit-toggle input:checked + .fc-toggle-slider::after {
+  transform: translateX(14px);
+}
+
+.fc-toggle-label {
+  font-size: 0.75rem;
+  color: var(--p-slate-600);
+  font-weight: 500;
+}
+
+.fc-kbd {
+  font-size: 0.55rem;
+  font-family: "JetBrains Mono", monospace;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 0.35rem;
+  line-height: 1;
+}
+
+/* ── History dropdown ─────────────────────────────────────────────────────── */
+.fc-history-wrapper {
+  position: relative;
+}
+
+.fc-history-badge {
+  font-size: 0.6rem;
+  background: var(--p-indigo-500);
+  color: white;
+  border-radius: 8px;
+  padding: 0 0.35rem;
+  margin-left: 0.25rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.fc-history-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 260px;
+  background: white;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.fc-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.fc-history-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--p-slate-400);
+  padding: 0.15rem;
+  border-radius: 3px;
+}
+
+.fc-history-close:hover {
+  background: var(--p-slate-200);
+}
+
+.fc-history-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.fc-history-item {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+
+.fc-history-item:hover {
+  background: var(--p-slate-50);
+}
+
+.fc-history-item.active {
+  background: var(--p-indigo-50);
+  border-left: 3px solid var(--p-indigo-500);
+}
+
+.fc-history-item-time {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.fc-history-item-name {
+  font-size: 0.65rem;
+  color: var(--p-slate-500);
+  margin-top: 0.125rem;
+}
+
+.fc-history-footer {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+}
+
+/* ── Diff bar ─────────────────────────────────────────────────────────────── */
+.fc-diff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: var(--p-amber-50);
+  border-bottom: 1px solid var(--p-amber-200);
+  flex-shrink: 0;
+}
+
+.fc-file-diff {
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-file-diff :deep(.diff-viewer) {
+  flex: 1;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+}
+
+/* ── FileCodeEditor in file view ──────────────────────────────────────────── */
+.fc-file-code :deep(.file-code-editor) {
+  height: 100%;
 }
 </style>

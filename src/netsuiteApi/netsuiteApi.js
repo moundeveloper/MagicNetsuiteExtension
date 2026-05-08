@@ -319,6 +319,19 @@ const handlers = {
     const dataUrl = `data:${contentType};base64,${base64}`;
     return { content: dataUrl, contentType, binary: true };
   },
+  UPDATE_FILE_CONTENT: async ({
+    modules,
+    payload: { fileId, fileContent, fileName, folderId, mediaType }
+  }) => {
+    console.log("Update File Content action received", { fileId, fileName });
+    return window.updateNetsuiteFileContent(modules, {
+      fileId,
+      fileContent,
+      fileName,
+      folderId,
+      mediaType: mediaType || "JAVASCRIPT"
+    });
+  },
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {
