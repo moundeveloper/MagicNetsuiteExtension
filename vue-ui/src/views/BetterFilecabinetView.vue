@@ -98,160 +98,224 @@
             <i class="pi pi-angle-right text-xs text-gray-400"></i>
             <button
               class="fc-breadcrumb-item"
-              :class="{ active: idx === breadcrumbs.length - 1 }"
+              :class="{ active: idx === breadcrumbs.length - 1 && !openedFile }"
               @click="navigateToFolder(crumb.id)"
             >
               {{ crumb.name }}
             </button>
           </template>
+          <!-- Open file name in breadcrumb -->
+          <template v-if="openedFile">
+            <i class="pi pi-angle-right text-xs text-gray-400"></i>
+            <span class="fc-breadcrumb-item active">
+              <i :class="getItemIcon(openedFile)" class="text-xs mr-1"></i>
+              {{ openedFile.name }}
+            </span>
+          </template>
           <div class="ml-auto flex items-center gap-2">
-            <InputText
-              v-model="contentSearch"
-              type="text"
-              placeholder="Filter..."
-              size="small"
-              class="fc-filter-input"
-            />
-            <button
-              class="fc-view-toggle"
-              :class="{ active: viewMode === 'grid' }"
-              @click="viewMode = 'grid'"
-              title="Grid view"
-            >
-              <i class="pi pi-th-large text-xs"></i>
-            </button>
-            <button
-              class="fc-view-toggle"
-              :class="{ active: viewMode === 'list' }"
-              @click="viewMode = 'list'"
-              title="List view"
-            >
-              <i class="pi pi-list text-xs"></i>
-            </button>
-          </div>
-        </div>
-
-        <!-- Loading -->
-        <div v-if="isLoading" class="flex-1 flex items-center justify-center">
-          <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
-        </div>
-
-        <!-- Error -->
-        <div v-else-if="loadError" class="flex-1 flex items-center justify-center">
-          <div class="text-center text-red-500">
-            <i class="pi pi-exclamation-circle text-3xl mb-2"></i>
-            <p class="text-sm">{{ loadError }}</p>
-            <Button size="small" class="mt-2" @click="refreshCurrentFolder">Retry</Button>
-          </div>
-        </div>
-
-        <!-- Empty state -->
-        <div v-else-if="filteredItems.length === 0 && !isLoading" class="flex-1 flex items-center justify-center">
-          <div class="text-center text-gray-500">
-            <i class="pi pi-folder-open text-4xl mb-2"></i>
-            <p>{{ contentSearch ? 'No matching items' : 'This folder is empty' }}</p>
-          </div>
-        </div>
-
-        <!-- Grid view -->
-        <div
-          v-else-if="viewMode === 'grid'"
-          class="fc-grid-view"
-          @contextmenu.prevent
-        >
-          <div
-            v-for="item in filteredItems"
-            :key="item.type + '-' + item.id"
-            class="fc-grid-item"
-            :class="{ selected: isSelected(item) }"
-            @click="handleItemClick(item, $event)"
-            @dblclick="handleItemDblClick(item)"
-            @contextmenu.prevent="handleItemContext(item, $event)"
-          >
-            <div class="fc-grid-icon">
-              <i :class="getItemIcon(item)" class="text-2xl"></i>
-            </div>
-            <div class="fc-grid-label" :title="item.name">{{ item.name }}</div>
-            <div class="fc-grid-meta">
-              <template v-if="item.type === 'folder'">
-                {{ item.numfolderfiles ?? 0 }} files
-              </template>
-              <template v-else>
-                {{ formatFileSize(item.filesize) }}
-              </template>
-            </div>
-          </div>
-        </div>
-
-        <!-- List view -->
-        <div
-          v-else
-          class="fc-list-view"
-          @contextmenu.prevent
-        >
-          <table class="fc-table">
-            <thead>
-              <tr>
-                <th class="fc-th-name" @click="toggleSort('name')">
-                  Name
-                  <i v-if="sortField === 'name'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
-                </th>
-                <th class="fc-th-type" @click="toggleSort('fileType')">
-                  Type
-                  <i v-if="sortField === 'fileType'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
-                </th>
-                <th class="fc-th-size" @click="toggleSort('size')">
-                  Size
-                  <i v-if="sortField === 'size'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
-                </th>
-                <th class="fc-th-date" @click="toggleSort('lastmodifieddate')">
-                  Modified
-                  <i v-if="sortField === 'lastmodifieddate'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
-                </th>
-                <th class="fc-th-id">ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="item in filteredItems"
-                :key="item.type + '-' + item.id"
-                class="fc-table-row"
-                :class="{ selected: isSelected(item) }"
-                @click="handleItemClick(item, $event)"
-                @dblclick="handleItemDblClick(item)"
-                @contextmenu.prevent="handleItemContext(item, $event)"
+            <template v-if="openedFile">
+              <Button
+                size="small"
+                severity="secondary"
+                @click="closeFile"
               >
-                <td class="fc-td-name">
-                  <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
-                  <span>{{ item.name }}</span>
-                </td>
-                <td class="fc-td-type">{{ item.type === 'folder' ? 'Folder' : (item.filetype || '—') }}</td>
-                <td class="fc-td-size">
-                  <template v-if="item.type === 'folder'">
-                    {{ formatFolderSize(item.foldersize) }}
-                  </template>
-                  <template v-else>
-                    {{ formatFileSize(item.filesize) }}
-                  </template>
-                </td>
-                <td class="fc-td-date">{{ item.lastmodifieddate || '—' }}</td>
-                <td class="fc-td-id">{{ item.id }}</td>
-              </tr>
-            </tbody>
-          </table>
+                <i class="pi pi-arrow-left text-xs mr-1"></i>
+                Back
+              </Button>
+            </template>
+            <template v-else>
+              <InputText
+                v-model="contentSearch"
+                type="text"
+                placeholder="Filter..."
+                size="small"
+                class="fc-filter-input"
+              />
+              <button
+                class="fc-view-toggle"
+                :class="{ active: viewMode === 'grid' }"
+                @click="viewMode = 'grid'"
+                title="Grid view"
+              >
+                <i class="pi pi-th-large text-xs"></i>
+              </button>
+              <button
+                class="fc-view-toggle"
+                :class="{ active: viewMode === 'list' }"
+                @click="viewMode = 'list'"
+                title="List view"
+              >
+                <i class="pi pi-list text-xs"></i>
+              </button>
+            </template>
+          </div>
         </div>
 
-        <!-- Status bar -->
-        <div class="fc-status-bar">
-          <span>{{ folderCount }} folder{{ folderCount !== 1 ? 's' : '' }}, {{ fileCount }} file{{ fileCount !== 1 ? 's' : '' }}</span>
-          <span v-if="selectedItems.length > 0" class="ml-4">
-            {{ selectedItems.length }} selected
-          </span>
-        </div>
+        <!-- ═══ OPENED FILE VIEW ═══ -->
+        <template v-if="openedFile">
+          <!-- File loading -->
+          <div v-if="fileLoading" class="flex-1 flex items-center justify-center">
+            <div class="text-center">
+              <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
+              <p class="text-sm text-gray-500 mt-2">Loading {{ openedFile.name }}...</p>
+            </div>
+          </div>
+
+          <!-- File load error -->
+          <div v-else-if="fileLoadError" class="flex-1 flex items-center justify-center">
+            <div class="text-center text-red-500">
+              <i class="pi pi-exclamation-circle text-3xl mb-2"></i>
+              <p class="text-sm">{{ fileLoadError }}</p>
+              <Button size="small" class="mt-2" @click="openFile(openedFile!)">Retry</Button>
+            </div>
+          </div>
+
+          <!-- File content: Image -->
+          <div v-else-if="fileIsBinary && fileContent" class="fc-file-view fc-file-image">
+            <img :src="fileContent" :alt="openedFile.name" class="fc-image-content" />
+          </div>
+
+          <!-- File content: Text/Code -->
+          <div v-else-if="fileContent !== null" class="fc-file-view fc-file-code">
+            <CodeViewer
+              :code="fileContent"
+              :language="getCodeLanguage(openedFile)"
+            />
+          </div>
+
+          <!-- No content -->
+          <div v-else class="flex-1 flex items-center justify-center">
+            <div class="text-center text-gray-500">
+              <i class="pi pi-file text-4xl mb-2"></i>
+              <p>Unable to display this file</p>
+            </div>
+          </div>
+        </template>
+
+        <!-- ═══ FOLDER LISTING VIEW ═══ -->
+        <template v-else>
+          <!-- Loading -->
+          <div v-if="isLoading" class="flex-1 flex items-center justify-center">
+            <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
+          </div>
+
+          <!-- Error -->
+          <div v-else-if="loadError" class="flex-1 flex items-center justify-center">
+            <div class="text-center text-red-500">
+              <i class="pi pi-exclamation-circle text-3xl mb-2"></i>
+              <p class="text-sm">{{ loadError }}</p>
+              <Button size="small" class="mt-2" @click="refreshCurrentFolder">Retry</Button>
+            </div>
+          </div>
+
+          <!-- Empty state -->
+          <div v-else-if="filteredItems.length === 0 && !isLoading" class="flex-1 flex items-center justify-center">
+            <div class="text-center text-gray-500">
+              <i class="pi pi-folder-open text-4xl mb-2"></i>
+              <p>{{ contentSearch ? 'No matching items' : 'This folder is empty' }}</p>
+            </div>
+          </div>
+
+          <!-- Grid view -->
+          <div
+            v-else-if="viewMode === 'grid'"
+            class="fc-grid-view"
+            @contextmenu.prevent
+          >
+            <div
+              v-for="item in filteredItems"
+              :key="item.type + '-' + item.id"
+              class="fc-grid-item"
+              :class="{ selected: isSelected(item) }"
+              @click="handleItemClick(item, $event)"
+              @dblclick="handleItemDblClick(item)"
+              @contextmenu.prevent="handleItemContext(item, $event)"
+            >
+              <div class="fc-grid-icon">
+                <i :class="getItemIcon(item)" class="text-2xl"></i>
+              </div>
+              <div class="fc-grid-label" :title="item.name">{{ item.name }}</div>
+              <div class="fc-grid-meta">
+                <template v-if="item.type === 'folder'">
+                  {{ item.numfolderfiles ?? 0 }} files
+                </template>
+                <template v-else>
+                  {{ formatFileSize(item.filesize) }}
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- List view -->
+          <div
+            v-else
+            class="fc-list-view"
+            @contextmenu.prevent
+          >
+            <table class="fc-table">
+              <thead>
+                <tr>
+                  <th class="fc-th-name" @click="toggleSort('name')">
+                    Name
+                    <i v-if="sortField === 'name'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                  </th>
+                  <th class="fc-th-type" @click="toggleSort('fileType')">
+                    Type
+                    <i v-if="sortField === 'fileType'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                  </th>
+                  <th class="fc-th-size" @click="toggleSort('size')">
+                    Size
+                    <i v-if="sortField === 'size'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                  </th>
+                  <th class="fc-th-date" @click="toggleSort('lastmodifieddate')">
+                    Modified
+                    <i v-if="sortField === 'lastmodifieddate'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                  </th>
+                  <th class="fc-th-id">ID</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="item in filteredItems"
+                  :key="item.type + '-' + item.id"
+                  class="fc-table-row"
+                  :class="{ selected: isSelected(item) }"
+                  @click="handleItemClick(item, $event)"
+                  @dblclick="handleItemDblClick(item)"
+                  @contextmenu.prevent="handleItemContext(item, $event)"
+                >
+                  <td class="fc-td-name">
+                    <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
+                    <span>{{ item.name }}</span>
+                  </td>
+                  <td class="fc-td-type">{{ item.type === 'folder' ? 'Folder' : (item.filetype || '—') }}</td>
+                  <td class="fc-td-size">
+                    <template v-if="item.type === 'folder'">
+                      {{ formatFolderSize(item.foldersize) }}
+                    </template>
+                    <template v-else>
+                      {{ formatFileSize(item.filesize) }}
+                    </template>
+                  </td>
+                  <td class="fc-td-date">{{ item.lastmodifieddate || '—' }}</td>
+                  <td class="fc-td-id">{{ item.id }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Status bar -->
+          <div class="fc-status-bar">
+            <span>{{ folderCount }} folder{{ folderCount !== 1 ? 's' : '' }}, {{ fileCount }} file{{ fileCount !== 1 ? 's' : '' }}</span>
+            <span v-if="selectedItems.length > 0" class="ml-4">
+              {{ selectedItems.length }} selected
+            </span>
+          </div>
+        </template>
       </div>
 
       <!-- Detail / Preview panel -->
-      <div v-if="detailItem" class="fc-detail-panel">
+      <div v-if="detailItem && !openedFile" class="fc-detail-panel">
         <div class="fc-detail-header">
           <h4>{{ detailItem.name }}</h4>
           <button class="fc-detail-close" @click="detailItem = null">
@@ -262,6 +326,42 @@
           <div class="fc-detail-icon-large">
             <i :class="getItemIcon(detailItem)" class="text-4xl"></i>
           </div>
+
+          <!-- Preview section -->
+          <div v-if="detailItem.type === 'file' && isPreviewable(detailItem as FileItem)" class="fc-detail-preview">
+            <div v-if="previewLoading" class="fc-preview-loading">
+              <i class="pi pi-spin pi-spinner text-sm text-gray-400"></i>
+            </div>
+            <template v-else-if="previewContent">
+              <!-- Image preview -->
+              <img
+                v-if="isImageFile(detailItem as FileItem)"
+                :src="previewContent"
+                :alt="detailItem.name"
+                class="fc-preview-image"
+              />
+              <!-- Text/code preview -->
+              <div v-else class="fc-preview-code">
+                <CodeViewer
+                  :code="previewContent"
+                  :language="getCodeLanguage(detailItem as FileItem)"
+                />
+              </div>
+            </template>
+          </div>
+
+          <!-- Open button for files -->
+          <div v-if="detailItem.type === 'file' && (detailItem as FileItem).url" class="fc-detail-actions">
+            <Button
+              size="small"
+              class="w-full"
+              @click="openFile(detailItem as FileItem)"
+            >
+              <i class="pi pi-eye text-xs mr-1"></i>
+              Open File
+            </Button>
+          </div>
+
           <div class="fc-detail-fields">
             <div class="fc-detail-field">
               <span class="label">Type</span>
@@ -333,6 +433,7 @@ import { Button, InputText, useToast } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import FolderTreeNode from "../components/FolderTreeNode.vue";
+import CodeViewer from "../components/CodeViewer.vue";
 
 const toast = useToast();
 
@@ -396,6 +497,39 @@ const contextMenu = ref({
   actions: [] as { label: string; icon: string; handler: () => void }[]
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
+
+// ── Open File state ────────────────────────────────────────────────────────
+
+const openedFile = ref<FileItem | null>(null);
+const fileContent = ref<string | null>(null);
+const fileContentType = ref<string>("");
+const fileIsBinary = ref(false);
+const fileLoading = ref(false);
+const fileLoadError = ref<string | null>(null);
+
+// Preview in detail panel
+const previewContent = ref<string | null>(null);
+const previewLoading = ref(false);
+
+// ── File type helpers ──────────────────────────────────────────────────────
+
+const TEXT_FILE_TYPES = new Set([
+  "JAVASCRIPT", "TYPESCRIPT", "PLAINTEXT", "CSV", "XMLDOC", "HTMLDOC",
+  "JSON", "STYLESHEET", "FREEMARKER", "SVGIMAGE", "CONFIG"
+]);
+
+const IMAGE_FILE_TYPES = new Set([
+  "JPGIMAGE", "PNGIMAGE", "GIFIMAGE", "BMPIMAGE", "TIFFIMAGE", "ICON"
+]);
+
+const isTextFile = (item: FileItem) => TEXT_FILE_TYPES.has(item.filetype);
+const isImageFile = (item: FileItem) => IMAGE_FILE_TYPES.has(item.filetype);
+const isPreviewable = (item: FileItem) => isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
+
+const getCodeLanguage = (item: FileItem): "javascript" | "sql" => {
+  if (item.filetype === "JAVASCRIPT" || item.filetype === "TYPESCRIPT") return "javascript";
+  return "javascript"; // fallback — CodeViewer only supports js/sql
+};
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -595,6 +729,11 @@ const buildBreadcrumbs = async (folderId: number | null) => {
 // ── Navigation ─────────────────────────────────────────────────────────────
 
 const navigateToFolder = async (folderId: number | null) => {
+  // Close any open file when navigating folders
+  openedFile.value = null;
+  fileContent.value = null;
+  fileLoadError.value = null;
+
   isLoading.value = true;
   loadError.value = null;
   selectedItems.value = [];
@@ -663,6 +802,80 @@ const findFolderInTree = (folders: FolderItem[], id: number): FolderItem | null 
   return null;
 };
 
+// ── File content fetching ──────────────────────────────────────────────────
+
+const fetchFileContent = async (file: FileItem): Promise<{ content: string; contentType: string; binary: boolean } | null> => {
+  if (!file.url) return null;
+  const response = await callApi(
+    RequestRoutes.FETCH_FILE_CONTENT,
+    { fileUrl: file.url },
+    ApiRequestType.NORMAL
+  );
+  const result = (response as ApiResponse)?.message || response;
+  if (result?.error) throw new Error(result.error);
+  return result;
+};
+
+const openFile = async (file: FileItem) => {
+  if (!file.url) {
+    toast.add({ severity: "warn", summary: "No URL", detail: "This file has no accessible URL", life: 3000 });
+    return;
+  }
+
+  openedFile.value = file;
+  fileContent.value = null;
+  fileIsBinary.value = false;
+  fileContentType.value = "";
+  fileLoadError.value = null;
+  fileLoading.value = true;
+
+  try {
+    const result = await fetchFileContent(file);
+    if (result) {
+      fileContent.value = result.content;
+      fileContentType.value = result.contentType;
+      fileIsBinary.value = result.binary;
+    }
+  } catch (err: any) {
+    fileLoadError.value = err.message || "Failed to load file";
+  } finally {
+    fileLoading.value = false;
+  }
+};
+
+const closeFile = () => {
+  openedFile.value = null;
+  fileContent.value = null;
+  fileLoadError.value = null;
+};
+
+const loadPreview = async (file: FileItem) => {
+  if (!file.url || !isPreviewable(file)) {
+    previewContent.value = null;
+    return;
+  }
+
+  previewLoading.value = true;
+  try {
+    const result = await fetchFileContent(file);
+    if (result) {
+      if (result.binary) {
+        // Image: store data URL
+        previewContent.value = result.content;
+      } else {
+        // Text: truncate for preview (first 50 lines)
+        const lines = result.content.split("\n");
+        previewContent.value = lines.slice(0, 50).join("\n");
+        if (lines.length > 50) previewContent.value += "\n// ... truncated";
+      }
+    }
+  } catch {
+    previewContent.value = null;
+  } finally {
+    previewLoading.value = false;
+  }
+};
+
 // ── Selection & interaction ────────────────────────────────────────────────
 
 const isSelected = (item: CabinetItem) =>
@@ -690,9 +903,9 @@ const handleItemDblClick = (item: CabinetItem) => {
     navigateToFolder(item.id);
     expandedFolderIds.value.add(item.id);
     expandedFolderIds.value = new Set(expandedFolderIds.value);
-  } else if (item.url) {
-    // Open file URL in new tab
-    window.open(item.url, "_blank");
+  } else {
+    // Open file in-view
+    openFile(item as FileItem);
   }
 };
 
@@ -717,6 +930,11 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     if (item.url) {
       actions.push({
         label: "Open File",
+        icon: "pi pi-eye",
+        handler: () => openFile(item as FileItem)
+      });
+      actions.push({
+        label: "Open in New Tab",
         icon: "pi pi-external-link",
         handler: () => window.open(item.url, "_blank")
       });
@@ -838,6 +1056,15 @@ const handleDocClick = (event: MouseEvent) => {
     contextMenu.value.visible = false;
   }
 };
+
+// ── Preview watcher ────────────────────────────────────────────────────────
+
+watch(detailItem, (item) => {
+  previewContent.value = null;
+  if (item && item.type === "file" && isPreviewable(item as FileItem)) {
+    loadPreview(item as FileItem);
+  }
+});
 
 onMounted(async () => {
   document.addEventListener("click", handleDocClick);
@@ -1195,5 +1422,88 @@ onBeforeUnmount(() => {
 /* ── PrimeVue overrides ───────────────────────────────────────────────────── */
 .sidebar-section :deep(.p-inputtext) {
   font-size: 0.75rem;
+}
+
+/* ── File view (opened file) ──────────────────────────────────────────────── */
+.fc-file-view {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.fc-file-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--p-slate-100);
+}
+
+.fc-image-content {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.fc-file-code {
+  padding: 0;
+}
+
+.fc-file-code :deep(.code-viewer-wrapper) {
+  height: 100%;
+}
+
+.fc-file-code :deep(.code-viewer) {
+  height: 100%;
+  border-radius: 0;
+}
+
+.fc-file-code :deep(.cm-editor) {
+  height: 100%;
+}
+
+/* ── Detail panel preview ─────────────────────────────────────────────────── */
+.fc-detail-preview {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+  overflow: hidden;
+  max-height: 200px;
+}
+
+.fc-preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.fc-preview-image {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+  object-fit: contain;
+  display: block;
+}
+
+.fc-preview-code {
+  max-height: 200px;
+  overflow: hidden;
+  font-size: 0.65rem;
+}
+
+.fc-preview-code :deep(.code-viewer) {
+  border-radius: 0;
+  font-size: 10px;
+}
+
+.fc-preview-code :deep(.cm-editor) {
+  max-height: 200px;
+}
+
+.fc-detail-actions {
+  margin-bottom: 0.75rem;
 }
 </style>

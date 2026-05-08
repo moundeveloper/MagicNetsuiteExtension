@@ -297,6 +297,28 @@ const handlers = {
     console.log("Get SuiteQL Count action received");
     return window.getSuiteQLCount(modules, sql);
   },
+  FETCH_FILE_CONTENT: async ({ payload: { fileUrl } }) => {
+    console.log("Fetch File Content action received", { fileUrl });
+    const fullUrl = window.location.origin + fileUrl;
+    const response = await fetch(fullUrl, { credentials: "include" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const contentType = response.headers.get("content-type") || "";
+    const isText = /text|javascript|json|xml|css|html|svg|freemarker|csv/i.test(contentType);
+    if (isText) {
+      const text = await response.text();
+      return { content: text, contentType, binary: false };
+    }
+    // Binary files: return as base64 data URL
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    const dataUrl = `data:${contentType};base64,${base64}`;
+    return { content: dataUrl, contentType, binary: true };
+  },
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {
