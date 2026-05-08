@@ -259,4 +259,21 @@ const closePanel = (): void => {
   chrome.runtime.sendMessage({ type: "CLOSE_PANEL" });
 };
 
-export { callApi, closePanel };
+/**
+ * Get the current NetSuite environment domain (e.g. "1234567.app.netsuite.com").
+ * Returns "unknown" if not available.
+ */
+const getNetsuiteEnvironment = async (): Promise<string> => {
+  try {
+    const tab = await getActiveNetsuiteTab();
+    if (tab.url) {
+      const url = new URL(tab.url);
+      return url.hostname;
+    }
+  } catch {
+    // Fall through
+  }
+  return "unknown";
+};
+
+export { callApi, closePanel, getNetsuiteEnvironment };

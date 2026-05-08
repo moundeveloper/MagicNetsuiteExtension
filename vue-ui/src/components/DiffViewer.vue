@@ -129,6 +129,7 @@ watch(() => [props.original, props.modified, props.language], () => {
   overflow-y: auto;
   font-size: 0.8rem;
   background: #f8fafc;
+  width: 100%;
 }
 
 .diff-viewer :deep(.cm-editor) {
@@ -140,8 +141,19 @@ watch(() => [props.original, props.modified, props.language], () => {
   width: 100%;
 }
 
+.diff-viewer :deep(.cm-mergeViewEditors) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
 .diff-viewer :deep(.cm-mergeViewEditor) {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+}
+
+.diff-viewer :deep(.cm-mergeViewEditor .cm-editor) {
+  width: 100%;
 }
 </style>

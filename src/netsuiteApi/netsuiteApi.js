@@ -332,6 +332,20 @@ const handlers = {
       mediaType: mediaType || "JAVASCRIPT"
     });
   },
+  DELETE_FILE: async ({
+    modules,
+    payload: { fileId, folderId }
+  }) => {
+    console.log("Delete File action received", { fileId, folderId });
+    return await window.deleteNetsuiteFile(modules, { fileId, folderId });
+  },
+  DELETE_FOLDER: async ({
+    modules,
+    payload: { folderId }
+  }) => {
+    console.log("Delete Folder action received", { folderId });
+    return await window.deleteFolder(modules, { folderId });
+  },
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {

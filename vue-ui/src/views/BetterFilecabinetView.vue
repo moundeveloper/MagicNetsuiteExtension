@@ -70,6 +70,16 @@
                 <i class="pi pi-home font-medium"></i>
                 Root
               </Button>
+              <Button
+                @click="openTrashPanel"
+                severity="secondary"
+                class="w-full"
+                size="small"
+              >
+                <i class="pi pi-trash font-medium"></i>
+                Trash
+                <span v-if="trashCount > 0" class="fc-trash-badge">{{ trashCount }}</span>
+              </Button>
             </div>
           </div>
 
@@ -148,6 +158,41 @@
                 <i class="pi pi-list text-xs"></i>
               </button>
             </template>
+          </div>
+        </div>
+
+        <!-- ═══ GLOBAL SEARCH PANEL ═══ -->
+        <!-- ═══ GLOBAL SEARCH ═══ -->
+        <div v-if="!openedFile" class="fc-global-search">
+          <div class="fc-search-input-row">
+            <i class="pi pi-search text-xs text-gray-400"></i>
+            <input
+              v-model="globalSearchQuery"
+              type="text"
+              placeholder="Search all files and folders..."
+              class="fc-search-input"
+              @input="handleGlobalSearch"
+              @keydown.escape="clearGlobalSearch"
+            />
+            <i v-if="globalSearchLoading" class="pi pi-spin pi-spinner text-xs text-gray-400"></i>
+            <button v-if="globalSearchQuery" class="fc-search-close" @click="clearGlobalSearch">
+              <i class="pi pi-times text-xs"></i>
+            </button>
+          </div>
+          <div v-if="globalSearchResults.length > 0" class="fc-search-results">
+            <div
+              v-for="result in globalSearchResults"
+              :key="`${result.type}-${result.id}`"
+              class="fc-search-result-item"
+              @click="handleSearchResultClick(result)"
+            >
+              <i :class="result.type === 'folder' ? 'pi pi-folder text-amber-500' : 'pi pi-file text-gray-500'" class="text-xs"></i>
+              <span class="fc-search-result-name">{{ result.name }}</span>
+              <span class="fc-search-result-path">{{ result.path }}</span>
+            </div>
+          </div>
+          <div v-else-if="globalSearchQuery.trim() && !globalSearchLoading" class="fc-search-empty">
+            No results found
           </div>
         </div>
 
@@ -300,10 +345,30 @@
 
         <!-- ═══ FOLDER LISTING VIEW ═══ -->
         <template v-else>
-          <!-- Loading -->
-          <div v-if="isLoading" class="flex-1 flex items-center justify-center">
-            <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
-          </div>
+          <!-- Drag & drop overlay -->
+          <div
+            class="fc-drop-zone"
+            :class="{ 'fc-drag-over': isDragOver }"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop"
+          >
+            <!-- Upload overlay indicator -->
+            <div v-if="isDragOver" class="fc-drop-overlay">
+              <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
+              <p>Drop files to upload to this folder</p>
+            </div>
+
+            <!-- Uploading indicator -->
+            <div v-if="isUploading" class="fc-upload-bar">
+              <i class="pi pi-spin pi-spinner text-xs"></i>
+              <span>{{ uploadProgress }}</span>
+            </div>
+
+            <!-- Loading -->
+            <div v-if="isLoading" class="flex-1 flex items-center justify-center">
+              <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
+            </div>
 
           <!-- Error -->
           <div v-else-if="loadError" class="flex-1 flex items-center justify-center">
@@ -408,6 +473,8 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+
           </div>
 
           <!-- Status bar -->
@@ -529,11 +596,178 @@
       </div>
     </div>
   </Teleport>
+
+  <!-- Drop version confirmation dialog -->
+  <Teleport to="body">
+    <div v-if="showDropConfirm" class="fc-confirm-overlay" @click.self="confirmDropCancel">
+      <div class="fc-confirm-box">
+        <div class="fc-confirm-header">
+          <i class="pi pi-exclamation-triangle text-amber-500"></i>
+          <span>History Full</span>
+        </div>
+        <p class="fc-confirm-body">
+          You already have 5 saved versions. Saving now will permanently delete the oldest version
+          <strong>({{ dropConfirmDate }})</strong> to make room.
+        </p>
+        <div class="fc-confirm-actions">
+          <Button size="small" severity="secondary" @click="confirmDropCancel">Cancel</Button>
+          <Button size="small" severity="warn" @click="confirmDropProceed">
+            <i class="pi pi-save text-xs mr-1"></i>
+            Save Anyway
+          </Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- Delete confirmation dialog -->
+  <Teleport to="body">
+    <div v-if="showDeleteConfirm && deleteTarget" class="fc-confirm-overlay" @click.self="cancelDelete">
+      <div class="fc-confirm-box">
+        <div class="fc-confirm-header fc-confirm-danger">
+          <i class="pi pi-exclamation-triangle text-red-500"></i>
+          <span>Delete {{ deleteTarget.type === 'folder' ? 'Folder' : 'File' }}</span>
+        </div>
+        <p class="fc-confirm-body">
+          Are you sure you want to delete <strong>{{ deleteTarget.name }}</strong>?
+          <template v-if="deleteTarget.type === 'file' && isTextFile(deleteTarget as any)">
+            The file content will be saved to trash for 15 days so you can restore it.
+          </template>
+          <template v-else-if="deleteTarget.type === 'file'">
+            Binary files cannot be restored from trash.
+          </template>
+          <template v-else>
+            Empty folders can be re-created from trash.
+          </template>
+        </p>
+        <div class="fc-confirm-actions">
+          <Button size="small" severity="secondary" @click="cancelDelete">Cancel</Button>
+          <Button size="small" severity="danger" @click="executeDelete" :loading="isDeleting">
+            <i class="pi pi-trash text-xs mr-1"></i>
+            Delete
+          </Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- Trash panel -->
+  <Teleport to="body">
+    <div v-if="showTrashPanel" class="fc-confirm-overlay" @click.self="closeTrashPanel">
+      <div class="fc-trash-panel">
+        <div class="fc-trash-panel-header">
+          <div class="flex items-center gap-2">
+            <i class="pi pi-trash text-sm"></i>
+            <span class="font-semibold">Trash</span>
+            <span class="text-xs text-gray-400">({{ trashedItems.length }} items)</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button
+              v-if="trashedItems.length > 0"
+              size="small"
+              severity="danger"
+              @click="handleEmptyTrash"
+            >
+              <i class="pi pi-ban text-xs mr-1"></i>
+              Empty Trash
+            </Button>
+            <button class="fc-search-close" @click="closeTrashPanel">
+              <i class="pi pi-times text-xs"></i>
+            </button>
+          </div>
+        </div>
+        <div class="fc-trash-panel-body">
+          <div v-if="trashedItems.length === 0" class="fc-trash-empty">
+            <i class="pi pi-check-circle text-2xl text-green-400"></i>
+            <p>Trash is empty</p>
+          </div>
+          <div
+            v-for="item in trashedItems"
+            :key="item.id"
+            class="fc-trash-item"
+          >
+            <div class="fc-trash-item-icon">
+              <i :class="item.itemType === 'folder' ? 'pi pi-folder text-amber-500' : 'pi pi-file text-gray-500'"></i>
+            </div>
+            <div class="fc-trash-item-info">
+              <div class="fc-trash-item-name">{{ item.name }}</div>
+              <div class="fc-trash-item-meta">
+                <span>{{ item.originalFolderName }}</span>
+                <span class="fc-trash-item-timer">{{ formatTimeRemaining(item.deletedAt) }}</span>
+              </div>
+            </div>
+            <div class="fc-trash-item-actions">
+              <Button
+                v-if="item.itemType === 'file' ? item.content !== null : true"
+                size="small"
+                severity="secondary"
+                @click="restoreItem(item)"
+                :loading="isRestoringId === item.id"
+                title="Restore"
+              >
+                <i class="pi pi-undo text-xs"></i>
+              </Button>
+              <Button
+                size="small"
+                severity="danger"
+                text
+                @click="permanentlyDelete(item)"
+                title="Delete permanently"
+              >
+                <i class="pi pi-times text-xs"></i>
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- Restore folder picker -->
+  <Teleport to="body">
+    <div v-if="showRestoreFolderPicker && restorePickerItem" class="fc-confirm-overlay" @click.self="showRestoreFolderPicker = false">
+      <div class="fc-confirm-box" style="max-width: 440px">
+        <div class="fc-confirm-header">
+          <i class="pi pi-folder text-amber-500"></i>
+          <span>Choose Restore Location</span>
+        </div>
+        <p class="fc-confirm-body">
+          The original folder for <strong>{{ restorePickerItem.name }}</strong> is no longer available.
+          Choose a folder to restore it to:
+        </p>
+        <div class="fc-restore-picker">
+          <InputText
+            v-model="restorePickerSearch"
+            type="text"
+            placeholder="Search folders..."
+            size="small"
+            class="w-full mb-2"
+            @input="loadRestoreFolders"
+          />
+          <div class="fc-restore-folder-list">
+            <div
+              v-for="folder in restorePickerFolders"
+              :key="folder.id"
+              class="fc-restore-folder-item"
+              @click="confirmRestoreToFolder(folder.id)"
+            >
+              <i class="pi pi-folder text-amber-500 text-xs"></i>
+              <span>{{ folder.name }}</span>
+              <span class="text-xs text-gray-400 ml-auto">#{{ folder.id }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="fc-confirm-actions mt-3">
+          <Button size="small" severity="secondary" @click="showRestoreFolderPicker = false">Cancel</Button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script lang="ts" setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
-import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
+import { callApi, ApiRequestType, type ApiResponse, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
@@ -551,6 +785,16 @@ import {
   formatVersionDate,
   type FileVersion
 } from "../utils/fileVersionsDb";
+import {
+  trashItem,
+  getTrashedItems,
+  removeFromTrash,
+  emptyTrash,
+  autoPurgeTrash,
+  getTrashCount,
+  formatTimeRemaining,
+  type TrashedItem
+} from "../utils/fileCabinetTrashDb";
 
 const toast = useToast();
 
@@ -607,6 +851,33 @@ const detailItem = ref<CabinetItem | null>(null);
 
 const expandedFolderIds = ref<Set<number>>(new Set());
 
+// ── Drag & drop upload ─────────────────────────────────────────────────────
+const isDragOver = ref(false);
+const isUploading = ref(false);
+const uploadProgress = ref("");
+
+// ── Global search ──────────────────────────────────────────────────────────
+const globalSearchQuery = ref("");
+const globalSearchResults = ref<{ id: number; name: string; path: string; type: "file" | "folder" }[]>([]);
+const globalSearchLoading = ref(false);
+
+// ── Delete & Trash ─────────────────────────────────────────────────────────
+const showDeleteConfirm = ref(false);
+const deleteTarget = ref<CabinetItem | null>(null);
+const isDeleting = ref(false);
+const currentEnvironment = ref("unknown");
+
+const showTrashPanel = ref(false);
+const trashedItems = ref<TrashedItem[]>([]);
+const trashCount = ref(0);
+const isRestoringId = ref<number | null>(null);
+
+// Restore folder picker
+const showRestoreFolderPicker = ref(false);
+const restorePickerItem = ref<TrashedItem | null>(null);
+const restorePickerFolders = ref<{ id: number; name: string }[]>([]);
+const restorePickerSearch = ref("");
+
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -642,6 +913,19 @@ const selectedVersionId = ref<number | null>(null);
 const selectedVersionContent = ref<string | null>(null);
 const selectedVersionLabel = ref("");
 const showingDiff = ref(false);
+
+// Drop version confirm dialog
+const showDropConfirm = ref(false);
+const dropConfirmDate = ref("");
+let dropConfirmResolve: ((proceed: boolean) => void) | null = null;
+
+const confirmDropCancel = () => {
+  if (dropConfirmResolve) dropConfirmResolve(false);
+};
+
+const confirmDropProceed = () => {
+  if (dropConfirmResolve) dropConfirmResolve(true);
+};
 
 // ── File type helpers ──────────────────────────────────────────────────────
 
@@ -1034,20 +1318,23 @@ const saveFile = async () => {
   if (!openedFile.value || isSaving.value || !hasUnsavedChanges.value) return;
 
   const file = openedFile.value;
+
+  // Check if oldest version will be dropped — ask for confirmation
+  const willDrop = await wouldDropVersion(file.id);
+  if (willDrop) {
+    dropConfirmDate.value = formatVersionDate(willDrop.savedAt);
+    const proceed = await new Promise<boolean>((resolve) => {
+      dropConfirmResolve = resolve;
+      showDropConfirm.value = true;
+    });
+    showDropConfirm.value = false;
+    dropConfirmResolve = null;
+    if (!proceed) return;
+  }
+
   isSaving.value = true;
 
   try {
-    // Check if oldest version will be dropped
-    const willDrop = await wouldDropVersion(file.id);
-    if (willDrop) {
-      toast.add({
-        severity: "warn",
-        summary: "History Full",
-        detail: `Oldest version (${formatVersionDate(willDrop.savedAt)}) was removed to make room.`,
-        life: 4000
-      });
-    }
-
     // Save the PREVIOUS content as a version (before overwriting)
     if (fileContent.value !== null) {
       await saveVersion(file.id, file.name, fileContent.value);
@@ -1228,6 +1515,12 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     handler: () => copyToClipboard(item.name)
   });
 
+  actions.push({
+    label: "Delete",
+    icon: "pi pi-trash text-red-500",
+    handler: () => confirmDeleteItem(item)
+  });
+
   contextMenu.value = {
     visible: true,
     x: event.clientX,
@@ -1328,6 +1621,454 @@ const handleDocClick = (event: MouseEvent) => {
   }
 };
 
+// ── Drag & drop upload ─────────────────────────────────────────────────────
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault();
+  if (event.dataTransfer?.types.includes("Files")) {
+    isDragOver.value = true;
+  }
+};
+
+const handleDragLeave = (event: DragEvent) => {
+  // Only dismiss if actually leaving the container (not entering a child)
+  const related = event.relatedTarget as Node | null;
+  const target = event.currentTarget as HTMLElement;
+  if (!related || !target.contains(related)) {
+    isDragOver.value = false;
+  }
+};
+
+const handleDrop = async (event: DragEvent) => {
+  event.preventDefault();
+  isDragOver.value = false;
+
+  const files = event.dataTransfer?.files;
+  if (!files || files.length === 0) return;
+
+  const targetFolderId = currentFolderId.value ?? -15;
+  isUploading.value = true;
+
+  const uploaded: string[] = [];
+  const errors: string[] = [];
+
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]!;
+      uploadProgress.value = `Uploading ${i + 1}/${files.length}: ${file.name}`;
+
+      const response = await callApi(
+        RequestRoutes.UPLOAD_FILE,
+        {
+          fileName: file.name,
+          fileContent: await file.text(),
+          folderId: targetFolderId
+        },
+        ApiRequestType.NORMAL
+      );
+
+      const result = (response as ApiResponse)?.message || response;
+      if (result?.uploaded?.length > 0) {
+        uploaded.push(file.name);
+      } else {
+        errors.push(file.name);
+      }
+    }
+
+    if (uploaded.length > 0) {
+      toast.add({
+        severity: "success",
+        summary: "Upload Complete",
+        detail: `${uploaded.length} file${uploaded.length > 1 ? "s" : ""} uploaded`,
+        life: 3000
+      });
+      // Refresh current folder to show new files
+      await refreshCurrentFolder();
+    }
+
+    if (errors.length > 0) {
+      toast.add({
+        severity: "error",
+        summary: "Upload Errors",
+        detail: `Failed: ${errors.join(", ")}`,
+        life: 5000
+      });
+    }
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Upload Failed",
+      detail: err.message || "An error occurred during upload",
+      life: 5000
+    });
+  } finally {
+    isUploading.value = false;
+    uploadProgress.value = "";
+  }
+};
+
+// ── Global search ──────────────────────────────────────────────────────────
+
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+const handleGlobalSearch = () => {
+  if (searchDebounce) clearTimeout(searchDebounce);
+  const q = globalSearchQuery.value.trim();
+  if (!q) {
+    globalSearchResults.value = [];
+    return;
+  }
+  searchDebounce = setTimeout(() => {
+    executeGlobalSearch(q);
+  }, 300);
+};
+
+const executeGlobalSearch = async (query: string) => {
+  globalSearchLoading.value = true;
+  try {
+    const escaped = query.replace(/'/g, "''");
+
+    // Search files with folder path
+    const filesSql = `
+      SELECT f.id, f.name, f.folder,
+             mf.name AS foldername
+      FROM File f
+      LEFT JOIN MediaItemFolder mf ON f.folder = mf.id
+      WHERE LOWER(f.name) LIKE LOWER('%${escaped}%')
+        AND ROWNUM <= 30
+    `;
+
+    // Search folders
+    const foldersSql = `
+      SELECT id, name, parent
+      FROM MediaItemFolder
+      WHERE LOWER(name) LIKE LOWER('%${escaped}%')
+        AND ROWNUM <= 15
+    `;
+
+    const [fileRows, folderRows] = await Promise.all([
+      runQuery(filesSql),
+      runQuery(foldersSql)
+    ]);
+
+    const results: typeof globalSearchResults.value = [];
+
+    // Map folder results
+    for (const folder of folderRows) {
+      if (!folder?.id) continue;
+      results.push({
+        id: Number(folder.id),
+        name: folder.name || "Unnamed",
+        path: folder.parent ? `(parent: ${folder.parent})` : "(root)",
+        type: "folder"
+      });
+    }
+
+    // Map file results
+    for (const file of fileRows) {
+      if (!file?.id) continue;
+      results.push({
+        id: Number(file.id),
+        name: file.name || "Unnamed",
+        path: file.foldername ? `/${file.foldername}/` : `(folder: ${file.folder})`,
+        type: "file"
+      });
+    }
+
+    globalSearchResults.value = results;
+  } catch (err) {
+    globalSearchResults.value = [];
+    toast.add({
+      severity: "error",
+      summary: "Search Error",
+      detail: "Failed to search file cabinet",
+      life: 3000
+    });
+  } finally {
+    globalSearchLoading.value = false;
+  }
+};
+
+const handleSearchResultClick = (result: typeof globalSearchResults.value[0]) => {
+  globalSearchQuery.value = "";
+  globalSearchResults.value = [];
+
+  if (result.type === "folder") {
+    navigateToFolder(result.id);
+  } else {
+    // Navigate to the file's folder then open the file
+    // We need to construct a minimal FileItem to open it
+    openFile({
+      type: "file",
+      id: result.id,
+      name: result.name,
+      filetype: "",
+      filesize: 0,
+      folder: 0,
+      lastmodifieddate: null
+    } as FileItem);
+  }
+};
+
+const clearGlobalSearch = () => {
+  globalSearchQuery.value = "";
+  globalSearchResults.value = [];
+};
+
+// ── Delete & Trash ─────────────────────────────────────────────────────────
+
+const confirmDeleteItem = (item: CabinetItem) => {
+  deleteTarget.value = item;
+  showDeleteConfirm.value = true;
+};
+
+const cancelDelete = () => {
+  showDeleteConfirm.value = false;
+  deleteTarget.value = null;
+};
+
+const executeDelete = async () => {
+  const item = deleteTarget.value;
+  if (!item) return;
+
+  isDeleting.value = true;
+  showDeleteConfirm.value = false;
+
+  try {
+    // For text files, fetch content before deleting so we can restore
+    let content: string | null = null;
+    if (item.type === "file" && isTextFile(item as FileItem)) {
+      try {
+        const resp = await callApi(
+          RequestRoutes.FETCH_FILE_CONTENT,
+          { fileUrl: (item as FileItem).url },
+          ApiRequestType.NORMAL
+        );
+        const result = (resp as ApiResponse)?.message || resp;
+        if (result?.content && !result?.binary) {
+          content = result.content;
+        }
+      } catch {
+        // Best effort — proceed even if we can't save content
+      }
+    }
+
+    // Save to trash before deleting from NetSuite
+    const folderName = breadcrumbs.value.length > 0
+      ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+      : "Root";
+
+    await trashItem({
+      environment: currentEnvironment.value,
+      itemType: item.type,
+      netsuiteId: item.id,
+      name: item.name,
+      originalFolderId: item.type === "file" ? (item as FileItem).folder : (item as FolderItem).parent,
+      originalFolderName: folderName,
+      content,
+      fileType: item.type === "file" ? (item as FileItem).filetype : null,
+      fileSize: item.type === "file" ? (item as FileItem).filesize : null
+    });
+
+    // Delete from NetSuite
+    if (item.type === "file") {
+      await callApi(
+        RequestRoutes.DELETE_FILE,
+        { fileId: item.id, folderId: (item as FileItem).folder },
+        ApiRequestType.NORMAL
+      );
+    } else {
+      await callApi(
+        RequestRoutes.DELETE_FOLDER,
+        { folderId: item.id },
+        ApiRequestType.NORMAL
+      );
+    }
+
+    // Update trash count
+    trashCount.value = await getTrashCount(currentEnvironment.value);
+
+    toast.add({
+      severity: "success",
+      summary: "Deleted",
+      detail: `${item.name} moved to trash`,
+      life: 3000
+    });
+
+    // Refresh current folder
+    await refreshCurrentFolder();
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Delete Failed",
+      detail: err.message || "Failed to delete item",
+      life: 5000
+    });
+  } finally {
+    isDeleting.value = false;
+    deleteTarget.value = null;
+  }
+};
+
+// ── Trash panel ────────────────────────────────────────────────────────────
+
+const openTrashPanel = async () => {
+  showTrashPanel.value = true;
+  await autoPurgeTrash(currentEnvironment.value);
+  trashedItems.value = await getTrashedItems(currentEnvironment.value);
+  trashCount.value = trashedItems.value.length;
+};
+
+const closeTrashPanel = () => {
+  showTrashPanel.value = false;
+  showRestoreFolderPicker.value = false;
+  restorePickerItem.value = null;
+};
+
+const handleEmptyTrash = async () => {
+  const count = await emptyTrash(currentEnvironment.value);
+  trashedItems.value = [];
+  trashCount.value = 0;
+  showTrashPanel.value = false;
+  toast.add({
+    severity: "success",
+    summary: "Trash Emptied",
+    detail: `${count} item${count !== 1 ? "s" : ""} permanently removed`,
+    life: 3000
+  });
+};
+
+const permanentlyDelete = async (item: TrashedItem) => {
+  if (!item.id) return;
+  await removeFromTrash(item.id);
+  trashedItems.value = trashedItems.value.filter((t) => t.id !== item.id);
+  trashCount.value = trashedItems.value.length;
+  toast.add({
+    severity: "info",
+    summary: "Removed",
+    detail: `${item.name} permanently deleted from trash`,
+    life: 3000
+  });
+};
+
+// ── Restore ────────────────────────────────────────────────────────────────
+
+const restoreItem = async (item: TrashedItem) => {
+  if (!item.id) return;
+
+  // Only text files can be restored (we saved their content)
+  if (item.itemType === "file" && !item.content) {
+    toast.add({
+      severity: "warn",
+      summary: "Cannot Restore",
+      detail: "File content was not saved — binary files cannot be restored",
+      life: 4000
+    });
+    return;
+  }
+
+  // Check if original folder still exists
+  if (item.originalFolderId !== null) {
+    try {
+      const rows = await runQuery(`
+        SELECT id FROM MediaItemFolder WHERE id = ${item.originalFolderId} AND ROWNUM <= 1
+      `);
+      if (rows.length > 0) {
+        // Folder exists — restore directly
+        await doRestore(item, item.originalFolderId);
+        return;
+      }
+    } catch {
+      // Folder check failed — show picker
+    }
+  }
+
+  // Original folder not available — show folder picker
+  restorePickerItem.value = item;
+  restorePickerSearch.value = "";
+  await loadRestoreFolders();
+  showRestoreFolderPicker.value = true;
+};
+
+const loadRestoreFolders = async () => {
+  try {
+    const search = restorePickerSearch.value.trim();
+    const sql = search
+      ? `SELECT id, name FROM MediaItemFolder WHERE LOWER(name) LIKE LOWER('%${search.replace(/'/g, "''")}%') AND ROWNUM <= 30 ORDER BY name`
+      : `SELECT id, name FROM MediaItemFolder WHERE parent IS NULL AND ROWNUM <= 30 ORDER BY name`;
+    restorePickerFolders.value = (await runQuery(sql)).map((r: any) => ({
+      id: Number(r.id),
+      name: r.name || "Unnamed"
+    }));
+  } catch {
+    restorePickerFolders.value = [];
+  }
+};
+
+const confirmRestoreToFolder = async (folderId: number) => {
+  if (!restorePickerItem.value) return;
+  await doRestore(restorePickerItem.value, folderId);
+  showRestoreFolderPicker.value = false;
+  restorePickerItem.value = null;
+};
+
+const doRestore = async (item: TrashedItem, folderId: number) => {
+  if (!item.id) return;
+  isRestoringId.value = item.id;
+
+  try {
+    if (item.itemType === "file" && item.content) {
+      // Re-upload file to the target folder
+      const response = await callApi(
+        RequestRoutes.UPLOAD_FILE,
+        {
+          fileName: item.name,
+          fileContent: item.content,
+          folderId
+        },
+        ApiRequestType.NORMAL
+      );
+      const result = (response as ApiResponse)?.message || response;
+      if (!result?.uploaded?.length) {
+        throw new Error("Upload failed during restore");
+      }
+    } else if (item.itemType === "folder") {
+      // Re-create folder
+      await callApi(
+        RequestRoutes.CREATE_FOLDER,
+        { name: item.name, parentId: folderId },
+        ApiRequestType.NORMAL
+      );
+    }
+
+    // Remove from trash
+    await removeFromTrash(item.id);
+    trashedItems.value = trashedItems.value.filter((t) => t.id !== item.id);
+    trashCount.value = trashedItems.value.length;
+
+    toast.add({
+      severity: "success",
+      summary: "Restored",
+      detail: `${item.name} has been restored`,
+      life: 3000
+    });
+
+    // Refresh if we're in the target folder
+    if (currentFolderId.value === folderId) {
+      await refreshCurrentFolder();
+    }
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Restore Failed",
+      detail: err.message || "Failed to restore item",
+      life: 5000
+    });
+  } finally {
+    isRestoringId.value = null;
+  }
+};
+
 // ── Preview watcher ────────────────────────────────────────────────────────
 
 watch(detailItem, (item) => {
@@ -1339,6 +2080,9 @@ watch(detailItem, (item) => {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocClick);
+  currentEnvironment.value = await getNetsuiteEnvironment();
+  await autoPurgeTrash(currentEnvironment.value);
+  trashCount.value = await getTrashCount(currentEnvironment.value);
   await navigateToFolder(null);
 });
 
@@ -1969,6 +2713,8 @@ onBeforeUnmount(() => {
 .fc-file-diff {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
 }
 
 .fc-file-diff :deep(.diff-viewer) {
@@ -1976,10 +2722,326 @@ onBeforeUnmount(() => {
   max-height: none;
   border: none;
   border-radius: 0;
+  width: 100%;
 }
 
 /* ── FileCodeEditor in file view ──────────────────────────────────────────── */
 .fc-file-code :deep(.file-code-editor) {
   height: 100%;
+}
+
+/* ── Drag & drop zone ─────────────────────────────────────────────────────── */
+.fc-drop-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+
+.fc-drop-zone.fc-drag-over {
+  outline: 2px dashed var(--p-indigo-400);
+  outline-offset: -4px;
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.fc-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.92);
+  z-index: 10;
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+.fc-drop-overlay p {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--p-indigo-600);
+}
+
+.fc-upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--p-indigo-50);
+  border-bottom: 1px solid var(--p-indigo-200);
+  font-size: 0.75rem;
+  color: var(--p-indigo-700);
+  flex-shrink: 0;
+}
+
+/* ── Global search ────────────────────────────────────────────────────────── */
+.fc-global-search {
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  flex-shrink: 0;
+}
+
+.fc-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.fc-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.8rem;
+  color: var(--p-slate-800);
+  font-family: inherit;
+}
+
+.fc-search-input::placeholder {
+  color: var(--p-slate-400);
+}
+
+.fc-search-close {
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  cursor: pointer;
+  color: var(--p-slate-500);
+  border-radius: 3px;
+}
+
+.fc-search-close:hover {
+  background: var(--p-slate-200);
+}
+
+.fc-search-results {
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid var(--p-slate-200);
+}
+
+.fc-search-result-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background 0.1s;
+}
+
+.fc-search-result-item:hover {
+  background: var(--p-indigo-50);
+}
+
+.fc-search-result-name {
+  font-weight: 500;
+  color: var(--p-slate-800);
+  white-space: nowrap;
+}
+
+.fc-search-result-path {
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fc-search-empty {
+  padding: 0.75rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--p-slate-400);
+  border-top: 1px solid var(--p-slate-200);
+}
+
+/* ── Confirm dialog ───────────────────────────────────────────────────────── */
+.fc-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+}
+
+.fc-confirm-box {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  padding: 1.25rem;
+  max-width: 380px;
+  width: 90%;
+}
+
+.fc-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: var(--p-slate-800);
+}
+
+.fc-confirm-body {
+  font-size: 0.8rem;
+  color: var(--p-slate-600);
+  line-height: 1.5;
+  margin-bottom: 1rem;
+}
+
+.fc-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.fc-confirm-danger span {
+  color: var(--p-red-600);
+}
+
+/* ── Trash badge ──────────────────────────────────────────────────────────── */
+.fc-trash-badge {
+  background: var(--p-red-500);
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 0 0.35rem;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.25rem;
+}
+
+/* ── Trash panel ──────────────────────────────────────────────────────────── */
+.fc-trash-panel {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  width: 90%;
+  max-width: 520px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.fc-trash-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  flex-shrink: 0;
+}
+
+.fc-trash-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.fc-trash-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  color: var(--p-slate-400);
+  font-size: 0.8rem;
+}
+
+.fc-trash-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--p-slate-100);
+  transition: background 0.1s;
+}
+
+.fc-trash-item:hover {
+  background: var(--p-slate-50);
+}
+
+.fc-trash-item-icon {
+  flex-shrink: 0;
+}
+
+.fc-trash-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fc-trash-item-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--p-slate-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fc-trash-item-meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+}
+
+.fc-trash-item-timer {
+  color: var(--p-amber-600);
+  font-weight: 500;
+}
+
+.fc-trash-item-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* ── Restore folder picker ────────────────────────────────────────────────── */
+.fc-restore-picker {
+  margin-bottom: 0.5rem;
+}
+
+.fc-restore-folder-list {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+}
+
+.fc-restore-folder-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background 0.1s;
+}
+
+.fc-restore-folder-item:hover {
+  background: var(--p-indigo-50);
+}
+
+/* ── Context menu delete styling ──────────────────────────────────────────── */
+.fc-context-item:last-child {
+  border-top: 1px solid var(--p-slate-200);
+  color: var(--p-red-600);
+}
+
+.fc-context-item:last-child:hover {
+  background: var(--p-red-50);
 }
 </style>
