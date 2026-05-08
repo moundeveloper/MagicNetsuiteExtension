@@ -142,49 +142,6 @@ const handlers = {
     console.log("Run Quick Script Server action received", { userId });
 
     return window.runQuickScriptServer(modules, { code, userId }, csrfToken);
-
-    try {
-      const N = modules;
-      const { query, url } = N;
-
-      // Step 1: Get or create Magic folder
-      const { folderId } = await window.getOrCreateMagicFolder(N);
-      console.log("[RUN_QUICK_SCRIPT_SERVER] Folder ID:", folderId);
-
-      if (!folderId) {
-        throw new Error("Failed to get or create Magic folder");
-      }
-
-      // Step 2: Get or create handler module
-      const handlerInfo = await window.getOrCreateHandlerModule(N, folderId);
-      console.log("[RUN_QUICK_SCRIPT_SERVER] Handler module:", handlerInfo);
-
-      // Step 3: Get or create suitelet
-      const suiteletInfo = await window.getOrCreateSuitelet(
-        N,
-        folderId,
-        handlerInfo.scriptRecordId
-      );
-      console.log("[RUN_QUICK_SCRIPT_SERVER] Suitelet:", suiteletInfo);
-
-      // Step 4: Update user handler
-      await window.updateUserHandler(N, folderId, userId, code);
-      console.log("[RUN_QUICK_SCRIPT_SERVER] User handler updated");
-
-      // Step 5: Execute server script
-      const result = await window.executeServerScript(
-        N,
-        SUITELET_SCRIPT_ID,
-        suiteletInfo.deploymentId,
-        userId
-      );
-
-      console.log("[RUN_QUICK_SCRIPT_SERVER] Execution result:", result);
-      return result;
-    } catch (err) {
-      console.error("[RUN_QUICK_SCRIPT_SERVER] Error:", err);
-      return { error: err.message };
-    }
   },
   CHECK_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
     return window.checkMagicNetsuiteComponents(modules, {}, csrfToken);

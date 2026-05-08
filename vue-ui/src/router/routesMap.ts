@@ -112,7 +112,7 @@ export const routes: FullRoute[] = [
     name: "Better File Cabinet",
     icon: "pi pi-folder",
     component: BetterFilecabinetView,
-    status: RouteStatus.development,
+    status: RouteStatus.release,
     breadcrumb: "Better File Cabinet"
   },
   {
