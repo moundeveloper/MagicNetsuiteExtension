@@ -873,7 +873,9 @@ Rules:
 - The question text goes **before** the \`---\` separator.
 - Each answer option goes on its own line **after** the separator.
 - Provide 2–6 meaningful options. The UI automatically adds a "Type your own answer" field.
-- Use this **only** when you genuinely cannot proceed without the user's choice. Do NOT use it for rhetorical follow-ups.
+- **Always use this format** when asking the user any question — never ask in plain prose.
+  This includes when you need to clarify requirements, gather preferences, or the user explicitly asks you to ask them questions.
+- For multiple questions at once, emit multiple consecutive \`question\` fences — one per question.
 - After the user selects or types an answer, continue the task using their response.
 
 ## Chained Tools — Pipeline Priority

@@ -505,7 +505,17 @@
       </div>
 
       <!-- Detail / Preview panel -->
-      <div v-if="detailItem && !openedFile" class="fc-detail-panel">
+      <div
+        v-if="detailItem && !openedFile"
+        class="fc-detail-panel"
+        :style="{ width: detailPanelWidth + 'px' }"
+      >
+        <!-- Resize handle on left edge -->
+        <div
+          class="fc-detail-resize-handle"
+          :class="{ 'fc-detail-resize-handle--active': isResizingPanel }"
+          @mousedown="startPanelResize"
+        />
         <div class="fc-detail-header">
           <h4>{{ detailItem.name }}</h4>
           <button class="fc-detail-close" @click="detailItem = null">
@@ -518,9 +528,17 @@
           </div>
 
           <!-- Preview section -->
-          <div v-if="detailItem.type === 'file' && isPreviewable(detailItem as FileItem)" class="fc-detail-preview">
+          <div
+            v-if="detailItem.type === 'file' && isPreviewable(detailItem as FileItem)"
+            class="fc-detail-preview"
+            :style="{ maxHeight: Math.min(Math.round(detailPanelWidth * 0.85), 480) + 'px' }"
+          >
             <div v-if="previewLoading" class="fc-preview-loading">
               <i class="pi pi-spin pi-spinner text-sm text-gray-400"></i>
+            </div>
+            <div v-else-if="previewError" class="fc-preview-unavailable">
+              <i class="pi pi-eye-slash text-gray-400 text-sm"></i>
+              <span>No preview available</span>
             </div>
             <template v-else-if="previewContent">
               <!-- Image preview -->
@@ -1013,6 +1031,31 @@ const fileLoadError = ref<string | null>(null);
 // Preview in detail panel
 const previewContent = ref<string | null>(null);
 const previewLoading = ref(false);
+const previewError = ref(false);
+
+// ── Detail panel resize ────────────────────────────────────────────────────
+const detailPanelWidth = ref(240);
+const isResizingPanel = ref(false);
+
+const startPanelResize = (e: MouseEvent) => {
+  e.preventDefault();
+  isResizingPanel.value = true;
+  const startX = e.clientX;
+  const startWidth = detailPanelWidth.value;
+
+  const onMove = (ev: MouseEvent) => {
+    // Panel is on the right; dragging left (smaller clientX) = wider panel
+    const delta = startX - ev.clientX;
+    detailPanelWidth.value = Math.min(600, Math.max(200, startWidth + delta));
+  };
+  const onUp = () => {
+    isResizingPanel.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+};
 
 // ── Edit mode state ────────────────────────────────────────────────────────
 
@@ -1405,10 +1448,12 @@ const closeFile = () => {
 const loadPreview = async (file: FileItem) => {
   if (!file.url || !isPreviewable(file)) {
     previewContent.value = null;
+    previewError.value = false;
     return;
   }
 
   previewLoading.value = true;
+  previewError.value = false;
   try {
     const result = await fetchFileContent(file);
     if (result) {
@@ -1416,14 +1461,25 @@ const loadPreview = async (file: FileItem) => {
         // Image: store data URL
         previewContent.value = result.content;
       } else {
+        // Detect HTML error pages (e.g. 404 redirect returned as text/html)
+        const trimmed = result.content.trimStart();
+        const isHtmlPage = /^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed);
+        if (isHtmlPage) {
+          previewContent.value = null;
+          previewError.value = true;
+          return;
+        }
         // Text: truncate for preview (first 50 lines)
         const lines = result.content.split("\n");
         previewContent.value = lines.slice(0, 50).join("\n");
         if (lines.length > 50) previewContent.value += "\n// ... truncated";
       }
+    } else {
+      previewError.value = true;
     }
   } catch {
     previewContent.value = null;
+    previewError.value = true;
   } finally {
     previewLoading.value = false;
   }
@@ -2549,6 +2605,7 @@ const doRestore = async (item: TrashedItem, folderId: number) => {
 
 watch(detailItem, (item) => {
   previewContent.value = null;
+  previewError.value = false;
   if (item && item.type === "file" && isPreviewable(item as FileItem)) {
     loadPreview(item as FileItem);
   }
@@ -2815,13 +2872,31 @@ onBeforeUnmount(() => {
 
 /* ── Detail panel ─────────────────────────────────────────────────────────── */
 .fc-detail-panel {
-  width: 240px;
   border-left: 1px solid var(--p-slate-200);
   background: var(--p-slate-50);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   overflow-y: auto;
+  position: relative;
+  min-width: 200px;
+  max-width: 600px;
+}
+
+.fc-detail-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.fc-detail-resize-handle:hover,
+.fc-detail-resize-handle--active {
+  background: var(--p-blue-200);
 }
 
 .fc-detail-header {
@@ -2968,7 +3043,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--p-slate-200);
   border-radius: 4px;
   overflow: hidden;
-  max-height: 200px;
 }
 
 .fc-preview-loading {
@@ -2978,18 +3052,29 @@ onBeforeUnmount(() => {
   padding: 1rem;
 }
 
+.fc-preview-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  color: var(--p-slate-400);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+
 .fc-preview-image {
   width: 100%;
   height: auto;
-  max-height: 200px;
+  max-height: 100%;
   object-fit: contain;
   display: block;
 }
 
 .fc-preview-code {
-  max-height: 200px;
   overflow: hidden;
   font-size: 0.65rem;
+  height: 100%;
 }
 
 .fc-preview-code :deep(.code-viewer) {
