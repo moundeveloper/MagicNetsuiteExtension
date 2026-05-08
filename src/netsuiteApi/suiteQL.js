@@ -191,6 +191,25 @@ window.runSuiteQLQuery = async (N, sql, limit) => {
   const effectiveLimit =
     limit === null || limit === undefined ? Infinity : limit;
 
+  // If governance is running low, skip the paged N/query path entirely and
+  // delegate to the suitelet, which runs under its own governance budget.
+  try {
+    const script = N.runtime.getCurrentScript();
+    if (script.getRemainingUsage() < 200) {
+      console.warn(
+        "[runSuiteQLQuery] Low governance (<200 units remaining), switching directly to suitelet fallback"
+      );
+      return runSuiteQLViaScriptlet(
+        N,
+        sql,
+        limit ?? 1000,
+        effectiveLimit !== Infinity
+      );
+    }
+  } catch {
+    // Not in a governance-tracked SuiteScript context — proceed normally
+  }
+
   try {
     const pagedData = await query.runSuiteQLPaged.promise({
       query: sql,

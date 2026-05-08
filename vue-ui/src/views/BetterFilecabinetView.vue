@@ -607,7 +607,7 @@
       <div
         v-for="(action, idx) in contextMenu.actions"
         :key="idx"
-        class="fc-context-item"
+        :class="['fc-context-item', { 'fc-context-item--danger': action.danger }]"
         @click="action.handler(); contextMenu.visible = false"
       >
         <i :class="action.icon" class="text-xs"></i>
@@ -997,7 +997,7 @@ const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
-  actions: [] as { label: string; icon: string; handler: () => void }[]
+  actions: [] as { label: string; icon: string; handler: () => void; danger?: boolean }[]
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
 
@@ -1646,7 +1646,8 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     actions.push({
       label: "Delete",
       icon: "pi pi-trash text-red-500",
-      handler: () => confirmDeleteItem(item)
+      handler: () => confirmDeleteItem(item),
+      danger: true
     });
   }
 
@@ -1998,13 +1999,18 @@ const executeNewFolder = async () => {
     toast.add({
       severity: "success",
       summary: "Folder Created",
-      detail: `"${name}" created${newId ? ` (ID: ${newId})` : ""}`,
+      detail: `"${name}" created`,
       life: 3000
     });
 
-    await refreshCurrentFolder();
+    // Navigate directly into the new folder
+    if (newId) {
+      await navigateToFolder(Number(newId));
+    } else {
+      await refreshCurrentFolder();
+    }
 
-    // Expand tree node for parent so new folder shows
+    // Expand parent tree node so the new folder shows in the sidebar
     if (parentFolder !== null) {
       expandedFolderIds.value.add(parentFolder);
       expandedFolderIds.value = new Set(expandedFolderIds.value);
@@ -3546,12 +3552,12 @@ onBeforeUnmount(() => {
 }
 
 /* ── Context menu delete styling ──────────────────────────────────────────── */
-.fc-context-item:last-child {
+.fc-context-item--danger {
   border-top: 1px solid var(--p-slate-200);
   color: var(--p-red-600);
 }
 
-.fc-context-item:last-child:hover {
+.fc-context-item--danger:hover {
   background: var(--p-red-50);
 }
 </style>
