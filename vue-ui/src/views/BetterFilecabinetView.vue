@@ -145,29 +145,23 @@
         <template v-if="!isSplit">
           <!-- Tab bar -->
           <div class="fc-tabbar">
-            <!-- Drop zone: split left (appears only when dragging) -->
-            <div
-              v-show="draggingTabId !== null"
-              class="fc-split-dropzone fc-split-dropzone--left"
-              :class="{ 'fc-split-dropzone--active': dropZone === 'left' }"
-              @dragover.prevent="dropZone = 'left'"
-              @dragleave="dropZone = null"
-              @drop.prevent="onDropSplit('left')"
-            >
-              <i class="pi pi-arrow-left text-xs"></i>
-              Split Left
-            </div>
-
             <div class="fc-tabbar-tabs">
               <div
                 v-for="pane in panes"
                 :key="pane.id"
                 class="fc-tab"
-                :class="{ 'fc-tab--active': pane.id === activePaneId }"
+                :class="{
+                  'fc-tab--active': pane.id === activePaneId,
+                  'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                  'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+                }"
                 draggable="true"
                 @click="activePaneId = pane.id"
                 @dragstart="onTabDragStart($event, pane.id)"
                 @dragend="onTabDragEnd"
+                @dragover.prevent="onTabReorderOver($event, pane.id)"
+                @dragleave="reorderTarget = null"
+                @drop.prevent="onTabReorderDrop(pane.id)"
               >
                 <span class="fc-tab-label">{{ pane.label }}</span>
                 <button
@@ -183,23 +177,33 @@
                 <i class="pi pi-plus" style="font-size:0.75rem"></i>
               </button>
             </div>
+          </div>
 
-            <!-- Drop zone: split right -->
+          <!-- Pane area — split overlays live here (opacity-based, always in DOM) -->
+          <div
+            class="fc-panes-area"
+            :class="{ 'fc-panes-area--dragging': draggingTabId !== null }"
+          >
             <div
-              v-show="draggingTabId !== null"
-              class="fc-split-dropzone fc-split-dropzone--right"
-              :class="{ 'fc-split-dropzone--active': dropZone === 'right' }"
-              @dragover.prevent="dropZone = 'right'"
-              @dragleave="dropZone = null"
+              class="fc-split-overlay fc-split-overlay--left"
+              :class="{ 'fc-split-overlay--active': splitDropSide === 'left' }"
+              @dragover.prevent="splitDropSide = 'left'"
+              @dragleave="splitDropSide = null"
+              @drop.prevent="onDropSplit('left')"
+            >
+              <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
+              Split Left
+            </div>
+            <div
+              class="fc-split-overlay fc-split-overlay--right"
+              :class="{ 'fc-split-overlay--active': splitDropSide === 'right' }"
+              @dragover.prevent="splitDropSide = 'right'"
+              @dragleave="splitDropSide = null"
               @drop.prevent="onDropSplit('right')"
             >
               Split Right
-              <i class="pi pi-arrow-right text-xs"></i>
+              <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
             </div>
-          </div>
-
-          <!-- Pane area -->
-          <div class="fc-panes-area">
             <FileCabinetPane
               v-for="pane in panes"
               :key="pane.id"
@@ -222,17 +226,24 @@
           <div class="fc-split-container">
             <!-- Left group -->
             <div class="fc-split-group" :style="{ width: splitRatio + '%' }">
-              <div class="fc-tabbar fc-split-tabbar">
+              <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right' }">
                 <div class="fc-tabbar-tabs">
                   <div
                     v-for="pane in leftGroupPanes"
                     :key="pane.id"
                     class="fc-tab"
-                    :class="{ 'fc-tab--active': pane.id === leftActiveId }"
+                    :class="{
+                      'fc-tab--active': pane.id === leftActiveId,
+                      'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                      'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+                    }"
                     draggable="true"
                     @click="leftActiveId = pane.id"
                     @dragstart="onTabDragStart($event, pane.id, 'left')"
                     @dragend="onTabDragEnd"
+                    @dragover.prevent="onTabReorderOver($event, pane.id)"
+                    @dragleave="reorderTarget = null"
+                    @drop.prevent="onTabReorderDrop(pane.id)"
                   >
                     <span class="fc-tab-label">{{ pane.label }}</span>
                     <button
@@ -247,9 +258,8 @@
                     <i class="pi pi-plus" style="font-size:0.75rem"></i>
                   </button>
                 </div>
-                <!-- Drop zone: receive from right -->
+                <!-- Drop zone: receive from right (opacity-based, always in DOM) -->
                 <div
-                  v-show="draggingTabId !== null && draggingGroup === 'right'"
                   class="fc-group-dropzone"
                   :class="{ 'fc-group-dropzone--active': dropZone === 'group-left' }"
                   @dragover.prevent="dropZone = 'group-left'"
@@ -282,17 +292,24 @@
 
             <!-- Right group -->
             <div class="fc-split-group" style="flex: 1">
-              <div class="fc-tabbar fc-split-tabbar">
+              <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left' }">
                 <div class="fc-tabbar-tabs">
                   <div
                     v-for="pane in rightGroupPanes"
                     :key="pane.id"
                     class="fc-tab"
-                    :class="{ 'fc-tab--active': pane.id === rightActiveId }"
+                    :class="{
+                      'fc-tab--active': pane.id === rightActiveId,
+                      'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                      'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+                    }"
                     draggable="true"
                     @click="rightActiveId = pane.id"
                     @dragstart="onTabDragStart($event, pane.id, 'right')"
                     @dragend="onTabDragEnd"
+                    @dragover.prevent="onTabReorderOver($event, pane.id)"
+                    @dragleave="reorderTarget = null"
+                    @drop.prevent="onTabReorderDrop(pane.id)"
                   >
                     <span class="fc-tab-label">{{ pane.label }}</span>
                     <button
@@ -307,9 +324,8 @@
                     <i class="pi pi-plus" style="font-size:0.75rem"></i>
                   </button>
                 </div>
-                <!-- Drop zone: receive from left -->
+                <!-- Drop zone: receive from left (opacity-based, always in DOM) -->
                 <div
-                  v-show="draggingTabId !== null && draggingGroup === 'left'"
                   class="fc-group-dropzone"
                   :class="{ 'fc-group-dropzone--active': dropZone === 'group-right' }"
                   @dragover.prevent="dropZone = 'group-right'"
@@ -522,7 +538,9 @@ const workspaceRef = ref<HTMLElement | null>(null);
 // Drag state
 const draggingTabId = ref<string | null>(null);
 const draggingGroup = ref<"left" | "right" | null>(null);
-const dropZone = ref<"left" | "right" | "group-left" | "group-right" | null>(null);
+const dropZone = ref<"group-left" | "group-right" | null>(null);
+const reorderTarget = ref<{ id: string; side: "before" | "after" } | null>(null);
+const splitDropSide = ref<"left" | "right" | null>(null);
 
 // Computed groups
 const leftGroupPanes = computed(() => panes.value.filter((p) => leftGroupIds.value.includes(p.id)));
@@ -637,6 +655,8 @@ const onTabDragEnd = () => {
   draggingTabId.value = null;
   draggingGroup.value = null;
   dropZone.value = null;
+  reorderTarget.value = null;
+  splitDropSide.value = null;
 };
 
 const onDropSplit = (direction: "left" | "right") => {
@@ -645,18 +665,91 @@ const onDropSplit = (direction: "left" | "right") => {
 
   isSplit.value = true;
 
-  if (direction === "right") {
+  if (panes.value.length === 1) {
+    // Auto-create a companion pane so neither group is empty
+    _paneCounter++;
+    const newId = `pane-${_paneCounter}`;
+    panes.value.push({ id: newId, label: "File Cabinet" });
+    if (direction === "right") {
+      leftGroupIds.value = [tabId];
+      rightGroupIds.value = [newId];
+      leftActiveId.value = tabId;
+      rightActiveId.value = newId;
+    } else {
+      leftGroupIds.value = [newId];
+      rightGroupIds.value = [tabId];
+      leftActiveId.value = newId;
+      rightActiveId.value = tabId;
+    }
+  } else if (direction === "right") {
     leftGroupIds.value = panes.value.map((p) => p.id).filter((id) => id !== tabId);
     rightGroupIds.value = [tabId];
-    leftActiveId.value = leftGroupIds.value[0] ?? tabId;
+    leftActiveId.value = leftGroupIds.value[0]!;
     rightActiveId.value = tabId;
   } else {
     rightGroupIds.value = panes.value.map((p) => p.id).filter((id) => id !== tabId);
     leftGroupIds.value = [tabId];
     leftActiveId.value = tabId;
-    rightActiveId.value = rightGroupIds.value[0] ?? tabId;
+    rightActiveId.value = rightGroupIds.value[0]!;
   }
 
+  onTabDragEnd();
+};
+
+// ── Tab reorder ────────────────────────────────────────────────────────────
+
+const onTabReorderOver = (event: DragEvent, targetId: string) => {
+  const fromId = draggingTabId.value;
+  if (!fromId || fromId === targetId) {
+    reorderTarget.value = null;
+    return;
+  }
+
+  // In split mode only allow reordering within the same group
+  if (isSplit.value) {
+    const sameLeft = leftGroupIds.value.includes(fromId) && leftGroupIds.value.includes(targetId);
+    const sameRight = rightGroupIds.value.includes(fromId) && rightGroupIds.value.includes(targetId);
+    if (!sameLeft && !sameRight) {
+      reorderTarget.value = null;
+      return;
+    }
+  }
+
+  const el = event.currentTarget as HTMLElement;
+  const rect = el.getBoundingClientRect();
+  const side = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+  reorderTarget.value = { id: targetId, side };
+};
+
+const onTabReorderDrop = (targetId: string) => {
+  const fromId = draggingTabId.value;
+  if (!fromId || !reorderTarget.value || fromId === targetId) {
+    reorderTarget.value = null;
+    return;
+  }
+
+  // In split mode only allow reordering within the same group
+  if (isSplit.value) {
+    const sameLeft = leftGroupIds.value.includes(fromId) && leftGroupIds.value.includes(targetId);
+    const sameRight = rightGroupIds.value.includes(fromId) && rightGroupIds.value.includes(targetId);
+    if (!sameLeft && !sameRight) {
+      reorderTarget.value = null;
+      return;
+    }
+  }
+
+  const arr = [...panes.value];
+  const fromIdx = arr.findIndex((p) => p.id === fromId);
+  if (fromIdx < 0) return;
+  const [item] = arr.splice(fromIdx, 1);
+  if (!item) return;
+  const newToIdx = arr.findIndex((p) => p.id === targetId);
+  if (newToIdx < 0) { arr.push(item); panes.value = arr; return; }
+  const insertAt = reorderTarget.value.side === "before" ? newToIdx : newToIdx + 1;
+  arr.splice(insertAt, 0, item);
+  panes.value = arr;
+
+  reorderTarget.value = null;
   onTabDragEnd();
 };
 
@@ -1162,32 +1255,51 @@ onMounted(async () => {
 
 .fc-tab-add:hover { background: var(--p-slate-200); }
 
-/* ── Split drop zones (appear on left/right edges of tab bar when dragging) ── */
-.fc-split-dropzone {
+/* ── Tab insert indicators (drag-to-reorder) ─────────────────────────────── */
+.fc-tab--drop-before { box-shadow: -2px 0 0 0 var(--p-indigo-500); }
+.fc-tab--drop-after  { box-shadow:  2px 0 0 0 var(--p-indigo-500); }
+
+/* ── Split overlays (large drop targets over the pane area) ──────────────── */
+.fc-split-overlay {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 38%;
+  z-index: 20;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 0.72rem;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.78rem;
   font-weight: 600;
+  border-radius: 6px;
+  border: 2px dashed transparent;
+  /* invisible + non-interactive by default */
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+  user-select: none;
+}
+
+.fc-split-overlay--left  { left: 8px; }
+.fc-split-overlay--right { right: 8px; }
+
+/* Become visible + interactive while a tab is being dragged */
+.fc-panes-area--dragging .fc-split-overlay {
+  opacity: 1;
+  pointer-events: all;
+  background: rgba(99, 102, 241, 0.10);
+  border-color: rgba(99, 102, 241, 0.35);
   color: var(--p-indigo-600);
-  border-radius: 4px;
-  cursor: pointer;
-  background: var(--p-indigo-50);
-  border: 1px dashed var(--p-indigo-300);
-  flex-shrink: 0;
-  margin: 3px 4px;
-  white-space: nowrap;
-  transition: background 0.15s, border-color 0.15s;
 }
 
-.fc-split-dropzone--active {
-  background: var(--p-indigo-100);
+.fc-split-overlay--active,
+.fc-panes-area--dragging .fc-split-overlay:hover {
+  background: rgba(99, 102, 241, 0.22);
   border-color: var(--p-indigo-500);
-  color: var(--p-indigo-800);
 }
 
-/* ── Group drop zone (tab bar of opposite group when split) ─────────────── */
+/* ── Group drop zone (split mode, move between groups) ──────────────────── */
 .fc-group-dropzone {
   display: flex;
   align-items: center;
@@ -1198,11 +1310,20 @@ onMounted(async () => {
   background: var(--p-indigo-50);
   border: 1px dashed var(--p-indigo-300);
   border-radius: 4px;
-  cursor: pointer;
   white-space: nowrap;
   margin: 3px 4px;
   flex-shrink: 0;
-  transition: background 0.15s;
+  /* invisible + non-interactive by default */
+  pointer-events: none;
+  opacity: 0;
+  transition: background 0.15s, opacity 0.12s;
+}
+
+/* Reveal when the parent tab bar is a valid drop target */
+.fc-split-tabbar--drop-target .fc-group-dropzone {
+  opacity: 1;
+  pointer-events: all;
+  cursor: pointer;
 }
 
 .fc-group-dropzone--active {
