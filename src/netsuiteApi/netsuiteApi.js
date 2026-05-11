@@ -240,7 +240,7 @@ const handlers = {
   },
   UPLOAD_FILE: async ({
     modules,
-    payload: { fileName, fileContent, folderId },
+    payload: { fileName, fileContent, fileContentBase64, mimeType, folderId },
     csrfToken
   }) => {
     console.log("Upload File action received", { fileName, folderId });
@@ -248,6 +248,8 @@ const handlers = {
     return await window.uploadFile(modules, {
       fileName,
       fileContent,
+      fileContentBase64,
+      mimeType,
       folderId: folderId ?? -15,
       csrfToken
     });

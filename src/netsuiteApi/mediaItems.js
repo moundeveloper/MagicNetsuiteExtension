@@ -90,7 +90,7 @@ window.createFolder = async ({ runtime }, { folderName, parentFolderId }) => {
  */
 window.uploadFile = async (
   N,
-  { fileName, fileContent, folderId = -15, csrfToken }
+  { fileName, fileContent, fileContentBase64, mimeType, folderId = -15, csrfToken }
 ) => {
   const targetFolder = String(folderId);
 
@@ -150,7 +150,22 @@ window.uploadFile = async (
     }
   };
 
-  // ── Content mode: AI supplies file name + content string ──────────────────
+  // ── Base64 mode: binary or any file type supplied as base64 string ────────
+  if (fileName && fileContentBase64 !== undefined) {
+    const binaryStr = atob(fileContentBase64);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: mimeType || "application/octet-stream" });
+    const result = await postFile(blob, fileName);
+    return {
+      uploaded: result.ok ? [{ name: result.name, fileId: result.fileId }] : [],
+      errors: result.ok ? [] : [`${result.name}: ${result.error}`]
+    };
+  }
+
+  // ── Content mode: AI supplies file name + plain text content string ───────
   if (fileName && fileContent !== undefined) {
     const blob = new Blob([fileContent], { type: "text/plain" });
     const result = await postFile(blob, fileName);

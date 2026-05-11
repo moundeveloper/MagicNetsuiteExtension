@@ -1817,6 +1817,20 @@ const handleDocClick = (event: MouseEvent) => {
 
 // ── Drag & drop upload ─────────────────────────────────────────────────────
 
+/**
+ * Encode an ArrayBuffer to a base64 string without blowing the call stack
+ * (handles large binary files by processing in 8 KB chunks).
+ */
+const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 8192;
+  const chunks: string[] = [];
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(chunks.join(""));
+};
+
 const handleDragOver = (event: DragEvent) => {
   event.preventDefault();
   if (event.dataTransfer?.types.includes("Files")) {
@@ -1851,11 +1865,13 @@ const handleDrop = async (event: DragEvent) => {
       const file = files[i]!;
       uploadProgress.value = `Uploading ${i + 1}/${files.length}: ${file.name}`;
 
+      const fileContentBase64 = arrayBufferToBase64(await file.arrayBuffer());
       const response = await callApi(
         RequestRoutes.UPLOAD_FILE,
         {
           fileName: file.name,
-          fileContent: await file.text(),
+          fileContentBase64,
+          mimeType: file.type || "application/octet-stream",
           folderId: targetFolderId
         },
         ApiRequestType.NORMAL
