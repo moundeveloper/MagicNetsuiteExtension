@@ -348,6 +348,20 @@ const handlers = {
     console.log("Delete Folder action received", { folderId });
     return await window.deleteFolder(modules, { folderId });
   },
+  RENAME_FILE: async ({
+    modules,
+    payload: { fileId, newName, folderId, filetype, filesize }
+  }) => {
+    console.log("Rename File action received", { fileId, newName });
+    return await window.editMediaItem(modules, { fileId, newName, folderId, filetype, filesize });
+  },
+  RENAME_FOLDER: async ({
+    modules,
+    payload: { folderId, newName, parentFolderId }
+  }) => {
+    console.log("Rename Folder action received", { folderId, newName });
+    return await window.editFolder(modules, { folderId, newName, parentFolderId });
+  },
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {

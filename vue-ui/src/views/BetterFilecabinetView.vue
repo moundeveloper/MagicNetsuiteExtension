@@ -83,6 +83,61 @@
             </div>
           </div>
 
+          <!-- Bookmarks -->
+          <div class="sidebar-section">
+            <h4
+              class="fc-section-toggle"
+              @click="showBookmarksSection = !showBookmarksSection"
+            >
+              <i class="pi pi-bookmark-fill text-yellow-500 text-xs"></i>
+              Bookmarks
+              <span v-if="bookmarks.length > 0" class="fc-trash-badge">{{ bookmarks.length }}</span>
+              <i
+                :class="showBookmarksSection ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"
+                class="ml-auto text-xs text-gray-400"
+              ></i>
+            </h4>
+            <template v-if="showBookmarksSection">
+              <div v-if="bookmarks.length === 0" class="text-xs text-gray-500 italic mt-1">
+                No bookmarks yet. Right-click any file or folder to add one.
+              </div>
+              <div v-else class="fc-bookmarks-list">
+                <div
+                  v-for="bm in bookmarks"
+                  :key="bm.id"
+                  class="fc-bookmark-item"
+                  :title="`${bm.name}\n${bm.parentFolderName}`"
+                  @click="navigateToBookmark(bm)"
+                >
+                  <i :class="getBookmarkStatusIcon(bm)" :class2="getBookmarkStatusClass(bm)" class="fc-bookmark-status text-xs" :style="{ color: bm.exists === true ? '#22c55e' : bm.exists === false ? '#ef4444' : '#9ca3af' }"></i>
+                  <i
+                    :class="bm.itemType === 'folder' ? 'pi pi-folder text-yellow-400' : 'pi pi-file text-blue-400'"
+                    class="text-xs"
+                  ></i>
+                  <span class="fc-bookmark-name">{{ bm.name }}</span>
+                  <button
+                    class="fc-bookmark-remove"
+                    @click.stop="removeBookmarkById(bm.id!)"
+                    title="Remove bookmark"
+                  >
+                    <i class="pi pi-times text-xs"></i>
+                  </button>
+                </div>
+              </div>
+              <Button
+                v-if="bookmarks.length > 0"
+                size="small"
+                severity="secondary"
+                class="w-full mt-2"
+                :loading="isCheckingBookmarks"
+                @click="checkAllBookmarks"
+              >
+                <i class="pi pi-check-circle text-xs mr-1"></i>
+                Check Availability
+              </Button>
+            </template>
+          </div>
+
           <!-- Info -->
           <div v-if="currentFolderInfo" class="sidebar-section">
             <h4>Folder Info</h4>
@@ -134,6 +189,15 @@
               </Button>
             </template>
             <template v-else>
+              <button
+                v-if="currentFolderInfo"
+                class="fc-view-toggle"
+                :class="{ active: bookmarkedIds.has(currentFolderInfo.id) }"
+                :title="bookmarkedIds.has(currentFolderInfo.id) ? 'Remove Bookmark' : 'Bookmark this folder'"
+                @click="toggleBookmark(currentFolderInfo)"
+              >
+                <i :class="bookmarkedIds.has(currentFolderInfo.id) ? 'pi pi-bookmark-fill' : 'pi pi-bookmark'" class="text-xs"></i>
+              </button>
               <InputText
                 v-model="contentSearch"
                 type="text"
@@ -196,6 +260,13 @@
               <i :class="result.type === 'folder' ? 'pi pi-folder text-amber-500' : 'pi pi-file text-gray-500'" class="text-xs"></i>
               <span class="fc-search-result-name">{{ result.name }}</span>
               <span class="fc-search-result-path">{{ result.path }}</span>
+              <button
+                class="fc-search-result-bookmark"
+                :title="bookmarkedIds.has(result.id) ? 'Remove Bookmark' : 'Add Bookmark'"
+                @click.stop="toggleBookmarkFromSearchResult(result)"
+              >
+                <i :class="bookmarkedIds.has(result.id) ? 'pi pi-bookmark-fill text-amber-400' : 'pi pi-bookmark text-gray-400'" class="text-xs"></i>
+              </button>
             </div>
           </div>
           <div v-else-if="globalSearchQuery.trim() && !globalSearchLoading" class="fc-search-empty">
@@ -412,7 +483,19 @@
               <div class="fc-grid-icon">
                 <i :class="getItemIcon(item)" class="text-2xl"></i>
               </div>
-              <div class="fc-grid-label" :title="item.name">{{ item.name }}</div>
+              <div class="fc-grid-label" :title="renamingItemId === item.id ? undefined : item.name">
+                <input
+                  v-if="renamingItemId === item.id"
+                  v-model="renameValue"
+                  class="fc-rename-input"
+                  @keydown.enter.stop="commitRename(item)"
+                  @keydown.escape.stop="cancelRename"
+                  @blur="cancelRename"
+                  @click.stop
+                  :ref="(el) => { if (el && renamingItemId === item.id) (el as HTMLInputElement).focus(); }"
+                />
+                <template v-else>{{ item.name }}</template>
+              </div>
               <div class="fc-grid-meta">
                 <template v-if="item.type === 'folder'">
                   {{ item.numfolderfiles ?? 0 }} files
@@ -464,7 +547,17 @@
                 >
                   <td class="fc-td-name">
                     <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
-                    <span>{{ item.name }}</span>
+                    <input
+                      v-if="renamingItemId === item.id"
+                      v-model="renameValue"
+                      class="fc-rename-input"
+                      @keydown.enter.stop="commitRename(item)"
+                      @keydown.escape.stop="cancelRename"
+                      @blur="cancelRename"
+                      @click.stop
+                      :ref="(el) => { if (el && renamingItemId === item.id) (el as HTMLInputElement).focus(); }"
+                    />
+                    <span v-else>{{ item.name }}</span>
                   </td>
                   <td class="fc-td-type">{{ item.type === 'folder' ? 'Folder' : (item.filetype || '—') }}</td>
                   <td class="fc-td-size">
@@ -518,6 +611,16 @@
         />
         <div class="fc-detail-header">
           <h4>{{ detailItem.name }}</h4>
+          <button
+            class="fc-detail-bookmark"
+            :title="bookmarkedIds.has(detailItem.id) ? 'Remove Bookmark' : 'Add Bookmark'"
+            @click="toggleBookmark(detailItem)"
+          >
+            <i
+              :class="bookmarkedIds.has(detailItem.id) ? 'pi pi-bookmark-fill text-yellow-400' : 'pi pi-bookmark text-gray-400'"
+              class="text-sm"
+            ></i>
+          </button>
           <button class="fc-detail-close" @click="detailItem = null">
             <i class="pi pi-times text-xs"></i>
           </button>
@@ -905,6 +1008,15 @@ import {
   formatTimeRemaining,
   type TrashedItem
 } from "../utils/fileCabinetTrashDb";
+import {
+  addBookmark,
+  removeBookmark,
+  removeBookmarkByNetsuiteId,
+  getBookmarks,
+  getBookmarkByNetsuiteId,
+  updateBookmarkExists,
+  type Bookmark
+} from "../utils/fileCabinetBookmarksDb";
 
 const toast = useToast();
 
@@ -986,6 +1098,16 @@ const expandedFolderIds = ref<Set<number>>(new Set());
 const isDragOver = ref(false);
 const isUploading = ref(false);
 const uploadProgress = ref("");
+
+// ── Inline rename ──────────────────────────────────────────────────────────
+const renamingItemId = ref<number | null>(null);
+const renameValue = ref("");
+const isRenamingLoading = ref(false);
+
+// ── Bookmarks ──────────────────────────────────────────────────────────────
+const bookmarks = ref<Bookmark[]>([]);
+const isCheckingBookmarks = ref(false);
+const showBookmarksSection = ref(true);
 
 // ── Global search ──────────────────────────────────────────────────────────
 const globalSearchQuery = ref("");
@@ -1617,6 +1739,7 @@ const isSelected = (item: CabinetItem) =>
   selectedItems.value.some((s) => s.type === item.type && s.id === item.id);
 
 const handleItemClick = (item: CabinetItem, event: MouseEvent) => {
+  if (renamingItemId.value === item.id) return; // Don't change selection while renaming
   if (event.ctrlKey || event.metaKey) {
     // Toggle multi-select
     const idx = selectedItems.value.findIndex(
@@ -1661,6 +1784,14 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
       icon: "pi pi-external-link",
       handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
     });
+    // Rename: only positive-id folders (not system roots)
+    if (item.id > 0) {
+      actions.push({
+        label: "Rename",
+        icon: "pi pi-pencil",
+        handler: () => startRename(item)
+      });
+    }
     actions.push({
       label: "Copy Folder ID",
       icon: "pi pi-copy",
@@ -1684,6 +1815,12 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
         handler: () => copyToClipboard(item.url!)
       });
     }
+    // Rename: all file types supported via editMediaItem
+    actions.push({
+      label: "Rename",
+      icon: "pi pi-pencil",
+      handler: () => startRename(item)
+    });
     actions.push({
       label: "Copy File ID",
       icon: "pi pi-copy",
@@ -1695,6 +1832,14 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     label: "Copy Name",
     icon: "pi pi-file",
     handler: () => copyToClipboard(item.name)
+  });
+
+  // Bookmark toggle
+  const alreadyBookmarked = bookmarkedIds.value.has(item.id);
+  actions.push({
+    label: alreadyBookmarked ? "Remove Bookmark" : "Add Bookmark",
+    icon: alreadyBookmarked ? "pi pi-bookmark-fill" : "pi pi-bookmark",
+    handler: () => toggleBookmark(item)
   });
 
   // System/root folders (negative IDs) cannot be deleted
@@ -1726,7 +1871,162 @@ const copyToClipboard = (text: string) => {
   });
 };
 
-// ── Sorting ────────────────────────────────────────────────────────────────
+// ── Inline rename ──────────────────────────────────────────────────────────
+
+const startRename = (item: CabinetItem) => {
+  contextMenu.value.visible = false;
+  renamingItemId.value = item.id;
+  renameValue.value = item.name;
+};
+
+const cancelRename = () => {
+  if (isRenamingLoading.value) return;
+  renamingItemId.value = null;
+  renameValue.value = "";
+};
+
+const commitRename = async (item: CabinetItem) => {
+  const newName = renameValue.value.trim();
+  if (!newName || newName === item.name || isRenamingLoading.value) {
+    cancelRename();
+    return;
+  }
+  isRenamingLoading.value = true;
+  try {
+    if (item.type === "folder") {
+      await callApi(
+        RequestRoutes.RENAME_FOLDER,
+        { folderId: item.id, newName, parentFolderId: item.parent ?? -15 },
+        ApiRequestType.NORMAL
+      );
+      const folderItem = currentSubfolders.value.find((f) => f.id === item.id);
+      if (folderItem) folderItem.name = newName;
+    } else {
+      const fi = item as FileItem;
+      await callApi(
+        RequestRoutes.RENAME_FILE,
+        { fileId: fi.id, newName, folderId: fi.folder, filetype: fi.filetype || "", filesize: fi.filesize || 0 },
+        ApiRequestType.NORMAL
+      );
+      const fileItem = currentFiles.value.find((f) => f.id === fi.id);
+      if (fileItem) fileItem.name = newName;
+    }
+    // Update detail panel if this item is open
+    if (detailItem.value?.id === item.id) detailItem.value = { ...detailItem.value, name: newName };
+    toast.add({ severity: "success", summary: "Renamed", detail: newName, life: 2000 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    toast.add({ severity: "error", summary: "Rename Failed", detail: msg, life: 3500 });
+  } finally {
+    isRenamingLoading.value = false;
+    renamingItemId.value = null;
+    renameValue.value = "";
+  }
+};
+
+// ── Bookmarks ──────────────────────────────────────────────────────────────
+
+/** Reactive Set of bookmarked NetSuite IDs for the current environment (for O(1) lookup). */
+const bookmarkedIds = computed(() => new Set(bookmarks.value.map((b) => b.netsuiteId)));
+
+const loadBookmarks = async () => {
+  if (!currentEnvironment.value || currentEnvironment.value === "unknown") return;
+  bookmarks.value = await getBookmarks(currentEnvironment.value);
+};
+
+const toggleBookmark = async (item: CabinetItem) => {
+  if (!currentEnvironment.value || currentEnvironment.value === "unknown") return;
+  const existing = await getBookmarkByNetsuiteId(currentEnvironment.value, item.id);
+  if (existing) {
+    await removeBookmark(existing.id!);
+    toast.add({ severity: "info", summary: "Bookmark Removed", detail: item.name, life: 2000 });
+  } else {
+    const parentFolderId =
+      item.type === "folder" ? ((item as FolderItem).parent ?? null) : (item as FileItem).folder;
+    const parentFolderName =
+      breadcrumbs.value.length > 0
+        ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+        : "Root";
+    const newBmId = await addBookmark({
+      environment: currentEnvironment.value,
+      itemType: item.type,
+      netsuiteId: item.id,
+      name: item.name,
+      parentFolderId,
+      parentFolderName,
+      filetype: item.type === "file" ? (item as FileItem).filetype : undefined,
+      url: item.type === "file" ? (item as FileItem).url : undefined
+    });
+    // Auto-check existence immediately after adding
+    try {
+      const table = item.type === "file" ? "File" : "MediaItemFolder";
+      const rows = await runQuery(`SELECT id FROM ${table} WHERE id = ${item.id}`);
+      await updateBookmarkExists(newBmId, rows.length > 0);
+    } catch { /* silently skip if check fails */ }
+    toast.add({ severity: "success", summary: "Bookmarked", detail: item.name, life: 2000 });
+  }
+  await loadBookmarks();
+};
+
+const removeBookmarkById = async (id: number) => {
+  await removeBookmark(id);
+  await loadBookmarks();
+};
+
+const navigateToBookmark = (bm: Bookmark) => {
+  if (bm.itemType === "folder") {
+    navigateToFolder(bm.netsuiteId);
+  } else if (bm.parentFolderId !== null) {
+    navigateToFolder(bm.parentFolderId);
+  }
+};
+
+const checkAllBookmarks = async () => {
+  if (!currentEnvironment.value || bookmarks.value.length === 0) return;
+  isCheckingBookmarks.value = true;
+  try {
+    const fileBookmarks = bookmarks.value.filter((b) => b.itemType === "file");
+    const folderBookmarks = bookmarks.value.filter((b) => b.itemType === "folder");
+
+    const verifyGroup = async (type: "file" | "folder", group: Bookmark[]) => {
+      if (group.length === 0) return;
+      const ids = group.map((b) => b.netsuiteId).join(", ");
+      const table = type === "file" ? "File" : "MediaItemFolder";
+      const rows = await runQuery(`SELECT id FROM ${table} WHERE id IN (${ids})`);
+      const foundIds = new Set<number>(rows.map((r: { id: string | number }) => Number(r.id)));
+      for (const bm of group) {
+        await updateBookmarkExists(bm.id!, foundIds.has(bm.netsuiteId));
+      }
+    };
+
+    await verifyGroup("file", fileBookmarks);
+    await verifyGroup("folder", folderBookmarks);
+    await loadBookmarks();
+    toast.add({
+      severity: "success",
+      summary: "Check Complete",
+      detail: `${bookmarks.value.length} bookmark${bookmarks.value.length !== 1 ? "s" : ""} verified`,
+      life: 2500
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    toast.add({ severity: "error", summary: "Check Failed", detail: msg, life: 3500 });
+  } finally {
+    isCheckingBookmarks.value = false;
+  }
+};
+
+const getBookmarkStatusClass = (bm: Bookmark) => {
+  if (bm.exists === true) return "text-green-500";
+  if (bm.exists === false) return "text-red-500";
+  return "text-gray-400";
+};
+
+const getBookmarkStatusIcon = (bm: Bookmark) => {
+  if (bm.exists === true) return "pi pi-check-circle";
+  if (bm.exists === false) return "pi pi-times-circle";
+  return "pi pi-question-circle";
+};
 
 const toggleSort = (field: string) => {
   if (sortField.value === field) {
@@ -2031,6 +2331,34 @@ const handleSearchResultClick = async (result: typeof globalSearchResults.value[
 const clearGlobalSearch = () => {
   globalSearchQuery.value = "";
   globalSearchResults.value = [];
+};
+
+const toggleBookmarkFromSearchResult = async (result: typeof globalSearchResults.value[0]) => {
+  if (!currentEnvironment.value || currentEnvironment.value === "unknown") return;
+  const existing = await getBookmarkByNetsuiteId(currentEnvironment.value, result.id);
+  if (existing) {
+    await removeBookmark(existing.id!);
+    toast.add({ severity: "info", summary: "Bookmark Removed", detail: result.name, life: 2000 });
+  } else {
+    const newBmId = await addBookmark({
+      environment: currentEnvironment.value,
+      itemType: result.type,
+      netsuiteId: result.id,
+      name: result.name,
+      parentFolderId: result.folder ?? null,
+      parentFolderName: result.path || "Root",
+      filetype: result.type === "file" ? result.filetype : undefined,
+      url: result.type === "file" ? result.url : undefined
+    });
+    // Auto-check existence immediately after adding
+    try {
+      const table = result.type === "file" ? "File" : "MediaItemFolder";
+      const rows = await runQuery(`SELECT id FROM ${table} WHERE id = ${result.id}`);
+      await updateBookmarkExists(newBmId, rows.length > 0);
+    } catch { /* silently skip if check fails */ }
+    toast.add({ severity: "success", summary: "Bookmarked", detail: result.name, life: 2000 });
+  }
+  await loadBookmarks();
 };
 
 // ── New Folder ─────────────────────────────────────────────────────────────
@@ -2632,6 +2960,7 @@ onMounted(async () => {
   currentEnvironment.value = await getNetsuiteEnvironment();
   await autoPurgeTrash(currentEnvironment.value);
   trashCount.value = await getTrashCount(currentEnvironment.value);
+  await loadBookmarks();
   await navigateToFolder(null);
 });
 
@@ -3434,6 +3763,26 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+}
+
+.fc-search-result-bookmark {
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.fc-search-result-item:hover .fc-search-result-bookmark {
+  opacity: 1;
+}
+
+.fc-search-result-bookmark:hover {
+  background: var(--p-slate-200);
 }
 
 .fc-search-empty {
@@ -3526,17 +3875,9 @@ onBeforeUnmount(() => {
 
 /* ── Trash badge ──────────────────────────────────────────────────────────── */
 .fc-trash-badge {
-  background: var(--p-red-500);
-  color: white;
-  font-size: 0.65rem;
-  font-weight: 600;
-  border-radius: 9px;
-  padding: 0 0.35rem;
-  min-width: 16px;
-  height: 16px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+  font-weight: 500;
   margin-left: 0.25rem;
 }
 
@@ -3659,6 +4000,103 @@ onBeforeUnmount(() => {
 }
 
 .fc-context-item--danger:hover {
+  background: var(--p-red-50);
+}
+
+/* ── Inline rename input ──────────────────────────────────────────────────── */
+.fc-rename-input {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--p-indigo-400);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: inherit;
+  background: var(--p-surface-0, #fff);
+  color: inherit;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+/* ── Detail panel bookmark button ────────────────────────────────────────── */
+.fc-detail-bookmark {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: var(--p-slate-400);
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+}
+
+.fc-detail-bookmark:hover {
+  background: var(--p-slate-200);
+}
+
+/* ── Sidebar section toggle header ──────────────────────────────────────── */
+.fc-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Bookmarks list ──────────────────────────────────────────────────────── */
+.fc-bookmarks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 0.25rem;
+}
+
+.fc-bookmark-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  min-width: 0;
+}
+
+.fc-bookmark-item:hover {
+  background: var(--p-slate-200);
+}
+
+.fc-bookmark-status {
+  flex-shrink: 0;
+}
+
+.fc-bookmark-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--p-slate-700);
+}
+
+.fc-bookmark-remove {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 0.15rem;
+  color: var(--p-slate-400);
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.fc-bookmark-item:hover .fc-bookmark-remove {
+  opacity: 1;
+}
+
+.fc-bookmark-remove:hover {
+  color: var(--p-red-500);
   background: var(--p-red-50);
 }
 </style>
