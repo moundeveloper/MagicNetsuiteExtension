@@ -7,7 +7,7 @@
     padding=""
     outlined
     elevated
-    :style="{ height: '90vh' }"
+    :style="{ height: '90vh', overflow: 'hidden' }"
   >
     <template #default>
       <!-- ── Sidebar ───────────────────────────────────────────────────── -->
@@ -459,6 +459,7 @@ import {
   getBookmarks,
   getBookmarkByNetsuiteId,
   updateBookmarkExists,
+  updateBookmarkName,
   type Bookmark
 } from "../utils/fileCabinetBookmarksDb";
 import { callApi as apiCall } from "../utils/api";
@@ -530,10 +531,7 @@ const registerPaneRef = (id: string, el: any) => {
 const activeFolderId = ref<number | null>(null);
 const activeFolderInfo = ref<FolderItem | null>(null);
 
-const getActivePaneId = () => {
-  if (isSplit.value) return leftActiveId.value; // left is "primary"
-  return activePaneId.value;
-};
+const getActivePaneId = () => activePaneId.value;
 
 const onPaneFolderNavigate = (paneId: string, folderId: number | null) => {
   if (paneId !== getActivePaneId()) return;
@@ -620,7 +618,7 @@ const getPaneStyle = (paneId: string): Record<string, string> => {
 
   if (!isSplit.value) {
     return paneId === activePaneId.value
-      ? { position: "absolute", inset: "0", display: "flex", flexDirection: "column", overflow: "hidden" }
+      ? { position: "absolute", inset: "0", display: "flex", overflow: "hidden" }
       : { display: "none" };
   }
 
@@ -629,7 +627,7 @@ const getPaneStyle = (paneId: string): Record<string, string> => {
     return {
       position: "absolute", top: "0", left: "0", bottom: "0",
       width: `calc(${splitRatio.value}% - ${H})`,
-      display: "flex", flexDirection: "column", overflow: "hidden",
+      display: "flex", overflow: "hidden",
     };
   }
 
@@ -638,7 +636,7 @@ const getPaneStyle = (paneId: string): Record<string, string> => {
     return {
       position: "absolute", top: "0", right: "0", bottom: "0",
       left: `calc(${splitRatio.value}% + ${H})`,
-      display: "flex", flexDirection: "column", overflow: "hidden",
+      display: "flex", overflow: "hidden",
     };
   }
 
@@ -955,9 +953,16 @@ const checkAllBookmarks = async () => {
       if (group.length === 0) return;
       const ids = group.map((b) => b.netsuiteId).join(", ");
       const table = type === "file" ? "File" : "MediaItemFolder";
-      const rows = await runQuery(`SELECT id FROM ${table} WHERE id IN (${ids})`);
-      const foundIds = new Set<number>(rows.map((r: any) => Number(r.id)));
-      for (const bm of group) await updateBookmarkExists(bm.id!, foundIds.has(bm.netsuiteId));
+      const rows = await runQuery(`SELECT id, name FROM ${table} WHERE id IN (${ids})`);
+      const foundMap = new Map<number, string>(rows.map((r: any) => [Number(r.id), String(r.name)]));
+      for (const bm of group) {
+        const exists = foundMap.has(bm.netsuiteId);
+        await updateBookmarkExists(bm.id!, exists);
+        if (exists) {
+          const currentName = foundMap.get(bm.netsuiteId)!;
+          if (currentName !== bm.name) await updateBookmarkName(bm.id!, currentName);
+        }
+      }
     };
     await verifyGroup("file", fileBookmarks);
     await verifyGroup("folder", folderBookmarks);
@@ -1120,6 +1125,8 @@ onMounted(async () => {
   trashCount.value = await getTrashCount(currentEnvironment.value);
   await reloadBookmarks();
   await loadSidebarRootFolders();
+  // Eagerly verify bookmarks on first load (non-blocking)
+  checkAllBookmarks();
 });
 </script>
 

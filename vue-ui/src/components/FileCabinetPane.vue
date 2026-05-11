@@ -244,10 +244,6 @@
                   <i class="pi pi-sort-alt text-xs mr-1"></i>
                   Swap
                 </Button>
-                <Button size="small" severity="secondary" @click="closeCompare">
-                  <i class="pi pi-times text-xs mr-1"></i>
-                  Close
-                </Button>
               </div>
             </div>
             <DiffComparator
@@ -294,6 +290,11 @@
             <div v-if="isDeleting" class="fc-delete-overlay">
               <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
               <span class="text-sm text-gray-600 mt-2">Deleting...</span>
+            </div>
+            <!-- Rename loading overlay -->
+            <div v-if="isRenamingLoading" class="fc-delete-overlay">
+              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+              <span class="text-sm text-gray-600 mt-2">Renaming...</span>
             </div>
           <div v-if="isDragOver" class="fc-drop-overlay">
             <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
@@ -1949,6 +1950,10 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
   color: white;
 }
 
+/* Hide the divider when either neighbouring button is active */
+.fc-view-seg-btn.active + .fc-view-seg-btn::before,
+.fc-view-seg-btn.active::before { display: none; }
+
 /* ── Grid view ───────────────────────────────────────────────────────────── */
 .fc-grid-view {
   flex: 1;
@@ -2112,12 +2117,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-file-code :deep(.cm-editor) { height: 100%; }
 .fc-file-code :deep(.file-code-editor) { height: 100%; }
 
-/* Make text selections visible over Monaco's current-line highlight */
-.fc-file-code :deep(.monaco-editor .current-line ~ .view-overlays .current-line),
-.fc-file-code :deep(.monaco-editor .current-line) { background: transparent !important; }
-.fc-file-code :deep(.monaco-editor .selected-text) { background: var(--vscode-editor-selectionBackground, rgba(51,153,255,0.35)) !important; }
-.fc-file-code :deep(.monaco-editor.focused .selected-text) { background: rgba(51,153,255,0.4) !important; }
-
+/* CodeMirror editors inside fc-file-code fill the container */
 /* ── Edit toolbar ────────────────────────────────────────────────────────── */
 .fc-edit-toolbar {
   display: flex;

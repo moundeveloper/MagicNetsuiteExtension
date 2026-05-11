@@ -135,3 +135,13 @@ export const updateBookmarkExists = async (
 ): Promise<void> => {
   await db.bookmarks.update(id, { exists, lastCheckedAt: new Date() });
 };
+
+/**
+ * Update the display name of a bookmark (e.g. after a rename is detected).
+ */
+export const updateBookmarkName = async (
+  id: number,
+  name: string
+): Promise<void> => {
+  await db.bookmarks.update(id, { name });
+};
