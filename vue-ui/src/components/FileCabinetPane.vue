@@ -686,7 +686,8 @@ import {
   addBookmark,
   removeBookmark,
   getBookmarkByNetsuiteId,
-  updateBookmarkExists
+  updateBookmarkExists,
+  updateBookmarkName
 } from "../utils/fileCabinetBookmarksDb";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1367,6 +1368,14 @@ const commitRename = async (item: CabinetItem) => {
       if (fileItem) fileItem.name = newName;
     }
     if (detailItem.value?.id === item.id) detailItem.value = { ...detailItem.value, name: newName };
+    // Sync bookmark name if this item is bookmarked
+    if (props.currentEnvironment && props.currentEnvironment !== "unknown") {
+      const bm = await getBookmarkByNetsuiteId(props.currentEnvironment, item.id);
+      if (bm?.id !== undefined) {
+        await updateBookmarkName(bm.id, newName);
+        emit("bookmark-changed");
+      }
+    }
     toast.add({ severity: "success", summary: "Renamed", detail: newName, life: 2000 });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

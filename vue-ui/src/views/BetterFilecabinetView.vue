@@ -194,7 +194,7 @@
                     'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
                   }"
                   draggable="true"
-                  @click="leftActiveId = pane.id"
+                  @click="leftActiveId = pane.id; activePaneId = pane.id"
                   @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'left')"
                   @dragstart="onTabDragStart($event, pane.id, 'left')"
                   @dragend="onTabDragEnd"
@@ -242,7 +242,7 @@
                     'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
                   }"
                   draggable="true"
-                  @click="rightActiveId = pane.id"
+                  @click="rightActiveId = pane.id; activePaneId = pane.id"
                   @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'right')"
                   @dragstart="onTabDragStart($event, pane.id, 'right')"
                   @dragend="onTabDragEnd"
@@ -1217,6 +1217,7 @@ onMounted(async () => {
   background: var(--p-slate-600);
   color: white;
   outline-color: var(--p-slate-500);
+  box-shadow: inset 0 -2px 0 var(--p-indigo-400);
 }
 
 .fc-tab-label {

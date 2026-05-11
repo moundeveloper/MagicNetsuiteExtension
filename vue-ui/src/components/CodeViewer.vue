@@ -12,6 +12,8 @@ import {
   keymap,
   lineNumbers,
   Decoration,
+  drawSelection,
+  highlightActiveLine,
   type DecorationSet
 } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
@@ -163,7 +165,13 @@ const createEditor = async () => {
     ".cm-activeLine": {
       backgroundColor: "#3B4252",
     },
-    ".cm-selectionBackground, .cm-content ::selection": {
+    ".cm-selectionBackground": {
+      backgroundColor: "#434C5E !important",
+    },
+    "&.cm-focused .cm-selectionBackground": {
+      backgroundColor: "#434C5E !important",
+    },
+    ".cm-content ::selection": {
       backgroundColor: "#434C5E !important",
     },
     ".cm-cursor": {
@@ -175,11 +183,13 @@ const createEditor = async () => {
     doc: formattedCode,
     extensions: [
       lineNumbers(),
+      drawSelection(),
+      highlightActiveLine(),
       highlightSelectionMatches(),
       keymap.of(searchKeymap),
       nordLikeTheme,
       syntaxHighlighting(nordHighlightStyle, { fallback: true }),
-      EditorView.editable.of(false),
+      EditorState.readOnly.of(true),
       EditorView.lineWrapping,
       langExtension,
       searchDecorationsField,
