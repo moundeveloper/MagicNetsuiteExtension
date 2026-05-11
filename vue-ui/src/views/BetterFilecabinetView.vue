@@ -368,6 +368,17 @@
                     </div>
                   </div>
                 </template>
+
+                <!-- Compare button — always visible for text files -->
+                <Button
+                  size="small"
+                  severity="secondary"
+                  :class="{ 'fc-btn-active': showCompare }"
+                  @click="openCompare"
+                >
+                  <i class="pi pi-arrows-h text-xs mr-1"></i>
+                  Compare
+                </Button>
               </div>
             </div>
 
@@ -393,6 +404,43 @@
                 :original="selectedVersionContent"
                 :modified="editorContent"
                 :language="getCodeLanguage(openedFile)"
+              />
+            </div>
+
+            <!-- Compare view -->
+            <div v-else-if="showCompare" class="fc-file-view fc-file-compare">
+              <div class="fc-compare-bar">
+                <div class="fc-compare-labels">
+                  <span class="fc-compare-label fc-compare-label-left">
+                    <i class="pi pi-lock text-xs mr-1"></i>
+                    Original (read-only)
+                  </span>
+                  <span class="fc-compare-label fc-compare-label-right">
+                    <i class="pi pi-pencil text-xs mr-1"></i>
+                    Modified (editable)
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <Button size="small" severity="secondary" @click="loadCompareFromClipboard">
+                    <i class="pi pi-clipboard text-xs mr-1"></i>
+                    Paste Clipboard
+                  </Button>
+                  <Button size="small" severity="secondary" @click="swapCompare">
+                    <i class="pi pi-sort-alt text-xs mr-1"></i>
+                    Swap
+                  </Button>
+                  <Button size="small" severity="secondary" @click="closeCompare">
+                    <i class="pi pi-times text-xs mr-1"></i>
+                    Close
+                  </Button>
+                </div>
+              </div>
+              <DiffComparator
+                :key="compareKey"
+                :original="compareA"
+                :modified="compareB"
+                :language="getCodeLanguage(openedFile)"
+                @update:modified="compareB = $event"
               />
             </div>
 
@@ -492,7 +540,7 @@
                   @keydown.escape.stop="cancelRename"
                   @blur="cancelRename"
                   @click.stop
-                  :ref="(el) => { if (el && renamingItemId === item.id) (el as HTMLInputElement).focus(); }"
+                  :ref="(el) => { if (el && renamingItemId === item.id) { const inp = el as HTMLInputElement; inp.focus(); if (item.type === 'file') { const d = item.name.lastIndexOf('.'); inp.setSelectionRange(0, d > 0 ? d : item.name.length); } else { inp.select(); } } }"
                 />
                 <template v-else>{{ item.name }}</template>
               </div>
@@ -555,7 +603,7 @@
                       @keydown.escape.stop="cancelRename"
                       @blur="cancelRename"
                       @click.stop
-                      :ref="(el) => { if (el && renamingItemId === item.id) (el as HTMLInputElement).focus(); }"
+                      :ref="(el) => { if (el && renamingItemId === item.id) { const inp = el as HTMLInputElement; inp.focus(); if (item.type === 'file') { const d = item.name.lastIndexOf('.'); inp.setSelectionRange(0, d > 0 ? d : item.name.length); } else { inp.select(); } } }"
                     />
                     <span v-else>{{ item.name }}</span>
                   </td>
@@ -610,6 +658,7 @@
           @mousedown="startPanelResize"
         />
         <div class="fc-detail-header">
+          <i :class="getItemIcon(detailItem)" class="text-sm flex-shrink-0" style="margin-top:1px"></i>
           <h4>{{ detailItem.name }}</h4>
           <button
             class="fc-detail-bookmark"
@@ -626,9 +675,6 @@
           </button>
         </div>
         <div class="fc-detail-body">
-          <div class="fc-detail-icon-large">
-            <i :class="getItemIcon(detailItem)" class="text-4xl"></i>
-          </div>
 
           <!-- Preview section -->
           <div
@@ -989,6 +1035,7 @@ import FolderTreeNode from "../components/FolderTreeNode.vue";
 import CodeViewer from "../components/CodeViewer.vue";
 import FileCodeEditor from "../components/FileCodeEditor.vue";
 import DiffViewer from "../components/DiffViewer.vue";
+import DiffComparator from "../components/DiffComparator.vue";
 import {
   getVersionsForFile,
   saveVersion,
@@ -1193,6 +1240,12 @@ const selectedVersionId = ref<number | null>(null);
 const selectedVersionContent = ref<string | null>(null);
 const selectedVersionLabel = ref("");
 const showingDiff = ref(false);
+
+// File comparator
+const showCompare = ref(false);
+const compareA = ref("");   // left pane (read-only)
+const compareB = ref("");   // right pane (editable)
+const compareKey = ref(0);  // increment to force remount
 
 // Drop version confirm dialog
 const showDropConfirm = ref(false);
@@ -1533,6 +1586,9 @@ const openFile = async (file: FileItem) => {
   isEditing.value = false;
   editorContent.value = "";
   showingDiff.value = false;
+  showCompare.value = false;
+  compareA.value = "";
+  compareB.value = "";
   selectedVersionContent.value = null;
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
@@ -1561,6 +1617,9 @@ const closeFile = () => {
   isEditing.value = false;
   editorContent.value = "";
   showingDiff.value = false;
+  showCompare.value = false;
+  compareA.value = "";
+  compareB.value = "";
   selectedVersionContent.value = null;
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
@@ -1733,7 +1792,37 @@ const commitHistory = async () => {
   });
 };
 
-// ── Selection & interaction ────────────────────────────────────────────────
+// ── File Comparator ────────────────────────────────────────────────────────
+
+const openCompare = () => {
+  showingDiff.value = false;
+  compareA.value = fileContent.value ?? "";
+  compareB.value = "";
+  compareKey.value++;
+  showCompare.value = true;
+};
+
+const closeCompare = () => {
+  showCompare.value = false;
+};
+
+const loadCompareFromClipboard = async () => {
+  try {
+    const text = await navigator.clipboard.readText();
+    compareB.value = text;
+    compareKey.value++;
+  } catch {
+    toast.add({ severity: "warn", summary: "Clipboard unavailable", detail: "Grant clipboard permission and try again", life: 3000 });
+  }
+};
+
+const swapCompare = () => {
+  const tmp = compareA.value;
+  compareA.value = compareB.value;
+  compareB.value = tmp;
+  compareKey.value++;
+};
+
 
 const isSelected = (item: CabinetItem) =>
   selectedItems.value.some((s) => s.type === item.type && s.id === item.id);
@@ -3247,7 +3336,7 @@ onBeforeUnmount(() => {
 .fc-detail-header {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  gap: 0.4rem;
   padding: 0.75rem;
   border-bottom: 1px solid var(--p-slate-200);
 }
@@ -3258,6 +3347,8 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--p-slate-800);
   word-break: break-word;
+  flex: 1;
+  min-width: 0;
 }
 
 .fc-detail-close {
@@ -3428,7 +3519,7 @@ onBeforeUnmount(() => {
 }
 
 .fc-preview-code :deep(.cm-editor) {
-  max-height: 200px;
+  max-height: 400px;
 }
 
 .fc-detail-actions {
@@ -3636,6 +3727,64 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: 0;
   width: 100%;
+}
+
+/* ── Compare view ─────────────────────────────────────────────────────────── */
+.fc-file-compare {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.fc-compare-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: var(--p-indigo-50);
+  border-bottom: 1px solid var(--p-indigo-200);
+  flex-shrink: 0;
+  gap: 0.5rem;
+}
+
+.fc-compare-labels {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.fc-compare-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--p-slate-600);
+}
+
+.fc-compare-label-left {
+  color: var(--p-indigo-600);
+}
+
+.fc-compare-label-right {
+  color: var(--p-teal-600);
+}
+
+.fc-file-compare :deep(.diff-comparator) {
+  flex: 1;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+}
+
+/* Active state for Compare toggle button */
+.fc-btn-active {
+  background: var(--p-indigo-100) !important;
+  color: var(--p-indigo-700) !important;
+  border-color: var(--p-indigo-300) !important;
 }
 
 /* ── FileCodeEditor in file view ──────────────────────────────────────────── */

@@ -151,13 +151,10 @@ const folderIcon = computed(() => {
 }
 
 .tree-badge {
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   color: var(--p-slate-400);
-  background: var(--p-slate-100);
-  padding: 0 0.3rem;
-  border-radius: 8px;
+  font-weight: 500;
   flex-shrink: 0;
-  line-height: 1.4;
 }
 
 .tree-children {
