@@ -51,22 +51,24 @@
             <button class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
               <i class="pi pi-folder-plus text-xs"></i>
             </button>
-            <button
-              class="fc-view-toggle"
-              :class="{ active: viewMode === 'grid' }"
-              @click="viewMode = 'grid'"
-              title="Grid view"
-            >
-              <i class="pi pi-th-large text-xs"></i>
-            </button>
-            <button
-              class="fc-view-toggle"
-              :class="{ active: viewMode === 'list' }"
-              @click="viewMode = 'list'"
-              title="List view"
-            >
-              <i class="pi pi-list text-xs"></i>
-            </button>
+            <div class="fc-view-seg">
+              <button
+                class="fc-view-seg-btn"
+                :class="{ active: viewMode === 'grid' }"
+                @click="viewMode = 'grid'"
+                title="Grid view"
+              >
+                <i class="pi pi-th-large text-xs"></i>
+              </button>
+              <button
+                class="fc-view-seg-btn"
+                :class="{ active: viewMode === 'list' }"
+                @click="viewMode = 'list'"
+                title="List view"
+              >
+                <i class="pi pi-list text-xs"></i>
+              </button>
+            </div>
           </template>
         </div>
       </div>
@@ -189,7 +191,7 @@
                 size="small"
                 severity="secondary"
                 :class="{ 'fc-btn-active': showCompare }"
-                @click="openCompare"
+                @click="showCompare ? closeCompare() : openCompare()"
               >
                 <i class="pi pi-arrows-h text-xs mr-1"></i>
                 Compare
@@ -281,13 +283,18 @@
 
       <!-- ═══ FOLDER LISTING VIEW ═══ -->
       <template v-else>
-        <div
-          class="fc-drop-zone"
-          :class="{ 'fc-drag-over': isDragOver }"
-          @dragover="handleDragOver"
-          @dragleave="handleDragLeave"
-          @drop="handleDrop"
-        >
+          <div
+            class="fc-drop-zone"
+            :class="{ 'fc-drag-over': isDragOver }"
+            @dragover="handleDragOver"
+            @dragleave="handleDragLeave"
+            @drop="handleDrop"
+          >
+            <!-- Deletion loading overlay -->
+            <div v-if="isDeleting" class="fc-delete-overlay">
+              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+              <span class="text-sm text-gray-600 mt-2">Deleting...</span>
+            </div>
           <div v-if="isDragOver" class="fc-drop-overlay">
             <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
             <p>Drop files to upload to this folder</p>
@@ -335,7 +342,6 @@
                   @keydown.escape.stop="cancelRename"
                   @blur="cancelRename"
                   @click.stop
-                  :ref="(el) => { if (el && renamingItemId === item.id) { const inp = el as HTMLInputElement; inp.focus(); if (item.type === 'file') { const d = item.name.lastIndexOf('.'); inp.setSelectionRange(0, d > 0 ? d : item.name.length); } else { inp.select(); } } }"
                 />
                 <template v-else>{{ item.name }}</template>
               </div>
@@ -389,7 +395,6 @@
                       @keydown.escape.stop="cancelRename"
                       @blur="cancelRename"
                       @click.stop
-                      :ref="(el) => { if (el && renamingItemId === item.id) { const inp = el as HTMLInputElement; inp.focus(); if (item.type === 'file') { const d = item.name.lastIndexOf('.'); inp.setSelectionRange(0, d > 0 ? d : item.name.length); } else { inp.select(); } } }"
                     />
                     <span v-else>{{ item.name }}</span>
                   </td>
@@ -1325,6 +1330,18 @@ const startRename = (item: CabinetItem) => {
   contextMenu.value.visible = false;
   renamingItemId.value = item.id;
   renameValue.value = item.name;
+  nextTick(() => {
+    const inp = document.querySelector<HTMLInputElement>(".fc-rename-input");
+    if (!inp) return;
+    inp.focus();
+    if (item.type === "file") {
+      const dot = item.name.lastIndexOf(".");
+      const pos = dot > 0 ? dot : item.name.length;
+      inp.setSelectionRange(pos, pos);
+    } else {
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+  });
 };
 
 const cancelRename = () => {
@@ -1826,6 +1843,8 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-pane-wrapper {
   display: flex;
   flex: 1;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   overflow: hidden;
 }
@@ -1884,6 +1903,49 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-view-toggle.active {
   background: var(--p-slate-600);
   border-color: var(--p-slate-600);
+  color: white;
+}
+
+/* ── Segmented view toggle ──────────────────────────────────────────────── */
+.fc-view-seg {
+  display: inline-flex;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 5px;
+  overflow: hidden;
+  background: white;
+}
+
+.fc-view-seg-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--p-slate-500);
+  transition: background 0.12s, color 0.12s;
+  position: relative;
+}
+
+.fc-view-seg-btn + .fc-view-seg-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: var(--p-slate-300);
+}
+
+.fc-view-seg-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+}
+
+.fc-view-seg-btn.active {
+  background: var(--p-slate-600);
   color: white;
 }
 
@@ -2050,6 +2112,12 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-file-code :deep(.cm-editor) { height: 100%; }
 .fc-file-code :deep(.file-code-editor) { height: 100%; }
 
+/* Make text selections visible over Monaco's current-line highlight */
+.fc-file-code :deep(.monaco-editor .current-line ~ .view-overlays .current-line),
+.fc-file-code :deep(.monaco-editor .current-line) { background: transparent !important; }
+.fc-file-code :deep(.monaco-editor .selected-text) { background: var(--vscode-editor-selectionBackground, rgba(51,153,255,0.35)) !important; }
+.fc-file-code :deep(.monaco-editor.focused .selected-text) { background: rgba(51,153,255,0.4) !important; }
+
 /* ── Edit toolbar ────────────────────────────────────────────────────────── */
 .fc-edit-toolbar {
   display: flex;
@@ -2117,6 +2185,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-drop-zone.fc-drag-over { outline: 2px dashed var(--p-indigo-400); outline-offset: -4px; background: rgba(99,102,241,0.03); }
 .fc-drop-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; background: rgba(255,255,255,0.92); z-index: 10; pointer-events: none; border-radius: 4px; }
 .fc-drop-overlay p { font-size: 0.85rem; font-weight: 500; color: var(--p-indigo-600); }
+.fc-delete-overlay { position: absolute; inset: 0; z-index: 15; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.75); backdrop-filter: blur(2px); pointer-events: all; }
 .fc-upload-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; background: var(--p-indigo-50); border-bottom: 1px solid var(--p-indigo-200); font-size: 0.75rem; color: var(--p-indigo-700); flex-shrink: 0; }
 
 /* ── Global search ───────────────────────────────────────────────────────── */

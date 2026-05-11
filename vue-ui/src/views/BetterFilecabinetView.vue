@@ -141,219 +141,190 @@
       <!-- ── Workspace: tab bar + panes ──────────────────────────────── -->
       <div ref="workspaceRef" class="fc-workspace">
 
-        <!-- ── SINGLE MODE ─────────────────────────────────────────── -->
-        <template v-if="!isSplit">
-          <!-- Tab bar -->
-          <div class="fc-tabbar">
-            <div class="fc-tabbar-tabs">
-              <div
-                v-for="pane in panes"
-                :key="pane.id"
-                class="fc-tab"
-                :class="{
-                  'fc-tab--active': pane.id === activePaneId,
-                  'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
-                  'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
-                }"
-                draggable="true"
-                @click="activePaneId = pane.id"
-                @dragstart="onTabDragStart($event, pane.id)"
-                @dragend="onTabDragEnd"
-                @dragover.prevent="onTabReorderOver($event, pane.id)"
-                @dragleave="reorderTarget = null"
-                @drop.prevent="onTabReorderDrop(pane.id)"
-              >
-                <span class="fc-tab-label">{{ pane.label }}</span>
-                <button
-                  v-if="panes.length > 1"
-                  class="fc-tab-close"
-                  @click.stop="closePane(pane.id)"
-                  title="Close tab"
-                >
-                  <i class="pi pi-times" style="font-size:0.6rem"></i>
-                </button>
-              </div>
-              <button class="fc-tab-add" @click="addPane" title="New tab">
-                <i class="pi pi-plus" style="font-size:0.75rem"></i>
-              </button>
-            </div>
-          </div>
-
-          <!-- Pane area — split overlays live here (opacity-based, always in DOM) -->
-          <div
-            class="fc-panes-area"
-            :class="{ 'fc-panes-area--dragging': draggingTabId !== null }"
-          >
+        <!-- ── Tab bar: single mode (v-show keeps DOM alive) ──────── -->
+        <div v-show="!isSplit" class="fc-tabbar">
+          <div class="fc-tabbar-tabs">
             <div
-              class="fc-split-overlay fc-split-overlay--left"
-              :class="{ 'fc-split-overlay--active': splitDropSide === 'left' }"
-              @dragover.prevent="splitDropSide = 'left'"
-              @dragleave="splitDropSide = null"
-              @drop.prevent="onDropSplit('left')"
-            >
-              <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
-              Split Left
-            </div>
-            <div
-              class="fc-split-overlay fc-split-overlay--right"
-              :class="{ 'fc-split-overlay--active': splitDropSide === 'right' }"
-              @dragover.prevent="splitDropSide = 'right'"
-              @dragleave="splitDropSide = null"
-              @drop.prevent="onDropSplit('right')"
-            >
-              Split Right
-              <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
-            </div>
-            <FileCabinetPane
               v-for="pane in panes"
               :key="pane.id"
-              v-show="pane.id === activePaneId"
-              :ref="(el) => registerPaneRef(pane.id, el)"
-              :bookmarked-ids="bookmarkedIds"
-              :current-environment="currentEnvironment"
-              @label-change="(label) => updatePaneLabel(pane.id, label)"
-              @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
-              @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
-              @bookmark-changed="reloadBookmarks"
-              @trash-changed="reloadTrashCount"
-              @expand-folder="expandFolderInTree"
-            />
+              class="fc-tab"
+              :class="{
+                'fc-tab--active': pane.id === activePaneId,
+                'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+              }"
+              draggable="true"
+              @click="activePaneId = pane.id"
+              @mousedown.middle.prevent="closePane(pane.id)"
+              @dragstart="onTabDragStart($event, pane.id)"
+              @dragend="onTabDragEnd"
+              @dragover.prevent="onTabReorderOver($event, pane.id)"
+              @dragleave="reorderTarget = null"
+              @drop.prevent="onTabReorderDrop(pane.id)"
+            >
+              <span class="fc-tab-label">{{ pane.label }}</span>
+              <button
+                v-if="panes.length > 1"
+                class="fc-tab-close"
+                @click.stop="closePane(pane.id)"
+                title="Close tab"
+              >
+                <i class="pi pi-times" style="font-size:0.6rem"></i>
+              </button>
+            </div>
+            <button class="fc-tab-add" @click="addPane" title="New tab">
+              <i class="pi pi-plus" style="font-size:0.75rem"></i>
+            </button>
           </div>
-        </template>
+        </div>
 
-        <!-- ── SPLIT MODE ──────────────────────────────────────────── -->
-        <template v-else>
-          <div class="fc-split-container">
-            <!-- Left group -->
-            <div class="fc-split-group" :style="{ width: splitRatio + '%' }">
-              <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right' }">
-                <div class="fc-tabbar-tabs">
-                  <div
-                    v-for="pane in leftGroupPanes"
-                    :key="pane.id"
-                    class="fc-tab"
-                    :class="{
-                      'fc-tab--active': pane.id === leftActiveId,
-                      'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
-                      'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
-                    }"
-                    draggable="true"
-                    @click="leftActiveId = pane.id"
-                    @dragstart="onTabDragStart($event, pane.id, 'left')"
-                    @dragend="onTabDragEnd"
-                    @dragover.prevent="onTabReorderOver($event, pane.id)"
-                    @dragleave="reorderTarget = null"
-                    @drop.prevent="onTabReorderDrop(pane.id)"
-                  >
-                    <span class="fc-tab-label">{{ pane.label }}</span>
-                    <button
-                      class="fc-tab-close"
-                      @click.stop="closePaneFromSplit(pane.id, 'left')"
-                      title="Close tab"
-                    >
-                      <i class="pi pi-times" style="font-size:0.6rem"></i>
-                    </button>
-                  </div>
-                  <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab">
-                    <i class="pi pi-plus" style="font-size:0.75rem"></i>
-                  </button>
-                </div>
-                <!-- Drop zone: receive from right (opacity-based, always in DOM) -->
+        <!-- ── Tab bars: split mode (two columns + handle gap) ────── -->
+        <div v-show="isSplit" class="fc-split-tabbars">
+          <!-- Left column -->
+          <div :style="{ width: `calc(${splitRatio}% - 2.5px)`, minWidth: 0 }">
+            <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right' }">
+              <div class="fc-tabbar-tabs">
                 <div
-                  class="fc-group-dropzone"
-                  :class="{ 'fc-group-dropzone--active': dropZone === 'group-left' }"
-                  @dragover.prevent="dropZone = 'group-left'"
-                  @dragleave="dropZone = null"
-                  @drop.prevent="moveTabToGroup(draggingTabId!, 'left')"
-                >
-                  <i class="pi pi-arrow-left text-xs mr-1"></i> Move here
-                </div>
-              </div>
-              <div class="fc-panes-area">
-                <FileCabinetPane
                   v-for="pane in leftGroupPanes"
                   :key="pane.id"
-                  v-show="pane.id === leftActiveId"
-                  :ref="(el) => registerPaneRef(pane.id, el)"
-                  :bookmarked-ids="bookmarkedIds"
-                  :current-environment="currentEnvironment"
-                  @label-change="(label) => updatePaneLabel(pane.id, label)"
-                  @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
-                  @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
-                  @bookmark-changed="reloadBookmarks"
-                  @trash-changed="reloadTrashCount"
-                  @expand-folder="expandFolderInTree"
-                />
-              </div>
-            </div>
-
-            <!-- Resize handle -->
-            <div class="fc-split-handle" @mousedown="startSplitResize"></div>
-
-            <!-- Right group -->
-            <div class="fc-split-group" style="flex: 1">
-              <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left' }">
-                <div class="fc-tabbar-tabs">
-                  <div
-                    v-for="pane in rightGroupPanes"
-                    :key="pane.id"
-                    class="fc-tab"
-                    :class="{
-                      'fc-tab--active': pane.id === rightActiveId,
-                      'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
-                      'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
-                    }"
-                    draggable="true"
-                    @click="rightActiveId = pane.id"
-                    @dragstart="onTabDragStart($event, pane.id, 'right')"
-                    @dragend="onTabDragEnd"
-                    @dragover.prevent="onTabReorderOver($event, pane.id)"
-                    @dragleave="reorderTarget = null"
-                    @drop.prevent="onTabReorderDrop(pane.id)"
+                  class="fc-tab"
+                  :class="{
+                    'fc-tab--active': pane.id === leftActiveId,
+                    'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                    'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+                  }"
+                  draggable="true"
+                  @click="leftActiveId = pane.id"
+                  @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'left')"
+                  @dragstart="onTabDragStart($event, pane.id, 'left')"
+                  @dragend="onTabDragEnd"
+                  @dragover.prevent="onTabReorderOver($event, pane.id)"
+                  @dragleave="reorderTarget = null"
+                  @drop.prevent="onTabReorderDrop(pane.id)"
+                >
+                  <span class="fc-tab-label">{{ pane.label }}</span>
+                  <button
+                    class="fc-tab-close"
+                    @click.stop="closePaneFromSplit(pane.id, 'left')"
+                    title="Close tab"
                   >
-                    <span class="fc-tab-label">{{ pane.label }}</span>
-                    <button
-                      class="fc-tab-close"
-                      @click.stop="closePaneFromSplit(pane.id, 'right')"
-                      title="Close tab"
-                    >
-                      <i class="pi pi-times" style="font-size:0.6rem"></i>
-                    </button>
-                  </div>
-                  <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab">
-                    <i class="pi pi-plus" style="font-size:0.75rem"></i>
+                    <i class="pi pi-times" style="font-size:0.6rem"></i>
                   </button>
                 </div>
-                <!-- Drop zone: receive from left (opacity-based, always in DOM) -->
-                <div
-                  class="fc-group-dropzone"
-                  :class="{ 'fc-group-dropzone--active': dropZone === 'group-right' }"
-                  @dragover.prevent="dropZone = 'group-right'"
-                  @dragleave="dropZone = null"
-                  @drop.prevent="moveTabToGroup(draggingTabId!, 'right')"
-                >
-                  Move here <i class="pi pi-arrow-right text-xs ml-1"></i>
-                </div>
+                <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab">
+                  <i class="pi pi-plus" style="font-size:0.75rem"></i>
+                </button>
               </div>
-              <div class="fc-panes-area">
-                <FileCabinetPane
-                  v-for="pane in rightGroupPanes"
-                  :key="pane.id"
-                  v-show="pane.id === rightActiveId"
-                  :ref="(el) => registerPaneRef(pane.id, el)"
-                  :bookmarked-ids="bookmarkedIds"
-                  :current-environment="currentEnvironment"
-                  @label-change="(label) => updatePaneLabel(pane.id, label)"
-                  @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
-                  @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
-                  @bookmark-changed="reloadBookmarks"
-                  @trash-changed="reloadTrashCount"
-                  @expand-folder="expandFolderInTree"
-                />
+              <div
+                class="fc-group-dropzone"
+                :class="{ 'fc-group-dropzone--active': dropZone === 'group-left' }"
+                @dragover.prevent="dropZone = 'group-left'"
+                @dragleave="dropZone = null"
+                @drop.prevent="moveTabToGroup(draggingTabId!, 'left')"
+              >
+                <i class="pi pi-arrow-left text-xs mr-1"></i> Move here
               </div>
             </div>
           </div>
-        </template>
+          <!-- Handle separator -->
+          <div class="fc-split-tabbars-sep"></div>
+          <!-- Right column -->
+          <div style="flex: 1; min-width: 0">
+            <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left' }">
+              <div class="fc-tabbar-tabs">
+                <div
+                  v-for="pane in rightGroupPanes"
+                  :key="pane.id"
+                  class="fc-tab"
+                  :class="{
+                    'fc-tab--active': pane.id === rightActiveId,
+                    'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
+                    'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
+                  }"
+                  draggable="true"
+                  @click="rightActiveId = pane.id"
+                  @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'right')"
+                  @dragstart="onTabDragStart($event, pane.id, 'right')"
+                  @dragend="onTabDragEnd"
+                  @dragover.prevent="onTabReorderOver($event, pane.id)"
+                  @dragleave="reorderTarget = null"
+                  @drop.prevent="onTabReorderDrop(pane.id)"
+                >
+                  <span class="fc-tab-label">{{ pane.label }}</span>
+                  <button
+                    class="fc-tab-close"
+                    @click.stop="closePaneFromSplit(pane.id, 'right')"
+                    title="Close tab"
+                  >
+                    <i class="pi pi-times" style="font-size:0.6rem"></i>
+                  </button>
+                </div>
+                <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab">
+                  <i class="pi pi-plus" style="font-size:0.75rem"></i>
+                </button>
+              </div>
+              <div
+                class="fc-group-dropzone"
+                :class="{ 'fc-group-dropzone--active': dropZone === 'group-right' }"
+                @dragover.prevent="dropZone = 'group-right'"
+                @dragleave="dropZone = null"
+                @drop.prevent="moveTabToGroup(draggingTabId!, 'right')"
+              >
+                Move here <i class="pi pi-arrow-right text-xs ml-1"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Pane host: ALL panes always mounted (never re-created) ─ -->
+        <div
+          class="fc-pane-host"
+          :class="{ 'fc-pane-host--split-drag': draggingTabId !== null && !isSplit }"
+        >
+          <!-- Split overlays (single mode only, opacity-based) -->
+          <div
+            class="fc-split-overlay fc-split-overlay--left"
+            :class="{ 'fc-split-overlay--active': splitDropSide === 'left' }"
+            @dragover.prevent="splitDropSide = 'left'"
+            @dragleave="splitDropSide = null"
+            @drop.prevent="onDropSplit('left')"
+          >
+            <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
+            Split Left
+          </div>
+          <div
+            class="fc-split-overlay fc-split-overlay--right"
+            :class="{ 'fc-split-overlay--active': splitDropSide === 'right' }"
+            @dragover.prevent="splitDropSide = 'right'"
+            @dragleave="splitDropSide = null"
+            @drop.prevent="onDropSplit('right')"
+          >
+            Split Right
+            <i class="pi pi-objects-column" style="font-size:1.1rem"></i>
+          </div>
+          <!-- Resize handle (split mode only) -->
+          <div
+            v-show="isSplit"
+            class="fc-split-handle"
+            :style="{ left: splitRatio + '%' }"
+            @mousedown="startSplitResize"
+          ></div>
+          <!-- All pane instances — always in DOM, positioned by getPaneStyle -->
+          <FileCabinetPane
+            v-for="pane in panes"
+            :key="pane.id"
+            :style="getPaneStyle(pane.id)"
+            :ref="(el) => registerPaneRef(pane.id, el)"
+            :bookmarked-ids="bookmarkedIds"
+            :current-environment="currentEnvironment"
+            @label-change="(label) => updatePaneLabel(pane.id, label)"
+            @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
+            @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
+            @bookmark-changed="reloadBookmarks"
+            @trash-changed="reloadTrashCount"
+            @expand-folder="expandFolderInTree"
+          />
+        </div>
       </div>
     </template>
   </MCard>
@@ -640,6 +611,38 @@ const closePaneFromSplit = (paneId: string, group: "left" | "right") => {
   const idx = panes.value.findIndex((p) => p.id === paneId);
   if (idx >= 0) panes.value.splice(idx, 1);
   delete paneRefs[paneId];
+};
+
+// ── Pane style (absolute positioning for stable-mount layout) ─────────────
+
+const getPaneStyle = (paneId: string): Record<string, string> => {
+  const H = "2.5px"; // half of the 5px handle
+
+  if (!isSplit.value) {
+    return paneId === activePaneId.value
+      ? { position: "absolute", inset: "0", display: "flex", flexDirection: "column", overflow: "hidden" }
+      : { display: "none" };
+  }
+
+  if (leftGroupIds.value.includes(paneId)) {
+    if (paneId !== leftActiveId.value) return { display: "none" };
+    return {
+      position: "absolute", top: "0", left: "0", bottom: "0",
+      width: `calc(${splitRatio.value}% - ${H})`,
+      display: "flex", flexDirection: "column", overflow: "hidden",
+    };
+  }
+
+  if (rightGroupIds.value.includes(paneId)) {
+    if (paneId !== rightActiveId.value) return { display: "none" };
+    return {
+      position: "absolute", top: "0", right: "0", bottom: "0",
+      left: `calc(${splitRatio.value}% + ${H})`,
+      display: "flex", flexDirection: "column", overflow: "hidden",
+    };
+  }
+
+  return { display: "none" };
 };
 
 // ── Tab drag → split ───────────────────────────────────────────────────────
@@ -1284,8 +1287,8 @@ onMounted(async () => {
 .fc-split-overlay--left  { left: 8px; }
 .fc-split-overlay--right { right: 8px; }
 
-/* Become visible + interactive while a tab is being dragged */
-.fc-panes-area--dragging .fc-split-overlay {
+/* Become visible + interactive while a tab is being dragged (single mode only) */
+.fc-pane-host--split-drag .fc-split-overlay {
   opacity: 1;
   pointer-events: all;
   background: rgba(99, 102, 241, 0.10);
@@ -1294,7 +1297,7 @@ onMounted(async () => {
 }
 
 .fc-split-overlay--active,
-.fc-panes-area--dragging .fc-split-overlay:hover {
+.fc-pane-host--split-drag .fc-split-overlay:hover {
   background: rgba(99, 102, 241, 0.22);
   border-color: var(--p-indigo-500);
 }
@@ -1331,38 +1334,39 @@ onMounted(async () => {
   border-color: var(--p-indigo-500);
 }
 
-/* ── Panes area ──────────────────────────────────────────────────────────── */
-.fc-panes-area {
+/* ── Pane host: stable mount container for all panes ────────────────────── */
+.fc-pane-host {
   flex: 1;
   min-height: 0;
-  display: flex;
-  overflow: hidden;
   position: relative;
-}
-
-/* ── Split layout ────────────────────────────────────────────────────────── */
-.fc-split-container {
-  display: flex;
-  flex: 1;
-  min-height: 0;
   overflow: hidden;
 }
 
-.fc-split-group {
+/* ── Split tabbars row (mirrors pane layout) ─────────────────────────────── */
+.fc-split-tabbars {
   display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: hidden;
+  align-items: stretch;
+  flex-shrink: 0;
 }
 
-.fc-split-handle {
+.fc-split-tabbars-sep {
   width: 5px;
+  flex-shrink: 0;
+  background: var(--p-slate-200);
+  border-bottom: 1px solid var(--p-slate-200);
+}
+
+/* ── Split handle (absolute, positioned by JS) ───────────────────────────── */
+.fc-split-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  transform: translateX(-50%);
   background: var(--p-slate-200);
   cursor: col-resize;
-  flex-shrink: 0;
-  transition: background 0.15s;
-  position: relative;
   z-index: 5;
+  transition: background 0.15s;
 }
 
 .fc-split-handle:hover,
