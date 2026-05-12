@@ -321,6 +321,7 @@
             :ref="(el) => registerPaneRef(pane.id, el)"
             :bookmarked-ids="bookmarkedIds"
             :current-environment="currentEnvironment"
+            @mousedown.capture="activePaneId = pane.id"
             @label-change="(label) => updatePaneLabel(pane.id, label)"
             @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
             @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
@@ -638,8 +639,9 @@ const getPaneStyle = (paneId: string): Record<string, string> => {
   if (rightGroupIds.value.includes(paneId)) {
     if (paneId !== rightActiveId.value) return { display: "none" };
     return {
-      position: "absolute", top: "0", right: "0", bottom: "0",
+      position: "absolute", top: "0", bottom: "0",
       left: `calc(${splitRatio.value}% + ${H})`,
+      width: `calc(${100 - splitRatio.value}% - ${H})`,
       display: "flex", overflow: "hidden",
     };
   }

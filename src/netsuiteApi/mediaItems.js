@@ -676,6 +676,55 @@ window.renameNetsuiteFile = async (
   });
 };
 
+/**
+ * Move files and/or folders to a different parent folder.
+ * Uses the NetSuite bulk-move endpoint (mediaitemfolders.nl?_grpMove=T).
+ * @param {object} N - unused (kept for consistency)
+ * @param {{ srcFolderId: number|string, dstFolderId: number|string, fileIds?: (number|string)[], folderIds?: (number|string)[] }} options
+ */
+window.moveItems = async (N, { srcFolderId, dstFolderId, fileIds = [], folderIds = [] }) => {
+  const { csrfToken, accountId } = window.getNetsiteParams();
+  const url = `https://${accountId}.app.netsuite.com/app/common/media/mediaitemfolders.nl?folder=${srcFolderId}&_grpMove=T&overwrite=T&newfolder=${dstFolderId}`;
+
+  const parts = [];
+  for (const fileId of fileIds) {
+    parts.push(`sa${fileId}fldF=T`);
+  }
+  for (const folderId of folderIds) {
+    parts.push(`sa${folderId}fldT=T`);
+  }
+  parts.push(`_csrf=${encodeURIComponent(csrfToken)}`);
+
+  const body = parts.join("&");
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "accept-language": "it-IT,it;q=0.6",
+      "cache-control": "max-age=0",
+      "content-type": "application/x-www-form-urlencoded",
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
+      "upgrade-insecure-requests": "1"
+    },
+    referrer: `https://${accountId}.app.netsuite.com/app/common/media/mediaitemfolders.nl?folder=${srcFolderId}`,
+    body,
+    credentials: "include",
+    mode: "cors"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Move failed: HTTP ${response.status}`);
+  }
+
+  console.log("moveItems - success, moved to folder:", dstFolderId);
+  return { moved: true };
+};
+
 window.updateNetsuiteFileContent = async (
   { runtime },
   {

@@ -293,6 +293,11 @@
               <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
               <span class="text-sm text-gray-600 mt-2">Renaming...</span>
             </div>
+            <!-- Move loading overlay -->
+            <div v-if="isMoveLoading" class="fc-delete-overlay">
+              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+              <span class="text-sm text-gray-600 mt-2">Moving...</span>
+            </div>
           <div v-if="isDragOver" class="fc-drop-overlay">
             <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
             <p>Drop files to upload to this folder</p>
@@ -323,10 +328,16 @@
               v-for="item in filteredItems"
               :key="item.type + '-' + item.id"
               class="fc-grid-item"
-              :class="{ selected: isSelected(item) }"
+              :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
+              :draggable="renamingItemId !== item.id"
               @click="handleItemClick(item, $event)"
               @dblclick="handleItemDblClick(item)"
               @contextmenu.prevent="handleItemContext(item, $event)"
+              @dragstart="handleItemDragStart(item, $event)"
+              @dragend="handleItemDragEnd"
+              @dragover.prevent="handleFolderDragOver(item, $event)"
+              @dragleave="handleFolderDragLeave"
+              @drop.prevent="handleMoveItemDrop(item, $event)"
             >
               <div class="fc-grid-icon">
                 <i :class="getItemIcon(item)" class="text-2xl"></i>
@@ -378,10 +389,16 @@
                   v-for="item in filteredItems"
                   :key="item.type + '-' + item.id"
                   class="fc-table-row"
-                  :class="{ selected: isSelected(item) }"
+                  :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
+                  :draggable="renamingItemId !== item.id"
                   @click="handleItemClick(item, $event)"
                   @dblclick="handleItemDblClick(item)"
                   @contextmenu.prevent="handleItemContext(item, $event)"
+                  @dragstart="handleItemDragStart(item, $event)"
+                  @dragend="handleItemDragEnd"
+                  @dragover.prevent="handleFolderDragOver(item, $event)"
+                  @dragleave="handleFolderDragLeave"
+                  @drop.prevent="handleMoveItemDrop(item, $event)"
                 >
                   <td class="fc-td-name">
                     <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
@@ -778,6 +795,10 @@ const detailItem = ref<CabinetItem | null>(null);
 const isDragOver = ref(false);
 const isUploading = ref(false);
 const uploadProgress = ref("");
+
+// ── Item drag / move ───────────────────────────────────────────────────────
+const dropTargetFolderId = ref<number | null>(null);
+const isMoveLoading = ref(false);
 
 // ── Inline rename ──────────────────────────────────────────────────────────
 const renamingItemId = ref<number | null>(null);
@@ -1300,6 +1321,9 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
       actions.push({ label: "Open File", icon: "pi pi-eye", handler: () => openFile(item as FileItem) });
       actions.push({ label: "Open in NetSuite", icon: "pi pi-external-link", handler: () => window.open(getNetsuiteEditUrl(item), "_blank") });
       actions.push({ label: "Copy URL", icon: "pi pi-link", handler: () => copyToClipboard(item.url!) });
+      if (isTextFile(item as FileItem)) {
+        actions.push({ label: "Compare", icon: "pi pi-arrows-h", handler: async () => { await openFile(item as FileItem); openCompare(); } });
+      }
     }
     actions.push({ label: "Rename", icon: "pi pi-pencil", handler: () => startRename(item) });
     actions.push({ label: "Copy File ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(item.id)) });
@@ -1559,6 +1583,60 @@ const handleDrop = async (event: DragEvent) => {
   } finally {
     isUploading.value = false;
     uploadProgress.value = "";
+  }
+};
+
+// ── Item drag / move handlers ───────────────────────────────────────────────
+
+const handleItemDragStart = (item: CabinetItem, event: DragEvent) => {
+  if (event.dataTransfer) {
+    event.dataTransfer.setData("application/fc-item", JSON.stringify(item));
+    event.dataTransfer.effectAllowed = "move";
+  }
+};
+
+const handleItemDragEnd = () => {
+  dropTargetFolderId.value = null;
+};
+
+const handleFolderDragOver = (folder: CabinetItem, event: DragEvent) => {
+  if (folder.type !== "folder") return;
+  if (!event.dataTransfer?.types.includes("application/fc-item")) return;
+  event.dataTransfer.dropEffect = "move";
+  dropTargetFolderId.value = folder.id;
+};
+
+const handleFolderDragLeave = () => {
+  dropTargetFolderId.value = null;
+};
+
+const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) => {
+  dropTargetFolderId.value = null;
+  if (targetFolder.type !== "folder") return;
+  const itemJson = event.dataTransfer?.getData("application/fc-item");
+  if (!itemJson) return;
+  let item: CabinetItem;
+  try { item = JSON.parse(itemJson); } catch { return; }
+  if (item.id === targetFolder.id) return;
+  const srcFolderId = item.type === "folder"
+    ? (item as FolderItem).parent ?? currentFolderId.value
+    : (item as FileItem).folder;
+  if (srcFolderId === targetFolder.id) return;
+  isMoveLoading.value = true;
+  try {
+    const fileIds = item.type === "file" ? [item.id] : [];
+    const folderIds = item.type === "folder" ? [item.id] : [];
+    await callApi(
+      RequestRoutes.MOVE_ITEMS,
+      { srcFolderId, dstFolderId: targetFolder.id, fileIds, folderIds },
+      ApiRequestType.NORMAL
+    );
+    toast.add({ severity: "success", summary: "Moved", detail: `${item.name} → ${targetFolder.name}`, life: 3000 });
+    await refreshCurrentFolder();
+  } catch (err: any) {
+    toast.add({ severity: "error", summary: "Move Failed", detail: err.message || "Failed to move item", life: 5000 });
+  } finally {
+    isMoveLoading.value = false;
   }
 };
 
@@ -1991,6 +2069,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 
 .fc-grid-item:hover { background: var(--p-slate-100); }
 .fc-grid-item.selected { background: var(--p-indigo-50); border-color: var(--p-indigo-300); }
+.fc-grid-item.fc-drop-target { outline: 2px solid var(--p-indigo-400); background: rgba(99, 102, 241, 0.12); }
 
 .fc-grid-icon { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; }
 
@@ -2034,6 +2113,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-table-row { cursor: pointer; transition: background 0.1s; }
 .fc-table-row:hover { background: var(--p-slate-50); }
 .fc-table-row.selected { background: var(--p-indigo-50); }
+.fc-table-row.fc-drop-target { outline: 2px solid var(--p-indigo-400); background: rgba(99, 102, 241, 0.12); }
 .fc-table-row td { padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--p-slate-100); color: var(--p-slate-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fc-td-name { display: flex; align-items: center; }
 
