@@ -57,11 +57,11 @@
                 <i class="pi pi-refresh font-medium"></i>
                 Refresh
               </Button>
-              <Button @click="navigateActivePane(null)" severity="secondary" class="w-full" size="small">
+              <Button @click="navigateActivePane(null)" severity="secondary" outlined class="w-full" size="small">
                 <i class="pi pi-home font-medium"></i>
                 Root
               </Button>
-              <Button @click="openTrashPanel" severity="secondary" class="w-full" size="small">
+              <Button @click="openTrashPanel" severity="secondary" outlined class="w-full" size="small">
                 <i class="pi pi-trash font-medium"></i>
                 Trash
                 <span v-if="trashCount > 0" class="fc-trash-badge">{{ trashCount }}</span>
@@ -114,6 +114,7 @@
                 v-if="bookmarks.length > 0"
                 size="small"
                 severity="secondary"
+                outlined
                 class="w-full mt-2"
                 :loading="isCheckingBookmarks"
                 @click="checkAllBookmarks"
@@ -970,7 +971,6 @@ const checkAllBookmarks = async () => {
     await verifyGroup("file", fileBookmarks);
     await verifyGroup("folder", folderBookmarks);
     await reloadBookmarks();
-    toast.add({ severity: "success", summary: "Check Complete", detail: `${bookmarks.value.length} bookmark${bookmarks.value.length !== 1 ? "s" : ""} verified`, life: 2500 });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     toast.add({ severity: "error", summary: "Check Failed", detail: msg, life: 3500 });

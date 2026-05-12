@@ -57,6 +57,7 @@
                 <Button
                   size="small"
                   :severity="executionMode === 'client' ? 'primary' : 'secondary'"
+                  :outlined="executionMode !== 'client'"
                   @click="executionMode = 'client'"
                   class="flex-1"
                 >
@@ -65,6 +66,7 @@
                 <Button
                   size="small"
                   :severity="executionMode === 'server' ? 'primary' : 'secondary'"
+                  :outlined="executionMode !== 'server'"
                   @click="executionMode = 'server'"
                   class="flex-1"
                 >

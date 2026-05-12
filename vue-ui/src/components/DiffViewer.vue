@@ -19,23 +19,23 @@ const containerRef = ref<HTMLDivElement | null>(null);
 let mergeView: MergeView | null = null;
 
 const lightHighlightStyle = HighlightStyle.define([
-  { tag: tags.keyword,                     color: "#6366f1", fontWeight: "600" },
-  { tag: tags.operator,                    color: "#6366f1" },
-  { tag: tags.operatorKeyword,             color: "#6366f1" },
-  { tag: tags.string,                      color: "#16a34a" },
-  { tag: tags.number,                      color: "#9333ea" },
-  { tag: tags.bool,                        color: "#6366f1" },
-  { tag: tags.null,                        color: "#6366f1" },
-  { tag: tags.comment,                     color: "#94a3b8", fontStyle: "italic" },
-  { tag: tags.name,                        color: "#1e293b" },
-  { tag: tags.variableName,               color: "#1e293b" },
-  { tag: tags.function(tags.variableName), color: "#0284c7" },
-  { tag: tags.function(tags.name),         color: "#0284c7" },
-  { tag: tags.typeName,                    color: "#0891b2" },
-  { tag: tags.className,                   color: "#0891b2" },
-  { tag: tags.propertyName,               color: "#0284c7" },
-  { tag: tags.punctuation,                color: "#64748b" },
-  { tag: tags.bracket,                    color: "#334155" },
+  { tag: tags.keyword,                     color: "#81A1C1", fontWeight: "600" },
+  { tag: tags.operator,                    color: "#81A1C1" },
+  { tag: tags.operatorKeyword,             color: "#81A1C1" },
+  { tag: tags.string,                      color: "#A3BE8C" },
+  { tag: tags.number,                      color: "#B48EAD" },
+  { tag: tags.bool,                        color: "#81A1C1" },
+  { tag: tags.null,                        color: "#81A1C1" },
+  { tag: tags.comment,                     color: "#616E88", fontStyle: "italic" },
+  { tag: tags.name,                        color: "#D8DEE9" },
+  { tag: tags.variableName,               color: "#D8DEE9" },
+  { tag: tags.function(tags.variableName), color: "#88C0D0" },
+  { tag: tags.function(tags.name),         color: "#88C0D0" },
+  { tag: tags.typeName,                    color: "#8FBCBB" },
+  { tag: tags.className,                   color: "#8FBCBB" },
+  { tag: tags.propertyName,               color: "#88C0D0" },
+  { tag: tags.punctuation,                color: "#81A1C1" },
+  { tag: tags.bracket,                    color: "#ECEFF4" },
 ]);
 
 const getLangExtension = () => {
@@ -48,24 +48,28 @@ const baseTheme = EditorView.theme({
   "&": {
     fontSize: "0.8rem",
     fontFamily: '"JetBrains Mono", monospace',
-    backgroundColor: "#f8fafc",
-    color: "#1e293b",
+    backgroundColor: "#2E3440",
+    color: "#D8DEE9",
     height: "100%"
   },
-  ".cm-content": { padding: "0.5rem 0", caretColor: "#1e293b" },
+  ".cm-content": { padding: "0.5rem 0", caretColor: "#D8DEE9" },
   ".cm-line": { padding: "0 0.75rem" },
   ".cm-gutters": {
-    background: "#f1f5f9",
-    borderRight: "1px solid #e2e8f0",
-    color: "#94a3b8",
+    background: "#3B4252",
+    borderRight: "1px solid #434C5E",
+    color: "#4C566A",
     fontSize: "0.72rem"
   },
-  ".cm-deletedChunk": { background: "rgba(239,68,68,0.10)" },
-  ".cm-insertedChunk": { background: "rgba(34,197,94,0.10)" },
-  ".cm-deletedLine": { background: "rgba(239,68,68,0.16)" },
-  ".cm-insertedLine": { background: "rgba(34,197,94,0.16)" },
-  ".cm-changedLine": { background: "rgba(59,130,246,0.08)" }
-});
+  ".cm-activeLineGutter": { backgroundColor: "#434C5E" },
+  ".cm-activeLine": { backgroundColor: "#3B4252" },
+  ".cm-selectionBackground": { backgroundColor: "#4C566A !important" },
+  "&.cm-focused .cm-selectionBackground": { backgroundColor: "#4C566A !important" },
+  ".cm-deletedChunk": { background: "rgba(191,97,106,0.15)" },
+  ".cm-insertedChunk": { background: "rgba(163,190,140,0.12)" },
+  ".cm-deletedLine": { background: "rgba(191,97,106,0.28)" },
+  ".cm-insertedLine": { background: "rgba(163,190,140,0.22)" },
+  ".cm-changedLine": { background: "rgba(129,161,193,0.10)" }
+}, { dark: true });
 
 const buildMergeView = () => {
   const el = containerRef.value;
@@ -122,13 +126,13 @@ watch(() => [props.original, props.modified, props.language], () => {
 
 <style scoped>
 .diff-viewer {
-  border: 1px solid var(--p-slate-200);
+  border: 1px solid #434C5E;
   border-radius: 0 0 0.5rem 0.5rem;
   overflow: hidden;
   max-height: 480px;
   overflow-y: auto;
   font-size: 0.8rem;
-  background: #f8fafc;
+  background: #2E3440;
   width: 100%;
 }
 

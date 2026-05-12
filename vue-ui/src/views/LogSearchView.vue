@@ -424,7 +424,7 @@ onBeforeUnmount(() => {
     <template #header>
       <Button
         @click="getLogs"
-        class="h-full bg-[var(--p-slate-300)] !rounded-sm ml-auto"
+        class="h-full bg-[var(--p-slate-300)] !rounded-md ml-auto"
       >
         <i class="pi pi-search text-white"></i>
         Run Search</Button

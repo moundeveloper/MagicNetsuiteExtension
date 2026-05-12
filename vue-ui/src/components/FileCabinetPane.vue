@@ -26,7 +26,7 @@
         </template>
         <div class="ml-auto flex items-center gap-2">
           <template v-if="openedFile">
-            <Button size="small" severity="secondary" @click="closeFile">
+            <Button size="small" severity="secondary" outlined @click="closeFile">
               <i class="pi pi-arrow-left text-xs mr-1"></i>
               Back
             </Button>
@@ -152,6 +152,7 @@
                   <Button
                     size="small"
                     severity="secondary"
+                    outlined
                     @click="toggleHistoryDropdown"
                     :disabled="versionHistory.length === 0"
                   >
@@ -190,6 +191,7 @@
               <Button
                 size="small"
                 severity="secondary"
+                outlined
                 :class="{ 'fc-btn-active': showCompare }"
                 @click="showCompare ? closeCompare() : openCompare()"
               >
@@ -206,11 +208,11 @@
                 Comparing: <strong>{{ selectedVersionLabel }}</strong> vs Current
               </span>
               <div class="flex items-center gap-2">
-                <Button size="small" severity="secondary" @click="revertToVersion">
+                <Button size="small" severity="secondary" outlined @click="revertToVersion">
                   <i class="pi pi-undo text-xs mr-1"></i>
                   Revert to This
                 </Button>
-                <Button size="small" severity="secondary" @click="closeDiff">
+                <Button size="small" severity="secondary" outlined @click="closeDiff">
                   <i class="pi pi-times text-xs mr-1"></i>
                   Close Diff
                 </Button>
@@ -236,11 +238,11 @@
                 </span>
               </div>
               <div class="flex items-center gap-2">
-                <Button size="small" severity="secondary" @click="loadCompareFromClipboard">
+                <Button size="small" severity="secondary" outlined @click="loadCompareFromClipboard">
                   <i class="pi pi-clipboard text-xs mr-1"></i>
                   Paste Clipboard
                 </Button>
-                <Button size="small" severity="secondary" @click="swapCompare">
+                <Button size="small" severity="secondary" outlined @click="swapCompare">
                   <i class="pi pi-sort-alt text-xs mr-1"></i>
                   Swap
                 </Button>
@@ -257,15 +259,10 @@
 
           <div v-else class="fc-file-view fc-file-code">
             <FileCodeEditor
-              v-if="isEditing"
               v-model="editorContent"
               :language="getCodeLanguage(openedFile)"
+              :readonly="!isEditing"
               @ctrl-s="saveFile"
-            />
-            <CodeViewer
-              v-else
-              :code="fileContent"
-              :language="getCodeLanguage(openedFile)"
             />
           </div>
         </template>
@@ -1900,14 +1897,20 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
   width: 26px;
   height: 26px;
   border-radius: 4px;
-  border: 1px solid var(--p-slate-300);
+  border: 1px solid var(--p-slate-400);
   background: white;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--p-slate-500);
+  color: var(--p-slate-600);
   transition: all 0.15s;
+}
+
+.fc-view-toggle:hover {
+  border-color: var(--p-slate-500);
+  color: var(--p-slate-800);
+  background: var(--p-slate-100);
 }
 
 .fc-view-toggle.active {

@@ -39,6 +39,7 @@
                 @click="fetchTables"
                 :disabled="isLoadingTables"
                 severity="secondary"
+                outlined
                 class="w-full"
               >
                 <i class="pi pi-refresh font-medium"></i>
