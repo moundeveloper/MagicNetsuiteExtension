@@ -51,6 +51,9 @@
             <button class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
               <i class="pi pi-folder-plus text-xs"></i>
             </button>
+            <button class="fc-view-toggle" title="New Text File" @click="openNewFileDialog">
+              <i class="pi pi-file-edit text-xs"></i>
+            </button>
             <div class="fc-view-seg">
               <button
                 class="fc-view-seg-btn"
@@ -129,8 +132,14 @@
             <Button size="small" class="mt-2" @click="openFile(openedFile!)">Retry</Button>
           </div>
         </div>
-        <div v-else-if="fileIsBinary && fileContent" class="fc-file-view fc-file-image">
-          <img :src="fileContent" :alt="openedFile.name" class="fc-image-content" />
+        <div v-else-if="fileIsBinary && fileContent" class="fc-file-view" :class="isPdfFile(openedFile!) && pdfObjectUrl ? 'fc-file-pdf' : 'fc-file-image'">
+          <iframe
+            v-if="isPdfFile(openedFile!) && pdfObjectUrl"
+            :src="pdfObjectUrl"
+            class="fc-pdf-viewer"
+            title="PDF Viewer"
+          ></iframe>
+          <img v-else :src="fileContent" :alt="openedFile!.name" class="fc-image-content" />
         </div>
         <template v-else-if="fileContent !== null && !fileIsBinary">
           <div v-if="isTextFile(openedFile)" class="fc-edit-toolbar">
@@ -337,7 +346,7 @@
               @dragend="handleItemDragEnd"
               @dragover.prevent="handleFolderDragOver(item, $event)"
               @dragleave="handleFolderDragLeave"
-              @drop.prevent="handleMoveItemDrop(item, $event)"
+              @drop.prevent.stop="handleMoveItemDrop(item, $event)"
             >
               <div class="fc-grid-icon">
                 <i :class="getItemIcon(item)" class="text-2xl"></i>
@@ -396,11 +405,11 @@
                   @contextmenu.prevent="handleItemContext(item, $event)"
                   @dragstart="handleItemDragStart(item, $event)"
                   @dragend="handleItemDragEnd"
-                  @dragover.prevent="handleFolderDragOver(item, $event)"
-                  @dragleave="handleFolderDragLeave"
-                  @drop.prevent="handleMoveItemDrop(item, $event)"
-                >
-                  <td class="fc-td-name">
+                   @dragover.prevent="handleFolderDragOver(item, $event)"
+                   @dragleave="handleFolderDragLeave"
+                   @drop.prevent.stop="handleMoveItemDrop(item, $event)"
+                 >
+                   <td class="fc-td-name">
                     <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
                     <input
                       v-if="renamingItemId === item.id"
@@ -674,6 +683,41 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- New File dialog -->
+    <Teleport to="body">
+      <div v-if="showNewFileDialog" class="fc-confirm-overlay" @click.self="cancelNewFile">
+        <div class="fc-confirm-box">
+          <div class="fc-confirm-header">
+            <i class="pi pi-file-edit text-blue-500"></i>
+            <span>New Text File</span>
+          </div>
+          <div class="fc-confirm-body">
+            <p class="mb-2">
+              Create a new file in
+              <strong>{{ breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1]!.name : 'Root' }}</strong>.
+            </p>
+            <InputText
+              ref="newFileInputRef"
+              v-model="newFileName"
+              placeholder="filename.js"
+              size="small"
+              class="w-full"
+              @keydown.enter="executeNewFile"
+              @keydown.escape="cancelNewFile"
+            />
+            <p class="text-xs text-gray-400 mt-1">Include the extension (.js, .ts, .html, .txt, .json…)</p>
+          </div>
+          <div class="fc-confirm-actions">
+            <Button size="small" severity="secondary" @click="cancelNewFile">Cancel</Button>
+            <Button size="small" @click="executeNewFile" :loading="isCreatingFile" :disabled="!newFileName.trim()">
+              <i class="pi pi-check text-xs mr-1"></i>
+              Create
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -767,6 +811,7 @@ const emit = defineEmits<{
   (e: "folder-navigate", folderId: number | null): void;
   (e: "folder-info-change", info: FolderItem | null): void;
   (e: "expand-folder", folderId: number): void;
+  (e: "item-moved", dstFolderId: number): void;
 }>();
 
 const toast = useToast();
@@ -832,6 +877,7 @@ const fileContentType = ref<string>("");
 const fileIsBinary = ref(false);
 const fileLoading = ref(false);
 const fileLoadError = ref<string | null>(null);
+const pdfObjectUrl = ref<string | null>(null);
 
 const previewContent = ref<string | null>(null);
 const previewLoading = ref(false);
@@ -875,6 +921,12 @@ const newFolderName = ref("");
 const isCreatingFolder = ref(false);
 const newFolderInputRef = ref<any>(null);
 
+// ── New file ───────────────────────────────────────────────────────────────
+const showNewFileDialog = ref(false);
+const newFileName = ref("");
+const isCreatingFile = ref(false);
+const newFileInputRef = ref<any>(null);
+
 // ── File type helpers ──────────────────────────────────────────────────────
 
 const TEXT_FILE_TYPES = new Set([
@@ -888,6 +940,7 @@ const IMAGE_FILE_TYPES = new Set([
 
 const isTextFile = (item: FileItem) => TEXT_FILE_TYPES.has(item.filetype);
 const isImageFile = (item: FileItem) => IMAGE_FILE_TYPES.has(item.filetype);
+const isPdfFile = (item: FileItem) => item.filetype === "PDF";
 const isPreviewable = (item: FileItem) => isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
 
 const getCodeLanguage = (item: FileItem): "javascript" | "sql" => {
@@ -1052,6 +1105,9 @@ const navigateToFolder = async (folderId: number | null) => {
   detailItem.value = null;
   contentSearch.value = "";
 
+  // Invalidate only this folder's cache so breadcrumb clicks always show fresh contents
+  if (folderId !== null) childFoldersCache.value.delete(folderId);
+
   try {
     currentFolderId.value = folderId;
     if (folderId === null) {
@@ -1111,6 +1167,7 @@ const openFile = async (file: FileItem) => {
   selectedVersionContent.value = null;
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
+  if (pdfObjectUrl.value) { URL.revokeObjectURL(pdfObjectUrl.value); pdfObjectUrl.value = null; }
   updateLabel();
 
   try {
@@ -1120,6 +1177,16 @@ const openFile = async (file: FileItem) => {
       fileContentType.value = result.contentType;
       fileIsBinary.value = result.binary;
       editorContent.value = result.content;
+      if (result.binary && isPdfFile(file)) {
+        try {
+          const base64 = result.content.replace(/^data:[^;]+;base64,/, "");
+          const raw = atob(base64);
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+          const blob = new Blob([bytes], { type: "application/pdf" });
+          pdfObjectUrl.value = URL.createObjectURL(blob);
+        } catch { /* leave pdfObjectUrl null */ }
+      }
     }
     await loadVersionHistory(file.id);
   } catch (err: any) {
@@ -1143,6 +1210,7 @@ const closeFile = () => {
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
   versionHistory.value = [];
+  if (pdfObjectUrl.value) { URL.revokeObjectURL(pdfObjectUrl.value); pdfObjectUrl.value = null; }
   updateLabel();
 };
 
@@ -1545,7 +1613,11 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
 
 const handleDragOver = (event: DragEvent) => {
   event.preventDefault();
-  if (event.dataTransfer?.types.includes("Files")) isDragOver.value = true;
+  if (event.dataTransfer?.types.includes("Files")) {
+    isDragOver.value = true;
+  } else if (event.dataTransfer?.types.includes("application/fc-item") && currentFolderId.value !== null) {
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  }
 };
 
 const handleDragLeave = (event: DragEvent) => {
@@ -1557,6 +1629,29 @@ const handleDragLeave = (event: DragEvent) => {
 const handleDrop = async (event: DragEvent) => {
   event.preventDefault();
   isDragOver.value = false;
+
+  // Item-move drop: item was dragged from grid/list onto empty folder space
+  const fcItemJson = event.dataTransfer?.getData("application/fc-item");
+  if (fcItemJson) {
+    if (currentFolderId.value !== null) {
+      const currentName = breadcrumbs.value.length > 0
+        ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+        : "Root";
+      const targetFolder: FolderItem = {
+        type: "folder",
+        id: currentFolderId.value,
+        name: currentName,
+        parent: null,
+        foldertype: "DEFAULT",
+        numfolderfiles: 0,
+        foldersize: 0,
+        lastmodifieddate: null,
+      };
+      await handleMoveItemDrop(targetFolder, event);
+    }
+    return;
+  }
+
   const files = event.dataTransfer?.files;
   if (!files || files.length === 0) return;
   const targetFolderId = currentFolderId.value ?? -15;
@@ -1615,23 +1710,41 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   if (targetFolder.type !== "folder") return;
   const itemJson = event.dataTransfer?.getData("application/fc-item");
   if (!itemJson) return;
-  let item: CabinetItem;
-  try { item = JSON.parse(itemJson); } catch { return; }
-  if (item.id === targetFolder.id) return;
-  const srcFolderId = item.type === "folder"
-    ? (item as FolderItem).parent ?? currentFolderId.value
-    : (item as FileItem).folder;
-  if (srcFolderId === targetFolder.id) return;
+  let draggedItem: CabinetItem;
+  try { draggedItem = JSON.parse(itemJson); } catch { return; }
+
+  // Determine items to move: if dragged item is part of the selection, move all selected; otherwise just the dragged item
+  const isDraggedSelected = selectedItems.value.some(
+    (s) => s.type === draggedItem.type && s.id === draggedItem.id
+  );
+  const itemsToMove: CabinetItem[] = isDraggedSelected && selectedItems.value.length > 1
+    ? [...selectedItems.value]
+    : [draggedItem];
+
+  // Filter out moving a folder into itself and items already in the target
+  const filtered = itemsToMove.filter((item) => {
+    if (item.id === targetFolder.id) return false;
+    const itemSrcFolder = item.type === "folder"
+      ? (item as FolderItem).parent ?? currentFolderId.value
+      : (item as FileItem).folder;
+    return itemSrcFolder !== targetFolder.id;
+  });
+  if (filtered.length === 0) return;
+
+  const srcFolderId = currentFolderId.value;
+  const fileIds = filtered.filter((i) => i.type === "file").map((i) => i.id);
+  const folderIds = filtered.filter((i) => i.type === "folder").map((i) => i.id);
+
   isMoveLoading.value = true;
   try {
-    const fileIds = item.type === "file" ? [item.id] : [];
-    const folderIds = item.type === "folder" ? [item.id] : [];
     await callApi(
       RequestRoutes.MOVE_ITEMS,
       { srcFolderId, dstFolderId: targetFolder.id, fileIds, folderIds },
       ApiRequestType.NORMAL
     );
-    toast.add({ severity: "success", summary: "Moved", detail: `${item.name} → ${targetFolder.name}`, life: 3000 });
+    const label = filtered.length === 1 ? filtered[0]!.name : `${filtered.length} items`;
+    toast.add({ severity: "success", summary: "Moved", detail: `${label} → ${targetFolder.name}`, life: 3000 });
+    emit("item-moved", targetFolder.id);
     await refreshCurrentFolder();
   } catch (err: any) {
     toast.add({ severity: "error", summary: "Move Failed", detail: err.message || "Failed to move item", life: 5000 });
@@ -1722,6 +1835,43 @@ const executeNewFolder = async () => {
     toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create folder", life: 5000 });
   } finally {
     isCreatingFolder.value = false;
+  }
+};
+
+// ── New File ───────────────────────────────────────────────────────────────
+
+const openNewFileDialog = () => {
+  newFileName.value = "";
+  showNewFileDialog.value = true;
+  nextTick(() => {
+    const el = newFileInputRef.value?.$el ?? newFileInputRef.value;
+    el?.focus?.();
+  });
+};
+
+const cancelNewFile = () => { showNewFileDialog.value = false; newFileName.value = ""; };
+
+const executeNewFile = async () => {
+  const name = newFileName.value.trim();
+  if (!name) return;
+  isCreatingFile.value = true;
+  try {
+    const folderId = currentFolderId.value ?? -15;
+    const response = await callApi(
+      RequestRoutes.UPLOAD_FILE,
+      { fileName: name, fileContent: "", folderId },
+      ApiRequestType.NORMAL
+    );
+    const result = (response as ApiResponse)?.message || response;
+    if (!result?.uploaded?.length) throw new Error("NetSuite did not confirm the upload");
+    showNewFileDialog.value = false;
+    newFileName.value = "";
+    toast.add({ severity: "success", summary: "File Created", detail: `"${name}" created`, life: 3000 });
+    await refreshCurrentFolder();
+  } catch (err: any) {
+    toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create file", life: 5000 });
+  } finally {
+    isCreatingFile.value = false;
   }
 };
 
@@ -1921,7 +2071,7 @@ onBeforeUnmount(() => {
 
 // ── Expose ─────────────────────────────────────────────────────────────────
 
-defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
+defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFile });
 </script>
 
 <style scoped>
@@ -2203,6 +2353,8 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo });
 .fc-file-view { flex: 1; overflow: auto; min-height: 0; }
 .fc-file-image { display: flex; align-items: center; justify-content: center; padding: 1rem; background: var(--p-slate-100); }
 .fc-image-content { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.fc-file-pdf { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.fc-pdf-viewer { width: 100%; flex: 1; border: none; display: block; }
 .fc-file-code { padding: 0; }
 .fc-file-code :deep(.code-viewer-wrapper) { height: 100%; }
 .fc-file-code :deep(.code-viewer) { height: 100%; border-radius: 0; }

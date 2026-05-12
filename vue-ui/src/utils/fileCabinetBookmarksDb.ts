@@ -145,3 +145,13 @@ export const updateBookmarkName = async (
 ): Promise<void> => {
   await db.bookmarks.update(id, { name });
 };
+
+/**
+ * Update the parent folder of a bookmark (e.g. after the item has been moved).
+ */
+export const updateBookmarkParentFolder = async (
+  id: number,
+  parentFolderId: number
+): Promise<void> => {
+  await db.bookmarks.update(id, { parentFolderId });
+};

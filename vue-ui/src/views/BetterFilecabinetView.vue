@@ -328,6 +328,7 @@
             @bookmark-changed="reloadBookmarks"
             @trash-changed="reloadTrashCount"
             @expand-folder="expandFolderInTree"
+            @item-moved="onItemMoved"
           />
         </div>
       </div>
@@ -465,6 +466,7 @@ import {
   getBookmarkByNetsuiteId,
   updateBookmarkExists,
   updateBookmarkName,
+  updateBookmarkParentFolder,
   type Bookmark
 } from "../utils/fileCabinetBookmarksDb";
 import { callApi as apiCall } from "../utils/api";
@@ -763,16 +765,28 @@ const onTabReorderDrop = (targetId: string) => {
 const moveTabToGroup = (paneId: string, targetGroup: "left" | "right") => {
   if (targetGroup === "right") {
     leftGroupIds.value = leftGroupIds.value.filter((id) => id !== paneId);
+    // If the moved pane was the active one in the left group, switch focus to the first remaining left pane
+    if (leftActiveId.value === paneId && leftGroupIds.value.length > 0) {
+      leftActiveId.value = leftGroupIds.value[0]!;
+      activePaneId.value = leftGroupIds.value[0]!;
+    }
     rightGroupIds.value = [...rightGroupIds.value, paneId];
     rightActiveId.value = paneId;
+    activePaneId.value = paneId; // follow the moved tab
     if (leftGroupIds.value.length === 0) {
       isSplit.value = false;
       activePaneId.value = paneId;
     }
   } else {
     rightGroupIds.value = rightGroupIds.value.filter((id) => id !== paneId);
+    // If the moved pane was the active one in the right group, switch focus to the first remaining right pane
+    if (rightActiveId.value === paneId && rightGroupIds.value.length > 0) {
+      rightActiveId.value = rightGroupIds.value[0]!;
+      activePaneId.value = rightGroupIds.value[0]!;
+    }
     leftGroupIds.value = [...leftGroupIds.value, paneId];
     leftActiveId.value = paneId;
+    activePaneId.value = paneId; // follow the moved tab
     if (rightGroupIds.value.length === 0) {
       isSplit.value = false;
       activePaneId.value = leftActiveId.value;
@@ -814,6 +828,13 @@ const refreshActivePane = () => {
 
 const navigateActivePane = (folderId: number | null) => {
   paneRefs[getActivePaneId()]?.navigateToFolder(folderId);
+};
+
+const onItemMoved = () => {
+  // Refresh all panes so both sides of a split view reflect the move
+  for (const ref of Object.values(paneRefs)) {
+    ref?.refreshCurrentFolder();
+  }
 };
 
 // ── Shared: sidebar tree ───────────────────────────────────────────────────
@@ -941,11 +962,50 @@ const removeBookmarkById = async (id: number) => {
   await reloadBookmarks();
 };
 
-const navigateToBookmark = (bm: Bookmark) => {
+const navigateToBookmark = async (bm: Bookmark) => {
+  const pane = paneRefs[getActivePaneId()];
+  if (!pane) return;
+
   if (bm.itemType === "folder") {
-    navigateActivePane(bm.netsuiteId);
-  } else if (bm.parentFolderId !== null) {
-    navigateActivePane(bm.parentFolderId);
+    // Navigate inside the folder — the ID is always stable regardless of where it was moved
+    pane.navigateToFolder(bm.netsuiteId);
+  } else {
+    // For files: look up the current parent folder (may have changed after a move),
+    // update the bookmark if stale, then navigate + open the file directly.
+    let folderId = bm.parentFolderId;
+
+    if (bm.url) {
+      try {
+        const rows = await runQuery(
+          `SELECT folder FROM File WHERE id = ${bm.netsuiteId} AND ROWNUM <= 1`
+        );
+        if (rows.length > 0 && rows[0].folder) {
+          const currentFolder = Number(rows[0].folder);
+          if (currentFolder !== bm.parentFolderId && bm.id !== undefined) {
+            await updateBookmarkParentFolder(bm.id, currentFolder);
+            await reloadBookmarks();
+          }
+          folderId = currentFolder;
+        }
+      } catch { /* fallback to stored parentFolderId */ }
+
+      if (folderId !== null) {
+        await pane.navigateToFolder(folderId);
+      }
+      await pane.openFile({
+        type: "file",
+        id: bm.netsuiteId,
+        name: bm.name,
+        filetype: bm.filetype || "",
+        filesize: 0,
+        folder: folderId ?? 0,
+        lastmodifieddate: null,
+        url: bm.url,
+      });
+    } else if (folderId !== null) {
+      // No URL stored (shouldn't happen for files) — just navigate to the folder
+      pane.navigateToFolder(folderId);
+    }
   }
 };
 
