@@ -146,7 +146,7 @@
 
         <!-- ── Tab bar: single mode (v-show keeps DOM alive) ──────── -->
         <div v-show="!isSplit" class="fc-tabbar">
-          <div class="fc-tabbar-tabs">
+          <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
             <div
               v-for="pane in panes"
               :key="pane.id"
@@ -190,7 +190,7 @@
           <!-- Left column -->
           <div :style="{ width: `calc(${splitRatio}% - 2.5px)`, minWidth: 0 }">
             <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right' }">
-              <div class="fc-tabbar-tabs">
+              <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
                 <div
                   v-for="pane in leftGroupPanes"
                   :key="pane.id"
@@ -227,6 +227,7 @@
                 </button>
               </div>
               <div
+                v-show="draggingTabId !== null"
                 class="fc-group-dropzone"
                 :class="{ 'fc-group-dropzone--active': dropZone === 'group-left' }"
                 @dragover.prevent="dropZone = 'group-left'"
@@ -242,7 +243,7 @@
           <!-- Right column -->
           <div style="flex: 1; min-width: 0">
             <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left' }">
-              <div class="fc-tabbar-tabs">
+              <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
                 <div
                   v-for="pane in rightGroupPanes"
                   :key="pane.id"
@@ -279,6 +280,7 @@
                 </button>
               </div>
               <div
+                v-show="draggingTabId !== null"
                 class="fc-group-dropzone"
                 :class="{ 'fc-group-dropzone--active': dropZone === 'group-right' }"
                 @dragover.prevent="dropZone = 'group-right'"
@@ -342,6 +344,7 @@
             @trash-changed="reloadTrashCount"
             @expand-folder="expandFolderInTree"
             @item-moved="onItemMoved"
+            @open-in-newtab="(item) => addPaneForItem(item)"
           />
         </div>
       </div>
@@ -931,16 +934,72 @@ const openItemInNewTab = (event: DragEvent) => {
 // Wrapper: accept both tab-reorder drags AND fc-item drags on individual tabs
 const onTabItemDragOver = (event: DragEvent, targetId: string) => {
   event.preventDefault();
-  // Show reorder indicator for both tab-reorder and fc-item drags
+  if (event.dataTransfer?.types.includes("application/fc-item")) {
+    // onTabReorderOver bails early when draggingTabId is null, so compute the
+    // before/after side directly for fc-item drags.
+    const el = event.currentTarget as HTMLElement;
+    const rect = el.getBoundingClientRect();
+    const side = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+    reorderTarget.value = { id: targetId, side };
+    return;
+  }
   onTabReorderOver(event, targetId);
 };
 
 const onTabItemDrop = (event: DragEvent, targetId: string) => {
   if (event.dataTransfer?.types.includes("application/fc-item")) {
+    // Recompute reorderTarget from drop coordinates in case dragleave cleared it.
+    if (!reorderTarget.value || reorderTarget.value.id !== targetId) {
+      const el = event.currentTarget as HTMLElement;
+      const rect = el.getBoundingClientRect();
+      const side = event.clientX < rect.left + rect.width / 2 ? "before" : "after";
+      reorderTarget.value = { id: targetId, side };
+    }
     openItemInNewTab(event);
     return;
   }
   onTabReorderDrop(targetId);
+};
+
+// Convert vertical mouse wheel to horizontal scroll on tab bar
+const onTabBarWheel = (event: WheelEvent) => {
+  const el = event.currentTarget as HTMLElement;
+  el.scrollLeft += event.deltaY;
+};
+
+// Open any file-cabinet item in a new tab (used by middle-click and drag-to-tab)
+const addPaneForItem = (item: any) => {
+  const folderId: number | null = item.folder ? Number(item.folder) : null;
+  const initialFolderIdForNav: number | null = item.type === "folder" ? Number(item.id) : folderId;
+  const initialFile = item.type !== "folder" ? {
+    type: "file" as const,
+    id: Number(item.id),
+    name: item.name,
+    filetype: item.filetype || "",
+    filesize: item.filesize || 0,
+    folder: folderId ?? 0,
+    lastmodifieddate: null as string | null,
+    url: item.url as string | undefined,
+  } : null;
+
+  _paneCounter++;
+  const newId = `pane-${_paneCounter}`;
+  const newPane: PaneDef = { id: newId, label: "File Cabinet", initialFolderId: initialFolderIdForNav, initialFile };
+  panes.value.push(newPane);
+
+  if (isSplit.value) {
+    const group = leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+    if (group === "left") {
+      leftGroupIds.value = [...leftGroupIds.value, newId];
+      leftActiveId.value = newId;
+    } else {
+      rightGroupIds.value = [...rightGroupIds.value, newId];
+      rightActiveId.value = newId;
+    }
+  } else {
+    leftGroupIds.value = [...leftGroupIds.value, newId];
+  }
+  activePaneId.value = newId;
 };
 
 const startSplitResize = (e: MouseEvent) => {
@@ -1451,7 +1510,8 @@ onMounted(async () => {
 .fc-tabbar-tabs {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
   gap: 2px;

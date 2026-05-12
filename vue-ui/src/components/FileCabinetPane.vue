@@ -340,6 +340,7 @@
               :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
               :draggable="renamingItemId !== item.id"
               @click="handleItemClick(item, $event)"
+              @mousedown.middle.prevent="emit('open-in-newtab', item)"
               @dblclick="handleItemDblClick(item)"
               @contextmenu.prevent="handleItemContext(item, $event)"
               @dragstart="handleItemDragStart(item, $event)"
@@ -401,6 +402,7 @@
                   :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
                   :draggable="renamingItemId !== item.id"
                   @click="handleItemClick(item, $event)"
+                  @mousedown.middle.prevent="emit('open-in-newtab', item)"
                   @dblclick="handleItemDblClick(item)"
                   @contextmenu.prevent="handleItemContext(item, $event)"
                   @dragstart="handleItemDragStart(item, $event)"
@@ -710,14 +712,9 @@
                 @keydown.escape="cancelNewFile"
               />
               <span class="fc-nf-dot">.</span>
-              <Select
-                v-model="newFileExtension"
-                :options="FILE_EXTENSIONS"
-                option-label="label"
-                option-value="value"
-                class="fc-nf-ext-select"
-                size="small"
-              />
+              <select v-model="newFileExtension" class="fc-nf-ext-select">
+                <option v-for="ext in FILE_EXTENSIONS" :key="ext.value" :value="ext.value">{{ ext.label }}</option>
+              </select>
             </div>
             <p v-if="newFileBaseName.trim()" class="fc-nf-preview">
               <i class="pi pi-file text-blue-400 text-xs"></i>
@@ -751,7 +748,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, InputText, Select, useToast } from "primevue";
+import { Button, InputText, useToast } from "primevue";
 import CodeViewer from "./CodeViewer.vue";
 import FileCodeEditor from "./FileCodeEditor.vue";
 import DiffViewer from "./DiffViewer.vue";
@@ -851,6 +848,7 @@ const emit = defineEmits<{
   (e: "folder-info-change", info: FolderItem | null): void;
   (e: "expand-folder", folderId: number): void;
   (e: "item-moved", dstFolderId: number): void;
+  (e: "open-in-newtab", item: CabinetItem): void;
 }>();
 
 const toast = useToast();
@@ -1415,6 +1413,10 @@ const handleItemClick = (item: CabinetItem, event: MouseEvent) => {
     const idx = selectedItems.value.findIndex((s) => s.type === item.type && s.id === item.id);
     if (idx >= 0) selectedItems.value.splice(idx, 1);
     else selectedItems.value.push(item);
+  } else if (isSelected(item) && selectedItems.value.length > 1) {
+    // Standard file-manager rule: clicking an already-selected item inside a
+    // multi-selection does NOT replace the selection — this lets the user drag
+    // the whole group without accidentally reducing it to one item.
   } else {
     selectedItems.value = [item];
   }
@@ -1740,7 +1742,16 @@ const handleDrop = async (event: DragEvent) => {
 
 const handleItemDragStart = (item: CabinetItem, event: DragEvent) => {
   if (event.dataTransfer) {
+    // Snapshot the full selection at drag-start so drop handlers always
+    // receive the correct item list regardless of any later state changes.
+    const isInSelection = selectedItems.value.some(
+      (s) => s.type === item.type && s.id === item.id
+    );
+    const itemsToDrag: CabinetItem[] = isInSelection && selectedItems.value.length > 1
+      ? [...selectedItems.value]
+      : [item];
     event.dataTransfer.setData("application/fc-item", JSON.stringify(item));
+    event.dataTransfer.setData("application/fc-items", JSON.stringify(itemsToDrag));
     event.dataTransfer.effectAllowed = "move";
   }
 };
@@ -1768,13 +1779,16 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   let draggedItem: CabinetItem;
   try { draggedItem = JSON.parse(itemJson); } catch { return; }
 
-  // Determine items to move: if dragged item is part of the selection, move all selected; otherwise just the dragged item
-  const isDraggedSelected = selectedItems.value.some(
-    (s) => s.type === draggedItem.type && s.id === draggedItem.id
-  );
-  const itemsToMove: CabinetItem[] = isDraggedSelected && selectedItems.value.length > 1
-    ? [...selectedItems.value]
-    : [draggedItem];
+  // Use the full selection snapshot baked into dataTransfer at drag-start.
+  // This is reliable regardless of any selection changes that may have happened
+  // between dragstart and drop (cross-component, async updates, etc.).
+  const itemsJson = event.dataTransfer?.getData("application/fc-items");
+  let itemsToMove: CabinetItem[];
+  if (itemsJson) {
+    try { itemsToMove = JSON.parse(itemsJson); } catch { itemsToMove = [draggedItem]; }
+  } else {
+    itemsToMove = [draggedItem];
+  }
 
   // Filter out moving a folder into itself and items already in the target
   const filtered = itemsToMove.filter((item) => {
@@ -2539,7 +2553,27 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 .fc-nf-name-row { display: flex; align-items: center; gap: 0.35rem; }
 .fc-nf-name-input { flex: 1; min-width: 0; }
 .fc-nf-dot { font-weight: 600; color: var(--p-slate-500); }
-.fc-nf-ext-select { flex-shrink: 0; min-width: 9rem; max-width: 12rem; }
+.fc-nf-ext-select {
+  -webkit-appearance: none;
+  appearance: none;
+  flex-shrink: 0;
+  min-width: 9rem;
+  max-width: 12rem;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  background-color: var(--p-surface-0);
+  /* Chevron-down arrow matching slate-400 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2394a3b8' d='M5 7 0 2h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.55rem center;
+  color: var(--p-slate-700);
+  font-size: 0.78rem;
+  padding: 0.3rem 1.8rem 0.3rem 0.6rem;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.fc-nf-ext-select:hover { border-color: var(--p-slate-400); }
 .fc-nf-ext-select:focus { border-color: var(--p-indigo-400); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
 .fc-nf-preview { margin-top: 0.3rem; font-size: 0.72rem; color: var(--p-slate-400); display: flex; align-items: center; gap: 0.3rem; }
 .fc-nf-content {
