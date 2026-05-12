@@ -1752,6 +1752,8 @@ const handleItemDragStart = (item: CabinetItem, event: DragEvent) => {
       : [item];
     event.dataTransfer.setData("application/fc-item", JSON.stringify(item));
     event.dataTransfer.setData("application/fc-items", JSON.stringify(itemsToDrag));
+    // Snapshot the source folder so cross-pane drops use the right srcFolderId.
+    event.dataTransfer.setData("application/fc-srcfolder", String(currentFolderId.value ?? ""));
     event.dataTransfer.effectAllowed = "move";
   }
 };
@@ -1800,11 +1802,12 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   });
   if (filtered.length === 0) return;
 
-  // For a single-item drag, use the item's own source folder so that
-  // moves initiated from search results (where currentFolderId may differ) work correctly.
-  // For multi-select, all visible items are in currentFolderId, so use that.
-  const srcFolderId = filtered.length > 1
-    ? currentFolderId.value
+  // Always read srcFolderId from the dataTransfer snapshot set at drag-start.
+  // Using currentFolderId.value here is wrong for cross-pane drops — the drop
+  // pane's currentFolderId is the *destination*, not the source.
+  const srcFolderSnap = event.dataTransfer?.getData("application/fc-srcfolder");
+  const srcFolderId = srcFolderSnap
+    ? Number(srcFolderSnap)
     : filtered[0]!.type === "file"
       ? (filtered[0] as FileItem).folder
       : (filtered[0] as FolderItem).parent ?? currentFolderId.value;
