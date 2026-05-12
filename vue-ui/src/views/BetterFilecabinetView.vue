@@ -94,6 +94,8 @@
                   class="fc-bookmark-item"
                   :title="`${bm.name}\n${bm.parentFolderName}`"
                   @click="navigateToBookmark(bm)"
+                  @mousedown.middle.prevent="openBookmarkInNewTab(bm)"
+                  @contextmenu.prevent="showBookmarkCtxMenu($event, bm)"
                 >
                   <i
                     :class="getBookmarkStatusIcon(bm)"
@@ -160,9 +162,9 @@
               @mousedown.middle.prevent="closePane(pane.id)"
               @dragstart="onTabDragStart($event, pane.id)"
               @dragend="onTabDragEnd"
-              @dragover.prevent="onTabReorderOver($event, pane.id)"
+              @dragover="onTabItemDragOver($event, pane.id)"
               @dragleave="reorderTarget = null"
-              @drop.prevent="onTabReorderDrop(pane.id)"
+              @drop.prevent.stop="onTabItemDrop($event, pane.id)"
             >
               <span class="fc-tab-label">{{ pane.label }}</span>
               <button
@@ -174,7 +176,10 @@
                 <i class="pi pi-times" style="font-size:0.6rem"></i>
               </button>
             </div>
-            <button class="fc-tab-add" @click="addPane" title="New tab">
+            <button class="fc-tab-add" @click="addPane" title="New tab · Drop file or folder to open"
+              @dragover.prevent
+              @drop.prevent="openItemInNewTab($event)"
+            >
               <i class="pi pi-plus" style="font-size:0.75rem"></i>
             </button>
           </div>
@@ -201,9 +206,9 @@
                   @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'left')"
                   @dragstart="onTabDragStart($event, pane.id, 'left')"
                   @dragend="onTabDragEnd"
-                  @dragover.prevent="onTabReorderOver($event, pane.id)"
+                  @dragover="onTabItemDragOver($event, pane.id)"
                   @dragleave="reorderTarget = null"
-                  @drop.prevent="onTabReorderDrop(pane.id)"
+                  @drop.prevent.stop="onTabItemDrop($event, pane.id)"
                 >
                   <span class="fc-tab-label">{{ pane.label }}</span>
                   <button
@@ -214,7 +219,10 @@
                     <i class="pi pi-times" style="font-size:0.6rem"></i>
                   </button>
                 </div>
-                <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab">
+                <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab · Drop file or folder to open"
+                  @dragover.prevent
+                  @drop.prevent="openItemInNewTab($event)"
+                >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
               </div>
@@ -250,9 +258,9 @@
                   @mousedown.middle.prevent="closePaneFromSplit(pane.id, 'right')"
                   @dragstart="onTabDragStart($event, pane.id, 'right')"
                   @dragend="onTabDragEnd"
-                  @dragover.prevent="onTabReorderOver($event, pane.id)"
+                  @dragover="onTabItemDragOver($event, pane.id)"
                   @dragleave="reorderTarget = null"
-                  @drop.prevent="onTabReorderDrop(pane.id)"
+                  @drop.prevent.stop="onTabItemDrop($event, pane.id)"
                 >
                   <span class="fc-tab-label">{{ pane.label }}</span>
                   <button
@@ -263,7 +271,10 @@
                     <i class="pi pi-times" style="font-size:0.6rem"></i>
                   </button>
                 </div>
-                <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab">
+                <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab · Drop file or folder to open"
+                  @dragover.prevent
+                  @drop.prevent="openItemInNewTab($event)"
+                >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
               </div>
@@ -321,6 +332,8 @@
             :ref="(el) => registerPaneRef(pane.id, el)"
             :bookmarked-ids="bookmarkedIds"
             :current-environment="currentEnvironment"
+            :initial-folder-id="pane.initialFolderId"
+            :initial-file="pane.initialFile"
             @mousedown.capture="activePaneId = pane.id"
             @label-change="(label) => updatePaneLabel(pane.id, label)"
             @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
@@ -439,10 +452,37 @@
       </div>
     </div>
   </Teleport>
+
+  <!-- ── Bookmark context menu ────────────────────────────────────────────── -->
+  <Teleport to="body">
+    <template v-if="bookmarkCtxMenu">
+      <!-- Backdrop: click-away to close -->
+      <div class="fc-bm-ctx-backdrop" @click="bookmarkCtxMenu = null" @contextmenu.prevent="bookmarkCtxMenu = null"></div>
+      <div
+        class="fc-bm-ctx-menu"
+        :style="{ left: bookmarkCtxMenu.x + 'px', top: bookmarkCtxMenu.y + 'px' }"
+        @click.stop
+      >
+        <button @click="navigateToBookmark(bookmarkCtxMenu.bm); bookmarkCtxMenu = null">
+          <i class="pi pi-folder-open text-xs"></i>
+          Open
+        </button>
+        <button @click="openBookmarkInNewTab(bookmarkCtxMenu.bm); bookmarkCtxMenu = null">
+          <i class="pi pi-plus-circle text-xs"></i>
+          Open in New Tab
+        </button>
+        <div class="fc-bm-ctx-sep"></div>
+        <button class="fc-bm-ctx-danger" @click="removeBookmarkById(bookmarkCtxMenu.bm.id!); bookmarkCtxMenu = null">
+          <i class="pi pi-times text-xs"></i>
+          Remove
+        </button>
+      </div>
+    </template>
+  </Teleport>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
@@ -498,6 +538,19 @@ interface FolderSnapshot {
 interface PaneDef {
   id: string;
   label: string;
+  /** Folder to navigate to on mount (null = root, undefined = root) */
+  initialFolderId?: number | null;
+  /** File to open immediately after mount navigation */
+  initialFile?: {
+    type: "file";
+    id: number;
+    name: string;
+    filetype: string;
+    filesize: number;
+    folder: number;
+    lastmodifieddate: string | null;
+    url?: string;
+  } | null;
 }
 
 let _paneCounter = 1;
@@ -795,7 +848,100 @@ const moveTabToGroup = (paneId: string, targetGroup: "left" | "right") => {
   onTabDragEnd();
 };
 
-// ── Split resize ───────────────────────────────────────────────────────────
+// ── Drop file/folder item onto tab bar → open in new tab ──────────────────
+
+const openItemInNewTab = (event: DragEvent) => {
+  const itemJson = event.dataTransfer?.getData("application/fc-item");
+  if (!itemJson) return;
+  let item: any;
+  try { item = JSON.parse(itemJson); } catch { return; }
+
+  // Build initial nav data so onMounted handles navigation — no race condition
+  const folderId: number | null = item.folder ? Number(item.folder) : null;
+  const initialFolderIdForNav: number | null = item.type === "folder" ? Number(item.id) : folderId;
+  const initialFile = item.type !== "folder" ? {
+    type: "file" as const,
+    id: Number(item.id),
+    name: item.name,
+    filetype: item.filetype || "",
+    filesize: item.filesize || 0,
+    folder: folderId ?? 0,
+    lastmodifieddate: null as string | null,
+    url: item.url as string | undefined,
+  } : null;
+
+  _paneCounter++;
+  const newId = `pane-${_paneCounter}`;
+  const newPane: PaneDef = { id: newId, label: "File Cabinet", initialFolderId: initialFolderIdForNav, initialFile };
+
+  // Determine insert position from reorderTarget (set by onTabItemDragOver)
+  const rt = reorderTarget.value;
+  reorderTarget.value = null;
+
+  if (isSplit.value) {
+    // Determine which group to add to (prefer group the drop target is in, else active group)
+    const group = (rt && rightGroupIds.value.includes(rt.id)) ? "right"
+      : (rt && leftGroupIds.value.includes(rt.id)) ? "left"
+      : leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+
+    if (rt && ((group === "left" && leftGroupIds.value.includes(rt.id)) || (group === "right" && rightGroupIds.value.includes(rt.id)))) {
+      // Insert at reorder position within the group's ID list
+      const groupArr = group === "left" ? leftGroupIds.value : rightGroupIds.value;
+      const groupIdx = groupArr.indexOf(rt.id);
+      const spliceAt = rt.side === "before" ? groupIdx : groupIdx + 1;
+      // Insert into panes at same relative position
+      const targetPaneIdx = panes.value.findIndex((p) => p.id === rt.id);
+      const panesInsertAt = rt.side === "before" ? targetPaneIdx : targetPaneIdx + 1;
+      panes.value.splice(panesInsertAt, 0, newPane);
+      if (group === "left") {
+        leftGroupIds.value = [...leftGroupIds.value.slice(0, spliceAt), newId, ...leftGroupIds.value.slice(spliceAt)];
+        leftActiveId.value = newId;
+      } else {
+        rightGroupIds.value = [...rightGroupIds.value.slice(0, spliceAt), newId, ...rightGroupIds.value.slice(spliceAt)];
+        rightActiveId.value = newId;
+      }
+    } else {
+      panes.value.push(newPane);
+      if (group === "left") {
+        leftGroupIds.value = [...leftGroupIds.value, newId];
+        leftActiveId.value = newId;
+      } else {
+        rightGroupIds.value = [...rightGroupIds.value, newId];
+        rightActiveId.value = newId;
+      }
+    }
+  } else {
+    // Single mode — insert at reorderTarget position or append
+    if (rt && leftGroupIds.value.includes(rt.id)) {
+      const groupIdx = leftGroupIds.value.indexOf(rt.id);
+      const spliceAt = rt.side === "before" ? groupIdx : groupIdx + 1;
+      const targetPaneIdx = panes.value.findIndex((p) => p.id === rt.id);
+      const panesInsertAt = rt.side === "before" ? targetPaneIdx : targetPaneIdx + 1;
+      panes.value.splice(panesInsertAt, 0, newPane);
+      leftGroupIds.value = [...leftGroupIds.value.slice(0, spliceAt), newId, ...leftGroupIds.value.slice(spliceAt)];
+    } else {
+      panes.value.push(newPane);
+      leftGroupIds.value = [...leftGroupIds.value, newId];
+    }
+  }
+
+  activePaneId.value = newId;
+};
+
+// Wrapper: accept both tab-reorder drags AND fc-item drags on individual tabs
+const onTabItemDragOver = (event: DragEvent, targetId: string) => {
+  event.preventDefault();
+  // Show reorder indicator for both tab-reorder and fc-item drags
+  onTabReorderOver(event, targetId);
+};
+
+const onTabItemDrop = (event: DragEvent, targetId: string) => {
+  if (event.dataTransfer?.types.includes("application/fc-item")) {
+    openItemInNewTab(event);
+    return;
+  }
+  onTabReorderDrop(targetId);
+};
 
 const startSplitResize = (e: MouseEvent) => {
   e.preventDefault();
@@ -1047,6 +1193,65 @@ const getBookmarkStatusIcon = (bm: Bookmark) => {
   return "pi pi-question-circle";
 };
 
+// ── Bookmark context menu ───────────────────────────────────────────────────
+
+const bookmarkCtxMenu = ref<{ bm: Bookmark; x: number; y: number } | null>(null);
+
+const showBookmarkCtxMenu = (event: MouseEvent, bm: Bookmark) => {
+  bookmarkCtxMenu.value = { bm, x: event.clientX, y: event.clientY };
+};
+
+const openBookmarkInNewTab = async (bm: Bookmark) => {
+  // Resolve folder ID before creating the pane to avoid the post-mount navigation race.
+  let folderId: number | null = bm.parentFolderId;
+  if (bm.itemType !== "folder" && bm.url) {
+    try {
+      const rows = await runQuery(
+        `SELECT folder FROM File WHERE id = ${bm.netsuiteId} AND ROWNUM <= 1`
+      );
+      if (rows.length > 0 && rows[0].folder) {
+        const currentFolder = Number(rows[0].folder);
+        if (currentFolder !== bm.parentFolderId && bm.id !== undefined) {
+          await updateBookmarkParentFolder(bm.id, currentFolder);
+          await reloadBookmarks();
+        }
+        folderId = currentFolder;
+      }
+    } catch { /* fall back to stored parentFolderId */ }
+  }
+
+  const initialFolderIdForNav: number | null = bm.itemType === "folder" ? bm.netsuiteId : folderId;
+  const initialFile = bm.itemType !== "folder" ? {
+    type: "file" as const,
+    id: bm.netsuiteId,
+    name: bm.name,
+    filetype: bm.filetype || "",
+    filesize: 0,
+    folder: folderId ?? 0,
+    lastmodifieddate: null as string | null,
+    url: bm.url as string | undefined,
+  } : null;
+
+  _paneCounter++;
+  const newId = `pane-${_paneCounter}`;
+  const newPane: PaneDef = { id: newId, label: "File Cabinet", initialFolderId: initialFolderIdForNav, initialFile };
+  panes.value.push(newPane);
+
+  if (isSplit.value) {
+    const group = leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+    if (group === "left") {
+      leftGroupIds.value = [...leftGroupIds.value, newId];
+      leftActiveId.value = newId;
+    } else {
+      rightGroupIds.value = [...rightGroupIds.value, newId];
+      rightActiveId.value = newId;
+    }
+  } else {
+    leftGroupIds.value = [...leftGroupIds.value, newId];
+  }
+  activePaneId.value = newId;
+};
+
 // ── Shared: trash ──────────────────────────────────────────────────────────
 
 const showTrashPanel = ref(false);
@@ -1246,7 +1451,7 @@ onMounted(async () => {
 .fc-tabbar-tabs {
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 0 0 auto;
   overflow-x: auto;
   scrollbar-width: none;
   gap: 2px;
@@ -1505,4 +1710,21 @@ onMounted(async () => {
 
 /* ── PrimeVue overrides ───────────────────────────────────────────────────── */
 .sidebar-section :deep(.p-inputtext) { font-size: 0.75rem; }
+
+/* ── Bookmark context menu ────────────────────────────────────────────────── */
+.fc-bm-ctx-backdrop { position: fixed; inset: 0; z-index: 9998; }
+.fc-bm-ctx-menu {
+  position: fixed; z-index: 9999; min-width: 160px; padding: 0.25rem 0;
+  background: white; border: 1px solid var(--p-slate-200); border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.14); font-size: 0.78rem;
+}
+.fc-bm-ctx-menu button {
+  display: flex; align-items: center; gap: 0.45rem; width: 100%;
+  padding: 0.4rem 0.8rem; background: none; border: none; cursor: pointer;
+  color: var(--p-slate-700); text-align: left; white-space: nowrap;
+}
+.fc-bm-ctx-menu button:hover { background: var(--p-slate-100); }
+.fc-bm-ctx-menu .fc-bm-ctx-danger { color: var(--p-red-600); }
+.fc-bm-ctx-menu .fc-bm-ctx-danger:hover { background: var(--p-red-50); }
+.fc-bm-ctx-sep { height: 1px; background: var(--p-slate-200); margin: 0.2rem 0; }
 </style>

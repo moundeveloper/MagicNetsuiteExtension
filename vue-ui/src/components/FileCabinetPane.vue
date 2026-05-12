@@ -687,30 +687,56 @@
     <!-- New File dialog -->
     <Teleport to="body">
       <div v-if="showNewFileDialog" class="fc-confirm-overlay" @click.self="cancelNewFile">
-        <div class="fc-confirm-box">
+        <div class="fc-confirm-box" style="max-width:460px">
           <div class="fc-confirm-header">
             <i class="pi pi-file-edit text-blue-500"></i>
             <span>New Text File</span>
           </div>
           <div class="fc-confirm-body">
-            <p class="mb-2">
+            <p class="mb-3">
               Create a new file in
               <strong>{{ breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1]!.name : 'Root' }}</strong>.
             </p>
-            <InputText
-              ref="newFileInputRef"
-              v-model="newFileName"
-              placeholder="filename.js"
-              size="small"
-              class="w-full"
-              @keydown.enter="executeNewFile"
-              @keydown.escape="cancelNewFile"
+
+            <!-- Name + Extension row -->
+            <label class="fc-nf-label">File name</label>
+            <div class="fc-nf-name-row">
+              <InputText
+                ref="newFileInputRef"
+                v-model="newFileBaseName"
+                placeholder="my-script"
+                size="small"
+                class="fc-nf-name-input"
+                @keydown.escape="cancelNewFile"
+              />
+              <span class="fc-nf-dot">.</span>
+              <Select
+                v-model="newFileExtension"
+                :options="FILE_EXTENSIONS"
+                option-label="label"
+                option-value="value"
+                class="fc-nf-ext-select"
+                size="small"
+              />
+            </div>
+            <p v-if="newFileBaseName.trim()" class="fc-nf-preview">
+              <i class="pi pi-file text-blue-400 text-xs"></i>
+              {{ newFileBaseName.trim() }}.{{ newFileExtension }}
+            </p>
+
+            <!-- Initial content -->
+            <label class="fc-nf-label mt-3">Initial content <span class="text-gray-400">(optional)</span></label>
+            <textarea
+              v-model="newFileContent"
+              class="fc-nf-content"
+              placeholder="// Start writing here..."
+              rows="6"
+              spellcheck="false"
             />
-            <p class="text-xs text-gray-400 mt-1">Include the extension (.js, .ts, .html, .txt, .json…)</p>
           </div>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" @click="cancelNewFile">Cancel</Button>
-            <Button size="small" @click="executeNewFile" :loading="isCreatingFile" :disabled="!newFileName.trim()">
+            <Button size="small" severity="secondary" outlined @click="cancelNewFile">Cancel</Button>
+            <Button size="small" @click="executeNewFile" :loading="isCreatingFile" :disabled="!newFileBaseName.trim()">
               <i class="pi pi-check text-xs mr-1"></i>
               Create
             </Button>
@@ -725,7 +751,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, InputText, useToast } from "primevue";
+import { Button, InputText, Select, useToast } from "primevue";
 import CodeViewer from "./CodeViewer.vue";
 import FileCodeEditor from "./FileCodeEditor.vue";
 import DiffViewer from "./DiffViewer.vue";
@@ -802,6 +828,19 @@ interface FolderSnapshot {
 const props = defineProps<{
   bookmarkedIds: Set<number>;
   currentEnvironment: string;
+  /** If provided, the pane mounts directly to this folder instead of root. */
+  initialFolderId?: number | null;
+  /** If provided, the pane opens this file immediately after mounting. */
+  initialFile?: {
+    type: "file";
+    id: number;
+    name: string;
+    filetype: string;
+    filesize: number;
+    folder: number;
+    lastmodifieddate: string | null;
+    url?: string;
+  } | null;
 }>();
 
 const emit = defineEmits<{
@@ -923,9 +962,25 @@ const newFolderInputRef = ref<any>(null);
 
 // ── New file ───────────────────────────────────────────────────────────────
 const showNewFileDialog = ref(false);
-const newFileName = ref("");
+const newFileBaseName = ref("");
+const newFileExtension = ref("js");
+const newFileContent = ref("");
 const isCreatingFile = ref(false);
 const newFileInputRef = ref<any>(null);
+
+const FILE_EXTENSIONS = [
+  { label: "JavaScript (.js)", value: "js" },
+  { label: "TypeScript (.ts)", value: "ts" },
+  { label: "CSS (.css)", value: "css" },
+  { label: "HTML (.html)", value: "html" },
+  { label: "XML (.xml)", value: "xml" },
+  { label: "JSON (.json)", value: "json" },
+  { label: "Plain Text (.txt)", value: "txt" },
+  { label: "CSV (.csv)", value: "csv" },
+  { label: "SQL (.sql)", value: "sql" },
+  { label: "FreeMarker (.ftl)", value: "ftl" },
+  { label: "SHTML (.shtml)", value: "shtml" },
+];
 
 // ── File type helpers ──────────────────────────────────────────────────────
 
@@ -1731,7 +1786,14 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   });
   if (filtered.length === 0) return;
 
-  const srcFolderId = currentFolderId.value;
+  // For a single-item drag, use the item's own source folder so that
+  // moves initiated from search results (where currentFolderId may differ) work correctly.
+  // For multi-select, all visible items are in currentFolderId, so use that.
+  const srcFolderId = filtered.length > 1
+    ? currentFolderId.value
+    : filtered[0]!.type === "file"
+      ? (filtered[0] as FileItem).folder
+      : (filtered[0] as FolderItem).parent ?? currentFolderId.value;
   const fileIds = filtered.filter((i) => i.type === "file").map((i) => i.id);
   const folderIds = filtered.filter((i) => i.type === "folder").map((i) => i.id);
 
@@ -1841,7 +1903,9 @@ const executeNewFolder = async () => {
 // ── New File ───────────────────────────────────────────────────────────────
 
 const openNewFileDialog = () => {
-  newFileName.value = "";
+  newFileBaseName.value = "";
+  newFileContent.value = "";
+  newFileExtension.value = "js";
   showNewFileDialog.value = true;
   nextTick(() => {
     const el = newFileInputRef.value?.$el ?? newFileInputRef.value;
@@ -1849,24 +1913,30 @@ const openNewFileDialog = () => {
   });
 };
 
-const cancelNewFile = () => { showNewFileDialog.value = false; newFileName.value = ""; };
+const cancelNewFile = () => {
+  showNewFileDialog.value = false;
+  newFileBaseName.value = "";
+  newFileContent.value = "";
+};
 
 const executeNewFile = async () => {
-  const name = newFileName.value.trim();
-  if (!name) return;
+  const baseName = newFileBaseName.value.trim();
+  if (!baseName) return;
+  const fileName = `${baseName}.${newFileExtension.value}`;
   isCreatingFile.value = true;
   try {
     const folderId = currentFolderId.value ?? -15;
     const response = await callApi(
       RequestRoutes.UPLOAD_FILE,
-      { fileName: name, fileContent: "", folderId },
+      { fileName, fileContent: newFileContent.value, folderId },
       ApiRequestType.NORMAL
     );
     const result = (response as ApiResponse)?.message || response;
     if (!result?.uploaded?.length) throw new Error("NetSuite did not confirm the upload");
     showNewFileDialog.value = false;
-    newFileName.value = "";
-    toast.add({ severity: "success", summary: "File Created", detail: `"${name}" created`, life: 3000 });
+    newFileBaseName.value = "";
+    newFileContent.value = "";
+    toast.add({ severity: "success", summary: "File Created", detail: `"${fileName}" created`, life: 3000 });
     await refreshCurrentFolder();
   } catch (err: any) {
     toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create file", life: 5000 });
@@ -2062,7 +2132,10 @@ watch(currentFolderInfo, (info) => {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocClick);
-  await navigateToFolder(null);
+  await navigateToFolder(props.initialFolderId ?? null);
+  if (props.initialFile) {
+    await openFile(props.initialFile as FileItem);
+  }
 });
 
 onBeforeUnmount(() => {
@@ -2459,6 +2532,23 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 .fc-delete-list { margin: 0.5rem 0; padding: 0; list-style: none; max-height: 160px; overflow-y: auto; font-size: 0.75rem; border: 1px solid var(--p-slate-200); border-radius: 4px; padding: 0.4rem; }
 .fc-delete-list li { display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0; }
 .fc-folder-warning { display: flex; align-items: flex-start; gap: 0.35rem; margin-top: 0.5rem; padding: 0.4rem 0.5rem; background: var(--p-amber-50, #fffbeb); border: 1px solid var(--p-amber-200, #fde68a); border-radius: 4px; font-size: 0.72rem; color: var(--p-amber-800, #92400e); line-height: 1.4; }
+
+/* ── New-file dialog ─────────────────────────────────────────────────────── */
+.fc-nf-label { display: block; font-size: 0.72rem; font-weight: 500; color: var(--p-slate-500); margin-bottom: 0.25rem; }
+.fc-nf-label.mt-3 { margin-top: 0.75rem; }
+.fc-nf-name-row { display: flex; align-items: center; gap: 0.35rem; }
+.fc-nf-name-input { flex: 1; min-width: 0; }
+.fc-nf-dot { font-weight: 600; color: var(--p-slate-500); }
+.fc-nf-ext-select { flex-shrink: 0; min-width: 9rem; max-width: 12rem; }
+.fc-nf-ext-select:focus { border-color: var(--p-indigo-400); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.fc-nf-preview { margin-top: 0.3rem; font-size: 0.72rem; color: var(--p-slate-400); display: flex; align-items: center; gap: 0.3rem; }
+.fc-nf-content {
+  width: 100%; margin-top: 0.25rem; border: 1px solid var(--p-slate-300); border-radius: 5px;
+  padding: 0.4rem 0.5rem; font-size: 0.72rem; font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--p-slate-800); resize: vertical; outline: none; box-sizing: border-box;
+  line-height: 1.5;
+}
+.fc-nf-content:focus { border-color: var(--p-indigo-400); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
 
 /* ── Inline rename ───────────────────────────────────────────────────────── */
 .fc-rename-input { width: 100%; max-width: 100%; border: 1px solid var(--p-indigo-400); border-radius: 3px; padding: 1px 4px; font-size: inherit; background: var(--p-surface-0, #fff); color: inherit; outline: none; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }

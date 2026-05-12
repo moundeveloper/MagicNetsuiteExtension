@@ -686,16 +686,12 @@ window.moveItems = async (N, { srcFolderId, dstFolderId, fileIds = [], folderIds
   const { csrfToken, accountId } = window.getNetsiteParams();
   const url = `https://${accountId}.app.netsuite.com/app/common/media/mediaitemfolders.nl?folder=${srcFolderId}&_grpMove=T&overwrite=T&newfolder=${dstFolderId}`;
 
-  const parts = [];
-  for (const fileId of fileIds) {
-    parts.push(`sa${fileId}fldF=T`);
-  }
-  for (const folderId of folderIds) {
-    parts.push(`sa${folderId}fldT=T`);
-  }
-  parts.push(`_csrf=${encodeURIComponent(csrfToken)}`);
-
-  const body = parts.join("&");
+  // Build body with URLSearchParams — _csrf first, then file/folder params,
+  // matching the reference implementation order exactly.
+  const body = new URLSearchParams();
+  body.append("_csrf", csrfToken);
+  for (const fileId of fileIds)   body.append(`sa${fileId}fldF`, "T");
+  for (const folderId of folderIds) body.append(`sa${folderId}fldT`, "T");
 
   const response = await fetch(url, {
     method: "POST",
@@ -712,7 +708,7 @@ window.moveItems = async (N, { srcFolderId, dstFolderId, fileIds = [], folderIds
       "upgrade-insecure-requests": "1"
     },
     referrer: `https://${accountId}.app.netsuite.com/app/common/media/mediaitemfolders.nl?folder=${srcFolderId}`,
-    body,
+    body: body.toString(),
     credentials: "include",
     mode: "cors"
   });
