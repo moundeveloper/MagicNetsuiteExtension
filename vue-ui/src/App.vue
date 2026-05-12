@@ -10,6 +10,8 @@ const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
 const route = useRoute();
 
+const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
+
 const isProcessingRoute = computed(() => route.path === "/processing");
 
 type PanelAction = "open" | "close";
@@ -32,7 +34,7 @@ onMounted(async () => {
     });
 
     chrome.storage.session.get("openView", (result) => {
-      console.log("openView", result);
+      if (isAdmin) console.log("openView", result);
       if (result?.openView) {
         router.push({ name: result.openView });
         chrome.storage.session.remove("openView");
@@ -42,10 +44,10 @@ onMounted(async () => {
     const port = chrome.runtime.connect({ name: "sidePanel" });
 
     port.onDisconnect.addListener(() => {
-      console.log("Disconnected from background (cleanup if needed)");
+      if (isAdmin) console.log("Disconnected from background (cleanup if needed)");
     });
   } catch (error) {
-    console.log("[App] Error", "Could not connect to background");
+    if (isAdmin) console.log("[App] Error", "Could not connect to background");
   }
 });
 

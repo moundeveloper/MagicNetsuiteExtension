@@ -336,15 +336,41 @@
               <ToggleSwitch v-model="formData.limits.canExecuteDestructive" />
             </div>
           </div>
-          <!-- Blocked tools -->
+          <!-- Blocked tools picker -->
           <div class="blocked-tools-field">
-            <label for="blocked-tools" class="limit-label">Blocked tools (comma-separated)</label>
-            <InputText
-              id="blocked-tools"
-              v-model="blockedToolsInput"
-              placeholder="e.g., netsuite_run_script, netsuite_save_template"
-              class="w-full"
-            />
+            <label class="limit-label">
+              Blocked tools
+              <span class="label-hint">{{ formData.limits.blockedTools.length }} blocked</span>
+            </label>
+            <div class="tool-picker">
+              <div class="picker-search">
+                <InputText
+                  v-model="blockedToolSearch"
+                  placeholder="Filter tools..."
+                  class="w-full"
+                />
+              </div>
+              <div class="picker-list">
+                <label
+                  v-for="toolName in filteredBlockedToolNames"
+                  :key="toolName"
+                  class="picker-item"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="formData.limits.blockedTools.includes(toolName)"
+                    @change="toggleBlockedTool(toolName)"
+                  />
+                  <span class="picker-item-name">{{ toolName }}</span>
+                </label>
+                <div v-if="filteredBlockedToolNames.length === 0" class="picker-empty">
+                  No matching tools
+                </div>
+              </div>
+              <div class="picker-actions">
+                <button type="button" class="picker-action-btn" @click="formData.limits.blockedTools = []">Clear all</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -459,8 +485,8 @@ const isEditing = ref(false);
 const editingId = ref<string | null>(null);
 const deleteTarget = ref<Agent | null>(null);
 const toolSearch = ref("");
+const blockedToolSearch = ref("");
 const slugError = ref("");
-const blockedToolsInput = ref("");
 
 // ── AI Generation ──────────────────────────
 const creationMode = ref<"manual" | "ai">("manual");
@@ -504,6 +530,12 @@ const filteredAgents = computed(() => {
 
 const filteredToolNames = computed(() => {
   const q = toolSearch.value.toLowerCase().trim();
+  if (!q) return allToolNames.value;
+  return allToolNames.value.filter((name) => name.toLowerCase().includes(q));
+});
+
+const filteredBlockedToolNames = computed(() => {
+  const q = blockedToolSearch.value.toLowerCase().trim();
   if (!q) return allToolNames.value;
   return allToolNames.value.filter((name) => name.toLowerCase().includes(q));
 });
@@ -555,6 +587,15 @@ const toggleTool = (toolName: string) => {
     formData.value.tools.splice(idx, 1);
   } else {
     formData.value.tools.push(toolName);
+  }
+};
+
+const toggleBlockedTool = (toolName: string) => {
+  const idx = formData.value.limits.blockedTools.indexOf(toolName);
+  if (idx >= 0) {
+    formData.value.limits.blockedTools.splice(idx, 1);
+  } else {
+    formData.value.limits.blockedTools.push(toolName);
   }
 };
 
@@ -679,8 +720,6 @@ Rules:
       color: parsedColor
     };
 
-    blockedToolsInput.value = parsedBlockedTools.join(", ");
-
     // Switch to manual so the user can review and tweak before saving
     creationMode.value = "manual";
   } catch (err) {
@@ -695,8 +734,8 @@ const openCreateDialog = () => {
   isEditing.value = false;
   editingId.value = null;
   toolSearch.value = "";
+  blockedToolSearch.value = "";
   slugError.value = "";
-  blockedToolsInput.value = "";
   creationMode.value = "manual";
   aiPromptText.value = "";
   generateError.value = "";
@@ -718,8 +757,8 @@ const openEditDialog = (agent: Agent) => {
   isEditing.value = true;
   editingId.value = agent.agentId;
   toolSearch.value = "";
+  blockedToolSearch.value = "";
   slugError.value = "";
-  blockedToolsInput.value = agent.limits.blockedTools.join(", ");
   formData.value = {
     name: agent.name,
     slug: agent.slug,
@@ -744,11 +783,6 @@ const saveAgent = async () => {
 
   if (!name.trim() || !slug.trim() || !systemPrompt.trim()) return;
 
-  const parsedBlockedTools = blockedToolsInput.value
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-
   const agentData = {
     name: name.trim(),
     slug: slug.trim(),
@@ -759,7 +793,7 @@ const saveAgent = async () => {
     skillIds: [...skillIds],
     limits: {
       canExecuteDestructive: limits.canExecuteDestructive,
-      blockedTools: parsedBlockedTools
+      blockedTools: [...limits.blockedTools]
     },
     color,
     enabled: true

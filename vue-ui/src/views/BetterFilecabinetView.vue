@@ -150,6 +150,7 @@
               class="fc-tab"
               :class="{
                 'fc-tab--active': pane.id === activePaneId,
+                'fc-tab--focused': pane.id === activePaneId,
                 'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
                 'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
               }"
@@ -190,6 +191,7 @@
                   class="fc-tab"
                   :class="{
                     'fc-tab--active': pane.id === leftActiveId,
+                    'fc-tab--focused': pane.id === activePaneId,
                     'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
                     'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
                   }"
@@ -238,6 +240,7 @@
                   class="fc-tab"
                   :class="{
                     'fc-tab--active': pane.id === rightActiveId,
+                    'fc-tab--focused': pane.id === activePaneId,
                     'fc-tab--drop-before': reorderTarget?.id === pane.id && reorderTarget?.side === 'before',
                     'fc-tab--drop-after':  reorderTarget?.id === pane.id && reorderTarget?.side === 'after',
                   }"
@@ -1217,6 +1220,10 @@ onMounted(async () => {
   background: var(--p-slate-600);
   color: white;
   outline-color: var(--p-slate-500);
+}
+
+/* Accent underline only on the globally-focused pane's tab */
+.fc-tab--focused {
   box-shadow: inset 0 -2px 0 var(--p-indigo-400);
 }
 
