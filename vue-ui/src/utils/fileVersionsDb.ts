@@ -110,6 +110,13 @@ export const getVersion = async (versionId: number): Promise<FileVersion | undef
 };
 
 /**
+ * Delete a single version by its primary key.
+ */
+export const deleteVersion = async (versionId: number): Promise<void> => {
+  await db.fileVersions.delete(versionId);
+};
+
+/**
  * Delete all versions for a file (used by "commit" to clear history).
  */
 export const clearVersionHistory = async (fileId: number): Promise<number> => {

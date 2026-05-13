@@ -514,8 +514,18 @@
         <!-- Version history panel -->
         <div v-if="currentRequest?.showVersionHistory && currentRequest.scriptFileVersions.length > 0" class="version-history-panel">
           <div class="version-history-heading">
-            <i class="pi pi-history text-xs mr-1"></i>
-            Local History ({{ currentRequest.scriptFileVersions.length }} saved versions)
+            <span>
+              <i class="pi pi-history text-xs mr-1"></i>
+              Local History ({{ currentRequest.scriptFileVersions.length }} saved versions)
+            </span>
+            <button
+              class="version-clear-all-btn"
+              title="Delete all saved versions"
+              @click="currentRequest && clearAllHistory(currentRequest)"
+            >
+              <i class="pi pi-trash text-xs"></i>
+              Clear all
+            </button>
           </div>
           <div class="version-list">
             <div
@@ -542,6 +552,13 @@
                 >
                   <i class="pi pi-undo text-xs"></i>
                   Restore
+                </button>
+                <button
+                  class="version-delete-btn"
+                  title="Delete this version"
+                  @click="currentRequest && deleteHistoryVersion(currentRequest, ver)"
+                >
+                  <i class="pi pi-times text-xs"></i>
                 </button>
               </div>
             </div>
@@ -634,6 +651,8 @@ import {
 import {
   saveVersion,
   getVersionsForFile,
+  deleteVersion,
+  clearVersionHistory,
   formatVersionDate,
   type FileVersion
 } from "../utils/fileVersionsDb";
@@ -727,6 +746,8 @@ interface ApiRequest {
   previewLoading: boolean;
   /** Script file source content (fetched via SCRIPT_FILES, runtime-only) */
   scriptFileContent: string | null;
+  /** Last content successfully fetched from / saved to NetSuite — used as the version snapshot on next save */
+  scriptFileSavedContent: string | null;
   scriptFileLoading: boolean;
   /** File cabinet internal ID — needed for UPDATE_FILE_CONTENT */
   scriptFileId: number | null;
@@ -961,13 +982,16 @@ const loadVersionHistory = async (req: ApiRequest): Promise<void> => {
 
 const fetchScriptFile = async (req: ApiRequest, scriptId: number): Promise<void> => {
   req.scriptFileContent = null;
+  req.scriptFileSavedContent = null;
   req.scriptFileDirty = false;
   req.scriptFileLoading = true;
   try {
     const res = await callApi(RequestRoutes.SCRIPT_FILES, { scriptIds: [scriptId] });
     const files: any[] = (res as ApiResponse)?.message ?? [];
     const file = files[0];
-    req.scriptFileContent = file?.scriptFile ?? null;
+    const content = file?.scriptFile ?? null;
+    req.scriptFileContent = content;
+    req.scriptFileSavedContent = content;
     req.scriptFileId = file?.fileId != null ? Number(file.fileId) : null;
     req.scriptFileFolderId = file?.fileFolderId != null ? Number(file.fileFolderId) : null;
     if (req.scriptFileId) {
@@ -985,7 +1009,13 @@ const saveScriptContent = async (req: ApiRequest): Promise<void> => {
   if (!req.scriptFileId || req.scriptFileContent === null) return;
   req.scriptFileSaving = true;
   try {
-    await saveVersion(req.scriptFileId, req.scriptName ?? "script.js", req.scriptFileContent);
+    // Snapshot the PREVIOUS content (what was in NetSuite) so diff compares
+    // "old save" vs "current content" rather than identical text.
+    const snapshotContent = req.scriptFileSavedContent;
+    if (snapshotContent !== null && snapshotContent !== req.scriptFileContent) {
+      await saveVersion(req.scriptFileId, req.scriptName ?? "script.js", snapshotContent);
+    }
+
     const result = await callApi(RequestRoutes.UPDATE_FILE_CONTENT, {
       fileId: req.scriptFileId,
       fileContent: req.scriptFileContent,
@@ -996,6 +1026,8 @@ const saveScriptContent = async (req: ApiRequest): Promise<void> => {
     const isUpdated = (result as ApiResponse)?.message?.isUpdated;
     if (isUpdated) {
       req.scriptFileDirty = false;
+      // Update the ground-truth baseline to the content we just saved
+      req.scriptFileSavedContent = req.scriptFileContent;
       await loadVersionHistory(req);
       toast.add({ severity: "success", summary: "Saved", detail: `${req.scriptName ?? "Script"} saved to NetSuite`, life: 2000 });
     } else {
@@ -1020,6 +1052,35 @@ const restoreVersion = (req: ApiRequest, version: FileVersion): void => {
     detail: `Content from ${formatVersionDate(version.savedAt)} loaded — click Save to apply.`,
     life: 3000
   });
+};
+
+const deleteHistoryVersion = async (req: ApiRequest, version: FileVersion): Promise<void> => {
+  if (!version.id) return;
+  try {
+    // If this version is currently open in the diff panel, close it first
+    if (req.scriptDiffVersion?.id === version.id) {
+      req.scriptDiffVersion = null;
+    }
+    await deleteVersion(version.id);
+    await loadVersionHistory(req);
+  } catch (err) {
+    console.error("[ApiTester] deleteHistoryVersion failed:", err);
+    toast.add({ severity: "error", summary: "Delete Failed", detail: "Could not delete version", life: 3000 });
+  }
+};
+
+const clearAllHistory = async (req: ApiRequest): Promise<void> => {
+  if (!req.scriptFileId) return;
+  try {
+    req.scriptDiffVersion = null;
+    await clearVersionHistory(req.scriptFileId);
+    await loadVersionHistory(req);
+    req.showVersionHistory = false;
+    toast.add({ severity: "info", summary: "History Cleared", detail: "All saved versions removed.", life: 2000 });
+  } catch (err) {
+    console.error("[ApiTester] clearAllHistory failed:", err);
+    toast.add({ severity: "error", summary: "Clear Failed", detail: "Could not clear version history", life: 3000 });
+  }
 };
 
 const onEditorChange = (val: string): void => {
@@ -1077,6 +1138,7 @@ const createNewRequest = (): ApiRequest => ({
   previewSrc: null,
   previewLoading: false,
   scriptFileContent: null,
+  scriptFileSavedContent: null,
   scriptFileLoading: false,
   scriptFileId: null,
   scriptFileFolderId: null,
@@ -1516,6 +1578,7 @@ onMounted(async () => {
       previewSrc: null,
       previewLoading: false,
       scriptFileContent: null,
+      scriptFileSavedContent: null,
       scriptFileLoading: false,
       scriptFileId: r.scriptFileId ?? null,
       scriptFileFolderId: r.scriptFileFolderId ?? null,
@@ -1729,6 +1792,9 @@ onBeforeUnmount(async () => {
 }
 
 .version-history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.65rem;
   font-weight: 600;
   color: var(--p-slate-500);
@@ -1777,6 +1843,48 @@ onBeforeUnmount(async () => {
 
 .version-restore-btn:hover {
   background: var(--p-indigo-50);
+}
+
+.version-delete-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 0.2rem;
+  color: var(--p-slate-400);
+  font-size: 0.62rem;
+  padding: 0.1rem 0.25rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.version-delete-btn:hover {
+  background: var(--p-red-50);
+  border-color: var(--p-red-200);
+  color: var(--p-red-600);
+}
+
+.version-clear-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: none;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.2rem;
+  color: var(--p-slate-500);
+  font-size: 0.6rem;
+  padding: 0.1rem 0.35rem;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.version-clear-all-btn:hover {
+  background: var(--p-red-50);
+  border-color: var(--p-red-300);
+  color: var(--p-red-700);
 }
 
 .editor-pane-content {
