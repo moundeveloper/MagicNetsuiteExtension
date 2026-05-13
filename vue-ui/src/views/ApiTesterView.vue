@@ -518,32 +518,92 @@
             Local History ({{ currentRequest.scriptFileVersions.length }} saved versions)
           </div>
           <div class="version-list">
-            <div v-for="ver in currentRequest.scriptFileVersions" :key="ver.id" class="version-item">
+            <div
+              v-for="ver in currentRequest.scriptFileVersions"
+              :key="ver.id"
+              class="version-item"
+              :class="{ 'version-item--active': currentRequest.scriptDiffVersion?.id === ver.id }"
+            >
               <span class="version-date">{{ formatVersionDate(ver.savedAt) }}</span>
-              <button class="version-restore-btn" @click="currentRequest && restoreVersion(currentRequest, ver)">
-                Restore
-              </button>
+              <div class="version-actions">
+                <button
+                  class="version-diff-btn"
+                  :class="{ active: currentRequest.scriptDiffVersion?.id === ver.id }"
+                  title="Compare with current"
+                  @click="currentRequest && (currentRequest.scriptDiffVersion = currentRequest.scriptDiffVersion?.id === ver.id ? null : ver)"
+                >
+                  <i class="pi pi-code text-xs"></i>
+                  Diff
+                </button>
+                <button
+                  class="version-restore-btn"
+                  title="Restore this version"
+                  @click="currentRequest && restoreVersion(currentRequest, ver)"
+                >
+                  <i class="pi pi-undo text-xs"></i>
+                  Restore
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
+        <!-- Editor / Diff area -->
         <div class="editor-pane-content">
-          <MonacoCodeEditor
-            v-if="currentRequest?.scriptFileContent != null && !currentRequest?.scriptFileLoading"
-            :model-value="currentRequest?.scriptFileContent ?? ''"
-            @update:modelValue="onEditorChange"
-            language="javascript"
-            :readonly="false"
-            :config="{ autoSizing: true, minimap: false, suppressNativeFind: false }"
-          />
-          <div v-else-if="currentRequest?.scriptFileLoading" class="editor-pane-empty">
-            <i class="pi pi-spin pi-spinner text-xl" style="color: var(--p-indigo-400)"></i>
-            <span>Loading script…</span>
-          </div>
-          <div v-else class="editor-pane-empty">
-            <i class="pi pi-code text-2xl" style="color: var(--p-slate-300)"></i>
-            <span>Select a deployment to view its script</span>
-          </div>
+          <!-- ── Diff mode ── -->
+          <template v-if="currentRequest?.scriptDiffVersion">
+            <div class="script-diff-bar">
+              <span class="script-diff-label">
+                <i class="pi pi-clock text-xs mr-1"></i>
+                Comparing <strong>{{ formatVersionDate(currentRequest.scriptDiffVersion.savedAt) }}</strong> (left) vs Current (right)
+              </span>
+              <div class="script-diff-actions">
+                <button
+                  class="editor-action-btn"
+                  title="Restore this version to the editor"
+                  @click="currentRequest && restoreVersion(currentRequest, currentRequest.scriptDiffVersion)"
+                >
+                  <i class="pi pi-undo text-xs"></i>
+                  Restore to This
+                </button>
+                <button
+                  class="editor-action-btn"
+                  title="Close diff"
+                  @click="currentRequest && (currentRequest.scriptDiffVersion = null)"
+                >
+                  <i class="pi pi-times text-xs"></i>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div class="script-diff-view">
+              <DiffViewer
+                :original="currentRequest.scriptDiffVersion.content"
+                :modified="currentRequest.scriptFileContent ?? ''"
+                language="javascript"
+              />
+            </div>
+          </template>
+
+          <!-- ── Normal Monaco mode ── -->
+          <template v-else>
+            <MonacoCodeEditor
+              v-if="currentRequest?.scriptFileContent != null && !currentRequest?.scriptFileLoading"
+              :model-value="currentRequest?.scriptFileContent ?? ''"
+              @update:modelValue="onEditorChange"
+              language="javascript"
+              :readonly="false"
+              :config="{ autoSizing: true, minimap: false, suppressNativeFind: false }"
+            />
+            <div v-else-if="currentRequest?.scriptFileLoading" class="editor-pane-empty">
+              <i class="pi pi-spin pi-spinner text-xl" style="color: var(--p-indigo-400)"></i>
+              <span>Loading script…</span>
+            </div>
+            <div v-else class="editor-pane-empty">
+              <i class="pi pi-code text-2xl" style="color: var(--p-slate-300)"></i>
+              <span>Select a deployment to view its script</span>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -552,7 +612,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, watch, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, nextTick, watch, onBeforeUnmount } from "vue";
 import { Button, InputText, useToast } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
 import MSelect from "../components/universal/input/MSelect.vue";
@@ -560,6 +620,7 @@ import MInput from "../components/universal/input/MInput.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import DiffViewer from "../components/DiffViewer.vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { generateId } from "../utils/utilities";
@@ -679,6 +740,8 @@ interface ApiRequest {
   scriptFileVersions: FileVersion[];
   /** Whether the version history panel is expanded */
   showVersionHistory: boolean;
+  /** The version currently being diff-compared against the live editor content */
+  scriptDiffVersion: FileVersion | null;
 }
 
 // ── Request / tab state ────────────────────────────────────────────────────────
@@ -949,6 +1012,7 @@ const saveScriptContent = async (req: ApiRequest): Promise<void> => {
 const restoreVersion = (req: ApiRequest, version: FileVersion): void => {
   req.scriptFileContent = version.content;
   req.scriptFileDirty = true;
+  req.scriptDiffVersion = null;
   req.showVersionHistory = false;
   toast.add({
     severity: "info",
@@ -1019,7 +1083,8 @@ const createNewRequest = (): ApiRequest => ({
   scriptFileDirty: false,
   scriptFileSaving: false,
   scriptFileVersions: [],
-  showVersionHistory: false
+  showVersionHistory: false,
+  scriptDiffVersion: null
 });
 
 const addNewRequest = () => {
@@ -1457,7 +1522,8 @@ onMounted(async () => {
       scriptFileDirty: false,
       scriptFileSaving: false,
       scriptFileVersions: [],
-      showVersionHistory: false
+      showVersionHistory: false,
+      scriptDiffVersion: null
     }));
 
     requests.value = restored;
@@ -1478,6 +1544,13 @@ onMounted(async () => {
   }
 
   isRestoring.value = false;
+
+  // Set initial split at 60% left / 40% right based on actual container width
+  await nextTick();
+  const containerW = mainRef.value?.clientWidth ?? 0;
+  if (containerW > 0) {
+    splitLeftWidth.value = Math.max(280, Math.floor(containerW * 0.6));
+  }
 
   // Auto-fetch script files for any open tab that has an associated script
   const tabsWithScript = openTabs.value
@@ -1708,6 +1781,8 @@ onBeforeUnmount(async () => {
 
 .editor-pane-content {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   min-height: 0;
 }
@@ -2427,5 +2502,91 @@ onBeforeUnmount(async () => {
   white-space: nowrap;
   text-align: right;
   flex-shrink: 0;
+}
+
+/* ── Version item actions ────────────────────────────────────────────────── */
+.version-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.version-item--active {
+  background: var(--p-indigo-50);
+  border-color: var(--p-indigo-200);
+}
+
+.version-diff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  background: none;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.2rem;
+  color: var(--p-slate-500);
+  font-size: 0.62rem;
+  padding: 0.1rem 0.35rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.version-diff-btn:hover {
+  background: var(--p-slate-100);
+  border-color: var(--p-slate-400);
+  color: var(--p-slate-700);
+}
+
+.version-diff-btn.active {
+  background: var(--p-indigo-50);
+  border-color: var(--p-indigo-300);
+  color: var(--p-indigo-700);
+}
+
+/* ── Script diff bar ─────────────────────────────────────────────────────── */
+.script-diff-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.28rem 0.6rem;
+  border-bottom: 1px solid var(--p-indigo-200);
+  background: var(--p-indigo-50);
+  flex-shrink: 0;
+  font-size: 0.72rem;
+}
+
+.script-diff-label {
+  flex: 1;
+  color: var(--p-indigo-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-diff-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* ── Script diff view ────────────────────────────────────────────────────── */
+.script-diff-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.script-diff-view :deep(.diff-viewer) {
+  flex: 1;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
 }
 </style>
