@@ -1,20 +1,149 @@
 <template>
-  <div v-if="!isAdmin" class="admin-guard">
-    <i class="pi pi-lock text-4xl text-gray-400 mb-3"></i>
-    <p class="text-gray-500 text-sm">Access restricted to admins.</p>
-  </div>
-
-  <MCard v-else flex autoHeight direction="row" gap="0.5" padding="" outlined elevated :style="{ height: '90vh' }">
-    <!-- ═══ SIDEBAR: History ═══ -->
-    <ExpandableSidebar expandedWidth="220px" :defaultExpanded="true">
+  <MCard flex autoHeight direction="row" gap="0.5" padding="" outlined elevated :style="{ height: '90vh' }">
+    <!-- ═══ SIDEBAR ═══ -->
+    <ExpandableSidebar expandedWidth="240px" :defaultExpanded="true">
       <template #collapsed>
         <button class="p-2 rounded bg-slate-600 hover:opacity-100 hover:bg-slate-500 transition-opacity duration-150 text-[var(--p-slate-50)]" title="History">
           <i class="pi pi-history text-sm"></i>
         </button>
       </template>
       <template #default>
-        <div class="sidebar-section">
-          <h4>History</h4>
+        <!-- ── Endpoints section ────────────────────────────────────── -->
+        <div class="sidebar-section endpoints-section">
+          <div class="sidebar-section-header">
+            <h4>Endpoints</h4>
+            <button
+              class="sidebar-icon-btn"
+              title="Refresh RESTlets & Suitelets"
+              :disabled="loadingScripts"
+              @click="loadScripts"
+            >
+              <i :class="loadingScripts ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" class="text-xs"></i>
+            </button>
+          </div>
+
+          <!-- Search box — shown once loaded and list is non-empty -->
+          <div v-if="scriptsLoaded && endpointScripts.length > 0" class="endpoints-search">
+            <i class="pi pi-search endpoints-search-icon"></i>
+            <input
+              v-model="scriptSearch"
+              class="endpoints-search-input"
+              placeholder="Search endpoints…"
+              type="text"
+              autocomplete="off"
+            />
+            <button
+              v-if="scriptSearch"
+              class="endpoints-search-clear"
+              title="Clear"
+              @click="scriptSearch = ''"
+            >
+              <i class="pi pi-times text-xs"></i>
+            </button>
+          </div>
+
+          <!-- Loading -->
+          <div v-if="loadingScripts" class="endpoints-loading">
+            <i class="pi pi-spin pi-spinner text-indigo-400 text-sm"></i>
+            <span>Loading scripts…</span>
+          </div>
+
+          <!-- Loaded: no results from API -->
+          <div v-else-if="scriptsLoaded && endpointScripts.length === 0" class="endpoints-empty">
+            No RESTlets or Suitelets found.
+          </div>
+
+          <!-- Loaded: no results from search filter -->
+          <div v-else-if="scriptsLoaded && filteredRestlets.length === 0 && filteredSuitelets.length === 0 && scriptSearch" class="endpoints-empty">
+            No matches for "{{ scriptSearch }}"
+          </div>
+
+          <!-- Loaded: script list -->
+          <div v-else-if="scriptsLoaded" class="endpoints-list">
+            <!-- RESTlets group -->
+            <template v-if="filteredRestlets.length > 0">
+              <div class="endpoint-group-label">RESTlets</div>
+              <div
+                v-for="script in filteredRestlets"
+                :key="script.id"
+                class="endpoint-script"
+              >
+                <button
+                  class="endpoint-script-btn"
+                  :class="{ 'is-expanded': expandedScriptIds.has(script.id) }"
+                  @click="toggleScriptExpand(script)"
+                >
+                  <i :class="expandedScriptIds.has(script.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" class="endpoint-chevron"></i>
+                  <span class="endpoint-name" :title="script.name">{{ script.name }}</span>
+                  <i v-if="loadingDeploymentFor === script.id" class="pi pi-spin pi-spinner text-xs text-indigo-400 ml-auto"></i>
+                </button>
+                <div v-if="expandedScriptIds.has(script.id)" class="deployment-list">
+                  <div v-if="script.deployments.length === 0 && !loadingDeploymentFor" class="deployment-empty">
+                    No deployments
+                  </div>
+                  <button
+                    v-for="dep in script.deployments"
+                    :key="dep.primarykey"
+                    class="deployment-item"
+                    :title="`${dep.scriptid} — ${dep.isdeployed ? 'Deployed' : 'Not deployed'}`"
+                    @click="useDeployment(script, dep)"
+                  >
+                    <i class="pi pi-send text-xs text-indigo-500 flex-shrink-0"></i>
+                    <span class="deployment-id">{{ dep.scriptid }}</span>
+                    <span v-if="!dep.isdeployed" class="deployment-inactive" title="Not deployed">off</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Suitelets group -->
+            <template v-if="filteredSuitelets.length > 0">
+              <div class="endpoint-group-label" :class="{ 'mt-2': filteredRestlets.length > 0 }">Suitelets</div>
+              <div
+                v-for="script in filteredSuitelets"
+                :key="script.id"
+                class="endpoint-script"
+              >
+                <button
+                  class="endpoint-script-btn"
+                  :class="{ 'is-expanded': expandedScriptIds.has(script.id) }"
+                  @click="toggleScriptExpand(script)"
+                >
+                  <i :class="expandedScriptIds.has(script.id) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" class="endpoint-chevron"></i>
+                  <span class="endpoint-name" :title="script.name">{{ script.name }}</span>
+                  <i v-if="loadingDeploymentFor === script.id" class="pi pi-spin pi-spinner text-xs text-indigo-400 ml-auto"></i>
+                </button>
+                <div v-if="expandedScriptIds.has(script.id)" class="deployment-list">
+                  <div v-if="script.deployments.length === 0 && !loadingDeploymentFor" class="deployment-empty">
+                    No deployments
+                  </div>
+                  <button
+                    v-for="dep in script.deployments"
+                    :key="dep.primarykey"
+                    class="deployment-item"
+                    :title="`${dep.scriptid} — ${dep.isdeployed ? 'Deployed' : 'Not deployed'}`"
+                    @click="useDeployment(script, dep)"
+                  >
+                    <i class="pi pi-send text-xs text-purple-500 flex-shrink-0"></i>
+                    <span class="deployment-id">{{ dep.scriptid }}</span>
+                    <span v-if="!dep.isdeployed" class="deployment-inactive" title="Not deployed">off</span>
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="sidebar-divider"></div>
+
+        <!-- ── History section ──────────────────────────────────────── -->
+        <div class="sidebar-section history-section">
+          <div class="sidebar-section-header">
+            <h4>History</h4>
+            <button v-if="history.length > 0" class="sidebar-icon-btn" title="Clear history" @click="clearHistory">
+              <i class="pi pi-trash text-xs"></i>
+            </button>
+          </div>
           <div class="history-list">
             <div
               v-for="entry in history"
@@ -27,13 +156,10 @@
               <span class="history-url">{{ entry.url }}</span>
               <span v-if="entry.status" class="history-status" :class="statusClass(entry.status)">{{ entry.status }}</span>
             </div>
-            <div v-if="history.length === 0" class="text-gray-400 text-xs text-center mt-4 px-2">
+            <div v-if="history.length === 0" class="text-gray-400 text-xs text-center mt-2 px-2">
               No history yet
             </div>
           </div>
-          <Button v-if="history.length > 0" size="small" text class="mt-2 w-full" @click="clearHistory">
-            <i class="pi pi-trash text-xs mr-1"></i> Clear
-          </Button>
         </div>
       </template>
     </ExpandableSidebar>
@@ -42,12 +168,11 @@
     <div class="api-main">
       <!-- URL bar -->
       <div class="url-bar">
-        <Select
+        <MSelect
           v-model="method"
           :options="HTTP_METHODS"
           size="small"
           class="method-select"
-          :pt="{ overlay: { style: { zIndex: '10000' } } }"
         />
         <InputText
           v-model="url"
@@ -113,12 +238,11 @@
         <!-- Body -->
         <div v-if="activeRequestTab === 'Body'" class="body-editor">
           <div class="body-type-bar">
-            <Select
+            <MSelect
               v-model="bodyType"
               :options="BODY_TYPES"
               size="small"
               class="body-type-select"
-              :pt="{ overlay: { style: { zIndex: '10000' } } }"
             />
           </div>
           <textarea
@@ -154,14 +278,16 @@
 
           <div class="tab-bar mt-1">
             <button
-              v-for="tab in RESPONSE_TABS"
+              v-for="tab in responseTabs"
               :key="tab"
               :class="['tab-btn', { active: activeResponseTab === tab }]"
               @click="activeResponseTab = tab"
             >
+              <i v-if="tab === 'Preview'" class="pi pi-eye text-xs mr-1"></i>
               {{ tab }}
             </button>
-            <div class="ml-auto flex gap-1">
+            <!-- Pretty / Raw / Copy — hidden on Preview tab -->
+            <div v-if="activeResponseTab !== 'Preview'" class="ml-auto flex gap-1">
               <button class="fmt-btn" :class="{ active: responseFormat === 'pretty' }" @click="responseFormat = 'pretty'">Pretty</button>
               <button class="fmt-btn" :class="{ active: responseFormat === 'raw' }" @click="responseFormat = 'raw'">Raw</button>
               <button class="fmt-btn ml-1" @click="copyResponse" title="Copy response">
@@ -185,6 +311,15 @@
               No response headers
             </div>
           </div>
+
+          <!-- HTML Preview -->
+          <div v-else-if="activeResponseTab === 'Preview'" class="response-content preview-content">
+            <iframe
+              class="preview-iframe"
+              :srcdoc="response.body"
+              sandbox="allow-scripts allow-forms"
+            ></iframe>
+          </div>
         </div>
       </div>
     </div>
@@ -192,22 +327,22 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from "vue";
-import { Button, InputText, Select } from "primevue";
+import { ref, computed, onMounted } from "vue";
+import { Button, InputText } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
+import MSelect from "../components/universal/input/MSelect.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
-import { callApi } from "../utils/api";
+import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-
-// ── Admin guard ─────────────────────────────────────────────────────────────
-const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
-const isAdmin = privilegeLevel === "ADMIN";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const BODY_TYPES = ["none", "raw (JSON)", "raw (text)", "form-urlencoded"];
 const REQUEST_TABS = ["Params", "Headers", "Body"];
-const RESPONSE_TABS = ["Body", "Headers"];
+
+// Script types that represent RESTlets and Suitelets in NetSuite
+const RESTLET_TYPE = "RESTLET";
+const SUITELET_TYPE = "SCRIPTLET";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type KVRow = { key: string; value: string };
@@ -230,7 +365,23 @@ type HttpResponse = {
   error?: string;
 };
 
-// ── State ────────────────────────────────────────────────────────────────────
+type Deployment = {
+  primarykey: string;
+  scriptid: string;
+  isdeployed: boolean;
+  status?: string;
+};
+
+type EndpointScript = {
+  id: number;
+  name: string;
+  scriptid: string;
+  scriptType: string;
+  deployments: Deployment[];
+  deploymentsLoaded: boolean;
+};
+
+// ── Request state ─────────────────────────────────────────────────────────────
 const method = ref("GET");
 const url = ref("");
 const params = ref<KVRow[]>([{ key: "", value: "" }]);
@@ -246,9 +397,55 @@ const isLoading = ref(false);
 const response = ref<HttpResponse | null>(null);
 const history = ref<HistoryEntry[]>([]);
 
-// ── Computed ─────────────────────────────────────────────────────────────────
+// ── Endpoints state ───────────────────────────────────────────────────────────
+const scriptsLoaded = ref(false);
+const loadingScripts = ref(false);
+const endpointScripts = ref<EndpointScript[]>([]);
+const expandedScriptIds = ref<Set<number>>(new Set());
+const loadingDeploymentFor = ref<number | null>(null);
+const scriptSearch = ref("");
+
+// ── Computed ──────────────────────────────────────────────────────────────────
 const activeParams = computed(() => params.value.filter((r) => r.key.trim()));
 const activeHeaders = computed(() => headers.value.filter((r) => r.key.trim()));
+
+const restlets = computed(() =>
+  endpointScripts.value.filter((s) => s.scriptType === RESTLET_TYPE)
+);
+const suitelets = computed(() =>
+  endpointScripts.value.filter((s) => s.scriptType === SUITELET_TYPE)
+);
+
+const filteredRestlets = computed(() => {
+  const q = scriptSearch.value.trim().toLowerCase();
+  return q ? restlets.value.filter((s) => s.name.toLowerCase().includes(q) || s.scriptid.toLowerCase().includes(q)) : restlets.value;
+});
+
+const filteredSuitelets = computed(() => {
+  const q = scriptSearch.value.trim().toLowerCase();
+  return q ? suitelets.value.filter((s) => s.name.toLowerCase().includes(q) || s.scriptid.toLowerCase().includes(q)) : suitelets.value;
+});
+
+/** True when the response body is HTML (detected by Content-Type or doctype sniff). */
+const isHtmlResponse = computed(() => {
+  if (!response.value) return false;
+  const ct = Object.entries(response.value.headers).find(
+    ([k]) => k.toLowerCase() === "content-type"
+  )?.[1] ?? "";
+  if (ct.toLowerCase().includes("text/html")) return true;
+  const trimmed = response.value.body.trimStart();
+  return (
+    trimmed.startsWith("<!DOCTYPE") ||
+    trimmed.startsWith("<!doctype") ||
+    trimmed.startsWith("<html") ||
+    trimmed.startsWith("<HTML")
+  );
+});
+
+/** Dynamic response tab list — adds Preview when body is HTML. */
+const responseTabs = computed(() =>
+  isHtmlResponse.value ? ["Body", "Headers", "Preview"] : ["Body", "Headers"]
+);
 
 const formattedResponseBody = computed(() => {
   if (!response.value) return "";
@@ -260,7 +457,7 @@ const formattedResponseBody = computed(() => {
   }
 });
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const buildUrl = (): string => {
   const base = url.value.trim();
   const qp = activeParams.value;
@@ -296,7 +493,7 @@ const buildBody = (): string | undefined => {
   return body.value;
 };
 
-// ── Actions ──────────────────────────────────────────────────────────────────
+// ── Request actions ───────────────────────────────────────────────────────────
 const sendRequest = async () => {
   if (!url.value.trim()) return;
   isLoading.value = true;
@@ -353,11 +550,88 @@ const copyResponse = () => {
   navigator.clipboard.writeText(formattedResponseBody.value);
 };
 
-// ── KV helpers ───────────────────────────────────────────────────────────────
+// ── KV helpers ────────────────────────────────────────────────────────────────
 const addParam = () => params.value.push({ key: "", value: "" });
 const removeParam = (i: number) => params.value.splice(i, 1);
 const addHeader = () => headers.value.push({ key: "", value: "" });
 const removeHeader = (i: number) => headers.value.splice(i, 1);
+
+// ── Endpoints ─────────────────────────────────────────────────────────────────
+const loadScripts = async () => {
+  loadingScripts.value = true;
+  try {
+    const res = await callApi(RequestRoutes.SCRIPTS);
+    const scripts: any[] = (res as ApiResponse)?.message ?? [];
+    endpointScripts.value = scripts
+      .filter((s) => s.scripttype === RESTLET_TYPE || s.scripttype === SUITELET_TYPE)
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        scriptid: s.scriptid,
+        scriptType: s.scripttype,
+        deployments: [],
+        deploymentsLoaded: false
+      }));
+    scriptsLoaded.value = true;
+  } finally {
+    loadingScripts.value = false;
+  }
+};
+
+const toggleScriptExpand = async (script: EndpointScript) => {
+  const newSet = new Set(expandedScriptIds.value);
+  if (newSet.has(script.id)) {
+    newSet.delete(script.id);
+    expandedScriptIds.value = newSet;
+    return;
+  }
+  newSet.add(script.id);
+  expandedScriptIds.value = newSet;
+
+  // Lazy-load deployments
+  if (!script.deploymentsLoaded) {
+    loadingDeploymentFor.value = script.id;
+    try {
+      const res = await callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, { scriptId: script.id });
+      const deps: any[] = (res as ApiResponse)?.message ?? [];
+      script.deployments = deps.map((d) => ({
+        primarykey: String(d.primarykey ?? d.id ?? ""),
+        scriptid: String(d.scriptid ?? ""),
+        isdeployed: Boolean(d.isdeployed),
+        status: d.status
+      }));
+      script.deploymentsLoaded = true;
+    } finally {
+      loadingDeploymentFor.value = null;
+    }
+  }
+};
+
+const useDeployment = async (script: EndpointScript, dep: Deployment) => {
+  let deploymentUrl: string | null = null;
+
+  if (script.scriptType === SUITELET_TYPE) {
+    const res = await callApi(RequestRoutes.SUITELET_URL, {
+      script: script.scriptid,
+      deployment: dep.scriptid
+    });
+    deploymentUrl = (res as ApiResponse)?.message ?? null;
+  } else {
+    const res = await callApi(RequestRoutes.SCRIPT_DEPLOYMENT_URL, {
+      deployment: dep.primarykey
+    });
+    deploymentUrl = (res as ApiResponse)?.message ?? null;
+  }
+
+  if (deploymentUrl) {
+    url.value = deploymentUrl;
+    if (script.scriptType === SUITELET_TYPE) {
+      method.value = "GET";
+    }
+    params.value = [{ key: "", value: "" }];
+    response.value = null;
+  }
+};
 
 // ── CSS helpers ───────────────────────────────────────────────────────────────
 const statusClass = (status: number): string => {
@@ -378,19 +652,14 @@ const methodClass = (m: string): string => {
   };
   return map[m] ?? "method-other";
 };
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
+onMounted(() => {
+  loadScripts();
+});
 </script>
 
 <style scoped>
-/* ── Admin guard ─────────────────────────────────────────────────────────── */
-.admin-guard {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 90vh;
-  gap: 0.5rem;
-}
-
 /* ── Main layout ─────────────────────────────────────────────────────────── */
 .api-main {
   flex: 1;
@@ -400,31 +669,242 @@ const methodClass = (m: string): string => {
   overflow: hidden;
 }
 
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+/* ── Sidebar sections ────────────────────────────────────────────────────── */
 .sidebar-section {
   display: flex;
   flex-direction: column;
+  padding: 0.6rem 0.5rem 0.4rem;
+}
+
+.endpoints-section {
+  flex-shrink: 0;
+}
+
+.history-section {
   flex: 1;
   min-height: 0;
-  padding: 0.75rem 0.5rem;
   overflow: hidden;
 }
 
-.sidebar-section h4 {
-  font-size: 0.7rem;
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+}
+
+.sidebar-section-header h4 {
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--p-slate-400);
-  margin: 0 0 0.5rem 0;
+  margin: 0;
 }
 
+.sidebar-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--p-slate-400);
+  padding: 0.15rem 0.25rem;
+  border-radius: 0.2rem;
+  transition: color 0.12s, background 0.12s;
+  line-height: 1;
+}
+
+.sidebar-icon-btn:hover:not(:disabled) {
+  color: var(--p-indigo-600);
+  background: var(--p-indigo-50);
+}
+
+.sidebar-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--p-slate-200);
+  margin: 0.1rem 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ── Endpoints search ────────────────────────────────────────────────────── */
+.endpoints-search {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--p-slate-100);
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.3rem;
+  padding: 0.2rem 0.4rem;
+  margin-bottom: 0.4rem;
+  transition: border-color 0.12s;
+}
+
+.endpoints-search:focus-within {
+  border-color: var(--p-indigo-300);
+  background: white;
+}
+
+.endpoints-search-icon {
+  font-size: 0.6rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+}
+
+.endpoints-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.72rem;
+  color: var(--p-slate-700);
+  min-width: 0;
+}
+
+.endpoints-search-input::placeholder {
+  color: var(--p-slate-400);
+}
+
+.endpoints-search-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--p-slate-400);
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.endpoints-search-clear:hover {
+  color: var(--p-slate-600);
+}
+
+/* ── Endpoints ───────────────────────────────────────────────────────────── */
+.endpoints-loading,
+.endpoints-empty {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  text-align: center;
+  padding: 0.3rem 0.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.endpoints-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  max-height: 220px;
+}
+
+.endpoint-group-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--p-slate-400);
+  padding: 0.25rem 0.2rem 0.15rem;
+}
+
+.endpoint-script-btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.3rem;
+  padding: 0.3rem 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--p-slate-700);
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.endpoint-script-btn:hover,
+.endpoint-script-btn.is-expanded {
+  background: var(--p-slate-100);
+}
+
+.endpoint-chevron {
+  font-size: 0.55rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.endpoint-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deployment-list {
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.deployment-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.3rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 0.2rem;
+  font-size: 0.68rem;
+  color: var(--p-slate-600);
+  text-align: left;
+  width: 100%;
+  transition: background 0.1s, color 0.1s;
+}
+
+.deployment-item:hover {
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-700);
+}
+
+.deployment-id {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deployment-empty {
+  font-size: 0.68rem;
+  color: var(--p-slate-400);
+  padding: 0.2rem 0.3rem;
+  font-style: italic;
+}
+
+.deployment-inactive {
+  font-size: 0.6rem;
+  background: var(--p-slate-200);
+  color: var(--p-slate-500);
+  border-radius: 99px;
+  padding: 0.05rem 0.3rem;
+  flex-shrink: 0;
+}
+
+/* ── History ─────────────────────────────────────────────────────────────── */
 .history-list {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
   min-height: 0;
 }
 
@@ -432,7 +912,7 @@ const methodClass = (m: string): string => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.3rem 0.4rem;
+  padding: 0.28rem 0.35rem;
   border-radius: 0.25rem;
   cursor: pointer;
   font-size: 0.7rem;
@@ -680,6 +1160,22 @@ const methodClass = (m: string): string => {
   color: var(--p-slate-700);
   padding: 0.4rem 0;
   margin: 0;
+}
+
+/* ── HTML Preview ────────────────────────────────────────────────────────── */
+.preview-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preview-iframe {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0.25rem;
+  background: white;
 }
 
 /* ── Response headers table ──────────────────────────────────────────────── */

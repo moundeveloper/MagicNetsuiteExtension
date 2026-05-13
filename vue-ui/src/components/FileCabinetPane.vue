@@ -713,14 +713,13 @@
                 @keydown.escape="cancelNewFile"
               />
               <span class="fc-nf-dot">.</span>
-              <Select
+              <MSelect
                 v-model="newFileExtension"
                 :options="FILE_EXTENSIONS"
                 option-label="label"
                 option-value="value"
                 size="small"
                 class="fc-nf-ext-select"
-                :pt="{ overlay: { style: { zIndex: '10000' } } }"
               />
             </div>
             <p v-if="newFileBaseName.trim()" class="fc-nf-preview">
@@ -755,7 +754,8 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, InputText, Select, useToast } from "primevue";
+import { Button, InputText, useToast } from "primevue";
+import MSelect from "./universal/input/MSelect.vue";
 import CodeViewer from "./CodeViewer.vue";
 import FileCodeEditor from "./FileCodeEditor.vue";
 import DiffViewer from "./DiffViewer.vue";
@@ -1929,8 +1929,7 @@ const executeNewFolder = async () => {
     showNewFolderDialog.value = false;
     newFolderName.value = "";
     toast.add({ severity: "success", summary: "Folder Created", detail: `"${name}" created`, life: 3000 });
-    if (newId) await navigateToFolder(Number(newId));
-    else await refreshCurrentFolder();
+    await refreshCurrentFolder();
     if (parentFolder !== null) emit("expand-folder", parentFolder);
   } catch (err: any) {
     toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create folder", life: 5000 });
