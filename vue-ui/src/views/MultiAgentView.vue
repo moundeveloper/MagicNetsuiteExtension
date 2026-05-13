@@ -273,17 +273,34 @@
                         :key="saMsg.id"
                         class="sub-agent-msg"
                       >
+                        <!-- Tool call row: icon + name + status badge + indented result -->
                         <div
                           v-if="saMsg.role === 'tool'"
-                          class="sub-agent-tool-msg"
+                          class="sa-tool-row"
                         >
-                          <span class="sub-agent-tool-name">{{
-                            saMsg.toolName
-                          }}</span>
-                          <span class="sub-agent-tool-content">{{
-                            truncate(saMsg.content, 300)
-                          }}</span>
+                          <div class="sa-tool-header">
+                            <i class="pi pi-bolt sa-tool-icon" />
+                            <span class="sa-tool-name">{{ saMsg.toolName }}</span>
+                            <span
+                              v-if="saMsg.content.startsWith('Running ')"
+                              class="sa-tool-badge sa-tool-badge--running"
+                            >
+                              <span class="sa-run-dot" />
+                              running
+                            </span>
+                            <span v-else class="sa-tool-badge sa-tool-badge--done">
+                              <i class="pi pi-check" style="font-size: 0.55rem" />
+                              done
+                            </span>
+                          </div>
+                          <div
+                            v-if="!saMsg.content.startsWith('Running ')"
+                            class="sa-tool-result"
+                          >
+                            {{ truncate(saMsg.content, 200) }}
+                          </div>
                         </div>
+                        <!-- Assistant final answer -->
                         <div
                           v-else-if="saMsg.role === 'assistant'"
                           class="sub-agent-assistant-msg"
@@ -291,6 +308,7 @@
                           <MessageContentRenderer :content="saMsg.content" />
                         </div>
                       </div>
+                      <!-- Running indicator (thinking dots while still in progress) -->
                       <div
                         v-if="sa.status === 'running'"
                         class="sub-agent-running-indicator"
@@ -352,14 +370,30 @@
               </span>
             </div>
 
+            <!-- Slash command suggestions -->
+            <div v-if="showSlashSuggestions && slashSuggestions.length > 0" ref="suggestionListRef" class="slash-suggestions">
+              <div
+                v-for="(ag, idx) in slashSuggestions"
+                :key="ag.agentId"
+                class="slash-suggestion-item"
+                :class="{ 'slash-suggestion-active': idx === selectedSuggestionIndex }"
+                @mousedown.prevent="applySlashSuggestion(ag)"
+              >
+                <span class="slash-dot" :style="{ background: ag.color }" />
+                <span class="slash-cmd">/{{ ag.slug }}</span>
+                <span class="slash-desc">{{ ag.description }}</span>
+              </div>
+            </div>
+
             <div class="input-row">
               <div
                 ref="inputRef"
                 class="chat-input"
                 :contenteditable="!loading"
-                data-placeholder="Describe a task to orchestrate..."
+                data-placeholder="Describe a task... (type / to pin an agent)"
                 @keydown="onInputKeydown"
                 @input="onPromptInput"
+                @blur="onPromptBlur"
                 @paste.prevent="onInputPaste"
               />
               <button
@@ -514,6 +548,14 @@ const toolMessageToAssistant = ref<Map<number, number>>(new Map());
 
 // Track synced tool call IDs
 const syncedToolCallIds = ref<Set<string>>(new Set());
+
+// ── Slash-command agent picker ──
+const availableAgents = ref<Agent[]>([]);
+const slashSuggestions = ref<Agent[]>([]);
+const showSlashSuggestions = ref(false);
+const selectedSuggestionIndex = ref(-1);
+const activeChipAgent = ref<Agent | null>(null);
+const suggestionListRef = ref<HTMLDivElement | null>(null);
 
 // ── Save debounce ──
 let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -702,7 +744,6 @@ const executeSubAgent = async (
         content: `Running ${name}...`,
         toolName: name
       });
-      scrollToBottom();
     },
     onToolResult(name, result) {
       const lastTool = [...subAgent.messages]
@@ -714,7 +755,6 @@ const executeSubAgent = async (
             ? result
             : JSON.stringify(result, null, 2);
       }
-      scrollToBottom();
     }
   });
 
@@ -750,7 +790,6 @@ const executeSubAgent = async (
     });
   }
 
-  scrollToBottom();
   autoSaveCurrentSession();
 };
 
@@ -822,7 +861,7 @@ const spawnAgentTool: ToolDefinition = {
       task,
       messages: [],
       isTemporary: false,
-      expanded: true,
+      expanded: false,
       createdAt: new Date().toISOString()
     };
 
@@ -911,7 +950,7 @@ const createTempAgentTool: ToolDefinition = {
       task,
       messages: [],
       isTemporary: true,
-      expanded: true,
+      expanded: false,
       createdAt: new Date().toISOString()
     };
 
@@ -999,34 +1038,53 @@ const getAgentResultsTool: ToolDefinition = {
       ? (input.agent_ids as string[])
       : [];
 
-    const results = ids.map((id) => {
-      const sa = subAgents.value.find((s) => s.id === id);
-      if (!sa) return { id, status: "not_found", result: null, task: null };
-      return {
-        id,
-        name: sa.name,
-        status: sa.status,
-        task: sa.task,
-        result:
-          sa.status === "done" || sa.status === "error"
-            ? (sa.result ?? null)
-            : null
-      };
-    });
+    const POLL_INTERVAL_MS = 1500;
+    const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+    const startTime = Date.now();
 
-    const pending = results.filter(
-      (r) => r.status === "running" || r.status === "idle"
-    ).length;
-    const allDone = pending === 0;
+    while (true) {
+      const results = ids.map((id) => {
+        const sa = subAgents.value.find((s) => s.id === id);
+        if (!sa) return { id, status: "not_found", result: null, task: null };
+        return {
+          id,
+          name: sa.name,
+          status: sa.status,
+          task: sa.task,
+          result:
+            sa.status === "done" || sa.status === "error"
+              ? (sa.result ?? null)
+              : null
+        };
+      });
 
-    return {
-      results,
-      allDone,
-      pending,
-      instruction: allDone
-        ? "All agents have completed. Use their results above to write your final synthesis."
-        : `${pending} agent(s) still running. Call get_agent_results again in a moment.`
-    };
+      const pending = results.filter(
+        (r) => r.status === "running" || r.status === "idle"
+      ).length;
+      const allDone = pending === 0;
+
+      if (allDone) {
+        return {
+          results,
+          allDone: true,
+          pending: 0,
+          instruction:
+            "All agents have completed. Use their results above to write your final synthesis."
+        };
+      }
+
+      if (Date.now() - startTime >= TIMEOUT_MS) {
+        return {
+          results,
+          allDone: false,
+          pending,
+          timedOut: true,
+          instruction: `Timed out waiting for ${pending} agent(s). Synthesize with the results available so far.`
+        };
+      }
+
+      await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
   }
 };
 
@@ -1165,6 +1223,8 @@ const getInputText = (): string => {
       text += node.textContent ?? "";
     } else if (node.nodeName === "BR") {
       text += "\n";
+    } else if ((node as HTMLElement).classList?.contains("agent-chip")) {
+      // skip chip
     } else {
       text += (node as HTMLElement).textContent ?? "";
     }
@@ -1174,16 +1234,162 @@ const getInputText = (): string => {
 
 const clearInput = () => {
   if (inputRef.value) inputRef.value.innerHTML = "";
+  activeChipAgent.value = null;
   prompt.value = "";
 };
 
-const inputHasContent = computed(() => !!prompt.value.trim());
+const inputHasContent = computed(() => !!prompt.value.trim() || !!activeChipAgent.value);
+
+const hasChip = (): boolean =>
+  !!inputRef.value &&
+  Array.from(inputRef.value.childNodes).some((n) =>
+    (n as HTMLElement).classList?.contains("agent-chip")
+  );
+
+const insertAgentChip = (ag: Agent) => {
+  const el = inputRef.value;
+  if (!el) return;
+
+  el.innerHTML = "";
+
+  const chip = document.createElement("span");
+  chip.className = "agent-chip";
+  chip.contentEditable = "false";
+  chip.dataset.slug = ag.slug;
+  chip.style.display = "inline-flex";
+  chip.style.alignItems = "center";
+  chip.style.gap = "3px";
+  chip.style.borderRadius = "20px";
+  chip.style.padding = "1px 8px 1px 5px";
+  chip.style.fontFamily = '"JetBrains Mono", monospace';
+  chip.style.fontSize = "0.72rem";
+  chip.style.fontWeight = "600";
+  chip.style.color = "#334155";
+  chip.style.verticalAlign = "middle";
+  chip.style.marginRight = "4px";
+  chip.style.userSelect = "none";
+  chip.style.cursor = "default";
+  chip.style.whiteSpace = "nowrap";
+  chip.style.background = hexAlpha(ag.color, 0.12);
+  chip.style.border = `1px solid ${hexAlpha(ag.color, 0.4)}`;
+
+  const dot = document.createElement("span");
+  dot.style.display = "inline-block";
+  dot.style.width = "7px";
+  dot.style.height = "7px";
+  dot.style.borderRadius = "50%";
+  dot.style.flexShrink = "0";
+  dot.style.background = ag.color;
+  chip.appendChild(dot);
+  chip.appendChild(document.createTextNode(`/${ag.slug}`));
+  el.appendChild(chip);
+
+  // Zero-width space so cursor lands after the chip
+  const spacer = document.createTextNode("\u200B");
+  el.appendChild(spacer);
+
+  const range = document.createRange();
+  range.setStartAfter(chip);
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+
+  activeChipAgent.value = ag;
+  prompt.value = "";
+};
+
+const scrollSuggestionIntoView = () => {
+  const list = suggestionListRef.value;
+  if (!list) return;
+  const idx = selectedSuggestionIndex.value;
+  const items = list.querySelectorAll<HTMLElement>(".slash-suggestion-item");
+  items[idx]?.scrollIntoView({ block: "nearest" });
+};
+
+const applySlashSuggestion = (ag: Agent) => {
+  insertAgentChip(ag);
+  showSlashSuggestions.value = false;
+  selectedSuggestionIndex.value = -1;
+  inputRef.value?.focus();
+};
 
 const onPromptInput = () => {
-  prompt.value = getInputText();
+  const text = getInputText();
+  prompt.value = text;
+
+  // Detect chip removal
+  if (activeChipAgent.value && !hasChip()) {
+    activeChipAgent.value = null;
+  }
+
+  if (!activeChipAgent.value && text.startsWith("/")) {
+    const partial = text.slice(1).split(/\s/)[0]?.toLowerCase() ?? "";
+    if (!text.includes(" ")) {
+      slashSuggestions.value = availableAgents.value.filter((a) =>
+        a.slug.toLowerCase().includes(partial)
+      );
+      showSlashSuggestions.value = slashSuggestions.value.length > 0;
+      selectedSuggestionIndex.value = -1;
+    } else {
+      showSlashSuggestions.value = false;
+    }
+  } else {
+    showSlashSuggestions.value = false;
+  }
+};
+
+const onPromptBlur = () => {
+  setTimeout(() => {
+    showSlashSuggestions.value = false;
+  }, 150);
 };
 
 const onInputKeydown = (e: KeyboardEvent) => {
+  // ── Arrow / Tab / Enter inside suggestion dropdown ──
+  if (showSlashSuggestions.value && slashSuggestions.value.length > 0) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      e.stopPropagation();
+      const max = slashSuggestions.value.length - 1;
+      selectedSuggestionIndex.value =
+        selectedSuggestionIndex.value >= max ? 0 : selectedSuggestionIndex.value + 1;
+      scrollSuggestionIntoView();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (selectedSuggestionIndex.value <= -1) {
+        selectedSuggestionIndex.value = slashSuggestions.value.length - 1;
+      } else {
+        selectedSuggestionIndex.value = selectedSuggestionIndex.value - 1;
+      }
+      scrollSuggestionIntoView();
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const target =
+        selectedSuggestionIndex.value >= 0
+          ? slashSuggestions.value[selectedSuggestionIndex.value]
+          : slashSuggestions.value[0];
+      if (target) applySlashSuggestion(target);
+      return;
+    }
+    if (e.key === "Enter" && selectedSuggestionIndex.value >= 0) {
+      e.preventDefault();
+      const sel = slashSuggestions.value[selectedSuggestionIndex.value];
+      if (sel) applySlashSuggestion(sel);
+      return;
+    }
+    if (e.key === "Escape") {
+      showSlashSuggestions.value = false;
+      selectedSuggestionIndex.value = -1;
+      return;
+    }
+  }
+
   // Alt+Enter = newline
   if (e.key === "Enter" && e.altKey) {
     e.preventDefault();
@@ -1221,14 +1427,22 @@ const onInputPaste = (e: ClipboardEvent) => {
 
 // ── Send Message ──
 const sendMessage = async (overrideText?: string) => {
-  const rawText =
+  const inputText =
     overrideText !== undefined ? overrideText : getInputText().trim();
+  const chipAgent = activeChipAgent.value;
+  // When a chip is present, prepend the agent slug instruction so the orchestrator
+  // knows which agent to use for this task.
+  const rawText =
+    chipAgent && overrideText === undefined
+      ? `[Required agent: ${chipAgent.slug}] ${inputText}`.trim()
+      : inputText;
   if (!rawText) return;
   if (loading.value) return;
 
   inProgressTools.value = [];
   if (overrideText === undefined) {
     clearInput();
+    showSlashSuggestions.value = false;
   }
 
   const userMsg: OrchestratorMessage = {
@@ -1691,8 +1905,9 @@ const loadSessionHistory = async () => {
 };
 
 // ── Lifecycle ──
-onMounted(() => {
+onMounted(async () => {
   loadSessionHistory();
+  availableAgents.value = await getEnabledAgents();
 });
 
 onBeforeUnmount(() => {
@@ -2066,30 +2281,78 @@ onBeforeUnmount(() => {
   margin-bottom: 0;
 }
 
-.sub-agent-tool-msg {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
+/* ── Tool row (icon + name + badge + result) ── */
+.sa-tool-row {
   padding: 0.3rem 0.5rem;
   background: var(--p-slate-50);
   border-radius: 0.25rem;
   margin-bottom: 0.25rem;
 }
 
-.sub-agent-tool-name {
+.sa-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.sa-tool-icon {
+  font-size: 0.6rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+}
+
+.sa-tool-name {
   font-family: "JetBrains Mono", monospace;
   font-size: 0.65rem;
   font-weight: 600;
-  color: var(--p-slate-500);
+  color: var(--p-slate-600);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.sub-agent-tool-content {
-  font-size: 0.65rem;
+.sa-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.2rem;
+  flex-shrink: 0;
+}
+
+.sa-tool-badge--running {
+  background: var(--p-blue-50);
+  color: var(--p-blue-600);
+}
+
+.sa-tool-badge--done {
+  background: var(--p-green-50);
+  color: var(--p-green-600);
+}
+
+.sa-run-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: thinking 1.4s ease-in-out infinite;
+}
+
+.sa-tool-result {
+  margin-top: 0.25rem;
+  margin-left: 1rem;
+  font-size: 0.63rem;
   color: var(--p-slate-400);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 120px;
+  max-height: 80px;
   overflow-y: auto;
+  line-height: 1.4;
 }
 
 .sub-agent-assistant-msg {
@@ -2605,5 +2868,61 @@ onBeforeUnmount(() => {
   border: none;
   border-top: 1px solid var(--p-slate-200);
   margin: 0.75rem 0;
+}
+
+/* ── Slash Command Suggestions ── */
+.slash-suggestions {
+  border-bottom: 1px solid var(--p-slate-100);
+  padding: 0.25rem 0;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.slash-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 0.8rem;
+}
+
+.slash-suggestion-item:hover {
+  background: var(--p-slate-50);
+}
+
+.slash-suggestion-active {
+  background: var(--p-blue-50) !important;
+  outline: 1px solid var(--p-blue-200);
+  outline-offset: -1px;
+}
+
+.slash-suggestion-active .slash-cmd {
+  color: var(--p-blue-700);
+}
+
+.slash-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.slash-cmd {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+
+.slash-desc {
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 </style>
