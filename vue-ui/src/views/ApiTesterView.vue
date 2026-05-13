@@ -202,8 +202,9 @@
               v-for="entry in history"
               :key="entry.id"
               class="history-item"
+              :class="{ 'is-active': selectedHistoryEntry?.id === entry.id }"
               :title="`${entry.method} ${entry.url}`"
-              @click="loadFromHistory(entry)"
+              @click="viewHistoryEntry(entry)"
             >
               <span class="method-badge" :class="methodClass(entry.method)">{{ entry.method }}</span>
               <span class="history-url">{{ entry.url }}</span>
@@ -220,8 +221,141 @@
     <!-- ═══ MAIN AREA ═══ -->
     <div class="api-main" ref="mainRef">
 
-      <!-- ── SPLIT LEFT: request tabs ── -->
+      <!-- ── SPLIT LEFT: request tabs / history viewer ── -->
       <div class="split-left" :style="{ width: splitLeftWidth + 'px' }">
+
+        <!-- ── History Viewer (replaces tabs when a history entry is selected) ── -->
+        <template v-if="selectedHistoryEntry">
+          <div class="history-viewer">
+            <!-- Header bar -->
+            <div class="history-viewer-header">
+              <span class="method-badge" :class="methodClass(selectedHistoryEntry.method)">{{ selectedHistoryEntry.method }}</span>
+              <span class="history-viewer-url" :title="selectedHistoryEntry.url">{{ selectedHistoryEntry.url }}</span>
+              <span class="history-viewer-time">{{ formatHistoryTime(selectedHistoryEntry.timestamp) }}</span>
+              <div class="history-viewer-actions">
+                <button
+                  class="editor-action-btn"
+                  title="Load this request into the current tab"
+                  @click="reuseHistoryEntry(selectedHistoryEntry)"
+                >
+                  <i class="pi pi-arrow-up-right text-xs"></i>
+                  Reuse
+                </button>
+                <button
+                  class="editor-action-btn"
+                  title="Close history viewer"
+                  @click="selectedHistoryEntry = null"
+                >
+                  <i class="pi pi-times text-xs"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Response panel -->
+            <div v-if="selectedHistoryEntry.response" class="response-body">
+              <div class="response-meta">
+                <span class="status-badge" :class="statusClass(selectedHistoryEntry.response.status)">
+                  {{ selectedHistoryEntry.response.status }} {{ selectedHistoryEntry.response.statusText }}
+                </span>
+                <span class="response-duration">{{ selectedHistoryEntry.response.duration }}ms</span>
+                <span v-if="selectedHistoryEntry.response.error" class="text-red-500 text-xs ml-2">{{ selectedHistoryEntry.response.error }}</span>
+              </div>
+
+              <div class="tab-bar mt-1">
+                <button
+                  v-for="tab in historyViewerResponseTabs"
+                  :key="tab"
+                  :class="['tab-btn', { active: historyViewerTab === tab }]"
+                  @click="onHistoryViewerTabClick(tab)"
+                >
+                  <i v-if="tab === 'Preview'" class="pi pi-eye text-xs mr-1"></i>
+                  <i v-if="tab === 'Logs'" class="pi pi-list text-xs mr-1"></i>
+                  {{ tab }}
+                  <span v-if="tab === 'Logs' && selectedHistoryEntry.logsLoading" class="ml-1">
+                    <i class="pi pi-spin pi-spinner text-xs"></i>
+                  </span>
+                  <span v-else-if="tab === 'Logs' && selectedHistoryEntry.logs && selectedHistoryEntry.logs.length > 0" class="tab-badge">
+                    {{ selectedHistoryEntry.logs.length }}
+                  </span>
+                </button>
+                <div v-if="historyViewerTab === 'Body'" class="ml-auto flex gap-1">
+                  <button class="fmt-btn" :class="{ active: historyViewerFormat === 'pretty' }" @click="historyViewerFormat = 'pretty'">Pretty</button>
+                  <button class="fmt-btn" :class="{ active: historyViewerFormat === 'raw' }" @click="historyViewerFormat = 'raw'">Raw</button>
+                  <button class="fmt-btn ml-1" @click="copyHistoryBody()" title="Copy response">
+                    <i class="pi pi-copy text-xs"></i>
+                  </button>
+                </div>
+                <div v-else-if="historyViewerTab === 'Headers'" class="ml-auto flex gap-1">
+                  <button class="fmt-btn ml-1" @click="copyHistoryHeaders()" title="Copy headers">
+                    <i class="pi pi-copy text-xs"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Body -->
+              <div v-if="historyViewerTab === 'Body'" class="response-content">
+                <pre class="response-pre">{{ formattedHistoryBody }}</pre>
+              </div>
+
+              <!-- Headers -->
+              <div v-else-if="historyViewerTab === 'Headers'" class="response-content">
+                <div v-for="(value, key) in selectedHistoryEntry.response.headers" :key="key" class="header-row">
+                  <span class="header-key">{{ key }}</span>
+                  <span class="header-value">{{ value }}</span>
+                </div>
+                <div v-if="Object.keys(selectedHistoryEntry.response.headers).length === 0" class="text-gray-400 text-xs text-center mt-4">
+                  No response headers
+                </div>
+              </div>
+
+              <!-- Preview -->
+              <div v-else-if="historyViewerTab === 'Preview'" class="response-content preview-content">
+                <div v-if="historyViewerPreviewLoading" class="response-empty">
+                  <i class="pi pi-spin pi-spinner text-2xl text-indigo-400 mb-2"></i>
+                  <p class="text-gray-400 text-sm">Fetching styles…</p>
+                </div>
+                <iframe
+                  v-else
+                  class="preview-iframe"
+                  :srcdoc="historyViewerPreviewSrc ?? ''"
+                  sandbox="allow-scripts allow-forms allow-same-origin"
+                ></iframe>
+              </div>
+
+              <!-- Logs -->
+              <div v-else-if="historyViewerTab === 'Logs'" class="response-content">
+                <div v-if="selectedHistoryEntry.logsLoading" class="response-empty">
+                  <i class="pi pi-spin pi-spinner text-2xl text-indigo-400 mb-2"></i>
+                  <p class="text-gray-400 text-sm">Fetching logs…</p>
+                </div>
+                <div v-else-if="!selectedHistoryEntry.logs || selectedHistoryEntry.logs.length === 0" class="response-empty">
+                  <i class="pi pi-list text-3xl text-gray-300 mb-2"></i>
+                  <p class="text-gray-400 text-sm">No logs found for this request.</p>
+                </div>
+                <div v-else class="logs-list">
+                  <div v-for="log in selectedHistoryEntry.logs" :key="log.id" class="log-entry">
+                    <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
+                    <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
+                    <div class="log-body">
+                      <span v-if="log.title" class="log-title">{{ log.title }}</span>
+                      <span class="log-message">{{ log.message }}</span>
+                    </div>
+                    <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- No response data (shouldn't happen, but guard) -->
+            <div v-else class="response-empty">
+              <i class="pi pi-exclamation-circle text-3xl text-gray-300 mb-2"></i>
+              <p class="text-gray-400 text-sm">No response data available.</p>
+            </div>
+          </div>
+        </template>
+
+        <!-- ── Normal request tabs ── -->
+        <template v-else>
         <!-- Tabs for open requests -->
         <MTabs
         v-if="openTabs.length > 0"
@@ -464,6 +598,7 @@
           </Button>
         </div>
       </div>
+        </template>
       </div><!-- end .split-left -->
 
       <!-- ── SPLIT DIVIDER ── -->
@@ -679,6 +814,19 @@ type HistoryEntry = {
   url: string;
   timestamp: number;
   status: number | null;
+  /** Full response snapshot captured at send time */
+  response: HttpResponse | null;
+  /** Logs fetched after the request (populated async) */
+  logs: LogEntry[] | null;
+  /** True while the background log fetch is in-flight */
+  logsLoading: boolean;
+  /** Request params at send time */
+  params: KVRow[];
+  /** Request headers at send time */
+  headers: KVRow[];
+  body: string;
+  bodyType: string;
+  scriptName: string | null;
 };
 
 type HttpResponse = {
@@ -844,6 +992,15 @@ const formattedResponseBodyOf = (req: ApiRequest): string => {
 
 const copyResponse = (req: ApiRequest) => {
   navigator.clipboard.writeText(formattedResponseBodyOf(req));
+};
+
+const copyHistoryBody = () => {
+  navigator.clipboard.writeText(formattedHistoryBody.value);
+};
+
+const copyHistoryHeaders = () => {
+  const headers = selectedHistoryEntry.value?.response?.headers ?? {};
+  navigator.clipboard.writeText(JSON.stringify(headers, null, 2));
 };
 
 // ── Preview: inline CSS via proxy ─────────────────────────────────────────────
@@ -1096,22 +1253,116 @@ const onEditorChange = (val: string): void => {
 const history = ref<HistoryEntry[]>([]);
 const clearHistory = () => {
   history.value = [];
+  selectedHistoryEntry.value = null;
 };
 
-const loadFromHistory = (entry: HistoryEntry) => {
+// ── History viewer ────────────────────────────────────────────────────────────
+const selectedHistoryEntry = ref<HistoryEntry | null>(null);
+const historyViewerTab = ref("Body");
+const historyViewerFormat = ref<"pretty" | "raw">("pretty");
+const historyViewerPreviewSrc = ref<string | null>(null);
+const historyViewerPreviewLoading = ref(false);
+
+const viewHistoryEntry = (entry: HistoryEntry) => {
+  selectedHistoryEntry.value = entry;
+  historyViewerTab.value = "Body";
+  historyViewerFormat.value = "pretty";
+  historyViewerPreviewSrc.value = null;
+  historyViewerPreviewLoading.value = false;
+};
+
+const reuseHistoryEntry = (entry: HistoryEntry) => {
+  const applyTo = (r: ApiRequest) => {
+    r.method = entry.method;
+    r.url = entry.url;
+    r.params = entry.params.length ? JSON.parse(JSON.stringify(entry.params)) : [{ key: "", value: "" }];
+    r.headers = entry.headers.length ? JSON.parse(JSON.stringify(entry.headers)) : [{ key: "", value: "" }];
+    r.body = entry.body;
+    r.bodyType = entry.bodyType;
+  };
   const req = currentRequest.value;
   if (!req) {
     addNewRequest();
-    const newReq = requests.value.find((r) => r.id === activeRequestId.value);
-    if (newReq) {
-      newReq.method = entry.method;
-      newReq.url = entry.url;
-    }
-    return;
+    nextTick(() => {
+      const newReq = requests.value.find((r) => r.id === activeRequestId.value);
+      if (newReq) applyTo(newReq);
+    });
+  } else {
+    applyTo(req);
   }
-  req.method = entry.method;
-  req.url = entry.url;
-  req.params = [{ key: "", value: "" }];
+  selectedHistoryEntry.value = null;
+};
+
+const formatHistoryTime = (ts: number): string =>
+  new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+
+const isHtmlHistoryResponse = (): boolean => {
+  const body = selectedHistoryEntry.value?.response?.body ?? "";
+  const t = body.trimStart();
+  return t.startsWith("<!DOCTYPE") || t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<HTML");
+};
+
+const historyViewerResponseTabs = computed((): string[] => {
+  if (!selectedHistoryEntry.value?.response) return [];
+  const tabs = ["Body", "Headers"];
+  if (isHtmlHistoryResponse()) tabs.push("Preview");
+  tabs.push("Logs");
+  return tabs;
+});
+
+const formattedHistoryBody = computed((): string => {
+  const entry = selectedHistoryEntry.value;
+  if (!entry?.response) return "";
+  if (historyViewerFormat.value === "raw") return entry.response.body;
+  try {
+    return JSON.stringify(JSON.parse(entry.response.body), null, 2);
+  } catch {
+    return entry.response.body;
+  }
+});
+
+const buildInlinedPreviewForHistory = async (): Promise<void> => {
+  const entry = selectedHistoryEntry.value;
+  if (!entry?.response || historyViewerPreviewSrc.value !== null) return;
+  historyViewerPreviewLoading.value = true;
+  try {
+    const html = entry.response.body;
+    const baseUrl = entry.response.url ?? "";
+    const baseTag = baseUrl ? `<base href="${baseUrl}">` : "";
+    let processed = baseUrl && /<head\b/i.test(html)
+      ? html.replace(/<head\b[^>]*>/i, (m) => `${m}\n  ${baseTag}`)
+      : baseUrl ? `${baseTag}\n${html}` : html;
+    const linkRegex = /<link[^>]+rel=["']stylesheet["'][^>]*>/gi;
+    for (const match of [...processed.matchAll(linkRegex)]) {
+      const linkTag = match[0];
+      const hrefMatch = linkTag.match(/href=["']([^"']+)["']/i);
+      if (!hrefMatch?.[1]) continue;
+      let cssUrl: string;
+      try { cssUrl = baseUrl ? new URL(hrefMatch[1], baseUrl).toString() : hrefMatch[1]; } catch { continue; }
+      try {
+        const res = await callApi(RequestRoutes.EXECUTE_HTTP_REQUEST, { method: "GET", url: cssUrl, headers: {} });
+        const cssBody: string | undefined = res?.status === "ok" ? (res.message as HttpResponse)?.body : undefined;
+        if (cssBody) processed = processed.replace(linkTag, `<style>\n${cssBody}\n</style>`);
+      } catch { /* skip */ }
+    }
+    historyViewerPreviewSrc.value = processed;
+  } catch (err) {
+    console.error("[ApiTester] buildInlinedPreviewForHistory failed:", err);
+    historyViewerPreviewSrc.value = entry.response?.body ?? "";
+  } finally {
+    historyViewerPreviewLoading.value = false;
+  }
+};
+
+const onHistoryViewerTabClick = (tab: string) => {
+  historyViewerTab.value = tab;
+  if (tab === "Preview") buildInlinedPreviewForHistory();
 };
 
 // ── Request lifecycle ─────────────────────────────────────────────────────────
@@ -1221,7 +1472,7 @@ const buildBody = (req: ApiRequest): string | undefined => {
  * Uses sendTime as the start date and a 60-second window to capture all
  * script log.* calls triggered by the request.
  */
-const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date): Promise<void> => {
+const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date, histEntry?: HistoryEntry): Promise<void> => {
   req.isLoadingLogs = true;
   req.logs = null;
   try {
@@ -1234,7 +1485,7 @@ const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date): Promise<voi
     });
 
     const message = (res as ApiResponse)?.message;
-    req.logs = Array.isArray(message)
+    const logs: LogEntry[] = Array.isArray(message)
       ? message.map((log: any) => ({
           id: String(log.internalid ?? ""),
           datetime: log.datetime ?? "",
@@ -1245,9 +1496,18 @@ const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date): Promise<voi
           deploymentName: log["scriptDeployment.scriptid"] ?? ""
         }))
       : [];
+    req.logs = logs;
+    if (histEntry) {
+      histEntry.logs = logs;
+      histEntry.logsLoading = false;
+    }
   } catch (err) {
     console.error("[ApiTester] fetchLogsForRequest failed:", err);
     req.logs = [];
+    if (histEntry) {
+      histEntry.logs = [];
+      histEntry.logsLoading = false;
+    }
   } finally {
     req.isLoadingLogs = false;
   }
@@ -1263,6 +1523,8 @@ const sendRequest = async (requestId: string) => {
   req.previewSrc = null;
   req.previewLoading = false;
 
+  let histEntry: HistoryEntry | null = null;
+
   const finalUrl = buildUrl(req);
   const sendTime = new Date(); // record before the call for log window
 
@@ -1277,14 +1539,6 @@ const sendRequest = async (requestId: string) => {
     if (apiResponse.status === "ok") {
       req.response = apiResponse.message as HttpResponse;
       req.activeResponseTab = "Body";
-      history.value.unshift({
-        id: crypto.randomUUID(),
-        method: req.method,
-        url: finalUrl,
-        timestamp: Date.now(),
-        status: req.response.status
-      });
-      if (history.value.length > 50) history.value.pop();
     } else {
       req.response = {
         status: 0,
@@ -1297,10 +1551,29 @@ const sendRequest = async (requestId: string) => {
       };
       req.activeResponseTab = "Body";
     }
+
+    // Record full snapshot into history (both success and error cases)
+    histEntry = {
+      id: crypto.randomUUID(),
+      method: req.method,
+      url: finalUrl,
+      timestamp: Date.now(),
+      status: req.response.status,
+      response: JSON.parse(JSON.stringify(req.response)),
+      logs: null,
+      logsLoading: true,
+      params: JSON.parse(JSON.stringify(req.params)),
+      headers: JSON.parse(JSON.stringify(req.headers)),
+      body: req.body,
+      bodyType: req.bodyType,
+      scriptName: req.scriptName ?? null
+    };
+    history.value.unshift(histEntry);
+    if (history.value.length > 50) history.value.pop();
   } finally {
     req.isLoading = false;
     // Fetch logs in the background — don't await so the response renders immediately
-    fetchLogsForRequest(req, sendTime);
+    fetchLogsForRequest(req, sendTime, histEntry ?? undefined);
   }
 };
 
@@ -2696,5 +2969,61 @@ onBeforeUnmount(async () => {
   border-left: none;
   border-right: none;
   border-bottom: none;
+}
+
+/* ── History viewer (replaces split-left content) ────────────────────────── */
+.history-viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
+.history-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.65rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.history-viewer-url {
+  flex: 1;
+  font-size: 0.72rem;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  color: var(--p-slate-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.history-viewer-time {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.history-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+/* ── Active history item in sidebar ─────────────────────────────────────── */
+.history-item.is-active {
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-700);
+}
+
+.history-item.is-active .history-url {
+  color: var(--p-indigo-600);
 }
 </style>
