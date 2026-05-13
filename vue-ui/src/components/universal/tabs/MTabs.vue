@@ -214,8 +214,8 @@ watch(
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem 0.75rem;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
   border-radius: 0.25rem;
   outline: 1px solid var(--p-slate-300);
   background-color: var(--m-slate-150);
@@ -236,7 +236,7 @@ watch(
 /* ── Active indicator bar ── */
 .tab-indicator {
   width: 0.25rem;
-  height: 1rem;
+  height: 0.75rem;
   border-radius: 9999px;
   background-color: var(--p-slate-300);
   opacity: 0.4;
@@ -254,7 +254,7 @@ watch(
 
 .tab-label {
   font-weight: 500;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
   user-select: none;
 }
 
@@ -263,9 +263,9 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.375rem;
+  padding: 0.2rem;
   border-radius: 0.25rem;
-  margin-left: 0.5rem;
+  margin-left: 0.25rem;
   opacity: 0;
   color: var(--p-slate-500);
   transition:
@@ -287,7 +287,7 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.75rem 0.75rem;
+  padding: 0.3rem;
   border-radius: 0.25rem;
   outline: 1px solid var(--p-slate-300);
   background-color: var(--m-slate-150);

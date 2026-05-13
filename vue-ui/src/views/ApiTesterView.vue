@@ -218,9 +218,12 @@
     </ExpandableSidebar>
 
     <!-- ═══ MAIN AREA ═══ -->
-    <div class="api-main">
-      <!-- Tabs for open requests -->
-      <MTabs
+    <div class="api-main" ref="mainRef">
+
+      <!-- ── SPLIT TOP: request tabs ── -->
+      <div class="split-top" :style="{ height: splitTopHeight + 'px' }">
+        <!-- Tabs for open requests -->
+        <MTabs
         v-if="openTabs.length > 0"
         :tabs="tabs"
         :dynamic="true"
@@ -461,6 +464,48 @@
           </Button>
         </div>
       </div>
+      </div><!-- end .split-top -->
+
+      <!-- ── SPLIT DIVIDER ── -->
+      <div
+        class="split-divider"
+        :class="{ 'is-dragging': isDraggingSplit }"
+        @mousedown.prevent="startDrag"
+      >
+        <div class="split-divider-handle"></div>
+      </div>
+
+      <!-- ── SPLIT BOTTOM: Monaco script editor ── -->
+      <div class="split-bottom">
+        <div class="editor-pane-header">
+          <i class="pi pi-code text-xs" style="color: var(--p-indigo-400)"></i>
+          <span class="editor-pane-title">
+            {{ currentRequest?.scriptName ?? 'Script Viewer' }}
+          </span>
+          <span v-if="currentRequest?.deploymentScriptId" class="editor-pane-subtitle">
+            · {{ currentRequest.deploymentScriptId }}
+          </span>
+          <i v-if="currentRequest?.scriptFileLoading" class="pi pi-spin pi-spinner text-xs ml-auto" style="color: var(--p-indigo-400)"></i>
+        </div>
+        <div class="editor-pane-content">
+          <MonacoCodeEditor
+            v-if="currentRequest?.scriptFileContent"
+            :model-value="currentRequest.scriptFileContent"
+            language="javascript"
+            :readonly="true"
+            :config="{ autoSizing: true, minimap: false, suppressNativeFind: false }"
+          />
+          <div v-else-if="currentRequest?.scriptFileLoading" class="editor-pane-empty">
+            <i class="pi pi-spin pi-spinner text-xl" style="color: var(--p-indigo-400)"></i>
+            <span>Loading script…</span>
+          </div>
+          <div v-else class="editor-pane-empty">
+            <i class="pi pi-code text-2xl" style="color: var(--p-slate-300)"></i>
+            <span>Select a deployment to view its script file</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   </MCard>
 </template>
@@ -473,6 +518,7 @@ import MSelect from "../components/universal/input/MSelect.vue";
 import MInput from "../components/universal/input/MInput.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
+import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { generateId } from "../utils/utilities";
@@ -567,12 +613,13 @@ interface ApiRequest {
   activeRequestTab: string;
   activeResponseTab: string;
   responseFormat: "pretty" | "raw";
-  /** Fetched log entries; null = not yet fetched */
   logs: LogEntry[] | null;
   isLoadingLogs: boolean;
-  /** Processed HTML with inlined CSS for preview; null = not yet built */
   previewSrc: string | null;
   previewLoading: boolean;
+  /** Script file source content (fetched via SCRIPT_FILES, runtime-only) */
+  scriptFileContent: string | null;
+  scriptFileLoading: boolean;
 }
 
 // ── Request / tab state ────────────────────────────────────────────────────────
@@ -752,9 +799,51 @@ const logLevelClass = (level: string): string => {
   return map[level?.toUpperCase()] ?? "log-level-debug";
 };
 
+// ── Split pane ────────────────────────────────────────────────────────────────
+const mainRef = ref<HTMLElement | null>(null);
+const splitTopHeight = ref(420);
+const isDraggingSplit = ref(false);
+let dragStartY = 0;
+let dragStartHeight = 0;
+
+const startDrag = (e: MouseEvent) => {
+  isDraggingSplit.value = true;
+  dragStartY = e.clientY;
+  dragStartHeight = splitTopHeight.value;
+  document.addEventListener("mousemove", onDrag);
+  document.addEventListener("mouseup", stopDrag);
+};
+
+const onDrag = (e: MouseEvent) => {
+  if (!isDraggingSplit.value) return;
+  const delta = e.clientY - dragStartY;
+  const containerH = mainRef.value?.clientHeight ?? 800;
+  splitTopHeight.value = Math.max(150, Math.min(containerH - 120, dragStartHeight + delta));
+};
+
+const stopDrag = () => {
+  isDraggingSplit.value = false;
+  document.removeEventListener("mousemove", onDrag);
+  document.removeEventListener("mouseup", stopDrag);
+};
+
+// ── Script file fetcher ───────────────────────────────────────────────────────
+const fetchScriptFile = async (req: ApiRequest, scriptId: number): Promise<void> => {
+  req.scriptFileContent = null;
+  req.scriptFileLoading = true;
+  try {
+    const res = await callApi(RequestRoutes.SCRIPT_FILES, { scriptIds: [scriptId] });
+    const files: any[] = (res as ApiResponse)?.message ?? [];
+    req.scriptFileContent = files[0]?.scriptFile ?? null;
+  } catch (err) {
+    console.error("[ApiTester] fetchScriptFile failed:", err);
+  } finally {
+    req.scriptFileLoading = false;
+  }
+};
+
 // ── History ───────────────────────────────────────────────────────────────────
 const history = ref<HistoryEntry[]>([]);
-
 const clearHistory = () => {
   history.value = [];
 };
@@ -797,7 +886,9 @@ const createNewRequest = (): ApiRequest => ({
   logs: null,
   isLoadingLogs: false,
   previewSrc: null,
-  previewLoading: false
+  previewLoading: false,
+  scriptFileContent: null,
+  scriptFileLoading: false
 });
 
 const addNewRequest = () => {
@@ -1076,6 +1167,7 @@ const useDeployment = async (script: EndpointScript, dep: Deployment) => {
       req.response = null;
       req.logs = null;
       req.previewSrc = null;
+      req.scriptFileContent = null;
       req.scriptInternalId = script.id;
       req.scriptType = script.scriptType;
       req.scriptName = script.name;
@@ -1086,6 +1178,8 @@ const useDeployment = async (script: EndpointScript, dep: Deployment) => {
           req.method = "GET";
         }
       }
+      // Fetch script file content for the Monaco editor (non-blocking)
+      fetchScriptFile(req, script.id);
     }
   }
 };
@@ -1222,7 +1316,9 @@ onMounted(async () => {
       logs: null,
       isLoadingLogs: false,
       previewSrc: null,
-      previewLoading: false
+      previewLoading: false,
+      scriptFileContent: null,
+      scriptFileLoading: false
     }));
 
     requests.value = restored;
@@ -1247,6 +1343,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(async () => {
+  stopDrag();
   if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
   await flushSave();
   await saveTabState();
@@ -1261,6 +1358,91 @@ onBeforeUnmount(async () => {
   flex-direction: column;
   min-width: 0;
   overflow: hidden;
+}
+
+/* ── Split pane ──────────────────────────────────────────────────────────── */
+.split-top {
+  display: flex;
+  flex-direction: column;
+  min-height: 150px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.split-divider {
+  flex-shrink: 0;
+  height: 5px;
+  background: var(--p-slate-200);
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.split-divider:hover,
+.split-divider.is-dragging {
+  background: var(--p-indigo-200);
+}
+
+.split-divider-handle {
+  width: 36px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--p-slate-400);
+  pointer-events: none;
+}
+
+.split-bottom {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100px;
+  overflow: hidden;
+}
+
+.editor-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.6rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  background: var(--p-slate-50);
+}
+
+.editor-pane-title {
+  font-weight: 500;
+  color: var(--p-slate-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-pane-subtitle {
+  font-size: 0.65rem;
+  color: var(--p-indigo-500);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.editor-pane-content {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.editor-pane-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  height: 100%;
+  color: var(--p-slate-400);
+  font-size: 0.75rem;
 }
 
 /* ── Sidebar sections ────────────────────────────────────────────────────── */
@@ -1501,12 +1683,22 @@ onBeforeUnmount(async () => {
 .saved-req-item {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.3rem 0.35rem;
+  gap: 0.3rem;
+  padding: 0.12rem 0.3rem;
   border-radius: 0.25rem;
   cursor: pointer;
   font-size: 0.72rem;
   transition: background 0.12s;
+}
+
+/* Compact MInput height inside saved-req-items */
+.saved-req-item :deep(.m-input--dynamic),
+.saved-req-item :deep(.m-input) {
+  height: 1.6rem;
+}
+
+.saved-req-item :deep(.m-input__display-text) {
+  padding: 0.2rem 0.4rem;
 }
 
 .saved-req-item:hover {
