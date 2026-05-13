@@ -124,6 +124,7 @@ const emit = defineEmits<{
   blur: [];
   focus: [];
   "ctrl-enter": [];
+  "ctrl-s": [];
 }>();
 
 const editorContainer: Ref<HTMLElement | null> = ref(null);
@@ -218,6 +219,11 @@ onMounted(async () => {
   editorInstance.addCommand(
     monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
     () => { emit("ctrl-enter"); }
+  );
+
+  editorInstance.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+    () => { emit("ctrl-s"); }
   );
 
   const disableAutoScrollOnFocus = () => {

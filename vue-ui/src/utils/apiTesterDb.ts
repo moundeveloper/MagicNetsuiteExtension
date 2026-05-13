@@ -10,6 +10,12 @@ export interface KVRowRecord {
   value: string;
 }
 
+export interface KVBodyRowRecord {
+  key: string;
+  value: string;
+  type: "string" | "number" | "boolean" | "null";
+}
+
 export interface ApiRequestRecord {
   requestId: string;
   name: string;
@@ -33,12 +39,54 @@ export interface ApiRequestRecord {
   scriptFileId?: number | null;
   /** Folder ID of the script file (required by updateNetsuiteFileContent) */
   scriptFileFolderId?: number | null;
+  /** Key-value pairs for the "key-value (JSON)" body type */
+  bodyKv?: KVBodyRowRecord[];
 }
 
 /** Generic key-value store for UI state (openTabs, activeTab) */
 export interface ApiTesterUiStateRecord {
   key: string;
   value: any;
+}
+
+/** Persisted request history entry */
+export interface RequestHistoryRecord {
+  /** UUID primary key */
+  id: string;
+  method: string;
+  /** Final URL including query params (for display); base URL for body methods */
+  url: string;
+  /** Unix timestamp (ms) when the request was sent */
+  timestamp: number;
+  /** HTTP status code, or null if the request failed before a response */
+  status: number | null;
+  /** Full HTTP response snapshot */
+  response: {
+    status: number;
+    statusText: string;
+    headers: Record<string, string>;
+    body: string;
+    duration: number;
+    url: string;
+    error?: string;
+  } | null;
+  /** Script execution logs (populated async after the request) */
+  logs: Array<{
+    id: string;
+    datetime: string;
+    title: string;
+    level: string;
+    message: string;
+    scriptName: string;
+    deploymentName: string;
+  }> | null;
+  params: KVRowRecord[];
+  headers: KVRowRecord[];
+  body: string;
+  bodyType: string;
+  /** Key-value body rows at send time */
+  bodyKv?: KVBodyRowRecord[];
+  scriptName: string | null;
 }
 
 // ─────────────────────────────────────────────
@@ -48,11 +96,18 @@ export interface ApiTesterUiStateRecord {
 const db = new Dexie("MagicNetsuiteApiTester") as Dexie & {
   requests: EntityTable<ApiRequestRecord, "requestId">;
   uiState: EntityTable<ApiTesterUiStateRecord, "key">;
+  requestHistory: EntityTable<RequestHistoryRecord, "id">;
 };
 
 db.version(1).stores({
   requests: "&requestId, name, createdAt, updatedAt",
   uiState: "&key"
+});
+
+db.version(2).stores({
+  requests: "&requestId, name, createdAt, updatedAt",
+  uiState: "&key",
+  requestHistory: "&id, timestamp"
 });
 
 // ─────────────────────────────────────────────
@@ -86,4 +141,57 @@ export const getApiTesterUiState = async <T>(key: string, defaultValue: T): Prom
 
 export const setApiTesterUiState = async (key: string, value: any): Promise<void> => {
   await db.uiState.put({ key, value });
+};
+
+// ─────────────────────────────────────────────
+// Request History CRUD
+// ─────────────────────────────────────────────
+
+const MAX_HISTORY_ENTRIES = 100;
+
+/**
+ * Persist a history entry, then prune oldest entries beyond MAX_HISTORY_ENTRIES.
+ */
+export const addRequestHistoryEntry = async (entry: RequestHistoryRecord): Promise<void> => {
+  await db.requestHistory.put(entry);
+  const count = await db.requestHistory.count();
+  if (count > MAX_HISTORY_ENTRIES) {
+    const overflow = count - MAX_HISTORY_ENTRIES;
+    const oldest = await db.requestHistory
+      .orderBy("timestamp")
+      .limit(overflow)
+      .toArray();
+    await db.requestHistory.bulkDelete(oldest.map((e) => e.id));
+  }
+};
+
+/**
+ * Load all history entries, newest first (capped at MAX_HISTORY_ENTRIES).
+ */
+export const getAllRequestHistory = async (): Promise<RequestHistoryRecord[]> => {
+  return db.requestHistory.orderBy("timestamp").reverse().toArray();
+};
+
+/**
+ * Delete a single history entry by its UUID.
+ */
+export const deleteRequestHistoryEntry = async (id: string): Promise<void> => {
+  await db.requestHistory.delete(id);
+};
+
+/**
+ * Delete all history entries.
+ */
+export const clearRequestHistory = async (): Promise<void> => {
+  await db.requestHistory.clear();
+};
+
+/**
+ * Update the logs field of an existing history entry (called after async log fetch).
+ */
+export const updateRequestHistoryLogs = async (
+  id: string,
+  logs: RequestHistoryRecord["logs"]
+): Promise<void> => {
+  await db.requestHistory.where("id").equals(id).modify({ logs });
 };

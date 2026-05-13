@@ -209,6 +209,13 @@
               <span class="method-badge" :class="methodClass(entry.method)">{{ entry.method }}</span>
               <span class="history-url">{{ entry.url }}</span>
               <span v-if="entry.status" class="history-status" :class="statusClass(entry.status)">{{ entry.status }}</span>
+              <button
+                class="history-delete-btn"
+                title="Delete this entry"
+                @click.stop="deleteHistoryEntry(entry)"
+              >
+                <i class="pi pi-times text-xs"></i>
+              </button>
             </div>
             <div v-if="history.length === 0" class="text-gray-400 text-xs text-center mt-2 px-2">
               No history yet
@@ -382,10 +389,11 @@
                 class="method-select"
               />
               <InputText
-                v-model="req.url"
+                :model-value="buildUrl(req)"
                 placeholder="https://your-account.app.netsuite.com/..."
                 size="small"
                 class="url-input"
+                @update:model-value="(v) => onUrlBarInput(req, String(v))"
                 @keydown.enter="sendRequest(req.id)"
               />
               <Button size="small" @click="sendRequest(req.id)" :loading="req.isLoading" :disabled="!req.url.trim()">
@@ -410,6 +418,11 @@
 
               <!-- Params -->
               <div v-if="req.activeRequestTab === 'Params'" class="kv-editor">
+                <!-- Warning when using a body method -->
+                <div v-if="isBodyMethod(req.method)" class="params-body-hint">
+                  <i class="pi pi-info-circle text-xs"></i>
+                  Query params are not sent for <strong>{{ req.method }}</strong> — use the <strong>Body</strong> tab.
+                </div>
                 <div class="kv-header-row">
                   <span>Key</span><span>Value</span><span></span>
                 </div>
@@ -452,7 +465,32 @@
                     class="body-type-select"
                   />
                 </div>
+
+                <!-- Key-value JSON editor -->
+                <template v-if="req.bodyType === 'key-value (JSON)'">
+                  <div class="kv-header-row kv-body-header">
+                    <span>Key (dot.notation)</span><span>Value</span><span>Type</span><span></span>
+                  </div>
+                  <div v-for="(row, i) in req.bodyKv" :key="i" class="kv-row">
+                    <InputText v-model="row.key" placeholder="key or parent.child" size="small" class="kv-input" />
+                    <InputText v-model="row.value" placeholder="value" size="small" class="kv-input" />
+                    <MSelect v-model="row.type" :options="KV_BODY_TYPES" size="small" class="kv-type-select" />
+                    <button class="kv-remove" @click="req.bodyKv.splice(i, 1)" title="Remove">
+                      <i class="pi pi-times text-xs"></i>
+                    </button>
+                  </div>
+                  <Button text size="small" class="mt-1" @click="req.bodyKv.push({ key: '', value: '', type: 'string' })">
+                    <i class="pi pi-plus text-xs mr-1"></i> Add
+                  </Button>
+                  <div v-if="req.bodyKv.some(r => r.key.trim())" class="kv-json-preview">
+                    <div class="kv-json-preview-label">JSON Preview</div>
+                    <pre class="kv-json-preview-body">{{ buildNestedJson(req.bodyKv) }}</pre>
+                  </div>
+                </template>
+
+                <!-- Raw textarea (all non-KV body types) -->
                 <textarea
+                  v-else
                   v-model="req.body"
                   class="body-textarea"
                   placeholder="Request body..."
@@ -743,6 +781,7 @@
               v-if="currentRequest?.scriptFileContent != null && !currentRequest?.scriptFileLoading"
               :model-value="currentRequest?.scriptFileContent ?? ''"
               @update:modelValue="onEditorChange"
+              @ctrl-s="currentRequest && saveScriptContent(currentRequest)"
               language="javascript"
               :readonly="false"
               :config="{ autoSizing: true, minimap: false, suppressNativeFind: false }"
@@ -781,7 +820,13 @@ import {
   bulkUpsertApiRequests,
   deleteApiRequest,
   getApiTesterUiState,
-  setApiTesterUiState
+  setApiTesterUiState,
+  addRequestHistoryEntry,
+  getAllRequestHistory,
+  deleteRequestHistoryEntry,
+  clearRequestHistory,
+  updateRequestHistoryLogs,
+  type RequestHistoryRecord
 } from "../utils/apiTesterDb";
 import {
   saveVersion,
@@ -798,8 +843,13 @@ const toast = useToast();
 // ── Constants ─────────────────────────────────────────────────────────────────
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const SUITELET_METHODS = ["GET", "POST"];
-const BODY_TYPES = ["none", "raw (JSON)", "raw (text)", "form-urlencoded"];
+const BODY_TYPES = ["none", "raw (JSON)", "raw (text)", "form-urlencoded", "key-value (JSON)"];
+const KV_BODY_TYPES = ["string", "number", "boolean", "null"];
 const REQUEST_TABS = ["Params", "Headers", "Body"];
+
+/** Methods that send data in the request body, not as URL query params */
+const BODY_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
+const isBodyMethod = (method: string): boolean => BODY_METHODS.includes(method);
 
 // Script types for RESTlets and Suitelets in NetSuite
 const RESTLET_TYPE = "RESTLET";
@@ -807,6 +857,11 @@ const SUITELET_TYPE = "SCRIPTLET";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type KVRow = { key: string; value: string };
+type KVBodyRow = {
+  key: string;
+  value: string;
+  type: "string" | "number" | "boolean" | "null";
+};
 
 type HistoryEntry = {
   id: string;
@@ -826,6 +881,7 @@ type HistoryEntry = {
   headers: KVRow[];
   body: string;
   bodyType: string;
+  bodyKv: KVBodyRow[];
   scriptName: string | null;
 };
 
@@ -882,6 +938,8 @@ interface ApiRequest {
   scriptName: string | null;
   /** Deployment script ID shown in the URL bar */
   deploymentScriptId: string | null;
+  /** Key-value rows for the "key-value (JSON)" body type */
+  bodyKv: KVBodyRow[];
   // runtime-only (not persisted)
   response: HttpResponse | null;
   isLoading: boolean;
@@ -1251,9 +1309,19 @@ const onEditorChange = (val: string): void => {
 
 // ── History ───────────────────────────────────────────────────────────────────
 const history = ref<HistoryEntry[]>([]);
-const clearHistory = () => {
+
+const clearHistory = async () => {
   history.value = [];
   selectedHistoryEntry.value = null;
+  await clearRequestHistory();
+};
+
+const deleteHistoryEntry = async (entry: HistoryEntry): Promise<void> => {
+  history.value = history.value.filter((e) => e.id !== entry.id);
+  if (selectedHistoryEntry.value?.id === entry.id) {
+    selectedHistoryEntry.value = null;
+  }
+  await deleteRequestHistoryEntry(entry.id);
 };
 
 // ── History viewer ────────────────────────────────────────────────────────────
@@ -1274,11 +1342,12 @@ const viewHistoryEntry = (entry: HistoryEntry) => {
 const reuseHistoryEntry = (entry: HistoryEntry) => {
   const applyTo = (r: ApiRequest) => {
     r.method = entry.method;
-    r.url = entry.url;
+    r.url = stripQueryParams(entry.url);
     r.params = entry.params.length ? JSON.parse(JSON.stringify(entry.params)) : [{ key: "", value: "" }];
     r.headers = entry.headers.length ? JSON.parse(JSON.stringify(entry.headers)) : [{ key: "", value: "" }];
     r.body = entry.body;
     r.bodyType = entry.bodyType;
+    r.bodyKv = entry.bodyKv?.length ? JSON.parse(JSON.stringify(entry.bodyKv)) : [{ key: "", value: "", type: "string" }];
   };
   const req = currentRequest.value;
   if (!req) {
@@ -1375,6 +1444,7 @@ const createNewRequest = (): ApiRequest => ({
   headers: [{ key: "", value: "" }],
   body: "",
   bodyType: "none",
+  bodyKv: [{ key: "", value: "", type: "string" }],
   scriptInternalId: null,
   scriptType: null,
   scriptName: null,
@@ -1434,6 +1504,8 @@ const removeRequestByTab = ({ tabId, nextTabId }: { tabId: string; nextTabId: st
 // ── Send request ──────────────────────────────────────────────────────────────
 const buildUrl = (req: ApiRequest): string => {
   const base = req.url.trim();
+  // Body methods (POST/PUT/PATCH/DELETE) never append params to the URL
+  if (isBodyMethod(req.method)) return base;
   const qp = activeParamsOf(req);
   if (!qp.length) return base;
   try {
@@ -1448,12 +1520,90 @@ const buildUrl = (req: ApiRequest): string => {
   }
 };
 
+/**
+ * Strips the query-string from a URL, returning just the base path.
+ * Used when re-using a history entry so params aren't double-appended.
+ */
+const stripQueryParams = (url: string): string => {
+  try {
+    const u = new URL(url);
+    u.search = "";
+    return u.toString();
+  } catch {
+    return url.split("?")[0] ?? url;
+  }
+};
+
+/** Coerce a string value to the requested JS type for JSON serialisation. */
+const coerceKvValue = (value: string, type: KVBodyRow["type"]): any => {
+  switch (type) {
+    case "number": return Number(value);
+    case "boolean": return value === "true" || value === "1";
+    case "null": return null;
+    default: return value;
+  }
+};
+
+/**
+ * Build a (potentially nested) JSON object from the KV body rows.
+ * Dot-notation in the key creates nested objects: "user.name" → { user: { name: … } }
+ */
+const buildNestedJson = (rows: KVBodyRow[]): string => {
+  const result: Record<string, any> = {};
+  rows.filter((r) => r.key.trim()).forEach(({ key, value, type }) => {
+    const coerced = coerceKvValue(value, type);
+    const parts = key.trim().split(".");
+    let obj = result;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i]!;
+      if (!obj[part] || typeof obj[part] !== "object") obj[part] = {};
+      obj = obj[part] as Record<string, any>;
+    }
+    obj[parts[parts.length - 1]!] = coerced;
+  });
+  return JSON.stringify(result, null, 2);
+};
+
+/**
+ * Splits a full URL into its base path and parsed query-param rows.
+ * Used for bidirectional sync between the URL bar and the Params tab.
+ */
+const parseUrlAndParams = (full: string): { base: string; params: KVRow[] } => {
+  const qIdx = full.indexOf("?");
+  if (qIdx === -1) return { base: full, params: [] };
+  const base = full.slice(0, qIdx);
+  const search = full.slice(qIdx + 1);
+  const params: KVRow[] = [];
+  if (search) {
+    const sp = new URLSearchParams(search);
+    sp.forEach((value, key) => params.push({ key, value }));
+  }
+  return { base, params };
+};
+
+/**
+ * Called when the user edits the URL bar directly.
+ * If the typed value contains a '?', we parse out the query-string and push
+ * those key-value pairs into req.params (the single source of truth for query params).
+ * If no '?', only req.url (the base) is updated.
+ */
+const onUrlBarInput = (req: ApiRequest, val: string): void => {
+  const trimmed = val.trim();
+  if (trimmed.includes("?")) {
+    const { base, params } = parseUrlAndParams(trimmed);
+    req.url = base;
+    req.params = [...params, { key: "", value: "" }];
+  } else {
+    req.url = trimmed;
+  }
+};
+
 const buildHeaders = (req: ApiRequest): Record<string, string> => {
   const result: Record<string, string> = {};
   activeHeadersOf(req).forEach(({ key, value }) => {
     result[key.trim()] = value;
   });
-  if (req.bodyType === "raw (JSON)" && req.body) {
+  if ((req.bodyType === "raw (JSON)" || req.bodyType === "key-value (JSON)") && isBodyMethod(req.method)) {
     result["Content-Type"] = result["Content-Type"] ?? "application/json";
   } else if (req.bodyType === "form-urlencoded" && req.body) {
     result["Content-Type"] =
@@ -1463,7 +1613,14 @@ const buildHeaders = (req: ApiRequest): Record<string, string> => {
 };
 
 const buildBody = (req: ApiRequest): string | undefined => {
-  if (req.bodyType === "none" || !req.body) return undefined;
+  if (!isBodyMethod(req.method)) return undefined;
+  if (req.bodyType === "none") return undefined;
+  if (req.bodyType === "key-value (JSON)") {
+    const activeRows = req.bodyKv.filter((r) => r.key.trim());
+    if (!activeRows.length) return undefined;
+    return buildNestedJson(req.bodyKv);
+  }
+  if (!req.body) return undefined;
   return req.body;
 };
 
@@ -1500,6 +1657,10 @@ const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date, histEntry?: 
     if (histEntry) {
       histEntry.logs = logs;
       histEntry.logsLoading = false;
+      // Persist logs back to the DB entry (fire-and-forget)
+      updateRequestHistoryLogs(histEntry.id, logs).catch((err) =>
+        console.error("[ApiTester] History logs update failed:", err)
+      );
     }
   } catch (err) {
     console.error("[ApiTester] fetchLogsForRequest failed:", err);
@@ -1507,6 +1668,7 @@ const fetchLogsForRequest = async (req: ApiRequest, sendTime: Date, histEntry?: 
     if (histEntry) {
       histEntry.logs = [];
       histEntry.logsLoading = false;
+      updateRequestHistoryLogs(histEntry.id, []).catch(() => {});
     }
   } finally {
     req.isLoadingLogs = false;
@@ -1566,10 +1728,28 @@ const sendRequest = async (requestId: string) => {
       headers: JSON.parse(JSON.stringify(req.headers)),
       body: req.body,
       bodyType: req.bodyType,
+      bodyKv: JSON.parse(JSON.stringify(req.bodyKv)),
       scriptName: req.scriptName ?? null
     };
     history.value.unshift(histEntry);
     if (history.value.length > 50) history.value.pop();
+
+    // Persist to IndexedDB (fire-and-forget)
+    addRequestHistoryEntry({
+      id: histEntry.id,
+      method: histEntry.method,
+      url: histEntry.url,
+      timestamp: histEntry.timestamp,
+      status: histEntry.status,
+      response: histEntry.response,
+      logs: null,
+      params: histEntry.params,
+      headers: histEntry.headers,
+      body: histEntry.body,
+      bodyType: histEntry.bodyType,
+      bodyKv: histEntry.bodyKv,
+      scriptName: histEntry.scriptName
+    }).catch((err) => console.error("[ApiTester] History persist failed:", err));
   } finally {
     req.isLoading = false;
     // Fetch logs in the background — don't await so the response renders immediately
@@ -1693,8 +1873,9 @@ const useDeployment = async (script: EndpointScript, dep: Deployment) => {
       req = currentRequest.value;
     }
     if (req) {
-      req.url = deploymentUrl;
-      req.params = [{ key: "", value: "" }];
+      const { base: deployBase, params: deployParams } = parseUrlAndParams(deploymentUrl);
+      req.url = deployBase;
+      req.params = [...deployParams, { key: "", value: "" }];
       req.response = null;
       req.logs = null;
       req.previewSrc = null;
@@ -1757,6 +1938,7 @@ const flushSave = async () => {
         deploymentScriptId: r.deploymentScriptId,
         scriptFileId: r.scriptFileId ?? null,
         scriptFileFolderId: r.scriptFileFolderId ?? null,
+        bodyKv: r.bodyKv ?? [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       })))
@@ -1807,12 +1989,35 @@ watch(
       params: r.params,
       headers: r.headers,
       body: r.body,
-      bodyType: r.bodyType
+      bodyType: r.bodyType,
+      bodyKv: r.bodyKv
     })),
   () => {
     scheduleRequestSave();
   },
   { deep: true }
+);
+
+// Auto-switch tabs and default bodyType when the HTTP method changes
+watch(
+  () => requests.value.map((r) => ({ id: r.id, method: r.method })),
+  (newMethods, oldMethods) => {
+    if (!oldMethods) return;
+    newMethods.forEach((nm, idx) => {
+      const om = oldMethods[idx];
+      if (!om || nm.id !== om.id || nm.method === om.method) return;
+      const req = requests.value.find((r) => r.id === nm.id);
+      if (!req) return;
+      if (isBodyMethod(nm.method) && !isBodyMethod(om.method)) {
+        // Switching to a body method: show Body tab and default to JSON if no body type set
+        if (req.activeRequestTab === "Params") req.activeRequestTab = "Body";
+        if (req.bodyType === "none") req.bodyType = "raw (JSON)";
+      } else if (!isBodyMethod(nm.method) && isBodyMethod(om.method)) {
+        // Switching back to a non-body method: show Params tab
+        if (req.activeRequestTab === "Body") req.activeRequestTab = "Params";
+      }
+    });
+  }
 );
 
 watch([openTabs, activeRequestId], () => {
@@ -1828,39 +2033,52 @@ onMounted(async () => {
       getApiTesterUiState<string>("activeTab", "")
     ]);
 
-    const restored: ApiRequest[] = storedRequests.map((r) => ({
-      id: r.requestId,
-      name: r.name,
-      method: r.method,
-      url: r.url,
-      params: r.params.length ? r.params : [{ key: "", value: "" }],
-      headers: r.headers.length ? r.headers : [{ key: "", value: "" }],
-      body: r.body,
-      bodyType: r.bodyType,
-      scriptInternalId: r.scriptInternalId ?? null,
-      scriptType: r.scriptType ?? null,
-      scriptName: r.scriptName ?? null,
-      deploymentScriptId: r.deploymentScriptId ?? null,
-      response: null,
-      isLoading: false,
-      activeRequestTab: "Params",
-      activeResponseTab: "Body",
-      responseFormat: "pretty",
-      logs: null,
-      isLoadingLogs: false,
-      previewSrc: null,
-      previewLoading: false,
-      scriptFileContent: null,
-      scriptFileSavedContent: null,
-      scriptFileLoading: false,
-      scriptFileId: r.scriptFileId ?? null,
-      scriptFileFolderId: r.scriptFileFolderId ?? null,
-      scriptFileDirty: false,
-      scriptFileSaving: false,
-      scriptFileVersions: [],
-      showVersionHistory: false,
-      scriptDiffVersion: null
-    }));
+    const restored: ApiRequest[] = storedRequests.map((r) => {
+      // Migration: if stored url embeds query params but params array is empty, extract them
+      let restoredUrl = r.url;
+      let restoredParams = r.params.length ? r.params : [{ key: "", value: "" }];
+      if (r.url.includes("?") && r.params.filter((p) => p.key).length === 0) {
+        const { base: migratedBase, params: migratedParams } = parseUrlAndParams(r.url);
+        restoredUrl = migratedBase;
+        restoredParams = migratedParams.length
+          ? [...migratedParams, { key: "", value: "" }]
+          : [{ key: "", value: "" }];
+      }
+      return {
+        id: r.requestId,
+        name: r.name,
+        method: r.method,
+        url: restoredUrl,
+        params: restoredParams,
+        headers: r.headers.length ? r.headers : [{ key: "", value: "" }],
+        body: r.body,
+        bodyType: r.bodyType,
+        bodyKv: r.bodyKv?.length ? r.bodyKv : [{ key: "", value: "", type: "string" as const }],
+        scriptInternalId: r.scriptInternalId ?? null,
+        scriptType: r.scriptType ?? null,
+        scriptName: r.scriptName ?? null,
+        deploymentScriptId: r.deploymentScriptId ?? null,
+        response: null,
+        isLoading: false,
+        activeRequestTab: "Params",
+        activeResponseTab: "Body",
+        responseFormat: "pretty",
+        logs: null,
+        isLoadingLogs: false,
+        previewSrc: null,
+        previewLoading: false,
+        scriptFileContent: null,
+        scriptFileSavedContent: null,
+        scriptFileLoading: false,
+        scriptFileId: r.scriptFileId ?? null,
+        scriptFileFolderId: r.scriptFileFolderId ?? null,
+        scriptFileDirty: false,
+        scriptFileSaving: false,
+        scriptFileVersions: [],
+        showVersionHistory: false,
+        scriptDiffVersion: null
+      };
+    });
 
     requests.value = restored;
 
@@ -1895,6 +2113,29 @@ onMounted(async () => {
   tabsWithScript.forEach((r) => {
     fetchScriptFile(r, r.scriptInternalId as number);
   });
+
+  // Restore request history from IndexedDB
+  try {
+    const storedHistory = await getAllRequestHistory();
+    history.value = storedHistory.map((h) => ({
+      id: h.id,
+      method: h.method,
+      url: h.url,
+      timestamp: h.timestamp,
+      status: h.status,
+      response: h.response,
+      logs: h.logs,
+      logsLoading: false,
+      params: h.params,
+      headers: h.headers,
+      body: h.body,
+      bodyType: h.bodyType,
+      bodyKv: h.bodyKv ?? [],
+      scriptName: h.scriptName
+    }));
+  } catch (err) {
+    console.error("[ApiTester] History restore failed:", err);
+  }
 
   loadScripts();
 });
@@ -2693,6 +2934,49 @@ onBeforeUnmount(async () => {
   cursor: not-allowed;
 }
 
+/* ── Key-value body editor ───────────────────────────────────────────────── */
+.kv-body-header {
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+  padding: 0 0 0.25rem 0;
+  border-bottom: 1px solid var(--p-slate-700);
+  margin-bottom: 0.25rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr 7rem 1.5rem;
+  gap: 0.35rem;
+}
+.kv-type-select {
+  min-width: 0;
+}
+.kv-json-preview {
+  margin-top: 0.75rem;
+  border: 1px solid var(--p-slate-700);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.kv-json-preview-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--p-slate-400);
+  padding: 0.25rem 0.5rem;
+  background: var(--p-slate-800);
+  border-bottom: 1px solid var(--p-slate-700);
+}
+.kv-json-preview-body {
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  color: var(--p-slate-200);
+  padding: 0.5rem;
+  margin: 0;
+  background: var(--p-slate-900);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
 /* ── Response meta ───────────────────────────────────────────────────────── */
 .response-meta {
   display: flex;
@@ -3025,5 +3309,71 @@ onBeforeUnmount(async () => {
 
 .history-item.is-active .history-url {
   color: var(--p-indigo-600);
+}
+
+/* ── History item delete button ──────────────────────────────────────────── */
+.history-delete-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--p-slate-400);
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.2rem;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+}
+
+.history-item:hover .history-delete-btn {
+  display: inline-flex;
+}
+
+.history-delete-btn:hover {
+  color: var(--p-red-500);
+  background: var(--p-red-50);
+}
+
+/* ── URL preview row ─────────────────────────────────────────────────────── */
+.url-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.75rem;
+  background: var(--p-slate-50);
+  border-bottom: 1px solid var(--p-slate-100);
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.url-preview-icon {
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+}
+
+.url-preview-text {
+  font-size: 0.65rem;
+  font-family: "JetBrains Mono", "Fira Mono", monospace;
+  color: var(--p-slate-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── Body-method hint in Params tab ──────────────────────────────────────── */
+.params-body-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--p-amber-50);
+  border: 1px solid var(--p-amber-200);
+  border-radius: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--p-amber-800);
+  margin-bottom: 0.25rem;
 }
 </style>
