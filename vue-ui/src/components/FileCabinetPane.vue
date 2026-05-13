@@ -291,6 +291,7 @@
             @dragover="handleDragOver"
             @dragleave="handleDragLeave"
             @drop="handleDrop"
+            @contextmenu.prevent="handleBodyContextMenu($event)"
           >
             <!-- Deletion loading overlay -->
             <div v-if="isDeleting" class="fc-delete-overlay">
@@ -332,7 +333,7 @@
             </div>
           </div>
           <!-- Grid view -->
-          <div v-else-if="viewMode === 'grid'" class="fc-grid-view" @contextmenu.prevent>
+          <div v-else-if="viewMode === 'grid'" class="fc-grid-view">
             <div
               v-for="item in filteredItems"
               :key="item.type + '-' + item.id"
@@ -342,7 +343,7 @@
               @click="handleItemClick(item, $event)"
               @mousedown.middle.prevent="emit('open-in-newtab', item)"
               @dblclick="handleItemDblClick(item)"
-              @contextmenu.prevent="handleItemContext(item, $event)"
+              @contextmenu.prevent.stop="handleItemContext(item, $event)"
               @dragstart="handleItemDragStart(item, $event)"
               @dragend="handleItemDragEnd"
               @dragover.prevent="handleFolderDragOver(item, $event)"
@@ -371,7 +372,7 @@
             </div>
           </div>
           <!-- List view -->
-          <div v-else class="fc-list-view" @contextmenu.prevent>
+          <div v-else class="fc-list-view">
             <table class="fc-table">
               <thead>
                 <tr>
@@ -404,7 +405,7 @@
                   @click="handleItemClick(item, $event)"
                   @mousedown.middle.prevent="emit('open-in-newtab', item)"
                   @dblclick="handleItemDblClick(item)"
-                  @contextmenu.prevent="handleItemContext(item, $event)"
+                  @contextmenu.prevent.stop="handleItemContext(item, $event)"
                   @dragstart="handleItemDragStart(item, $event)"
                   @dragend="handleItemDragEnd"
                    @dragover.prevent="handleFolderDragOver(item, $event)"
@@ -712,9 +713,15 @@
                 @keydown.escape="cancelNewFile"
               />
               <span class="fc-nf-dot">.</span>
-              <select v-model="newFileExtension" class="fc-nf-ext-select">
-                <option v-for="ext in FILE_EXTENSIONS" :key="ext.value" :value="ext.value">{{ ext.label }}</option>
-              </select>
+              <Select
+                v-model="newFileExtension"
+                :options="FILE_EXTENSIONS"
+                option-label="label"
+                option-value="value"
+                size="small"
+                class="fc-nf-ext-select"
+                :pt="{ overlay: { style: { zIndex: '10000' } } }"
+              />
             </div>
             <p v-if="newFileBaseName.trim()" class="fc-nf-preview">
               <i class="pi pi-file text-blue-400 text-xs"></i>
@@ -748,7 +755,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, InputText, useToast } from "primevue";
+import { Button, InputText, Select, useToast } from "primevue";
 import CodeViewer from "./CodeViewer.vue";
 import FileCodeEditor from "./FileCodeEditor.vue";
 import DiffViewer from "./DiffViewer.vue";
@@ -1462,6 +1469,21 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
   });
   if (item.id > 0) {
     actions.push({ label: "Delete", icon: "pi pi-trash text-red-500", handler: () => confirmDeleteItem(item), danger: true });
+  }
+  contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, actions };
+};
+
+const handleBodyContextMenu = (event: MouseEvent) => {
+  // Only show when right-clicking on the empty background (not on an item)
+  const target = event.target as HTMLElement;
+  const isOnItem = target.closest(".fc-grid-item, .fc-table-row");
+  if (isOnItem) return;
+  const actions: { label: string; icon: string; handler: () => void; danger?: boolean }[] = [
+    { label: "New Folder", icon: "pi pi-folder-plus", handler: () => openNewFolderDialog() },
+    { label: "New File",   icon: "pi pi-file-edit",   handler: () => openNewFileDialog() },
+  ];
+  if (currentFolderId.value !== null) {
+    actions.push({ label: "Copy Folder ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(currentFolderId.value)) });
   }
   contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, actions };
 };
@@ -2556,28 +2578,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 .fc-nf-name-row { display: flex; align-items: center; gap: 0.35rem; }
 .fc-nf-name-input { flex: 1; min-width: 0; }
 .fc-nf-dot { font-weight: 600; color: var(--p-slate-500); }
-.fc-nf-ext-select {
-  -webkit-appearance: none;
-  appearance: none;
-  flex-shrink: 0;
-  min-width: 9rem;
-  max-width: 12rem;
-  border: 1px solid var(--p-slate-300);
-  border-radius: 6px;
-  background-color: var(--p-surface-0);
-  /* Chevron-down arrow matching slate-400 */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath fill='%2394a3b8' d='M5 7 0 2h10z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0.55rem center;
-  color: var(--p-slate-700);
-  font-size: 0.78rem;
-  padding: 0.3rem 1.8rem 0.3rem 0.6rem;
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.fc-nf-ext-select:hover { border-color: var(--p-slate-400); }
-.fc-nf-ext-select:focus { border-color: var(--p-indigo-400); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.fc-nf-ext-select { flex-shrink: 0; min-width: 9rem; max-width: 12rem; }
 .fc-nf-preview { margin-top: 0.3rem; font-size: 0.72rem; color: var(--p-slate-400); display: flex; align-items: center; gap: 0.3rem; }
 .fc-nf-content {
   width: 100%; margin-top: 0.25rem; border: 1px solid var(--p-slate-300); border-radius: 5px;

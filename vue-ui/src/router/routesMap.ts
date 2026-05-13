@@ -20,6 +20,7 @@ import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
 import SuiteQLView from "../views/SuiteQLView.vue";
 import McpServerView from "../views/McpServerView.vue";
 import AgentsView from "../views/AgentsView.vue";
+import ApiTesterView from "../views/ApiTesterView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -244,6 +245,14 @@ export const routes: FullRoute[] = [
     component: McpServerView,
     status: RouteStatus.release,
     breadcrumb: "MCP Server"
+  },
+  {
+    route: "/api-tester",
+    name: "API Tester",
+    icon: "pi pi-send",
+    component: ApiTesterView,
+    status: RouteStatus.release,
+    breadcrumb: "API Tester"
   }
 ];
 
