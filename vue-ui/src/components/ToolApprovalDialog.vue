@@ -9,6 +9,16 @@
           <h3 class="approval-title">Approval Required</h3>
         </div>
 
+        <!-- Requester attribution -->
+        <div v-if="requesterName" class="approval-requester">
+          <span
+            class="approval-requester-dot"
+            :style="{ background: requesterColor || 'var(--p-slate-400)' }"
+          />
+          <span class="approval-requester-name">{{ requesterName }}</span>
+          <span class="approval-requester-label">requests approval</span>
+        </div>
+
         <p class="approval-description">
           The AI wants to run a destructive tool. Review the details below and
           choose whether to allow or deny this action.
@@ -48,6 +58,10 @@ const props = defineProps<{
   visible: boolean;
   toolName: string;
   toolInput: unknown;
+  /** Optional name of the agent requesting the tool (e.g. "SQL Expert") */
+  requesterName?: string;
+  /** Optional color for the requester dot/badge */
+  requesterColor?: string;
 }>();
 
 const emit = defineEmits<{
@@ -131,6 +145,34 @@ const handleReject = () => {
   font-size: 0.8125rem;
   color: var(--p-slate-500, #64748b);
   line-height: 1.6;
+}
+
+.approval-requester {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--p-slate-50, #f8fafc);
+  border: 1px solid var(--p-slate-200, #e2e8f0);
+  border-radius: 0.375rem;
+  font-size: 0.775rem;
+}
+
+.approval-requester-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.approval-requester-name {
+  font-weight: 600;
+  color: var(--p-slate-700, #334155);
+}
+
+.approval-requester-label {
+  color: var(--p-slate-400, #94a3b8);
+  font-weight: 400;
 }
 
 .approval-tool-info {

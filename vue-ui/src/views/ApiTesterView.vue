@@ -468,20 +468,22 @@
 
                 <!-- Key-value JSON editor -->
                 <template v-if="req.bodyType === 'key-value (JSON)'">
-                  <div class="kv-header-row kv-body-header">
-                    <span>Key (dot.notation)</span><span>Value</span><span>Type</span><span></span>
+                  <div class="kv-editor">
+                    <div class="kv-header-row kv-header-row--body">
+                      <span>Key (dot.notation)</span><span>Value</span><span>Type</span><span></span>
+                    </div>
+                    <div v-for="(row, i) in req.bodyKv" :key="i" class="kv-row kv-row--body">
+                      <InputText v-model="row.key" placeholder="key or parent.child" size="small" class="kv-input" />
+                      <InputText v-model="row.value" placeholder="value" size="small" class="kv-input" />
+                      <MSelect v-model="row.type" :options="KV_BODY_TYPES" size="small" class="kv-type-select" />
+                      <button class="kv-remove" @click="req.bodyKv.splice(i, 1)" title="Remove">
+                        <i class="pi pi-times text-xs"></i>
+                      </button>
+                    </div>
+                    <Button text size="small" class="mt-1" @click="req.bodyKv.push({ key: '', value: '', type: 'string' })">
+                      <i class="pi pi-plus text-xs mr-1"></i> Add
+                    </Button>
                   </div>
-                  <div v-for="(row, i) in req.bodyKv" :key="i" class="kv-row">
-                    <InputText v-model="row.key" placeholder="key or parent.child" size="small" class="kv-input" />
-                    <InputText v-model="row.value" placeholder="value" size="small" class="kv-input" />
-                    <MSelect v-model="row.type" :options="KV_BODY_TYPES" size="small" class="kv-type-select" />
-                    <button class="kv-remove" @click="req.bodyKv.splice(i, 1)" title="Remove">
-                      <i class="pi pi-times text-xs"></i>
-                    </button>
-                  </div>
-                  <Button text size="small" class="mt-1" @click="req.bodyKv.push({ key: '', value: '', type: 'string' })">
-                    <i class="pi pi-plus text-xs mr-1"></i> Add
-                  </Button>
                   <div v-if="req.bodyKv.some(r => r.key.trim())" class="kv-json-preview">
                     <div class="kv-json-preview-label">JSON Preview</div>
                     <pre class="kv-json-preview-body">{{ buildNestedJson(req.bodyKv) }}</pre>
@@ -1582,17 +1584,34 @@ const parseUrlAndParams = (full: string): { base: string; params: KVRow[] } => {
 };
 
 /**
+ * Keys that are mandatory NetSuite endpoint identifiers.
+ * They are NEVER surfaced in the Params tab KV editor — they stay embedded
+ * in req.url so the user can't accidentally delete or overwrite them.
+ */
+const ENDPOINT_PARAM_KEYS = new Set(["script", "deploy", "compid"]);
+
+/**
  * Called when the user edits the URL bar directly.
- * If the typed value contains a '?', we parse out the query-string and push
- * those key-value pairs into req.params (the single source of truth for query params).
+ * If the typed value contains a '?', we parse out the query-string.
+ * - `script` / `deploy` keys stay embedded in req.url (they're endpoint IDs).
+ * - All other keys go into req.params (the user-editable Params tab).
  * If no '?', only req.url (the base) is updated.
  */
 const onUrlBarInput = (req: ApiRequest, val: string): void => {
   const trimmed = val.trim();
   if (trimmed.includes("?")) {
     const { base, params } = parseUrlAndParams(trimmed);
-    req.url = base;
-    req.params = [...params, { key: "", value: "" }];
+    const endpointParams = params.filter((p) => ENDPOINT_PARAM_KEYS.has(p.key));
+    const userParams     = params.filter((p) => !ENDPOINT_PARAM_KEYS.has(p.key));
+    if (endpointParams.length > 0) {
+      const qs = endpointParams
+        .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+        .join("&");
+      req.url = `${base}?${qs}`;
+    } else {
+      req.url = base;
+    }
+    req.params = [...userParams, { key: "", value: "" }];
   } else {
     req.url = trimmed;
   }
@@ -1873,9 +1892,10 @@ const useDeployment = async (script: EndpointScript, dep: Deployment) => {
       req = currentRequest.value;
     }
     if (req) {
-      const { base: deployBase, params: deployParams } = parseUrlAndParams(deploymentUrl);
-      req.url = deployBase;
-      req.params = [...deployParams, { key: "", value: "" }];
+      // Keep script/deploy query params as part of the base URL — they're
+      // mandatory endpoint identifiers, NOT user-editable query params.
+      req.url = deploymentUrl;
+      req.params = [{ key: "", value: "" }];
       req.response = null;
       req.logs = null;
       req.previewSrc = null;
@@ -2034,15 +2054,43 @@ onMounted(async () => {
     ]);
 
     const restored: ApiRequest[] = storedRequests.map((r) => {
-      // Migration: if stored url embeds query params but params array is empty, extract them
+      // ── Migration: old format had the full URL in r.url with no params array ──
       let restoredUrl = r.url;
       let restoredParams = r.params.length ? r.params : [{ key: "", value: "" }];
+
       if (r.url.includes("?") && r.params.filter((p) => p.key).length === 0) {
-        const { base: migratedBase, params: migratedParams } = parseUrlAndParams(r.url);
-        restoredUrl = migratedBase;
-        restoredParams = migratedParams.length
-          ? [...migratedParams, { key: "", value: "" }]
+        const { base: migratedBase, params: allMigrated } = parseUrlAndParams(r.url);
+        const epParams  = allMigrated.filter((p) =>  ENDPOINT_PARAM_KEYS.has(p.key));
+        const userParams = allMigrated.filter((p) => !ENDPOINT_PARAM_KEYS.has(p.key));
+        // Rebuild URL with ONLY the endpoint params; user params go to the KV editor
+        if (epParams.length > 0) {
+          const qs = epParams
+            .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+            .join("&");
+          restoredUrl = `${migratedBase}?${qs}`;
+        } else {
+          restoredUrl = migratedBase;
+        }
+        restoredParams = userParams.length
+          ? [...userParams, { key: "", value: "" }]
           : [{ key: "", value: "" }];
+      }
+
+      // ── Scrub: remove any endpoint params that were previously saved INTO req.params ──
+      // (can happen with requests saved before the endpoint-param fix)
+      const savedEpParams = restoredParams.filter((p) => ENDPOINT_PARAM_KEYS.has(p.key));
+      if (savedEpParams.length > 0) {
+        // Absorb them back into the URL if the URL doesn't already carry them
+        if (!restoredUrl.includes("?")) {
+          const qs = savedEpParams
+            .map((p) => `${encodeURIComponent(p.key)}=${encodeURIComponent(p.value)}`)
+            .join("&");
+          restoredUrl = `${restoredUrl}?${qs}`;
+        }
+        restoredParams = restoredParams.filter((p) => !ENDPOINT_PARAM_KEYS.has(p.key));
+        if (!restoredParams.some((p) => !p.key)) {
+          restoredParams.push({ key: "", value: "" });
+        }
       }
       return {
         id: r.requestId,
@@ -2935,22 +2983,19 @@ onBeforeUnmount(async () => {
 }
 
 /* ── Key-value body editor ───────────────────────────────────────────────── */
-.kv-body-header {
-  font-size: 0.7rem;
-  color: var(--p-slate-400);
-  padding: 0 0 0.25rem 0;
-  border-bottom: 1px solid var(--p-slate-700);
-  margin-bottom: 0.25rem;
-  display: grid;
-  grid-template-columns: 1fr 1fr 7rem 1.5rem;
-  gap: 0.35rem;
+.kv-header-row--body {
+  grid-template-columns: 1fr 1fr 5.5rem auto;
+}
+.kv-row--body {
+  grid-template-columns: 1fr 1fr 5.5rem auto;
 }
 .kv-type-select {
+  width: 100%;
   min-width: 0;
 }
 .kv-json-preview {
   margin-top: 0.75rem;
-  border: 1px solid var(--p-slate-700);
+  border: 1px solid var(--p-slate-300);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -2961,16 +3006,16 @@ onBeforeUnmount(async () => {
   letter-spacing: 0.05em;
   color: var(--p-slate-400);
   padding: 0.25rem 0.5rem;
-  background: var(--p-slate-800);
-  border-bottom: 1px solid var(--p-slate-700);
+  background: var(--p-slate-100);
+  border-bottom: 1px solid var(--p-slate-300);
 }
 .kv-json-preview-body {
   font-size: 0.72rem;
   font-family: ui-monospace, monospace;
-  color: var(--p-slate-200);
+  color: var(--p-slate-700);
   padding: 0.5rem;
   margin: 0;
-  background: var(--p-slate-900);
+  background: var(--p-slate-50);
   white-space: pre-wrap;
   word-break: break-all;
   max-height: 180px;

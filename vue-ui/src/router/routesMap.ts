@@ -21,6 +21,7 @@ import SuiteQLView from "../views/SuiteQLView.vue";
 import McpServerView from "../views/McpServerView.vue";
 import AgentsView from "../views/AgentsView.vue";
 import ApiTesterView from "../views/ApiTesterView.vue";
+import MultiAgentView from "../views/MultiAgentView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -253,6 +254,14 @@ export const routes: FullRoute[] = [
     component: ApiTesterView,
     status: RouteStatus.release,
     breadcrumb: "API Tester"
+  },
+  {
+    route: "/multi-agent",
+    name: "Multi-Agent",
+    icon: "pi pi-sitemap",
+    component: MultiAgentView,
+    status: RouteStatus.release,
+    breadcrumb: "Multi-Agent"
   }
 ];
 
