@@ -29,6 +29,10 @@ export interface ApiRequestRecord {
   scriptName?: string | null;
   /** Deployment script ID (e.g. "customdeploy_my_restlet_1") */
   deploymentScriptId?: string | null;
+  /** File cabinet internal ID of the script file (for UPDATE_FILE_CONTENT) */
+  scriptFileId?: number | null;
+  /** Folder ID of the script file (required by updateNetsuiteFileContent) */
+  scriptFileFolderId?: number | null;
 }
 
 /** Generic key-value store for UI state (openTabs, activeTab) */

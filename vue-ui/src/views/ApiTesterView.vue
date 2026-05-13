@@ -220,8 +220,8 @@
     <!-- ═══ MAIN AREA ═══ -->
     <div class="api-main" ref="mainRef">
 
-      <!-- ── SPLIT TOP: request tabs ── -->
-      <div class="split-top" :style="{ height: splitTopHeight + 'px' }">
+      <!-- ── SPLIT LEFT: request tabs ── -->
+      <div class="split-left" :style="{ width: splitLeftWidth + 'px' }">
         <!-- Tabs for open requests -->
         <MTabs
         v-if="openTabs.length > 0"
@@ -464,7 +464,7 @@
           </Button>
         </div>
       </div>
-      </div><!-- end .split-top -->
+      </div><!-- end .split-left -->
 
       <!-- ── SPLIT DIVIDER ── -->
       <div
@@ -475,24 +475,65 @@
         <div class="split-divider-handle"></div>
       </div>
 
-      <!-- ── SPLIT BOTTOM: Monaco script editor ── -->
-      <div class="split-bottom">
+      <!-- ── SPLIT RIGHT: Monaco script editor ── -->
+      <div class="split-right">
         <div class="editor-pane-header">
           <i class="pi pi-code text-xs" style="color: var(--p-indigo-400)"></i>
           <span class="editor-pane-title">
-            {{ currentRequest?.scriptName ?? 'Script Viewer' }}
+            {{ currentRequest?.scriptName ?? 'Script Editor' }}
           </span>
           <span v-if="currentRequest?.deploymentScriptId" class="editor-pane-subtitle">
             · {{ currentRequest.deploymentScriptId }}
           </span>
-          <i v-if="currentRequest?.scriptFileLoading" class="pi pi-spin pi-spinner text-xs ml-auto" style="color: var(--p-indigo-400)"></i>
+          <span v-if="currentRequest?.scriptFileDirty" class="editor-pane-dirty" title="Unsaved changes">●</span>
+          <div class="editor-pane-actions">
+            <button
+              v-if="currentRequest?.scriptFileId && currentRequest.scriptFileVersions.length > 0"
+              class="editor-action-btn"
+              :class="{ active: currentRequest?.showVersionHistory }"
+              title="Version history"
+              @click="currentRequest && (currentRequest.showVersionHistory = !currentRequest.showVersionHistory)"
+            >
+              <i class="pi pi-history text-xs"></i>
+              <span class="editor-version-count">{{ currentRequest.scriptFileVersions.length }}</span>
+            </button>
+            <button
+              v-if="currentRequest?.scriptFileId"
+              class="editor-action-btn editor-save-btn"
+              :disabled="!currentRequest?.scriptFileDirty || currentRequest?.scriptFileSaving"
+              title="Save to NetSuite"
+              @click="currentRequest && saveScriptContent(currentRequest)"
+            >
+              <i :class="currentRequest?.scriptFileSaving ? 'pi pi-spin pi-spinner' : 'pi pi-save'" class="text-xs"></i>
+              <span>Save</span>
+            </button>
+            <i v-if="currentRequest?.scriptFileLoading" class="pi pi-spin pi-spinner text-xs ml-1" style="color: var(--p-indigo-400)"></i>
+          </div>
         </div>
+
+        <!-- Version history panel -->
+        <div v-if="currentRequest?.showVersionHistory && currentRequest.scriptFileVersions.length > 0" class="version-history-panel">
+          <div class="version-history-heading">
+            <i class="pi pi-history text-xs mr-1"></i>
+            Local History ({{ currentRequest.scriptFileVersions.length }} saved versions)
+          </div>
+          <div class="version-list">
+            <div v-for="ver in currentRequest.scriptFileVersions" :key="ver.id" class="version-item">
+              <span class="version-date">{{ formatVersionDate(ver.savedAt) }}</span>
+              <button class="version-restore-btn" @click="currentRequest && restoreVersion(currentRequest, ver)">
+                Restore
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="editor-pane-content">
           <MonacoCodeEditor
-            v-if="currentRequest?.scriptFileContent"
-            :model-value="currentRequest.scriptFileContent"
+            v-if="currentRequest?.scriptFileContent != null && !currentRequest?.scriptFileLoading"
+            :model-value="currentRequest?.scriptFileContent ?? ''"
+            @update:modelValue="onEditorChange"
             language="javascript"
-            :readonly="true"
+            :readonly="false"
             :config="{ autoSizing: true, minimap: false, suppressNativeFind: false }"
           />
           <div v-else-if="currentRequest?.scriptFileLoading" class="editor-pane-empty">
@@ -501,7 +542,7 @@
           </div>
           <div v-else class="editor-pane-empty">
             <i class="pi pi-code text-2xl" style="color: var(--p-slate-300)"></i>
-            <span>Select a deployment to view its script file</span>
+            <span>Select a deployment to view its script</span>
           </div>
         </div>
       </div>
@@ -529,6 +570,12 @@ import {
   getApiTesterUiState,
   setApiTesterUiState
 } from "../utils/apiTesterDb";
+import {
+  saveVersion,
+  getVersionsForFile,
+  formatVersionDate,
+  type FileVersion
+} from "../utils/fileVersionsDb";
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 const toast = useToast();
@@ -620,6 +667,18 @@ interface ApiRequest {
   /** Script file source content (fetched via SCRIPT_FILES, runtime-only) */
   scriptFileContent: string | null;
   scriptFileLoading: boolean;
+  /** File cabinet internal ID — needed for UPDATE_FILE_CONTENT */
+  scriptFileId: number | null;
+  /** File folder ID — needed by updateNetsuiteFileContent */
+  scriptFileFolderId: number | null;
+  /** True when the editor has changes not yet saved to NetSuite */
+  scriptFileDirty: boolean;
+  /** True while a save request is in flight */
+  scriptFileSaving: boolean;
+  /** Local version history entries (populated from fileVersionsDb) */
+  scriptFileVersions: FileVersion[];
+  /** Whether the version history panel is expanded */
+  showVersionHistory: boolean;
 }
 
 // ── Request / tab state ────────────────────────────────────────────────────────
@@ -801,24 +860,24 @@ const logLevelClass = (level: string): string => {
 
 // ── Split pane ────────────────────────────────────────────────────────────────
 const mainRef = ref<HTMLElement | null>(null);
-const splitTopHeight = ref(420);
+const splitLeftWidth = ref(600);
 const isDraggingSplit = ref(false);
-let dragStartY = 0;
-let dragStartHeight = 0;
+let dragStartX = 0;
+let dragStartWidth = 0;
 
 const startDrag = (e: MouseEvent) => {
   isDraggingSplit.value = true;
-  dragStartY = e.clientY;
-  dragStartHeight = splitTopHeight.value;
+  dragStartX = e.clientX;
+  dragStartWidth = splitLeftWidth.value;
   document.addEventListener("mousemove", onDrag);
   document.addEventListener("mouseup", stopDrag);
 };
 
 const onDrag = (e: MouseEvent) => {
   if (!isDraggingSplit.value) return;
-  const delta = e.clientY - dragStartY;
-  const containerH = mainRef.value?.clientHeight ?? 800;
-  splitTopHeight.value = Math.max(150, Math.min(containerH - 120, dragStartHeight + delta));
+  const delta = e.clientX - dragStartX;
+  const containerW = mainRef.value?.clientWidth ?? 1200;
+  splitLeftWidth.value = Math.max(280, Math.min(containerW - 200, dragStartWidth + delta));
 };
 
 const stopDrag = () => {
@@ -828,17 +887,83 @@ const stopDrag = () => {
 };
 
 // ── Script file fetcher ───────────────────────────────────────────────────────
+const loadVersionHistory = async (req: ApiRequest): Promise<void> => {
+  if (!req.scriptFileId) return;
+  try {
+    req.scriptFileVersions = await getVersionsForFile(req.scriptFileId);
+  } catch (err) {
+    console.error("[ApiTester] loadVersionHistory failed:", err);
+  }
+};
+
 const fetchScriptFile = async (req: ApiRequest, scriptId: number): Promise<void> => {
   req.scriptFileContent = null;
+  req.scriptFileDirty = false;
   req.scriptFileLoading = true;
   try {
     const res = await callApi(RequestRoutes.SCRIPT_FILES, { scriptIds: [scriptId] });
     const files: any[] = (res as ApiResponse)?.message ?? [];
-    req.scriptFileContent = files[0]?.scriptFile ?? null;
+    const file = files[0];
+    req.scriptFileContent = file?.scriptFile ?? null;
+    req.scriptFileId = file?.fileId != null ? Number(file.fileId) : null;
+    req.scriptFileFolderId = file?.fileFolderId != null ? Number(file.fileFolderId) : null;
+    if (req.scriptFileId) {
+      await loadVersionHistory(req);
+    }
   } catch (err) {
     console.error("[ApiTester] fetchScriptFile failed:", err);
   } finally {
     req.scriptFileLoading = false;
+  }
+};
+
+// ── Script file save + version history ───────────────────────────────────────
+const saveScriptContent = async (req: ApiRequest): Promise<void> => {
+  if (!req.scriptFileId || req.scriptFileContent === null) return;
+  req.scriptFileSaving = true;
+  try {
+    await saveVersion(req.scriptFileId, req.scriptName ?? "script.js", req.scriptFileContent);
+    const result = await callApi(RequestRoutes.UPDATE_FILE_CONTENT, {
+      fileId: req.scriptFileId,
+      fileContent: req.scriptFileContent,
+      fileName: req.scriptName ?? "script.js",
+      folderId: req.scriptFileFolderId,
+      mediaType: "JAVASCRIPT"
+    });
+    const isUpdated = (result as ApiResponse)?.message?.isUpdated;
+    if (isUpdated) {
+      req.scriptFileDirty = false;
+      await loadVersionHistory(req);
+      toast.add({ severity: "success", summary: "Saved", detail: `${req.scriptName ?? "Script"} saved to NetSuite`, life: 2000 });
+    } else {
+      throw new Error("NetSuite returned a save failure");
+    }
+  } catch (err: any) {
+    console.error("[ApiTester] saveScriptContent failed:", err);
+    toast.add({ severity: "error", summary: "Save Failed", detail: err?.message ?? "Could not save script to NetSuite", life: 5000 });
+  } finally {
+    req.scriptFileSaving = false;
+  }
+};
+
+const restoreVersion = (req: ApiRequest, version: FileVersion): void => {
+  req.scriptFileContent = version.content;
+  req.scriptFileDirty = true;
+  req.showVersionHistory = false;
+  toast.add({
+    severity: "info",
+    summary: "Version Restored",
+    detail: `Content from ${formatVersionDate(version.savedAt)} loaded — click Save to apply.`,
+    life: 3000
+  });
+};
+
+const onEditorChange = (val: string): void => {
+  const req = currentRequest.value;
+  if (!req) return;
+  if (req.scriptFileContent !== val) {
+    req.scriptFileContent = val;
+    req.scriptFileDirty = true;
   }
 };
 
@@ -888,7 +1013,13 @@ const createNewRequest = (): ApiRequest => ({
   previewSrc: null,
   previewLoading: false,
   scriptFileContent: null,
-  scriptFileLoading: false
+  scriptFileLoading: false,
+  scriptFileId: null,
+  scriptFileFolderId: null,
+  scriptFileDirty: false,
+  scriptFileSaving: false,
+  scriptFileVersions: [],
+  showVersionHistory: false
 });
 
 const addNewRequest = () => {
@@ -1224,6 +1355,8 @@ const flushSave = async () => {
         scriptType: r.scriptType,
         scriptName: r.scriptName,
         deploymentScriptId: r.deploymentScriptId,
+        scriptFileId: r.scriptFileId ?? null,
+        scriptFileFolderId: r.scriptFileFolderId ?? null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       })))
@@ -1318,7 +1451,13 @@ onMounted(async () => {
       previewSrc: null,
       previewLoading: false,
       scriptFileContent: null,
-      scriptFileLoading: false
+      scriptFileLoading: false,
+      scriptFileId: r.scriptFileId ?? null,
+      scriptFileFolderId: r.scriptFileFolderId ?? null,
+      scriptFileDirty: false,
+      scriptFileSaving: false,
+      scriptFileVersions: [],
+      showVersionHistory: false
     }));
 
     requests.value = restored;
@@ -1339,6 +1478,15 @@ onMounted(async () => {
   }
 
   isRestoring.value = false;
+
+  // Auto-fetch script files for any open tab that has an associated script
+  const tabsWithScript = openTabs.value
+    .map((id) => requests.value.find((r) => r.id === id))
+    .filter((r): r is ApiRequest => r != null && r.scriptInternalId != null);
+  tabsWithScript.forEach((r) => {
+    fetchScriptFile(r, r.scriptInternalId as number);
+  });
+
   loadScripts();
 });
 
@@ -1355,25 +1503,25 @@ onBeforeUnmount(async () => {
 .api-main {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-width: 0;
   overflow: hidden;
 }
 
 /* ── Split pane ──────────────────────────────────────────────────────────── */
-.split-top {
+.split-left {
   display: flex;
   flex-direction: column;
-  min-height: 150px;
+  min-width: 280px;
   overflow: hidden;
   flex-shrink: 0;
 }
 
 .split-divider {
   flex-shrink: 0;
-  height: 5px;
+  width: 5px;
   background: var(--p-slate-200);
-  cursor: row-resize;
+  cursor: col-resize;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1387,18 +1535,18 @@ onBeforeUnmount(async () => {
 }
 
 .split-divider-handle {
-  width: 36px;
-  height: 3px;
+  width: 3px;
+  height: 36px;
   border-radius: 2px;
   background: var(--p-slate-400);
   pointer-events: none;
 }
 
-.split-bottom {
+.split-right {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 100px;
+  min-width: 200px;
   overflow: hidden;
 }
 
@@ -1426,6 +1574,136 @@ onBeforeUnmount(async () => {
   color: var(--p-indigo-500);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.editor-pane-dirty {
+  font-size: 0.6rem;
+  color: var(--p-amber-500);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.editor-pane-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.editor-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.18rem 0.4rem;
+  background: none;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.65rem;
+  color: var(--p-slate-600);
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+
+.editor-action-btn:hover:not(:disabled) {
+  background: var(--p-slate-100);
+  color: var(--p-slate-800);
+  border-color: var(--p-slate-400);
+}
+
+.editor-action-btn.active {
+  background: var(--p-indigo-50);
+  border-color: var(--p-indigo-300);
+  color: var(--p-indigo-700);
+}
+
+.editor-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.editor-save-btn:not(:disabled) {
+  border-color: var(--p-indigo-400);
+  color: var(--p-indigo-700);
+}
+
+.editor-save-btn:not(:disabled):hover {
+  background: var(--p-indigo-50);
+}
+
+.editor-version-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--p-slate-200);
+  border-radius: 999px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  min-width: 0.9rem;
+  height: 0.9rem;
+  padding: 0 0.15rem;
+}
+
+/* ── Version history panel ───────────────────────────────────────────────── */
+.version-history-panel {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  padding: 0.35rem 0.6rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.version-history-heading {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--p-slate-500);
+  margin-bottom: 0.3rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.version-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 0.2rem;
+  font-size: 0.68rem;
+  border: 1px solid var(--p-slate-200);
+  background: white;
+}
+
+.version-date {
+  color: var(--p-slate-600);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.version-restore-btn {
+  background: none;
+  border: 1px solid var(--p-indigo-300);
+  border-radius: 0.2rem;
+  color: var(--p-indigo-600);
+  font-size: 0.62rem;
+  padding: 0.1rem 0.35rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+.version-restore-btn:hover {
+  background: var(--p-indigo-50);
 }
 
 .editor-pane-content {
