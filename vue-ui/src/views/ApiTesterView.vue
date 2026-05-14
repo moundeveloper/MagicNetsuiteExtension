@@ -169,6 +169,12 @@
                 item-dynamic
                 class="flex-1 min-w-0"
               />
+              <!-- Subtle saving indicator: only shown on the active request while a save is in flight -->
+              <span
+                v-if="isSaving && activeRequestId === req.id"
+                class="req-saving-dot"
+                title="Saving…"
+              />
               <button
                 class="ml-auto p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-slate-300 flex-shrink-0"
                 title="Delete request"
@@ -340,14 +346,22 @@
                   <p class="text-gray-400 text-sm">No logs found for this request.</p>
                 </div>
                 <div v-else class="logs-list">
-                  <div v-for="log in selectedHistoryEntry.logs" :key="log.id" class="log-entry">
-                    <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
-                    <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
-                    <div class="log-body">
-                      <span v-if="log.title" class="log-title">{{ log.title }}</span>
-                      <span class="log-message">{{ log.message }}</span>
+                  <div
+                    v-for="log in selectedHistoryEntry.logs"
+                    :key="log.id"
+                    class="log-entry"
+                    :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
+                  >
+                    <div class="log-entry-header" @click="toggleLog(log.id)">
+                      <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
+                      <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
+                      <span class="log-title">{{ log.title || '(no title)' }}</span>
+                      <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                      <i class="pi pi-chevron-down log-chevron" />
                     </div>
-                    <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                    <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
+                      <pre class="log-message">{{ log.message }}</pre>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -470,11 +484,16 @@
                 <template v-if="req.bodyType === 'key-value (JSON)'">
                   <div class="kv-editor">
                     <div class="kv-header-row kv-header-row--body">
-                      <span>Key (dot.notation)</span><span>Value</span><span>Type</span><span></span>
+                      <span>Key (dot / bracket[0] notation)</span><span>Value</span><span>Type</span><span></span>
                     </div>
                     <div v-for="(row, i) in req.bodyKv" :key="i" class="kv-row kv-row--body">
-                      <InputText v-model="row.key" placeholder="key or parent.child" size="small" class="kv-input" />
-                      <InputText v-model="row.value" placeholder="value" size="small" class="kv-input" />
+                      <InputText v-model="row.key" placeholder="key, parent.child or arr[0]" size="small" class="kv-input" />
+                      <InputText
+                        v-model="row.value"
+                        :placeholder="row.type === 'array' || row.type === 'array(number)' ? 'a, b, c' : 'value'"
+                        size="small"
+                        class="kv-input"
+                      />
                       <MSelect v-model="row.type" :options="KV_BODY_TYPES" size="small" class="kv-type-select" />
                       <button class="kv-remove" @click="req.bodyKv.splice(i, 1)" title="Remove">
                         <i class="pi pi-times text-xs"></i>
@@ -594,14 +613,22 @@
                     <p class="text-gray-400 text-sm">No logs found for this request.</p>
                   </div>
                   <div v-else class="logs-list">
-                    <div v-for="log in req.logs" :key="log.id" class="log-entry">
-                      <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
-                      <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
-                      <div class="log-body">
-                        <span v-if="log.title" class="log-title">{{ log.title }}</span>
-                        <span class="log-message">{{ log.message }}</span>
+                    <div
+                      v-for="log in req.logs"
+                      :key="log.id"
+                      class="log-entry"
+                      :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
+                    >
+                      <div class="log-entry-header" @click="toggleLog(log.id)">
+                        <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
+                        <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
+                        <span class="log-title">{{ log.title || '(no title)' }}</span>
+                        <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                        <i class="pi pi-chevron-down log-chevron" />
                       </div>
-                      <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                      <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
+                        <pre class="log-message">{{ log.message }}</pre>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -846,7 +873,7 @@ const toast = useToast();
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const SUITELET_METHODS = ["GET", "POST"];
 const BODY_TYPES = ["none", "raw (JSON)", "raw (text)", "form-urlencoded", "key-value (JSON)"];
-const KV_BODY_TYPES = ["string", "number", "boolean", "null"];
+const KV_BODY_TYPES = ["string", "number", "boolean", "null", "array", "array(number)"];
 const REQUEST_TABS = ["Params", "Headers", "Body"];
 
 /** Methods that send data in the request body, not as URL query params */
@@ -862,7 +889,7 @@ type KVRow = { key: string; value: string };
 type KVBodyRow = {
   key: string;
   value: string;
-  type: "string" | "number" | "boolean" | "null";
+  type: "string" | "number" | "boolean" | "null" | "array" | "array(number)";
 };
 
 type HistoryEntry = {
@@ -1312,6 +1339,18 @@ const onEditorChange = (val: string): void => {
 // ── History ───────────────────────────────────────────────────────────────────
 const history = ref<HistoryEntry[]>([]);
 
+// ── Log expand/collapse ─────────────────────────────────────────────────────
+const expandedLogIds = ref<Set<string>>(new Set());
+const toggleLog = (id: string) => {
+  const next = new Set(expandedLogIds.value);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  expandedLogIds.value = next;
+};
+
 const clearHistory = async () => {
   history.value = [];
   selectedHistoryEntry.value = null;
@@ -1342,25 +1381,34 @@ const viewHistoryEntry = (entry: HistoryEntry) => {
 };
 
 const reuseHistoryEntry = (entry: HistoryEntry) => {
-  const applyTo = (r: ApiRequest) => {
-    r.method = entry.method;
-    r.url = stripQueryParams(entry.url);
-    r.params = entry.params.length ? JSON.parse(JSON.stringify(entry.params)) : [{ key: "", value: "" }];
-    r.headers = entry.headers.length ? JSON.parse(JSON.stringify(entry.headers)) : [{ key: "", value: "" }];
-    r.body = entry.body;
-    r.bodyType = entry.bodyType;
-    r.bodyKv = entry.bodyKv?.length ? JSON.parse(JSON.stringify(entry.bodyKv)) : [{ key: "", value: "", type: "string" }];
-  };
-  const req = currentRequest.value;
-  if (!req) {
-    addNewRequest();
-    nextTick(() => {
-      const newReq = requests.value.find((r) => r.id === activeRequestId.value);
-      if (newReq) applyTo(newReq);
-    });
-  } else {
-    applyTo(req);
-  }
+  // Always create a fresh request so we never overwrite an existing tab.
+  // Name it after the script (or a truncated URL) with a short random suffix.
+  const baseName = entry.scriptName
+    ? entry.scriptName
+    : (() => {
+        try {
+          return new URL(entry.url).pathname.split("/").filter(Boolean).pop() ?? "Request";
+        } catch {
+          return "Request";
+        }
+      })();
+  const suffix = generateId().slice(0, 4);
+  const copyName = `${baseName} (${suffix})`;
+
+  const newReq = createNewRequest();
+  newReq.name = copyName;
+  newReq.method = entry.method;
+  newReq.url = stripQueryParams(entry.url);
+  newReq.params = entry.params.length ? JSON.parse(JSON.stringify(entry.params)) : [{ key: "", value: "" }];
+  newReq.headers = entry.headers.length ? JSON.parse(JSON.stringify(entry.headers)) : [{ key: "", value: "" }];
+  newReq.body = entry.body;
+  newReq.bodyType = entry.bodyType;
+  newReq.bodyKv = entry.bodyKv?.length ? JSON.parse(JSON.stringify(entry.bodyKv)) : [{ key: "", value: "", type: "string" }];
+
+  requests.value.push(newReq);
+  openTabs.value.push(newReq.id);
+  activeRequestId.value = newReq.id;
+
   selectedHistoryEntry.value = null;
 };
 
@@ -1542,27 +1590,67 @@ const coerceKvValue = (value: string, type: KVBodyRow["type"]): any => {
     case "number": return Number(value);
     case "boolean": return value === "true" || value === "1";
     case "null": return null;
+    case "array": return value.split(",").map((v) => v.trim());
+    case "array(number)": return value.split(",").map((v) => Number(v.trim()));
     default: return value;
   }
 };
 
 /**
+ * Parse a key path that may mix dot-notation and bracket-index notation.
+ *   "user.name"        → ["user", "name"]
+ *   "items[0].price"   → ["items", 0, "price"]
+ *   "tags[0]"          → ["tags", 0]
+ */
+const parsePath = (key: string): Array<string | number> => {
+  const parts: Array<string | number> = [];
+  // Match either a plain identifier segment or a [N] array index.
+  const re = /([^.[]+)|\[(\d+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(key)) !== null) {
+    if (m[1] !== undefined) parts.push(m[1]);
+    else if (m[2] !== undefined) parts.push(parseInt(m[2], 10));
+  }
+  return parts.length ? parts : [key];
+};
+
+/**
  * Build a (potentially nested) JSON object from the KV body rows.
- * Dot-notation in the key creates nested objects: "user.name" → { user: { name: … } }
+ *  - Dot-notation creates nested objects:  "user.name"      → { user: { name: … } }
+ *  - Bracket notation creates arrays:      "ids[0]", "ids[1]" → { ids: […, …] }
+ *  - type="array"          → value is comma-separated strings  → ["a","b"]
+ *  - type="array(number)"  → value is comma-separated numbers  → [1, 2]
  */
 const buildNestedJson = (rows: KVBodyRow[]): string => {
   const result: Record<string, any> = {};
-  rows.filter((r) => r.key.trim()).forEach(({ key, value, type }) => {
-    const coerced = coerceKvValue(value, type);
-    const parts = key.trim().split(".");
-    let obj = result;
-    for (let i = 0; i < parts.length - 1; i++) {
-      const part = parts[i]!;
-      if (!obj[part] || typeof obj[part] !== "object") obj[part] = {};
-      obj = obj[part] as Record<string, any>;
+
+  const setAtPath = (
+    root: Record<string, any>,
+    path: Array<string | number>,
+    val: any
+  ) => {
+    let node: any = root;
+    for (let i = 0; i < path.length - 1; i++) {
+      const seg = path[i]!;
+      const next = path[i + 1]!;
+      const needsArray = typeof next === "number";
+
+      if (node[seg] === undefined || node[seg] === null || typeof node[seg] !== "object") {
+        node[seg] = needsArray ? [] : {};
+      }
+      node = node[seg];
     }
-    obj[parts[parts.length - 1]!] = coerced;
-  });
+    node[path[path.length - 1]!] = val;
+  };
+
+  rows
+    .filter((r) => r.key.trim())
+    .forEach(({ key, value, type }) => {
+      const coerced = coerceKvValue(value, type);
+      const path = parsePath(key.trim());
+      setAtPath(result, path, coerced);
+    });
+
   return JSON.stringify(result, null, 2);
 };
 
@@ -1940,6 +2028,9 @@ const methodClass = (m: string): string => {
 /** Track last time we showed a "Saved" toast to avoid spamming. */
 let lastSaveToastTime = 0;
 
+/** True while a debounced save is pending or in-flight. */
+const isSaving = ref(false);
+
 const flushSave = async () => {
   try {
     await bulkUpsertApiRequests(
@@ -1963,12 +2054,8 @@ const flushSave = async () => {
         updatedAt: new Date().toISOString()
       })))
     );
-    // Show success toast at most once every 5 seconds to avoid spam
-    const now = Date.now();
-    if (now - lastSaveToastTime > 5000) {
-      lastSaveToastTime = now;
-      toast.add({ severity: "success", summary: "Saved", life: 1500 });
-    }
+    // Linger the save indicator for a moment so the user can see it
+    setTimeout(() => { isSaving.value = false; }, 1500);
   } catch (err: any) {
     console.error("[ApiTester] flushSave failed:", err);
     toast.add({
@@ -1977,6 +2064,7 @@ const flushSave = async () => {
       detail: err?.message ?? "Could not save to IndexedDB",
       life: 5000
     });
+    isSaving.value = false;
   }
 };
 
@@ -1984,6 +2072,7 @@ let saveTimeout: number | undefined;
 
 const scheduleRequestSave = () => {
   if (isRestoring.value) return;
+  isSaving.value = true;
   if (saveTimeout) clearTimeout(saveTimeout);
   saveTimeout = window.setTimeout(flushSave, 300);
 };
@@ -2487,7 +2576,7 @@ onBeforeUnmount(async () => {
 
 .history-section {
   flex-shrink: 0;
-  max-height: 160px;
+  max-height: 260px;
 }
 
 .sidebar-section-header {
@@ -2741,6 +2830,15 @@ onBeforeUnmount(async () => {
   white-space: nowrap;
 }
 
+.req-saving-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--p-indigo-400);
+  flex-shrink: 0;
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
 /* ── History ─────────────────────────────────────────────────────────────── */
 .history-list {
   overflow-y: auto;
@@ -2748,7 +2846,7 @@ onBeforeUnmount(async () => {
   flex-direction: column;
   gap: 0.2rem;
   min-height: 0;
-  max-height: 120px;
+  max-height: 220px;
 }
 
 .history-item {
@@ -2760,6 +2858,7 @@ onBeforeUnmount(async () => {
   cursor: pointer;
   font-size: 0.7rem;
   overflow: hidden;
+  flex-shrink: 0;
   transition: background 0.12s;
 }
 
@@ -2987,7 +3086,7 @@ onBeforeUnmount(async () => {
   grid-template-columns: 1fr 1fr 5.5rem auto;
 }
 .kv-row--body {
-  grid-template-columns: 1fr 1fr 5.5rem auto;
+  grid-template-columns: 1fr 1fr 8.5rem auto;
 }
 .kv-type-select {
   width: 100%;
@@ -3152,15 +3251,45 @@ onBeforeUnmount(async () => {
 }
 
 .log-entry {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.35rem 0.5rem;
+  display: flex;
+  flex-direction: column;
   border-radius: 0.3rem;
   background: var(--p-slate-50);
   border: 1px solid var(--p-slate-100);
   font-size: 0.72rem;
+  overflow: hidden;
+}
+
+.log-entry-header {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.log-entry-header:hover {
+  background: var(--p-slate-100);
+}
+
+.log-entry-body {
+  border-top: 1px solid var(--p-slate-200);
+  padding: 0.4rem 0.6rem;
+  background: white;
+}
+
+.log-chevron {
+  font-size: 0.55rem;
+  color: var(--p-slate-400);
+  transition: transform 0.18s ease;
+  flex-shrink: 0;
+}
+
+.log-entry--expanded .log-chevron {
+  transform: rotate(180deg);
 }
 
 .log-level-badge {
@@ -3185,25 +3314,23 @@ onBeforeUnmount(async () => {
   flex-shrink: 0;
 }
 
-.log-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-
 .log-title {
   font-weight: 600;
   color: var(--p-slate-700);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .log-message {
+  font-size: 0.72rem;
   color: var(--p-slate-600);
   word-break: break-word;
   white-space: pre-wrap;
+  margin: 0;
+  font-family: "JetBrains Mono", monospace;
+  line-height: 1.5;
 }
 
 .log-script {
@@ -3358,7 +3485,8 @@ onBeforeUnmount(async () => {
 
 /* ── History item delete button ──────────────────────────────────────────── */
 .history-delete-btn {
-  display: none;
+  display: inline-flex;
+  visibility: hidden;
   align-items: center;
   justify-content: center;
   background: none;
@@ -3372,7 +3500,7 @@ onBeforeUnmount(async () => {
 }
 
 .history-item:hover .history-delete-btn {
-  display: inline-flex;
+  visibility: visible;
 }
 
 .history-delete-btn:hover {
@@ -3420,5 +3548,10 @@ onBeforeUnmount(async () => {
   font-size: 0.7rem;
   color: var(--p-amber-800);
   margin-bottom: 0.25rem;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(0.75); }
 }
 </style>

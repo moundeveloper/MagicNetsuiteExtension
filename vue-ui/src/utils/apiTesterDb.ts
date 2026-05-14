@@ -13,7 +13,7 @@ export interface KVRowRecord {
 export interface KVBodyRowRecord {
   key: string;
   value: string;
-  type: "string" | "number" | "boolean" | "null";
+  type: "string" | "number" | "boolean" | "null" | "array" | "array(number)";
 }
 
 export interface ApiRequestRecord {

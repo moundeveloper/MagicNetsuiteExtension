@@ -449,6 +449,7 @@ import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import { tools } from "../utils/toolManager";
 import { createSqlAiTools } from "../utils/sqlAiTools";
+import { netsuiteDocsTools, NETSUITE_DOCS_SYSTEM_PROMPT } from "../utils/netsuiteDocsTools";
 import {
   getEnabledAgents,
   getAgentBySlug,
@@ -678,6 +679,10 @@ const buildAgentSystemPrompt = async (
     parts.push("\n\n# Restrictions\n" + limitNotes.join("\n"));
   }
 
+  // Always append the NetSuite docs instruction so every sub-agent uses the
+  // docs tools for knowledge questions and cites references in its output.
+  parts.push("\n\n" + NETSUITE_DOCS_SYSTEM_PROMPT);
+
   return parts.join("\n");
 };
 
@@ -732,7 +737,7 @@ const executeSubAgent = async (
   // Create a temporary useAgent instance for the sub-agent
   const subAgentInstance = useAgent({
     systemPrompt,
-    tools: [...tools, ...createSqlAiTools()],
+    tools: [...tools, ...createSqlAiTools(), ...netsuiteDocsTools],
     keepHistory: false,
     onToolApprovalRequest: (name, input) => {
       return requestToolApproval(name, input, subAgent.name, subAgent.color);
