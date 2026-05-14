@@ -61,10 +61,55 @@ export const setupMessageListener = () => {
   // ============================================================================
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    const { action, mode = REQUEST_MODES.NORMAL } = msg;
+    const { action, data, mode = REQUEST_MODES.NORMAL } = msg;
     const requestId = generateRequestId();
 
     if (mode !== REQUEST_MODES.NORMAL) return;
+
+    // Handle FETCH_HELP_PAGE directly in the content script isolated world.
+    // Content scripts have extension-level fetch privileges (cross-origin +
+    // session cookies) AND full browser APIs (DOMParser) — both of which are
+    // unavailable or unreliable in the background service worker.
+    if (action === "FETCH_HELP_PAGE") {
+      const url = data?.url ?? "";
+      const operation = data?.operation ?? "read"; // "search" | "read"
+      const baseUrl = data?.baseUrl ?? "";
+
+      fetch(url, { credentials: "include" })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.text();
+        })
+        .then(html => {
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+
+          if (operation === "search") {
+            const titleEls = doc.querySelectorAll(".result-title");
+            const bodyEls = doc.querySelectorAll(".result-body");
+            const results = [];
+            titleEls.forEach((titleEl, i) => {
+              const anchor = titleEl.querySelector("a");
+              const title = (anchor?.textContent ?? titleEl.textContent ?? "").trim();
+              const href = anchor?.getAttribute("href") ?? "";
+              const fullUrl = href.startsWith("http") ? href : href ? `${baseUrl}${href}` : "";
+              const summary = (bodyEls[i]?.textContent ?? "").trim();
+              if (title && fullUrl) results.push({ title, url: fullUrl, summary });
+            });
+            sendResponse({ status: "ok", message: { results } });
+          } else {
+            const el =
+              doc.getElementById("nshelp_page") ??
+              doc.querySelector(".nshelp_page") ??
+              doc.querySelector("main") ??
+              doc.body;
+            const content = (el?.textContent ?? "").trim();
+            sendResponse({ status: "ok", message: { content } });
+          }
+        })
+        .catch(e => sendResponse({ status: "error", message: String(e?.message ?? e) }));
+      return true;
+    }
 
     const handler = new NormalRequestHandler(requestId, sendResponse);
     requestManager.addRequest(requestId, handler);

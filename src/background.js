@@ -796,6 +796,37 @@ async function handleRequest({ requestId, method, params }) {
               },
               required: ["tableName", "fieldId"]
             }
+          },
+          // ── NetSuite Docs Tools ──
+          {
+            name: "netsuite_search_docs",
+            description:
+              "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. Use this first to find relevant documentation, then call 'netsuite_read_doc_page' with a returned URL to get the full content. Always use this tool for any factual question about NetSuite — do NOT answer from training data.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "Search keywords (e.g. 'SuiteScript record load', 'saved search filters', 'revenue recognition')."
+                }
+              },
+              required: ["query"]
+            }
+          },
+          {
+            name: "netsuite_read_doc_page",
+            description:
+              "Read the full text content of a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs'. Returns the page's main text (up to 10 000 characters). Always include a References section with the page URL in your response after reading.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                url: {
+                  type: "string",
+                  description: "Full URL of the NetSuite help page (from netsuite_search_docs results)."
+                }
+              },
+              required: ["url"]
+            }
           }
         ]
       };
@@ -810,6 +841,10 @@ async function handleRequest({ requestId, method, params }) {
           result = { content: [{ type: "text", text: SUITEQL_GUIDE }] };
         } else if (name.startsWith("suiteql_")) {
           result = await handleSuiteQLTool(name, args);
+        } else if (name === "netsuite_search_docs") {
+          result = await handleNetsuiteSearchDocs(args);
+        } else if (name === "netsuite_read_doc_page") {
+          result = await handleNetsuiteReadDocPage(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -983,6 +1018,70 @@ async function handleSuiteQLTool(toolName, args) {
     content: [{
       type: "text",
       text: JSON.stringify(resultData, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// NetSuite Docs Tool Helpers
+// -----------------------------
+
+async function handleNetsuiteSearchDocs(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { protocol, host } = new URL(tab.url);
+  const baseUrl = `${protocol}//${host}`;
+  const searchUrl = `${baseUrl}/app/help/helpcenter.nl?search=${encodeURIComponent(String(args.query ?? ""))}`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_HELP_PAGE",
+    data: { url: searchUrl, operation: "search", baseUrl },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch NetSuite docs");
+  }
+
+  const results = response.message?.results ?? [];
+  const payload = results.length === 0
+    ? { results: [], message: "No results found for the given query." }
+    : { results };
+
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+}
+
+async function handleNetsuiteReadDocPage(args) {
+  const url = String(args.url ?? "");
+  if (!url.includes("app.netsuite.com")) {
+    throw new Error("URL must point to an app.netsuite.com help page.");
+  }
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_HELP_PAGE",
+    data: { url, operation: "read" },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch doc page");
+  }
+
+  const content = response.message?.content ?? "";
+  if (!content) throw new Error("Could not parse content from the page.");
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ url, content: content.slice(0, 10_000) }, null, 2)
     }]
   };
 }

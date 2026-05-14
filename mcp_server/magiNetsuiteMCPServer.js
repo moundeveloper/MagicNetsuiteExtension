@@ -459,6 +459,36 @@ async function handleMcp(req) {
               },
               required: ["tableName", "fieldId"]
             }
+          },
+          {
+            name: "netsuite_search_docs",
+            description:
+              "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. Use this first to find relevant documentation, then call 'netsuite_read_doc_page' with a returned URL to get the full content. Always use this tool for any factual question about NetSuite — do NOT answer from training data.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "Search keywords (e.g. 'SuiteScript record load', 'saved search filters', 'revenue recognition')."
+                }
+              },
+              required: ["query"]
+            }
+          },
+          {
+            name: "netsuite_read_doc_page",
+            description:
+              "Read the full text content of a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs'. Returns the page's main text (up to 10 000 characters). Always include a References section with the page URL in your response after reading.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                url: {
+                  type: "string",
+                  description: "Full URL of the NetSuite help page (from netsuite_search_docs results)."
+                }
+              },
+              required: ["url"]
+            }
           }
         ]
       };
