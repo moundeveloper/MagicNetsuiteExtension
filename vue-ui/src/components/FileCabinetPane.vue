@@ -653,6 +653,43 @@
       </div>
     </Teleport>
 
+    <!-- Move confirmation dialog -->
+    <Teleport to="body">
+      <div v-if="showMoveConfirm" class="fc-confirm-overlay" @click.self="cancelMove">
+        <div class="fc-confirm-box">
+          <div class="fc-confirm-header">
+            <i class="pi pi-arrow-right-arrow-left text-blue-400"></i>
+            <span v-if="moveTargets.length === 1">Move {{ moveTargets[0]!.type === 'folder' ? 'Folder' : 'File' }}</span>
+            <span v-else>Move {{ moveTargets.length }} Items</span>
+          </div>
+          <div class="fc-confirm-body">
+            <template v-if="moveTargets.length === 1">
+              <p>Move <strong>{{ moveTargets[0]!.name }}</strong> into <strong>{{ moveDestFolder?.name }}</strong>?</p>
+            </template>
+            <template v-else>
+              <p>Move <strong>{{ moveTargets.length }}</strong> items into <strong>{{ moveDestFolder?.name }}</strong>?</p>
+              <ul class="fc-delete-list">
+                <li v-for="t in moveTargets.slice(0, 8)" :key="`${t.type}-${t.id}`">
+                  <i :class="getItemIcon(t)" class="text-xs"></i>
+                  {{ t.name }}
+                </li>
+                <li v-if="moveTargets.length > 8" class="text-gray-400">
+                  ... and {{ moveTargets.length - 8 }} more
+                </li>
+              </ul>
+            </template>
+          </div>
+          <div class="fc-confirm-actions">
+            <Button size="small" severity="secondary" @click="cancelMove">Cancel</Button>
+            <Button size="small" severity="info" @click="executeMove" :loading="isMoveLoading">
+              <i class="pi pi-arrow-right-arrow-left text-xs mr-1"></i>
+              Move
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- New Folder dialog -->
     <Teleport to="body">
       <div v-if="showNewFolderDialog" class="fc-confirm-overlay" @click.self="cancelNewFolder">
@@ -905,6 +942,12 @@ const deleteTargets = ref<CabinetItem[]>([]);
 const deleteRecursive = ref(false);
 const folderContentWarning = ref<string | null>(null);
 const isDeleting = ref(false);
+
+// ── Move confirm ────────────────────────────────────────────────────────────
+const showMoveConfirm = ref(false);
+const moveTargets = ref<CabinetItem[]>([]);
+const moveDestFolder = ref<CabinetItem | null>(null);
+const moveSrcFolderId = ref<number | null>(null);
 
 const contextMenu = ref({
   visible: false,
@@ -1795,7 +1838,7 @@ const handleFolderDragLeave = () => {
   dropTargetFolderId.value = null;
 };
 
-const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) => {
+const handleMoveItemDrop = (targetFolder: CabinetItem, event: DragEvent) => {
   dropTargetFolderId.value = null;
   if (targetFolder.type !== "folder") return;
   const itemJson = event.dataTransfer?.getData("application/fc-item");
@@ -1803,9 +1846,6 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   let draggedItem: CabinetItem;
   try { draggedItem = JSON.parse(itemJson); } catch { return; }
 
-  // Use the full selection snapshot baked into dataTransfer at drag-start.
-  // This is reliable regardless of any selection changes that may have happened
-  // between dragstart and drop (cross-component, async updates, etc.).
   const itemsJson = event.dataTransfer?.getData("application/fc-items");
   let itemsToMove: CabinetItem[];
   if (itemsJson) {
@@ -1814,7 +1854,6 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
     itemsToMove = [draggedItem];
   }
 
-  // Filter out moving a folder into itself and items already in the target
   const filtered = itemsToMove.filter((item) => {
     if (item.id === targetFolder.id) return false;
     const itemSrcFolder = item.type === "folder"
@@ -1824,15 +1863,34 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
   });
   if (filtered.length === 0) return;
 
-  // Always read srcFolderId from the dataTransfer snapshot set at drag-start.
-  // Using currentFolderId.value here is wrong for cross-pane drops — the drop
-  // pane's currentFolderId is the *destination*, not the source.
   const srcFolderSnap = event.dataTransfer?.getData("application/fc-srcfolder");
   const srcFolderId = srcFolderSnap
     ? Number(srcFolderSnap)
     : filtered[0]!.type === "file"
       ? (filtered[0] as FileItem).folder
       : (filtered[0] as FolderItem).parent ?? currentFolderId.value;
+
+  // Stage and show confirm popup (same pattern as delete)
+  moveTargets.value = filtered;
+  moveDestFolder.value = targetFolder;
+  moveSrcFolderId.value = srcFolderId;
+  showMoveConfirm.value = true;
+};
+
+const cancelMove = () => {
+  showMoveConfirm.value = false;
+  moveTargets.value = [];
+  moveDestFolder.value = null;
+  moveSrcFolderId.value = null;
+};
+
+const executeMove = async () => {
+  const filtered = moveTargets.value;
+  const targetFolder = moveDestFolder.value;
+  const srcFolderId = moveSrcFolderId.value;
+  if (!filtered.length || !targetFolder || srcFolderId === null) return;
+
+  showMoveConfirm.value = false;
   const fileIds = filtered.filter((i) => i.type === "file").map((i) => i.id);
   const folderIds = filtered.filter((i) => i.type === "folder").map((i) => i.id);
 
@@ -1851,6 +1909,9 @@ const handleMoveItemDrop = async (targetFolder: CabinetItem, event: DragEvent) =
     toast.add({ severity: "error", summary: "Move Failed", detail: err.message || "Failed to move item", life: 5000 });
   } finally {
     isMoveLoading.value = false;
+    moveTargets.value = [];
+    moveDestFolder.value = null;
+    moveSrcFolderId.value = null;
   }
 };
 

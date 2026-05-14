@@ -189,7 +189,16 @@
         <div v-show="isSplit" class="fc-split-tabbars">
           <!-- Left column -->
           <div :style="{ width: `calc(${splitRatio}% - 2.5px)`, minWidth: 0 }">
-            <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right' }">
+            <div
+              class="fc-tabbar fc-split-tabbar"
+              :class="{
+                'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'right',
+                'fc-tabbar-tabs--drop-active': dropZone === 'group-left',
+              }"
+              @dragover.prevent="onTabbarDragOver($event, 'left')"
+              @dragleave="dropZone = null"
+              @drop.prevent="onTabbarDrop($event, 'left')"
+            >
               <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
                 <div
                   v-for="pane in leftGroupPanes"
@@ -221,20 +230,10 @@
                 </div>
                 <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab · Drop file or folder to open"
                   @dragover.prevent
-                  @drop.prevent="openItemInNewTab($event)"
+                  @drop.prevent.stop="openItemInNewTab($event)"
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
-              </div>
-              <div
-                v-show="draggingTabId !== null"
-                class="fc-group-dropzone"
-                :class="{ 'fc-group-dropzone--active': dropZone === 'group-left' }"
-                @dragover.prevent="dropZone = 'group-left'"
-                @dragleave="dropZone = null"
-                @drop.prevent="moveTabToGroup(draggingTabId!, 'left')"
-              >
-                <i class="pi pi-arrow-left text-xs mr-1"></i> Move here
               </div>
             </div>
           </div>
@@ -242,7 +241,16 @@
           <div class="fc-split-tabbars-sep"></div>
           <!-- Right column -->
           <div style="flex: 1; min-width: 0">
-            <div class="fc-tabbar fc-split-tabbar" :class="{ 'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left' }">
+            <div
+              class="fc-tabbar fc-split-tabbar"
+              :class="{
+                'fc-split-tabbar--drop-target': draggingTabId !== null && draggingGroup === 'left',
+                'fc-tabbar-tabs--drop-active': dropZone === 'group-right',
+              }"
+              @dragover.prevent="onTabbarDragOver($event, 'right')"
+              @dragleave="dropZone = null"
+              @drop.prevent="onTabbarDrop($event, 'right')"
+            >
               <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
                 <div
                   v-for="pane in rightGroupPanes"
@@ -274,20 +282,10 @@
                 </div>
                 <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab · Drop file or folder to open"
                   @dragover.prevent
-                  @drop.prevent="openItemInNewTab($event)"
+                  @drop.prevent.stop="openItemInNewTab($event)"
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
-              </div>
-              <div
-                v-show="draggingTabId !== null"
-                class="fc-group-dropzone"
-                :class="{ 'fc-group-dropzone--active': dropZone === 'group-right' }"
-                @dragover.prevent="dropZone = 'group-right'"
-                @dragleave="dropZone = null"
-                @drop.prevent="moveTabToGroup(draggingTabId!, 'right')"
-              >
-                Move here <i class="pi pi-arrow-right text-xs ml-1"></i>
               </div>
             </div>
           </div>
@@ -849,6 +847,33 @@ const moveTabToGroup = (paneId: string, targetGroup: "left" | "right") => {
     }
   }
   onTabDragEnd();
+};
+
+// ── Tab bar drag/drop handlers (split mode) ───────────────────────────────
+// Handles both tab moves and fc-item drops (open in new tab) on the full bar.
+
+const onTabbarDragOver = (event: DragEvent, group: "left" | "right") => {
+  const isFcItem = event.dataTransfer?.types.includes("application/fc-item") ?? false;
+  // Only highlight for cross-group tab moves or fc-item drops; ignore same-group tab drags.
+  const isCrossGroupTab = draggingTabId.value !== null && draggingGroup.value !== null && draggingGroup.value !== group;
+  if (isCrossGroupTab || isFcItem) {
+    dropZone.value = `group-${group}`;
+  }
+};
+
+const onTabbarDrop = (event: DragEvent, group: "left" | "right") => {
+  dropZone.value = null;
+  if (draggingTabId.value !== null) {
+    // Only move if actually crossing groups — dropping on the same group is a no-op
+    // (and would otherwise create a duplicate entry in the group's ID array).
+    if (draggingGroup.value !== null && draggingGroup.value !== group) {
+      moveTabToGroup(draggingTabId.value, group);
+    } else {
+      onTabDragEnd();
+    }
+  } else {
+    openItemInNewTab(event);
+  }
 };
 
 // ── Drop file/folder item onto tab bar → open in new tab ──────────────────
@@ -1507,6 +1532,12 @@ onMounted(async () => {
   border-bottom: 1px solid var(--p-slate-200);
 }
 
+/* Subtle hint: opposite group is a valid drop target when dragging a tab cross-group */
+.fc-split-tabbar--drop-target {
+  outline: 1px dashed var(--p-indigo-300);
+  outline-offset: -2px;
+}
+
 .fc-tabbar-tabs {
   display: flex;
   align-items: center;
@@ -1644,36 +1675,12 @@ onMounted(async () => {
   border-color: var(--p-indigo-500);
 }
 
-/* ── Group drop zone (split mode, move between groups) ──────────────────── */
-.fc-group-dropzone {
-  display: flex;
-  align-items: center;
-  padding: 3px 8px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--p-indigo-600);
+/* ── Tab bar drop-active highlight (split mode, move between groups) ──────── */
+.fc-tabbar-tabs--drop-active {
   background: var(--p-indigo-50);
-  border: 1px dashed var(--p-indigo-300);
+  outline: 1px dashed var(--p-indigo-400);
+  outline-offset: -2px;
   border-radius: 4px;
-  white-space: nowrap;
-  margin: 3px 4px;
-  flex-shrink: 0;
-  /* invisible + non-interactive by default */
-  pointer-events: none;
-  opacity: 0;
-  transition: background 0.15s, opacity 0.12s;
-}
-
-/* Reveal when the parent tab bar is a valid drop target */
-.fc-split-tabbar--drop-target .fc-group-dropzone {
-  opacity: 1;
-  pointer-events: all;
-  cursor: pointer;
-}
-
-.fc-group-dropzone--active {
-  background: var(--p-indigo-100);
-  border-color: var(--p-indigo-500);
 }
 
 /* ── Pane host: stable mount container for all panes ────────────────────── */
