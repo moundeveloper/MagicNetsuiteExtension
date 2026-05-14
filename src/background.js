@@ -827,6 +827,42 @@ async function handleRequest({ requestId, method, params }) {
               },
               required: ["url"]
             }
+          },
+          // ── Bundle Tools ──
+          {
+            name: "netsuite_list_bundles",
+            description:
+              "List SuiteApp bundles in the current NetSuite account. Returns each bundle's name, ID, version, app ID, abstract, creator, dates, and a `type` field ('installed' or 'created'). Use the `filter` parameter to narrow results: 'installed' returns only marketplace/3rd-party bundles, 'created' returns only bundles built and published in-house, 'all' (default) returns both.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filter: {
+                  type: "string",
+                  enum: ["all", "installed", "created"],
+                  description:
+                    "'all' (default) – both installed and created bundles. 'installed' – only bundles downloaded from the SuiteApp marketplace (type=I). 'created' – only bundles built and published in-house (type=S)."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_get_bundle_components",
+            description:
+              "Get the detailed list of components installed by a specific bundle, identified by its Bundle ID. Returns components grouped by category (e.g. 'Script Files', 'Custom Records') and subcategory, with each component's name, script/record ID, references, and lock status.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                bundleId: {
+                  type: "string",
+                  description: "The numeric Bundle ID to inspect (e.g. '123456'). Obtain this from netsuite_list_bundles."
+                },
+                bundleName: {
+                  type: "string",
+                  description: "Optional bundle name for context."
+                }
+              },
+              required: ["bundleId"]
+            }
           }
         ]
       };
@@ -845,6 +881,10 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteSearchDocs(args);
         } else if (name === "netsuite_read_doc_page") {
           result = await handleNetsuiteReadDocPage(args);
+        } else if (name === "netsuite_list_bundles") {
+          result = await handleNetsuitListBundles(args);
+        } else if (name === "netsuite_get_bundle_components") {
+          result = await handleNetsuiteGetBundleComponents(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -1082,6 +1122,73 @@ async function handleNetsuiteReadDocPage(args) {
     content: [{
       type: "text",
       text: JSON.stringify({ url, content: content.slice(0, 10_000) }, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// Bundle Tool Helpers
+// -----------------------------
+
+async function handleNetsuitListBundles(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { hostname } = new URL(tab.url);
+
+  // Map friendly filter names to NetSuite type codes
+  const filterMap = { installed: "I", created: "S", all: "both" };
+  const bundleType = filterMap[args?.filter] ?? "both";
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_BUNDLES",
+    data: { domain: hostname, bundleType },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch bundle list");
+  }
+
+  const bundles = response.message?.bundles ?? [];
+  const installed = bundles.filter(b => b.type === "installed").length;
+  const created = bundles.filter(b => b.type === "created").length;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ bundles, count: bundles.length, installed, created }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetBundleComponents(args) {
+  const bundleId = String(args.bundleId ?? "");
+  if (!bundleId) throw new Error("bundleId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { hostname } = new URL(tab.url);
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_BUNDLE_COMPONENTS",
+    data: { domain: hostname, bundleId },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? `Failed to fetch components for bundle ${bundleId}`);
+  }
+
+  const components = response.message?.components ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ bundleId, components, count: components.length }, null, 2)
     }]
   };
 }

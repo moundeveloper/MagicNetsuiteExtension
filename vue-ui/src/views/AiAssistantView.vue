@@ -516,6 +516,7 @@ import { skillTools } from "../utils/skillSearchTools";
 import { chainedTools } from "../utils/chainedTools";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { netsuiteDocsTools, NETSUITE_DOCS_SYSTEM_PROMPT } from "../utils/netsuiteDocsTools";
+import { bundleTools, BUNDLE_TOOLS_SYSTEM_PROMPT } from "../utils/bundleTools";
 import { useSettings } from "../states/settingsState";
 import {
   getAllAiChats,
@@ -881,13 +882,15 @@ Rules:
 
 ${NETSUITE_DOCS_SYSTEM_PROMPT}
 
+${BUNDLE_TOOLS_SYSTEM_PROMPT}
+
 ## Chained Tools — Pipeline Priority
 When a chained tool is available (e.g. \`generate_script_deployment\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.
 
 ## Agent Delegation
 You may have specialized agents available via the \`delegate_to_agent\` tool. When a task clearly falls within a specialized agent's domain, delegate to it by calling the tool with the agent's slug and the task description. The agent will handle the task with its own specialized tools and skills, and return the result. Only delegate when the agent's specialization is a strong match — otherwise handle the task yourself.
 ${DIAGRAM_DOCS}`,
-  tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, delegateToAgentTool],
+  tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools, delegateToAgentTool],
   chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,

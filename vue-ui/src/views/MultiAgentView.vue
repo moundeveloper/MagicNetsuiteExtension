@@ -450,6 +450,7 @@ import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import { tools } from "../utils/toolManager";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { netsuiteDocsTools, NETSUITE_DOCS_SYSTEM_PROMPT } from "../utils/netsuiteDocsTools";
+import { bundleTools, BUNDLE_TOOLS_SYSTEM_PROMPT } from "../utils/bundleTools";
 import {
   getEnabledAgents,
   getAgentBySlug,
@@ -682,6 +683,7 @@ const buildAgentSystemPrompt = async (
   // Always append the NetSuite docs instruction so every sub-agent uses the
   // docs tools for knowledge questions and cites references in its output.
   parts.push("\n\n" + NETSUITE_DOCS_SYSTEM_PROMPT);
+  parts.push("\n\n" + BUNDLE_TOOLS_SYSTEM_PROMPT);
 
   return parts.join("\n");
 };
@@ -737,7 +739,7 @@ const executeSubAgent = async (
   // Create a temporary useAgent instance for the sub-agent
   const subAgentInstance = useAgent({
     systemPrompt,
-    tools: [...tools, ...createSqlAiTools(), ...netsuiteDocsTools],
+    tools: [...tools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools],
     keepHistory: false,
     onToolApprovalRequest: (name, input) => {
       return requestToolApproval(name, input, subAgent.name, subAgent.color);

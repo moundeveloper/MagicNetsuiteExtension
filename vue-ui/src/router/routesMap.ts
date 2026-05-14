@@ -8,6 +8,7 @@ import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
 import RequestSnifferView from "../views/RequestSnifferView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
+import BundleDetailView from "../views/BundleDetailView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 import PlaygroundView from "../views/PlaygroundView.vue";
 import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
@@ -106,8 +107,17 @@ export const routes: FullRoute[] = [
     name: "Bundles",
     icon: "pi pi-box",
     component: BundleSearchView,
-    status: RouteStatus.draft,
-    breadcrumb: "Bundles"
+    status: RouteStatus.release,
+    breadcrumb: "Bundles",
+    children: [
+      {
+        route: "/bundles/:bundleId",
+        name: "BundleDetail",
+        component: BundleDetailView,
+        breadcrumb: "Bundle Detail",
+        breadcrumbParents: [{ label: "Bundles", route: "/bundles" }]
+      }
+    ]
   },
   {
     route: "/better-filecabinet",
