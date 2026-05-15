@@ -5,6 +5,7 @@ import { callApi } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import Select from "primevue/select";
 import Button from "primevue/button";
+import ToggleSwitch from "primevue/toggleswitch";
 import MCard from "../components/universal/card/MCard.vue";
 
 const props = defineProps<{ vhOffset: number }>();
@@ -160,6 +161,32 @@ const fetchMcpTools = async () => {
   } finally {
     toolsLoading.value = false;
   }
+};
+
+// ── Tool enable / disable ──
+
+const isToolEnabled = (name: string) =>
+  !settings.mcpDisabledTools.includes(name);
+
+const enabledCount = computed(() =>
+  mcpTools.value.filter((t) => isToolEnabled(t.name)).length
+);
+
+const toggleTool = (name: string) => {
+  const idx = settings.mcpDisabledTools.indexOf(name);
+  if (idx === -1) {
+    settings.mcpDisabledTools = [...settings.mcpDisabledTools, name];
+  } else {
+    settings.mcpDisabledTools = settings.mcpDisabledTools.filter((n) => n !== name);
+  }
+};
+
+const disableAll = () => {
+  settings.mcpDisabledTools = mcpTools.value.map((t) => t.name);
+};
+
+const enableAll = () => {
+  settings.mcpDisabledTools = [];
 };
 
 // ── MCP Usage Tracking ──
@@ -384,20 +411,47 @@ onBeforeUnmount(() => {
       <!-- Available Tools Section -->
       <div class="mcp-section">
         <div class="section-header">
-          <h2>Available Tools</h2>
-          <Button
-            size="small"
-            severity="secondary"
-            outlined
-            :loading="toolsLoading"
-            @click="fetchMcpTools"
-            title="Refresh tools list"
-          >
-            <i class="pi pi-refresh" />
-          </Button>
+          <h2>
+            Available Tools
+            <span class="tools-enabled-count">
+              {{ enabledCount }} / {{ mcpTools.length }} enabled
+            </span>
+          </h2>
+          <div class="tools-header-actions">
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="enabledCount === mcpTools.length"
+              @click="enableAll"
+              title="Enable all tools"
+            >
+              Enable all
+            </Button>
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              :disabled="enabledCount === 0"
+              @click="disableAll"
+              title="Disable all tools"
+            >
+              Disable all
+            </Button>
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              :loading="toolsLoading"
+              @click="fetchMcpTools"
+              title="Refresh tools list"
+            >
+              <i class="pi pi-refresh" />
+            </Button>
+          </div>
         </div>
         <p class="section-description">
-          These tools are exposed to AI assistants via the MCP protocol.
+          These tools are exposed to AI assistants via the MCP protocol. Toggle individual tools to control what the AI can access.
         </p>
 
         <div v-if="toolsLoading" class="fetch-status">
@@ -423,10 +477,23 @@ onBeforeUnmount(() => {
             No tools match "{{ toolFilter }}".
           </div>
           <div v-else class="tools-list">
-            <div v-for="tool in filteredTools" :key="tool.name" class="tool-card">
-              <div class="tool-name">
-                <i class="pi pi-wrench" />
-                <code>{{ tool.name }}</code>
+            <div
+              v-for="tool in filteredTools"
+              :key="tool.name"
+              class="tool-card"
+              :class="{ 'tool-disabled': !isToolEnabled(tool.name) }"
+            >
+              <div class="tool-card-header">
+                <div class="tool-name">
+                  <i class="pi pi-wrench" />
+                  <code>{{ tool.name }}</code>
+                  <span v-if="!isToolEnabled(tool.name)" class="tool-disabled-badge">Disabled</span>
+                </div>
+                <ToggleSwitch
+                  :modelValue="isToolEnabled(tool.name)"
+                  @update:modelValue="toggleTool(tool.name)"
+                  class="tool-toggle"
+                />
               </div>
               <div class="tool-description">{{ tool.description }}</div>
             </div>
@@ -738,6 +805,40 @@ onBeforeUnmount(() => {
   border: 1px solid var(--p-slate-200);
   border-radius: 0.4rem;
   background: var(--surface-card);
+  transition: opacity 0.15s;
+}
+
+.tool-card.tool-disabled {
+  opacity: 0.5;
+}
+
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.15rem;
+}
+
+.tool-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.tool-disabled-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: var(--p-slate-200);
+  color: var(--p-slate-500);
+}
+
+.tool-toggle {
+  flex-shrink: 0;
 }
 
 .tool-name {
@@ -878,6 +979,21 @@ onBeforeUnmount(() => {
 
 .section-header h2 {
   margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tools-enabled-count {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--p-slate-400);
+}
+
+.tools-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 /* ── Usage stats ── */

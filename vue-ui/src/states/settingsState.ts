@@ -27,6 +27,8 @@ export interface ShortcutsSettings {
   mcpPreferredAccount: string;
   /** Whether the MCP server WebSocket bridge is enabled */
   mcpEnabled: boolean;
+  /** Names of MCP tools that are disabled and should be hidden from AI clients */
+  mcpDisabledTools: string[];
 }
 
 const defaultSettings: ShortcutsSettings = {
@@ -45,7 +47,8 @@ const defaultSettings: ShortcutsSettings = {
   compactionMode: "auto",
   compactionThreshold: 80000,
   mcpPreferredAccount: "",
-  mcpEnabled: true
+  mcpEnabled: true,
+  mcpDisabledTools: []
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -77,6 +80,9 @@ export function useSettings() {
         settings.compactionThreshold = stored.compactionThreshold ?? defaultSettings.compactionThreshold;
         settings.mcpPreferredAccount = stored.mcpPreferredAccount ?? defaultSettings.mcpPreferredAccount;
         settings.mcpEnabled = stored.mcpEnabled ?? defaultSettings.mcpEnabled;
+        settings.mcpDisabledTools = Array.isArray(stored.mcpDisabledTools)
+          ? [...stored.mcpDisabledTools]
+          : [];
       }
       isLoaded = true;
       isSettingsLoaded.value = true;
