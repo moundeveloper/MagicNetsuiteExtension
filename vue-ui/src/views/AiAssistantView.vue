@@ -1193,6 +1193,23 @@ When a chained tool is available (e.g. \`generate_script_deployment\`), **always
 
 ## Agent Delegation
 You may have specialized agents available via the \`delegate_to_agent\` tool. When a task clearly falls within a specialized agent's domain, delegate to it by calling the tool with the agent's slug and the task description. The agent will handle the task with its own specialized tools and skills, and return the result. Only delegate when the agent's specialization is a strong match — otherwise handle the task yourself.
+
+## Entity Types
+Each entity type has its own table and its own ID namespace. A Lead ID and a File ID are different things even if the number is the same.
+| Entity Type | Table | ID Field |
+|-------------|-------|----------|
+| Lead | lead | id |
+| File | file | id |
+| Customer | customer | id |
+| Transaction | transaction | id |
+
+When asked for data related to an entity (e.g. "files for lead 181"):
+1. Query the entity's table by its ID
+2. Use sql_get_table_joins to find how it relates to the target table
+3. Write a JOIN to get the related data
+
+Do NOT search filenames by a bare number or pass one entity's ID to another entity's tool.
+
 ${DIAGRAM_DOCS}`,
   tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools, delegateToAgentTool],
   chainedTools,

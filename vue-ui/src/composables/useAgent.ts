@@ -252,6 +252,154 @@ interface ToolCall {
   };
 }
 
+// ── Validation gate ──────────────────────────
+
+/**
+ * Validate tool call arguments against the tool's schema.
+ * Returns null if valid, or a descriptive error string to feed back to the model.
+ */
+function validateToolArgs(
+  tool: ToolDefinition,
+  args: Record<string, unknown>
+): string | null {
+  const { parameters } = tool;
+  if (!parameters || !parameters.properties) return null;
+
+  const errors: Array<{ path: string; message: string }> = [];
+
+  // Check required fields
+  if (parameters.required) {
+    for (const field of parameters.required) {
+      if (args[field] === undefined || args[field] === null) {
+        errors.push({ path: field, message: `Missing required field "${field}"` });
+      }
+    }
+  }
+
+  // Check types, enums, unknown fields
+  for (const [key, value] of Object.entries(args)) {
+    const param = parameters.properties[key];
+
+    if (!param) {
+      const valid = Object.keys(parameters.properties).join(", ");
+      errors.push({
+        path: key,
+        message: `Unknown field "${key}". Valid fields: ${valid}`
+      });
+      continue;
+    }
+
+    if (value === undefined || value === null) continue;
+
+    const valueType = Array.isArray(value) ? "array" : typeof value;
+
+    // Type check
+    if (param.type === "array" && !Array.isArray(value)) {
+      errors.push({ path: key, message: `"${key}" must be an array` });
+    } else if (param.type !== "array" && valueType !== param.type) {
+      errors.push({ path: key, message: `"${key}" must be ${param.type}, got ${valueType}` });
+    }
+
+    // Enum check
+    if (param.enum && param.enum.length > 0 && !param.enum.includes(String(value))) {
+      errors.push({
+        path: key,
+        message: `"${key}" must be one of: ${param.enum.join(", ")}. Got "${args[key]}"`
+      });
+    }
+  }
+
+  if (errors.length === 0) return null;
+
+  return (
+    `Tool call validation failed:\n` +
+    errors.map((e) => `  - ${e.message}`).join("\n") +
+    `\nPlease correct the arguments and call again.`
+  );
+}
+
+// ── Retry helper for transient failures ──────
+
+const RETRYABLE_ERROR_PATTERNS = [
+  /timeout/i,
+  /timed? ?out/i,
+  /network/i,
+  /connection/i,
+  /ECONNREFUSED/i,
+  /ECONNRESET/i,
+  /ETIMEDOUT/i,
+  /rate\s*limit/i,
+  /429/i,
+  /503/i,
+  /502/i,
+  /service\s*unavailable/i,
+  /too many requests/i,
+  /temporar/i,
+  /interrupt/i,
+];
+
+function isRetryableError(err: unknown): boolean {
+  const msg = String(err);
+  return RETRYABLE_ERROR_PATTERNS.some((p) => p.test(msg));
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Execute a tool with retry for transient failures.
+ * Validation/business errors are NOT retried — returned immediately.
+ * Returns the result, or throws if all retries exhausted.
+ */
+async function executeToolWithRetry(
+  tool: ToolDefinition,
+  input: Record<string, unknown>,
+  maxRetries = 2
+): Promise<unknown> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 4000);
+      console.warn(
+        `[useAgent] Retrying tool "${tool.name}" (attempt ${attempt + 1}/${maxRetries + 1}) after ${delayMs}ms…`
+      );
+      await sleep(delayMs);
+    }
+
+    try {
+      const result = await tool.execute(input);
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (!isRetryableError(err)) {
+        throw err;
+      }
+      console.warn(
+        `[useAgent] Tool "${tool.name}" attempt ${attempt + 1} failed (retryable): ${lastError.message}`
+      );
+    }
+  }
+
+  throw lastError ?? new Error(`Tool "${tool.name}" failed after ${maxRetries + 1} attempts`);
+}
+
+/** Cap a string at a max length with a truncation note. */
+function truncateResult(text: string, maxLength = 5000): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + `\n… [truncated: ${text.length - maxLength} more chars]`;
+}
+
+/**
+ * Build a stable call signature for repetition detection.
+ * Sorts object keys so {a:1, b:2} and {b:2, a:1} produce the same hash.
+ */
+function callSignature(toolName: string, args: Record<string, unknown>): string {
+  const canonical = JSON.stringify(args, Object.keys(args).sort());
+  return `${toolName}::${canonical}`;
+}
+
 // ─────────────────────────────────────────────
 // Token estimation & context compaction
 // ─────────────────────────────────────────────
@@ -607,6 +755,47 @@ export const useAgent = (options: AgentOptions = {}) => {
   const lastCompaction = ref<{ summary: string; compactedCount: number } | null>(null);
   /** Estimated token count of the current context (updated each run iteration) */
   const contextTokens = ref(0);
+
+  // ── Circuit breaker state ──
+  const MAX_REPETITIONS = 3;
+  const MAX_RUN_TOKENS = 120000;
+  const MAX_RUN_TIME_MS = 300000; // 5 min
+  let cbCallSignatures = new Map<string, number>();
+  let cbStartTime = 0;
+  let cbTotalTokens = 0;
+
+  const resetCircuitBreaker = () => {
+    cbCallSignatures = new Map();
+    cbStartTime = Date.now();
+    cbTotalTokens = 0;
+  };
+
+  /**
+   * Check repetition detector: same tool + same args called N times.
+   * Returns a warning message for the model, or null if OK.
+   */
+  const checkRepetition = (toolName: string, args: Record<string, unknown>): string | null => {
+    const sig = callSignature(toolName, args);
+    const count = (cbCallSignatures.get(sig) ?? 0) + 1;
+    cbCallSignatures.set(sig, count);
+    if (count >= MAX_REPETITIONS) {
+      return `You called "${toolName}" with the same arguments ${count} times. This appears to be a loop. Please try a different approach or provide your best answer with the results you already have.`;
+    }
+    return null;
+  };
+
+  /** Check token and time budgets. Returns a stop message or null. */
+  const checkBudgets = (): string | null => {
+    const elapsed = Date.now() - cbStartTime;
+    if (elapsed > MAX_RUN_TIME_MS) {
+      return `Time budget exceeded (${Math.round(elapsed / 1000)}s). Please provide your best answer now.`;
+    }
+    cbTotalTokens += contextTokens.value;
+    if (cbTotalTokens > MAX_RUN_TOKENS) {
+      return `Token budget exceeded. Please provide your best answer now.`;
+    }
+    return null;
+  };
 
   // ── Build tool registry from local tools first ──
   const toolRegistry = ref<Map<string, ToolDefinition>>(
@@ -1182,6 +1371,7 @@ export const useAgent = (options: AgentOptions = {}) => {
     loading.value = true;
     error.value = null;
     currentResponse.value = "";
+    resetCircuitBreaker();
 
     console.log("[useAgent] run() →", prompt);
 
@@ -1227,6 +1417,15 @@ export const useAgent = (options: AgentOptions = {}) => {
         const messages = buildMessages(systemPrompt, prompt);
         contextTokens.value = estimateMessagesTokens(messages);
 
+        // ── Circuit breaker: budget checks ──
+        const budgetMsg = checkBudgets();
+        if (budgetMsg) {
+          pushMessage({ role: "assistant", content: budgetMsg });
+          currentResponse.value = budgetMsg;
+          console.warn(`[useAgent] Budget exceeded — stopping run`);
+          return budgetMsg;
+        }
+
         console.log(`[useAgent] ── Iteration ${iterations} ──`);
         console.log(
           "[useAgent] Messages being sent:",
@@ -1266,7 +1465,7 @@ export const useAgent = (options: AgentOptions = {}) => {
           });
           pushMessage({
             role: "user",
-            content: "You produced a reasoning block but no response. Please now call the appropriate tool or provide your answer."
+            content: "You produced a reasoning block but no response. Look at the available tools and call one now, or provide your final answer."
           });
           continue;
         }
@@ -1349,22 +1548,57 @@ export const useAgent = (options: AgentOptions = {}) => {
                 `[useAgent] Tool "${toolName}" not found in registry!`
               );
             } else {
-              try {
-                const result = await tool.execute(toolInput);
-                resultContent =
-                  typeof result === "string" ? result : JSON.stringify(result);
-                console.log(
-                  `[useAgent] ← Tool "${toolName}" result:`,
-                  resultContent
+              // ── Validation gate ──
+              const validationError = validateToolArgs(tool, toolInput);
+              if (validationError) {
+                resultContent = JSON.stringify({ error: validationError });
+                console.warn(
+                  `[useAgent] Tool "${toolName}" args validation failed:`,
+                  validationError
                 );
-                if (!isChain) {
-                  onToolResult?.(toolName, result);
-                }
-              } catch (execErr) {
-                resultContent = JSON.stringify({ error: String(execErr) });
-                console.error(`[useAgent] Tool "${toolName}" threw:`, execErr);
-                if (!isChain) {
-                  onToolResult?.(toolName, { error: String(execErr) });
+              } else {
+                // ── Circuit breaker: repetition check ──
+                const repetitionWarning = checkRepetition(toolName, toolInput);
+                if (repetitionWarning) {
+                  resultContent = JSON.stringify({ warning: repetitionWarning });
+                  console.warn(
+                    `[useAgent] Tool "${toolName}" repetition detected`
+                  );
+                } else {
+                  try {
+                    // ── Execute with retry for transient failures ──
+                    const result = await executeToolWithRetry(tool, toolInput);
+                    resultContent =
+                      typeof result === "string"
+                        ? result
+                        : JSON.stringify(result);
+                    // ── Truncate large results ──
+                    resultContent = truncateResult(resultContent);
+                    console.log(
+                      `[useAgent] ← Tool "${toolName}" result:`,
+                      resultContent.slice(0, 300)
+                    );
+                    if (!isChain) {
+                      onToolResult?.(toolName, result);
+                    }
+                    // ┌─────────────────────────────────────────────────────────────
+                    // │ await new Promise(resolve => setTimeout(resolve, 500));
+                    // └─────────────────────────────────────────────────────────────
+                  } catch (execErr) {
+                    const isRetryable = isRetryableError(execErr);
+                    resultContent = JSON.stringify({
+                      error: isRetryable
+                        ? `Tool "${toolName}" failed after retries: ${execErr}`
+                        : String(execErr),
+                    });
+                    console.error(
+                      `[useAgent] Tool "${toolName}" threw:`,
+                      execErr
+                    );
+                    if (!isChain) {
+                      onToolResult?.(toolName, { error: String(execErr) });
+                    }
+                  }
                 }
               }
             }
@@ -1380,6 +1614,36 @@ export const useAgent = (options: AgentOptions = {}) => {
             });
           })
         );
+
+        // ── Post-tool-result analysis ──
+        // When a SQL query returns 0 results, inject a nudge to guide the model
+        // toward entity-relationship discovery (weak models often stop here).
+        const emptyNudges: string[] = [];
+        for (const call of toolCalls) {
+          if (chainedToolNames.has(call.function.name)) continue;
+          // Walk backwards in history to find the matching tool result
+          const lastToolMsg = [...history.value].reverse().find(
+            (m) => m.role === "tool" && m.toolName === call.function.name
+          );
+          if (!lastToolMsg) continue;
+          try {
+            const parsed = JSON.parse(lastToolMsg.content);
+            // SQL query with 0 rows
+            if (
+              call.function.name === "sql_execute_query" &&
+              parsed.success === true &&
+              parsed.rowCount === 0
+            ) {
+              emptyNudges.push(
+                `The query returned 0 rows. Try: searching a different table (use sql_search_tables), discovering field values first (sql_discover_field_values), or using a JOIN to relate entities instead of searching names.`
+              );
+            }
+          } catch { /* not JSON, skip */ }
+        }
+        if (emptyNudges.length > 0) {
+          pushMessage({ role: "user", content: emptyNudges.join("\n\n") });
+        }
+
         // Loop — tool results now in history, re-query model
       }
 

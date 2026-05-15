@@ -849,15 +849,15 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_find_file",
     description:
-      "Search the ENTIRE NetSuite File Cabinet for files matching a name or ID. Searches globally across all folders. " +
+      "Search the ENTIRE NetSuite File Cabinet for files matching a name or internal ID. Searches globally across all folders. " +
       "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url.",
     parameters: {
       type: "object",
       properties: {
-        id: {
+        fileId: {
           type: "string",
           description:
-            "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+            "Internal FILE ID (e.g. '12345'). Use for direct file lookup."
         },
         name: {
           type: "string",
@@ -869,7 +869,7 @@ export const tools: ToolDefinition[] = [
     },
     execute: async (input) => {
       const response = await callApi(RequestRoutes.FIND_FILE, {
-        id: input.id,
+        id: input.fileId ?? input.id,
         name: input.name
       });
       return response.message;
