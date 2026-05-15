@@ -13,7 +13,8 @@ import {
 const { settings } = useSettings();
 
 const providerOptions = [
-  { label: "Puter (auto-select model)", value: "puter" },
+  { label: "Puter (free, no API key)", value: "puter" },
+  { label: "OpenRouter (free models + paid)", value: "openrouter" },
   { label: "Ollama (local)", value: "ollama" },
   { label: "OpenCode (opencode serve)", value: "opencode" },
   { label: "GitHub Copilot", value: "copilot" }
@@ -682,9 +683,51 @@ const modelLabel = (m: OllamaModel) => {
     </template>
 
     <template v-else-if="settings.aiProvider === 'puter'">
+      <div class="shortcut-item">
+        <label for="puter-model">Model:</label>
+        <InputText
+          id="puter-model"
+          v-model="settings.puterModel"
+          placeholder="e.g., claude-sonnet-4-5"
+          class="url-input"
+        />
+      </div>
       <p class="provider-hint">
-        Puter automatically selects the best available model. No API key
-        required.
+        Puter routes to free AI models — no API key required. Defaults to
+        <code>claude-sonnet-4-5</code> for reliable tool calling. You can use
+        any model from Puter's 500+ catalog (e.g. <code>gpt-4o</code>,
+        <code>claude-opus-4-5</code>, <code>gemini-2.5-flash</code>).
+      </p>
+    </template>
+
+    <!-- OpenRouter options -->
+    <template v-else-if="settings.aiProvider === 'openrouter'">
+      <div class="shortcut-item">
+        <label for="openrouter-key">API Key:</label>
+        <InputText
+          id="openrouter-key"
+          v-model="settings.openrouterApiKey"
+          placeholder="sk-or-... (optional for free models)"
+          type="password"
+          class="url-input"
+        />
+      </div>
+      <div class="shortcut-item">
+        <label for="openrouter-model">Model:</label>
+        <InputText
+          id="openrouter-model"
+          v-model="settings.openrouterModel"
+          placeholder="e.g., openrouter/free"
+          class="url-input"
+        />
+      </div>
+      <p class="provider-hint">
+        <strong>openrouter/free</strong> randomly picks a free model that
+        supports your request (tool calling, etc.) — no credit needed. For a
+        specific model append <code>:free</code> (e.g.
+        <code>meta-llama/llama-3.3-70b-instruct:free</code>). An API key is
+        required for paid models — create one at
+        <code>openrouter.ai/settings/keys</code>.
       </p>
     </template>
 

@@ -185,6 +185,10 @@
             <i class="pi pi-exclamation-triangle" />
             {{ skillGenerateError }}
           </div>
+          <div v-if="isGeneratingSkill && skillGenerateProgress" class="generate-progress">
+            <i class="pi pi-spin pi-spinner" style="font-size:0.75rem" />
+            {{ skillGenerateProgress }}
+          </div>
           <div class="generate-row">
             <Button
               :label="isGeneratingSkill ? 'Generating...' : (isEditing ? 'Improve Skill' : 'Generate Skill')"
@@ -351,6 +355,7 @@ const skillGenMode = ref<"manual" | "ai">("manual");
 const aiSkillPrompt = ref("");
 const isGeneratingSkill = ref(false);
 const skillGenerateError = ref("");
+const skillGenerateProgress = ref("");
 
 const formData = ref<{
   name: string;
@@ -441,6 +446,7 @@ const generateSkillFromAi = async () => {
 
   isGeneratingSkill.value = true;
   skillGenerateError.value = "";
+  skillGenerateProgress.value = "";
 
   try {
     const isEdit = isEditing.value;
@@ -496,7 +502,20 @@ domain "global" means the skill is available to all AI agents.`;
     const agent = useAgent({
       systemPrompt,
       tools: netsuiteDocsTools,
-      keepHistory: false
+      keepHistory: false,
+      onToolStart: (name, input) => {
+        const inputRecord = input as Record<string, unknown>;
+        if (name === "search_netsuite_docs") {
+          skillGenerateProgress.value = `Searching docs: "${inputRecord.query ?? ""}"`;
+        } else if (name === "read_netsuite_doc_page") {
+          const url = String(inputRecord.url ?? "");
+          const page = url.split("/").pop() ?? url;
+          skillGenerateProgress.value = `Reading: ${decodeURIComponent(page)}`;
+        }
+      },
+      onToolResult: () => {
+        skillGenerateProgress.value = "Analysing results…";
+      }
     });
 
     await agent.run(prompt);
@@ -525,6 +544,7 @@ domain "global" means the skill is available to all AI agents.`;
     skillGenerateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     isGeneratingSkill.value = false;
+    skillGenerateProgress.value = "";
   }
 };
 
@@ -1046,6 +1066,16 @@ const formatSize = (chars: number): string => {
 .generate-error i {
   font-size: 0.8rem;
   flex-shrink: 0;
+}
+
+.generate-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--p-blue-600);
+  opacity: 0.85;
+  padding: 0.25rem 0.25rem;
 }
 
 .label-hint {

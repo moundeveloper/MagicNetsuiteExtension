@@ -1059,6 +1059,10 @@ const agent = useAgent({
 ## Tool Usage — ALWAYS prefer tools
 You have tools available. **Always use the appropriate tool** when one exists for the task — even for simple tasks. Do NOT answer from memory when a tool can provide a verified result.
 
+**DO NOT narrate, plan, or explain what you are about to do before calling a tool.**
+Call the tool immediately as your very first action. Write text ONLY after you have received tool results.
+Never write phrases like "I'll start by...", "First I need to...", "Let me search for...", "I'm going to call..." — just call the tool.
+
 Examples:
 - Math questions → call \`calculate\`
 - Need current time → call \`get_current_time\`

@@ -170,6 +170,10 @@
             <i class="pi pi-exclamation-triangle" />
             {{ generateError }}
           </div>
+          <div v-if="isGenerating && generateProgress" class="generate-progress">
+            <i class="pi pi-spin pi-spinner" style="font-size:0.75rem" />
+            {{ generateProgress }}
+          </div>
           <div class="generate-row">
             <Button
               :label="isGenerating ? 'Generating...' : 'Generate'"
@@ -494,6 +498,7 @@ const creationMode = ref<"manual" | "ai">("manual");
 const aiPromptText = ref("");
 const isGenerating = ref(false);
 const generateError = ref("");
+const generateProgress = ref("");
 
 const defaultLimits: AgentLimits = {
   canExecuteDestructive: false,
@@ -628,6 +633,7 @@ const generateFromAi = async () => {
 
   isGenerating.value = true;
   generateError.value = "";
+  generateProgress.value = "";
 
   try {
     const toolList = allToolNames.value.join("\n");
@@ -676,7 +682,20 @@ Rules:
     const agent = useAgent({
       systemPrompt,
       tools: netsuiteDocsTools,
-      keepHistory: false
+      keepHistory: false,
+      onToolStart: (name, input) => {
+        const inputRecord = input as Record<string, unknown>;
+        if (name === "search_netsuite_docs") {
+          generateProgress.value = `Searching docs: "${inputRecord.query ?? ""}"`;
+        } else if (name === "read_netsuite_doc_page") {
+          const url = String(inputRecord.url ?? "");
+          const page = url.split("/").pop() ?? url;
+          generateProgress.value = `Reading: ${decodeURIComponent(page)}`;
+        }
+      },
+      onToolResult: () => {
+        generateProgress.value = "Analysing results…";
+      }
     });
 
     await agent.run(prompt);
@@ -733,6 +752,7 @@ Rules:
     generateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
   } finally {
     isGenerating.value = false;
+    generateProgress.value = "";
   }
 };
 
@@ -1450,5 +1470,15 @@ const formatDate = (dateStr: string): string => {
 .generate-error i {
   font-size: 0.8rem;
   flex-shrink: 0;
+}
+
+.generate-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--p-blue-600);
+  opacity: 0.85;
+  padding: 0.25rem 0.25rem;
 }
 </style>

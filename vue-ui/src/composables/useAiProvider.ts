@@ -52,20 +52,27 @@ export interface NormalisedResponse {
 
 /**
  * Strips `<think>...</think>` tags that reasoning models (deepseek-r1, qwq, etc.)
- * emit inline. Always applied to Ollama responses — models that don't use thinking
+ * emit inline. Also handles models that emit the tag mid-string rather than at
+ * position 0 (some models write a brief preamble before the think block).
+ * Always applied to Ollama responses — models that don't use thinking
  * simply won't produce the tags, so this is a safe no-op for them.
  */
 const extractThinkTags = (
   content: string
 ): { thinking?: string; content: string } => {
-  const match = content.match(/^<think>([\s\S]*?)<\/think>\s*/);
-  if (match) {
-    return {
-      thinking: match[1]!.trim() || undefined,
-      content: content.slice(match[0].length).trim()
-    };
+  // Match <think>...</think> anywhere in the string (not just at ^)
+  const thinkRegex = /<think>([\s\S]*?)<\/think>\s*/g;
+  const thinkBlocks: string[] = [];
+  const stripped = content.replace(thinkRegex, (_, inner: string) => {
+    const trimmed = inner.trim();
+    if (trimmed) thinkBlocks.push(trimmed);
+    return "";
+  });
+  const cleaned = stripped.trim();
+  if (thinkBlocks.length > 0) {
+    return { thinking: thinkBlocks.join("\n\n"), content: cleaned };
   }
-  return { content };
+  return { content: cleaned || content };
 };
 
 /**
@@ -117,18 +124,21 @@ const isReasoningModel = (model: string): boolean =>
 const puterChat = async (
   messages: ChatMessage[],
   options: ChatCompletionOptions,
-  thinkingMode = false,
-  thinkingBudget = 8000
+  model = ""
 ): Promise<NormalisedResponse> => {
   const chatOptions: Record<string, unknown> = {};
   if (options.tools && options.tools.length > 0) {
     chatOptions.tools = options.tools;
+    // Note: tool_choice is not in Puter SDK's PARAMS_TO_PASS — silently dropped,
+    // but harmless. Puter defaults to auto tool selection.
   }
-  // Puter uses Claude under the hood — try to enable extended thinking when requested.
-  // If Puter doesn't support the param it will be silently ignored.
-  if (thinkingMode) {
-    chatOptions.thinking = { type: "enabled", budget_tokens: thinkingBudget };
+  // Pass selected model when set (non-empty); otherwise let Puter auto-select.
+  if (model.trim()) {
+    chatOptions.model = model.trim();
   }
+  // NOTE: Puter SDK's PARAMS_TO_PASS does not include "thinking" — any extended
+  // thinking config is silently dropped. CoT is handled via system-prompt injection
+  // in needsCoTInjection() instead.
 
   const response = await puter.ai.chat(
     messages as Parameters<typeof puter.ai.chat>[0],
@@ -218,10 +228,16 @@ export const COPILOT_CLIENT_ID = "01ab8ac9400c4e429b23";
  * so the model writes its reasoning inside <think>...</think> tags, which we then
  * parse and surface in the UI.
  */
-const needsCoTInjection = (provider: string, copilotModel: string): boolean => {
-  if (provider === "puter") return true;
+const needsCoTInjection = (provider: string, copilotModel: string, puterModel = ""): boolean => {
+  if (provider === "puter") {
+    return false; // Never inject CoT for Puter — breaks tool calling
+  }
   if (provider === "copilot") {
     // Claude and o1/o3/o4 handle reasoning natively — no injection needed
+    return !isClaudeModel(copilotModel) && !isReasoningModel(copilotModel);
+  }
+  if (provider === "openrouter") {
+    // Inject CoT for non-reasoning, non-Claude models
     return !isClaudeModel(copilotModel) && !isReasoningModel(copilotModel);
   }
   return false; // ollama parses <think> natively; opencode is server-managed
@@ -493,6 +509,92 @@ const opencodeChat = async (
 };
 
 // ─────────────────────────────────────────────
+// OpenRouter adapter (OpenAI-compatible)
+// ─────────────────────────────────────────────
+
+/**
+ * OpenRouter is a unified OpenAI-compatible API gateway.
+ * Endpoint: https://openrouter.ai/api/v1/chat/completions
+ * Default model: "openrouter/free" — randomly selects a free model that
+ * supports the requested features (tool calling, etc.).
+ */
+const openrouterChat = async (
+  messages: ChatMessage[],
+  options: ChatCompletionOptions,
+  apiKey: string,
+  model: string,
+  thinkingMode = false
+): Promise<NormalisedResponse> => {
+  const body: Record<string, unknown> = {
+    model: model || "openrouter/free",
+    messages,
+    stream: false
+  };
+
+  if (options.tools && options.tools.length > 0) {
+    body.tools = options.tools;
+    body.tool_choice = "auto";
+  }
+
+  // Thinking: map to :thinking variant suffix for supported models; otherwise
+  // CoT injection handles it via the system prompt (already done upstream).
+  if (thinkingMode && isReasoningModel(model)) {
+    body.reasoning = { effort: "high" };
+  }
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://magic-netsuite-extension",
+    "X-OpenRouter-Title": "MagicNetsuiteExtension"
+  };
+
+  if (apiKey.trim()) {
+    headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+  }
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+    signal: options.signal
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`OpenRouter chat failed (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as {
+    choices: Array<{
+      message: {
+        content: string | null;
+        tool_calls?: Array<{
+          id: string;
+          type: string;
+          function: { name: string; arguments: string };
+        }>;
+      };
+    }>;
+  };
+
+  const msg = data.choices[0]?.message;
+
+  // Some free models (DeepSeek R1, etc.) emit <think> tags — parse them out.
+  const { thinking, content } = extractThinkTags(msg?.content ?? "");
+
+  return {
+    content: content || null,
+    tool_calls:
+      msg?.tool_calls?.map((tc) => ({
+        id: tc.id,
+        type: "function" as const,
+        function: { name: tc.function.name, arguments: tc.function.arguments }
+      })) ?? [],
+    thinking
+  };
+};
+
+// ─────────────────────────────────────────────
 // Public composable
 // ─────────────────────────────────────────────
 
@@ -536,6 +638,11 @@ const getProviderConfigError = (settings: ReturnType<typeof useSettings>["settin
     return null;
   }
 
+  if (provider === "openrouter") {
+    // API key is optional for free models but strongly recommended for reliability
+    return null;
+  }
+
   // "puter" — always available, no auth needed
   return null;
 };
@@ -566,7 +673,11 @@ export const useAiProvider = () => {
     // shown as a collapsible "Reasoning" block — never fed back to the model.
     const effectiveMessages =
       settings.thinkingMode &&
-      needsCoTInjection(provider, settings.copilotModel || "gpt-4o")
+      needsCoTInjection(
+        provider,
+        provider === "openrouter" ? (settings.openrouterModel || "openrouter/free") : (settings.copilotModel || "gpt-4o"),
+        settings.puterModel || "claude-sonnet-4-5"
+      )
         ? injectCoTSystemPrompt(messages)
         : messages;
 
@@ -599,8 +710,22 @@ export const useAiProvider = () => {
       );
     }
 
+    if (provider === "openrouter") {
+      return openrouterChat(
+        effectiveMessages,
+        options,
+        settings.openrouterApiKey || "",
+        settings.openrouterModel || "openrouter/free",
+        settings.thinkingMode
+      );
+    }
+
     // Default: puter
-    return puterChat(effectiveMessages, options, settings.thinkingMode, settings.thinkingBudget);
+    return puterChat(
+      effectiveMessages,
+      options,
+      settings.puterModel || "claude-sonnet-4-5"
+    );
   };
 
   return { chatCompletion, settings };

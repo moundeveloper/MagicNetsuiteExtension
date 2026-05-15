@@ -1,7 +1,7 @@
 // settingsState.ts
 import { onMounted, reactive, ref, watch } from "vue";
 
-export type AiProvider = "puter" | "ollama" | "opencode" | "copilot";
+export type AiProvider = "puter" | "ollama" | "opencode" | "copilot" | "openrouter";
 export type CompactionMode = "auto" | "ask";
 
 export interface ShortcutsSettings {
@@ -16,9 +16,14 @@ export interface ShortcutsSettings {
   ollamaModel: string;
   opencodeBaseUrl: string;
   opencodeModel: string;
+  // Puter
+  puterModel: string;
   // GitHub Copilot
   githubToken: string;
   copilotModel: string;
+  // OpenRouter
+  openrouterApiKey: string;
+  openrouterModel: string;
   /** Whether to auto-compact or ask the user first when context limit nears */
   compactionMode: CompactionMode;
   /** Token threshold at which context compaction triggers */
@@ -42,12 +47,15 @@ const defaultSettings: ShortcutsSettings = {
   openOnCustomizationPage: true,
   preferredFeatures: [],
   aiProvider: "puter",
+  puterModel: "claude-sonnet-4-5",
   ollamaBaseUrl: "http://localhost:11434",
   ollamaModel: "llama3.2",
   opencodeBaseUrl: "http://localhost:4096",
   opencodeModel: "",
   githubToken: "",
   copilotModel: "gpt-4o",
+  openrouterApiKey: "",
+  openrouterModel: "openrouter/free",
   compactionMode: "auto",
   compactionThreshold: 80000,
   mcpPreferredAccount: "",
@@ -76,12 +84,15 @@ export function useSettings() {
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
         settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
+        settings.puterModel = stored.puterModel || defaultSettings.puterModel;
         settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
         settings.ollamaModel = stored.ollamaModel || defaultSettings.ollamaModel;
         settings.opencodeBaseUrl = stored.opencodeBaseUrl || defaultSettings.opencodeBaseUrl;
         settings.opencodeModel = stored.opencodeModel ?? defaultSettings.opencodeModel;
         settings.githubToken = stored.githubToken ?? defaultSettings.githubToken;
         settings.copilotModel = stored.copilotModel || defaultSettings.copilotModel;
+        settings.openrouterApiKey = stored.openrouterApiKey ?? defaultSettings.openrouterApiKey;
+        settings.openrouterModel = stored.openrouterModel || defaultSettings.openrouterModel;
         settings.compactionMode = stored.compactionMode ?? defaultSettings.compactionMode;
         settings.compactionThreshold = stored.compactionThreshold ?? defaultSettings.compactionThreshold;
         settings.mcpPreferredAccount = stored.mcpPreferredAccount ?? defaultSettings.mcpPreferredAccount;

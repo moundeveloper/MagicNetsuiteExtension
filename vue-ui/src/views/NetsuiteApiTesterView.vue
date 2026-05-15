@@ -342,7 +342,7 @@ import { ref, computed, watch, reactive, onBeforeUnmount } from "vue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
-import { callApi } from "../utils/api";
+import { callApi, ApiRequestType } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { generateId } from "../utils/utilities";
 import { useToast } from "primevue";
@@ -1066,8 +1066,40 @@ const sendCall = async () => {
   lastResponse.value = null;
 
   const start = performance.now();
+
+  // ── Detect stream mode for RUN_QUICK_SCRIPT ──
+  const isStreamMode =
+    selectedEndpoint.value.route === RequestRoutes.RUN_QUICK_SCRIPT &&
+    payload.mode === "stream";
+
   try {
-    const res = await callApi(selectedEndpoint.value.route, payload);
+    let res;
+
+    if (isStreamMode) {
+      // Collect streamed log entries in real-time
+      const streamLogs: unknown[] = [];
+      lastResponse.value = { status: "ok", message: streamLogs, duration: 0 };
+
+      res = await callApi(
+        selectedEndpoint.value.route,
+        payload,
+        ApiRequestType.STREAM,
+        (message: any) => {
+          if (message.event === "log" || message.event === "streamChunk") {
+            streamLogs.push(message.data ?? message);
+            // Trigger reactivity — replace array reference
+            lastResponse.value = {
+              status: "ok",
+              message: [...streamLogs],
+              duration: Math.round(performance.now() - start)
+            };
+          }
+        }
+      );
+    } else {
+      res = await callApi(selectedEndpoint.value.route, payload);
+    }
+
     const duration = Math.round(performance.now() - start);
 
     lastResponse.value = {

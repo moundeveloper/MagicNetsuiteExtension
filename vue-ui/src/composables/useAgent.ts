@@ -1202,9 +1202,19 @@ export const useAgent = (options: AgentOptions = {}) => {
       );
 
       let iterations = 0;
+      const MAX_ITERATIONS = 25;
 
       while (true) {
         iterations++;
+
+        // ── Guard against runaway loops (weak models doing excessive tool calls) ──
+        if (iterations > MAX_ITERATIONS) {
+          const limitMsg = `[Agent stopped: reached ${MAX_ITERATIONS}-iteration safety limit. The model may be looping or unable to produce a final answer.]`;
+          pushMessage({ role: "assistant", content: limitMsg });
+          currentResponse.value = limitMsg;
+          console.warn(`[useAgent] MAX_ITERATIONS (${MAX_ITERATIONS}) exceeded — aborting run`);
+          return limitMsg;
+        }
 
         // ── Check for cancellation ──
         if (signal?.aborted) {
@@ -1242,6 +1252,24 @@ export const useAgent = (options: AgentOptions = {}) => {
         console.log(
           `[useAgent] assistantText="${assistantText}" | toolCalls=${toolCalls.length}`
         );
+
+        // ── Empty content + no tool calls: model produced a thinking-only response
+        //    (e.g. CoT injection caused Claude to write <think> block and stop).
+        //    Inject a nudge so the model follows through on its reasoning. ─────────
+        if (toolCalls.length === 0 && !assistantText.trim() && response.thinking) {
+          console.warn("[useAgent] Model returned thinking-only with no content/tools — nudging to continue.");
+          pushMessage({
+            role: "assistant",
+            content: "",
+            toolCalls: [],
+            thinking: response.thinking
+          });
+          pushMessage({
+            role: "user",
+            content: "You produced a reasoning block but no response. Please now call the appropriate tool or provide your answer."
+          });
+          continue;
+        }
 
         // ── No tool calls → final answer ───────
         if (toolCalls.length === 0) {
