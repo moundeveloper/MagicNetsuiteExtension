@@ -152,7 +152,26 @@
 
               <!-- User message -->
               <div v-else-if="msg.role === 'user'" class="msg msg-user">
-                <div class="msg-user-content">{{ msg.content }}</div>
+                <div class="msg-user-bubble-row">
+                  <div v-if="editingMessageId === msg.id" class="msg-edit-area">
+                    <textarea v-model="editText" class="msg-edit-textarea" />
+                    <div class="msg-edit-actions">
+                      <button class="msg-edit-btn-cancel" @click="cancelEdit">Cancel</button>
+                      <button class="msg-edit-btn-save" @click="saveEdit(msg)">Save & Resubmit</button>
+                    </div>
+                  </div>
+                  <template v-else>
+                    <div class="msg-user-content">{{ msg.content }}</div>
+                    <button
+                      v-if="!loading"
+                      class="msg-edit-btn"
+                      @click="startEdit(msg)"
+                      title="Edit message"
+                    >
+                      <i class="pi pi-pencil" />
+                    </button>
+                  </template>
+                </div>
               </div>
 
               <!-- Assistant message -->
@@ -518,6 +537,8 @@ const subAgents = ref<SubAgent[]>([]);
 const prompt = ref("");
 const inputRef = ref<HTMLDivElement | null>(null);
 const messageListRef = ref<HTMLDivElement | null>(null);
+const editingMessageId = ref<number | null>(null);
+const editText = ref("");
 
 // Session state
 const sessionHistory = ref<Session[]>([]);
@@ -1433,6 +1454,27 @@ const onInputPaste = (e: ClipboardEvent) => {
 };
 
 // ── Send Message ──
+const startEdit = (msg: OrchestratorMessage) => {
+  editingMessageId.value = msg.id;
+  editText.value = msg.content;
+};
+
+const cancelEdit = () => {
+  editingMessageId.value = null;
+  editText.value = "";
+};
+
+const saveEdit = (msg: OrchestratorMessage) => {
+  const idx = messages.value.findIndex((m) => m.id === msg.id);
+  if (idx === -1) return;
+
+  messages.value = messages.value.slice(0, idx);
+  const restoredHistory = sessionMessagesToAgentHistory(messages.value);
+  orchestrator.setHistory(restoredHistory);
+  editingMessageId.value = null;
+  sendMessage(editText.value);
+};
+
 const sendMessage = async (overrideText?: string) => {
   const inputText =
     overrideText !== undefined ? overrideText : getInputText().trim();
@@ -1992,6 +2034,108 @@ onBeforeUnmount(() => {
 /* ── User Message ── */
 .msg-user {
   padding: 0.75rem 0;
+}
+
+.msg-user-bubble-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.msg-edit-btn {
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+  font-size: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.msg-user-bubble-row:hover .msg-edit-btn {
+  opacity: 1;
+}
+
+.msg-edit-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  border-color: var(--p-slate-200);
+}
+
+.msg-edit-area {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.msg-edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  max-height: 300px;
+  border: 1px solid var(--p-blue-300);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--p-slate-800);
+  background: white;
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.msg-edit-textarea:focus {
+  border-color: var(--p-blue-400);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-blue-400) 15%, transparent);
+}
+
+.msg-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.msg-edit-btn-save,
+.msg-edit-btn-cancel {
+  padding: 0.35rem 0.875rem;
+  border-radius: 0.375rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+
+.msg-edit-btn-save {
+  background: var(--p-blue-600);
+  color: white;
+  border-color: var(--p-blue-700);
+}
+
+.msg-edit-btn-save:hover {
+  background: var(--p-blue-700);
+}
+
+.msg-edit-btn-cancel {
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  border-color: var(--p-slate-200);
+}
+
+.msg-edit-btn-cancel:hover {
+  background: var(--p-slate-200);
 }
 
 .msg-user-content {

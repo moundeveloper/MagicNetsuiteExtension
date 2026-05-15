@@ -100,7 +100,26 @@
       <template v-for="msg in messages" :key="msg.id">
         <!-- User message -->
         <div v-if="msg.role === 'user'" class="sql-ai-msg sql-ai-msg-user">
-          <div class="sql-ai-msg-user-content">{{ msg.content }}</div>
+          <div class="sql-ai-msg-user-row">
+            <div v-if="editingMessageId === msg.id" class="sql-ai-msg-edit-area">
+              <textarea v-model="editText" class="sql-ai-msg-edit-textarea" />
+              <div class="sql-ai-msg-edit-actions">
+                <button class="sql-ai-msg-edit-cancel" @click="cancelEdit">Cancel</button>
+                <button class="sql-ai-msg-edit-save" @click="saveEdit(msg)">Save & Resubmit</button>
+              </div>
+            </div>
+            <template v-else>
+              <div class="sql-ai-msg-user-content">{{ msg.content }}</div>
+              <button
+                v-if="!loading"
+                class="sql-ai-msg-edit-btn"
+                @click="startEdit(msg)"
+                title="Edit message"
+              >
+                <i class="pi pi-pencil" />
+              </button>
+            </template>
+          </div>
         </div>
 
         <!-- Assistant message -->
@@ -339,6 +358,8 @@ const messagesRef = ref<HTMLElement | null>(null);
 const currentAssistantMsgId = ref(0);
 const runningTools = ref<RunningTool[]>([]);
 const toolMessageToAssistant = ref(new Map<number, number>());
+const editingMessageId = ref<number | null>(null);
+const editText = ref("");
 let abortController: AbortController | null = null;
 
 // ── Chat history state ──
@@ -700,6 +721,39 @@ const getToolMessagesForAssistant = (assistantId: number) =>
     (m) =>
       m.role === "tool" && toolMessageToAssistant.value.get(m.id) === assistantId
   );
+
+// ── Edit message ──
+const startEdit = (msg: SqlChatMessage) => {
+  editingMessageId.value = msg.id;
+  editText.value = msg.content;
+};
+
+const cancelEdit = () => {
+  editingMessageId.value = null;
+  editText.value = "";
+};
+
+const saveEdit = (msg: SqlChatMessage) => {
+  const idx = messages.value.findIndex((m) => m.id === msg.id);
+  if (idx === -1) return;
+
+  messages.value = messages.value.slice(0, idx);
+  const restoredHistory = agent.history.value.filter(() => false);
+  // Convert current ui messages to agent history
+  const agentMsgs: import("../composables/useAgent").AgentMessage[] = [];
+  for (const m of messages.value) {
+    if (m.role === "user") {
+      agentMsgs.push({ role: "user", content: m.content, timestamp: new Date() });
+    } else if (m.role === "assistant") {
+      agentMsgs.push({ role: "assistant", content: m.content, timestamp: new Date() });
+    } else if (m.role === "tool") {
+      agentMsgs.push({ role: "tool", content: m.content, toolName: m.toolName, timestamp: new Date() });
+    }
+  }
+  agent.setHistory(agentMsgs);
+  editingMessageId.value = null;
+  sendMessage(editText.value);
+};
 
 // ── Send message ──
 const handleSend = () => {
@@ -1222,6 +1276,108 @@ onBeforeUnmount(async () => {
 
 .sql-ai-msg-user {
   align-self: flex-end;
+}
+
+.sql-ai-msg-user-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.sql-ai-msg-edit-btn {
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+  font-size: 0.75rem;
+  margin-top: 0.3rem;
+}
+
+.sql-ai-msg-user-row:hover .sql-ai-msg-edit-btn {
+  opacity: 1;
+}
+
+.sql-ai-msg-edit-btn:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  border-color: var(--p-slate-200);
+}
+
+.sql-ai-msg-edit-area {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.sql-ai-msg-edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  max-height: 300px;
+  border: 1px solid var(--p-blue-300);
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.75rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  color: var(--p-slate-800);
+  background: white;
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.sql-ai-msg-edit-textarea:focus {
+  border-color: var(--p-blue-400);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-blue-400) 15%, transparent);
+}
+
+.sql-ai-msg-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.sql-ai-msg-edit-save,
+.sql-ai-msg-edit-cancel {
+  padding: 0.35rem 0.875rem;
+  border-radius: 0.375rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  font-family: inherit;
+}
+
+.sql-ai-msg-edit-save {
+  background: var(--p-blue-600);
+  color: white;
+  border-color: var(--p-blue-700);
+}
+
+.sql-ai-msg-edit-save:hover {
+  background: var(--p-blue-700);
+}
+
+.sql-ai-msg-edit-cancel {
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  border-color: var(--p-slate-200);
+}
+
+.sql-ai-msg-edit-cancel:hover {
+  background: var(--p-slate-200);
 }
 
 .sql-ai-msg-user-content {
