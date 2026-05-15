@@ -380,9 +380,13 @@ const handlers = {
     console.log("Execute HTTP Request action received", { method, url });
     return await window.executeHttpRequest(null, { method, url, headers: headers ?? {}, body });
   },
-  LOAD_RECORD: async ({ modules, payload: { type, id, sublistIds } }) => {
-    console.log("Load Record action received", { type, id });
-    return window.loadRecordById(modules, { type, id, sublistIds: sublistIds ?? null });
+  LOAD_RECORD: async ({ modules, payload: { type, id } }) => {
+    console.log("Load Record (body only) action received", { type, id });
+    return window.loadRecordById(modules, { type, id, bodyOnly: true });
+  },
+  LOAD_RECORD_SUBLISTS: async ({ modules, payload: { type, id, sublistIds } }) => {
+    console.log("Load Record Sublists action received", { type, id, sublistIds });
+    return window.loadRecordSublists(modules, { type, id, sublistIds: sublistIds ?? null });
   },
   GET_RECORD_FIELDS: async ({ modules, payload: { type } }) => {
     console.log("Get Record Fields action received", { type });

@@ -436,8 +436,9 @@ export const tools: ToolDefinition[] = [
     name: "netsuite_load_record",
     description:
       "ALWAYS use this when the user asks to show, view, get, open, or retrieve a specific NetSuite record. " +
+      "Returns body fields only (no sublist rows) — fast and token-efficient. " +
+      "If the user also needs line items or sublist rows, call netsuite_get_record_sublists afterward. " +
       "Do NOT use SuiteQL as a substitute — SuiteQL internal IDs do NOT match record API IDs. " +
-      "Returns all body fields and sublist lines. " +
       "Common recordType values: customer, lead, prospect, contact, vendor, employee, salesorder, invoice, purchaseorder, itemfulfillment, vendorbill, estimate, journalentry, inventoryadjustment, script, scriptdeployment, workflowdefinition. " +
       "For custom records use the custom record type internal ID string (e.g. 'customrecord_my_type').",
     parameters: {
@@ -451,18 +452,49 @@ export const tools: ToolDefinition[] = [
         id: {
           type: "string",
           description: "The internal numeric ID of the record to load."
-        },
-        sublistIds: {
-          type: "array",
-          items: { type: "string" },
-          description:
-            "Optional list of sublist IDs to include (e.g. ['item', 'expense']). Omit to include all sublists."
         }
       },
       required: ["recordType", "id"]
     },
     execute: async (input) => {
       const response = await callApi(RequestRoutes.LOAD_RECORD, {
+        type: input.recordType,
+        id: input.id
+      });
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_get_record_sublists",
+    description:
+      "Get the sublist rows (line items) for a NetSuite record. " +
+      "Use this after netsuite_load_record when the user specifically needs line-item data (e.g. order items, expense lines, inventory lines). " +
+      "Do NOT call this unless sublists are explicitly needed — sublist data can be very large. " +
+      "Specify sublistIds to limit which sublists are returned; omit to get all sublists. " +
+      "Common sublists: 'item' (line items), 'expense' (expense lines), 'apply' (applied transactions), 'links' (related records).",
+    parameters: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The record type string (e.g. 'salesorder', 'invoice')."
+        },
+        id: {
+          type: "string",
+          description: "The internal numeric ID of the record."
+        },
+        sublistIds: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional list of sublist IDs to include (e.g. ['item', 'expense']). Omit to get all sublists."
+        }
+      },
+      required: ["recordType", "id"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.LOAD_RECORD_SUBLISTS, {
         type: input.recordType,
         id: input.id,
         sublistIds: input.sublistIds ?? null

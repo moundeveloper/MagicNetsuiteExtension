@@ -848,10 +848,11 @@ async function handleRequest({ requestId, method, params }) {
             name: "netsuite_load_record",
             description:
               "ALWAYS use this tool when the user asks to 'show', 'view', 'display', 'get', or 'load' a NetSuite record by ID. " +
-              "Do NOT use SuiteQL as a substitute — this tool returns all body field values (value + display text) and sublist rows directly from the record API. " +
+              "Returns body fields only (no sublist rows) — fast and token-efficient. " +
+              "If the user also needs line items or sublist rows, call netsuite_get_record_sublists afterward. " +
+              "Do NOT use SuiteQL as a substitute — this tool returns all body field values (value + display text) directly from the record API. " +
               "Common recordType values: 'script' (SuiteScript), 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'item', 'customrecord_<scriptid>' for custom records. " +
-              "If you are unsure of the correct recordType string, call netsuite_list_record_types first. " +
-              "For large transaction records pass sublistIds to limit sublists returned.",
+              "If you are unsure of the correct recordType string, call netsuite_list_record_types first.",
             inputSchema: {
               type: "object",
               properties: {
@@ -862,6 +863,29 @@ async function handleRequest({ requestId, method, params }) {
                 recordId: {
                   type: "string",
                   description: "The internal numeric ID of the record to load (e.g. '3309')."
+                }
+              },
+              required: ["recordType", "recordId"]
+            }
+          },
+          {
+            name: "netsuite_get_record_sublists",
+            description:
+              "Get the sublist rows (line items) for a NetSuite record. " +
+              "Use this after netsuite_load_record when the user specifically needs line-item data (e.g. order items, expense lines, inventory lines). " +
+              "Do NOT call this unless sublists are explicitly needed — sublist data can be very large. " +
+              "Specify sublistIds to limit which sublists are returned; omit to get all sublists. " +
+              "Common sublists: 'item' (line items), 'expense' (expense lines), 'apply' (applied transactions), 'links' (related records).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The SuiteScript record type ID (e.g. 'salesorder', 'invoice', 'purchaseorder')."
+                },
+                recordId: {
+                  type: "string",
+                  description: "The internal numeric ID of the record (e.g. '3309')."
                 },
                 sublistIds: {
                   type: "array",
@@ -1023,6 +1047,8 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteListRecordTypes();
         } else if (name === "netsuite_load_record") {
           result = await handleNetsuiteLoadRecord(args);
+        } else if (name === "netsuite_get_record_sublists") {
+          result = await handleNetsuiteGetRecordSublists(args);
         } else if (name === "netsuite_get_record_fields") {
           result = await handleNetsuiteGetRecordFields(args);
         } else if (name === "netsuite_find_file") {
@@ -1354,7 +1380,7 @@ async function handleNetsuiteLoadRecord(args) {
 
   const response = await sendMessageToTab(tab.id, {
     action: "LOAD_RECORD",
-    data: { type: recordType, id: recordId, sublistIds: args.sublistIds ?? null },
+    data: { type: recordType, id: recordId },
     mode: "normal"
   });
 
@@ -1363,6 +1389,37 @@ async function handleNetsuiteLoadRecord(args) {
     const errMsg = rawMsg
       ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
       : `Failed to load record ${recordType}/${recordId}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetRecordSublists(args) {
+  const recordType = String(args.recordType ?? "");
+  const recordId = String(args.recordId ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "LOAD_RECORD_SUBLISTS",
+    data: { type: recordType, id: recordId, sublistIds: args.sublistIds ?? null },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to load sublists for record ${recordType}/${recordId}`;
     throw new Error(errMsg);
   }
 

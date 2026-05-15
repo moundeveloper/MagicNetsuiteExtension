@@ -154,7 +154,7 @@ window.exportRecord = async (N, config = {}) => {
  * @param {string[]|null} [options.sublistIds] - Whitelist of sublists to include (null = all)
  * @returns {{ id: string, type: string, body: object, sublists: object }}
  */
-window.loadRecordById = (N, { type, id, sublistIds = null }) => {
+window.loadRecordById = (N, { type, id, bodyOnly = false }) => {
   const { record } = N;
   const rec = record.load({ type, id });
 
@@ -171,18 +171,17 @@ window.loadRecordById = (N, { type, id, sublistIds = null }) => {
     }
   }
 
-  // Sublists
+  if (bodyOnly) {
+    return { id: String(rec.id), type: rec.type, body };
+  }
+
+  // Sublists (legacy path — kept for backward compat)
   const sublists = {};
   const availableSublists = rec.getSublists();
-  const targetSublists = sublistIds
-    ? availableSublists.filter((s) => sublistIds.includes(s))
-    : availableSublists;
-
-  for (const sublistId of targetSublists) {
+  for (const sublistId of availableSublists) {
     const lineCount = rec.getLineCount({ sublistId });
     const sublistFieldIds = rec.getSublistFields({ sublistId });
     const rows = [];
-
     for (let i = 0; i < lineCount; i++) {
       const row = {};
       for (const fieldId of sublistFieldIds) {
@@ -197,11 +196,55 @@ window.loadRecordById = (N, { type, id, sublistIds = null }) => {
       }
       rows.push(row);
     }
-
     sublists[sublistId] = rows;
   }
 
   return { id: String(rec.id), type: rec.type, body, sublists };
+};
+
+/**
+ * Load a record's sublist rows only — no body fields.
+ * Useful when the body is already known and only line-item data is needed.
+ *
+ * @param {object} N - NetSuite modules (must expose N.record)
+ * @param {object} options
+ * @param {string} options.type - Record type (e.g. 'salesorder')
+ * @param {string|number} options.id - Internal ID of the record
+ * @param {string[]|null} [options.sublistIds] - Whitelist of sublists to include (null = all)
+ * @returns {{ id: string, type: string, sublists: object }}
+ */
+window.loadRecordSublists = (N, { type, id, sublistIds = null }) => {
+  const { record } = N;
+  const rec = record.load({ type, id });
+
+  const sublists = {};
+  const availableSublists = rec.getSublists();
+  const targetSublists = sublistIds
+    ? availableSublists.filter((s) => sublistIds.includes(s))
+    : availableSublists;
+
+  for (const sublistId of targetSublists) {
+    const lineCount = rec.getLineCount({ sublistId });
+    const sublistFieldIds = rec.getSublistFields({ sublistId });
+    const rows = [];
+    for (let i = 0; i < lineCount; i++) {
+      const row = {};
+      for (const fieldId of sublistFieldIds) {
+        try {
+          row[fieldId] = {
+            value: rec.getSublistValue({ sublistId, fieldId, line: i }),
+            text: rec.getSublistText({ sublistId, fieldId, line: i })
+          };
+        } catch {
+          // Skip fields that error on this line
+        }
+      }
+      rows.push(row);
+    }
+    sublists[sublistId] = rows;
+  }
+
+  return { id: String(rec.id), type: rec.type, sublists };
 };
 
 /**
