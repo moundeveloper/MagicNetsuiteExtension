@@ -300,7 +300,8 @@ watch(
 
 /* ── Content areas ── */
 .tab-content {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
   outline: 1px solid var(--p-slate-300);

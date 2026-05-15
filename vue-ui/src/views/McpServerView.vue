@@ -133,42 +133,25 @@ const accountOptions = () =>
 
 // ── MCP Tools list ──
 
-const mcpTools = [
-  {
-    name: "suiteql_get_guide",
-    description:
-      "Returns the complete SuiteQL usage guide including syntax rules, the discovery workflow, and worked examples. Call this first before any SuiteQL work."
-  },
-  {
-    name: "ping",
-    description: "Ping the Chrome extension. Returns pong."
-  },
-  {
-    name: "suiteql_search_tables",
-    description:
-      "Search available SuiteQL tables by keyword. Returns table IDs and labels matching the search term."
-  },
-  {
-    name: "suiteql_get_table_fields",
-    description:
-      "Get all columns/fields for a specific SuiteQL table. Returns field IDs, labels, and data types."
-  },
-  {
-    name: "suiteql_get_table_joins",
-    description:
-      "Get available joins/relationships for a specific SuiteQL table."
-  },
-  {
-    name: "suiteql_execute_query",
-    description:
-      "Execute a SuiteQL query and return the results (limited to 5 rows for preview)."
-  },
-  {
-    name: "suiteql_discover_field_values",
-    description:
-      "Sample DISTINCT actual values for a specific column in a table."
+interface McpTool {
+  name: string;
+  description: string;
+}
+
+const mcpTools = ref<McpTool[]>([]);
+const toolsLoading = ref(false);
+
+const fetchMcpTools = async () => {
+  toolsLoading.value = true;
+  try {
+    const tools = await safeSendMessage<McpTool[]>({ type: "MCP_GET_TOOLS" });
+    mcpTools.value = tools ?? [];
+  } catch {
+    mcpTools.value = [];
+  } finally {
+    toolsLoading.value = false;
   }
-];
+};
 
 // ── MCP Usage Tracking ──
 
@@ -224,6 +207,7 @@ const formatTime = (iso: string) => {
 onMounted(() => {
   checkMcpStatus();
   fetchAccounts();
+  fetchMcpTools();
   if (settings.mcpEnabled) {
     fetchUsage();
     // Poll status every 5s and usage every 10s only while enabled
@@ -390,12 +374,30 @@ onBeforeUnmount(() => {
 
       <!-- Available Tools Section -->
       <div class="mcp-section">
-        <h2>Available Tools</h2>
+        <div class="section-header">
+          <h2>Available Tools</h2>
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            :loading="toolsLoading"
+            @click="fetchMcpTools"
+            title="Refresh tools list"
+          >
+            <i class="pi pi-refresh" />
+          </Button>
+        </div>
         <p class="section-description">
           These tools are exposed to AI assistants via the MCP protocol.
         </p>
 
-        <div class="tools-list">
+        <div v-if="toolsLoading" class="fetch-status">
+          <i class="pi pi-spin pi-spinner" /> Loading tools...
+        </div>
+        <div v-else-if="mcpTools.length === 0" class="usage-empty">
+          No tools found. Make sure the MCP server is enabled.
+        </div>
+        <div v-else class="tools-list">
           <div v-for="tool in mcpTools" :key="tool.name" class="tool-card">
             <div class="tool-name">
               <i class="pi pi-wrench" />

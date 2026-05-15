@@ -292,13 +292,12 @@ const navigateBack = () => {
           v-model="activeCategory"
           class="flex-1 min-h-0 p-2"
         >
-          <template #tab-content="{ activeTab, contentHeight }">
+          <template #tab-content="{ activeTab }">
             <div
               v-for="group in categoryGroups"
               :key="group.tabName"
               v-show="activeTab === group.tabName"
               class="components-scroll"
-              :style="{ height: `${contentHeight}px` }"
             >
               <!-- One section per subcategory -->
               <div
@@ -428,10 +427,9 @@ const navigateBack = () => {
 
 /* ── Component scroll area ──────────────────────────────────────────────── */
 .components-scroll {
+  position: absolute;
+  inset: 0;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
   padding: 8px;
 }
 
@@ -440,6 +438,11 @@ const navigateBack = () => {
   border: 1px solid var(--p-slate-200);
   border-radius: 6px;
   overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.subgroup:last-child {
+  margin-bottom: 0;
 }
 
 .subgroup-header {

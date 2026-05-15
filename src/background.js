@@ -230,7 +230,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     MCP_DISCONNECT: handleMcpDisconnect,
     MCP_STATUS: handleMcpStatus,
     MCP_USAGE: handleMcpUsage,
-    MCP_USAGE_CLEAR: handleMcpUsageClear
+    MCP_USAGE_CLEAR: handleMcpUsageClear,
+    MCP_GET_TOOLS: handleMcpGetTools
   };
 
   const messageHandler = messageMap[message.type];
@@ -338,6 +339,17 @@ const handleMcpUsage = ({ sendResponse }) => {
 const handleMcpUsageClear = ({ sendResponse }) => {
   mcpUsageLog.length = 0;
   sendResponse({ ok: true });
+  return true;
+};
+
+const handleMcpGetTools = async ({ sendResponse }) => {
+  try {
+    const result = await handleRequest({ requestId: "ui", method: "tools/list", params: {} });
+    const tools = (result.result.tools ?? []).map(({ name, description }) => ({ name, description }));
+    sendResponse(tools);
+  } catch {
+    sendResponse([]);
+  }
   return true;
 };
 
