@@ -29,6 +29,10 @@ export interface ShortcutsSettings {
   mcpEnabled: boolean;
   /** Names of MCP tools that are disabled and should be hidden from AI clients */
   mcpDisabledTools: string[];
+  /** Enable extended thinking / reasoning mode for supported models */
+  thinkingMode: boolean;
+  /** Max thinking token budget — used for Claude extended thinking via Copilot */
+  thinkingBudget: number;
 }
 
 const defaultSettings: ShortcutsSettings = {
@@ -48,7 +52,9 @@ const defaultSettings: ShortcutsSettings = {
   compactionThreshold: 80000,
   mcpPreferredAccount: "",
   mcpEnabled: true,
-  mcpDisabledTools: []
+  mcpDisabledTools: [],
+  thinkingMode: false,
+  thinkingBudget: 8000
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -83,6 +89,8 @@ export function useSettings() {
         settings.mcpDisabledTools = Array.isArray(stored.mcpDisabledTools)
           ? [...stored.mcpDisabledTools]
           : [];
+        settings.thinkingMode = stored.thinkingMode ?? defaultSettings.thinkingMode;
+        settings.thinkingBudget = stored.thinkingBudget ?? defaultSettings.thinkingBudget;
       }
       isLoaded = true;
       isSettingsLoaded.value = true;

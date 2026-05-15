@@ -435,7 +435,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useAiProvider, type ChatMessage } from "../composables/useAiProvider";
+import { useAgent } from "../composables/useAgent";
+import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -629,8 +630,6 @@ const generateFromAi = async () => {
   generateError.value = "";
 
   try {
-    const { chatCompletion } = useAiProvider();
-
     const toolList = allToolNames.value.join("\n");
     const skillList = availableSkills.value
       .map((s) => `id=${s.id} "${s.name}": ${s.description ?? ""}`)
@@ -639,6 +638,10 @@ const generateFromAi = async () => {
     const systemPrompt = `You are an agent configuration generator for a NetSuite SuiteScript AI assistant browser extension.
 Given a natural-language description, produce a complete agent configuration as a single raw JSON object.
 Do NOT wrap in markdown code blocks. Return ONLY the JSON.
+
+You have access to NetSuite documentation tools. Use \`search_netsuite_docs\` and \`read_netsuite_doc_page\`
+to look up accurate, up-to-date information about NetSuite features relevant to the agent's domain BEFORE
+generating its system prompt. This ensures the agent's system prompt contains correct guidance.
 
 Available tool names (only pick from this exact list):
 ${toolList}
@@ -670,14 +673,18 @@ Rules:
 - canExecuteDestructive true only if the agent needs to create / update / delete records
 - color: pastel, desaturated hex that visually fits the domain`;
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: prompt }
-    ];
+    const agent = useAgent({
+      systemPrompt,
+      tools: netsuiteDocsTools,
+      keepHistory: false
+    });
 
-    const result = await chatCompletion(messages);
+    await agent.run(prompt);
 
-    let raw = (result.content ?? "").trim();
+    const lastMsg = [...agent.history.value]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    let raw = (lastMsg?.content ?? "").trim();
     // Strip any accidental markdown code fences
     raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 

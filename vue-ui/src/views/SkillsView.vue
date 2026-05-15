@@ -314,7 +314,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
-import { useAiProvider, type ChatMessage } from "../composables/useAiProvider";
+import { useAgent } from "../composables/useAgent";
+import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
@@ -442,8 +443,6 @@ const generateSkillFromAi = async () => {
   skillGenerateError.value = "";
 
   try {
-    const { chatCompletion } = useAiProvider();
-
     const isEdit = isEditing.value;
     const existing = isEdit ? formData.value : null;
 
@@ -451,7 +450,10 @@ const generateSkillFromAi = async () => {
       ? `You are a skill content improver for a NetSuite SuiteScript AI assistant browser extension.
 A skill is a knowledge document injected into the AI's context to help it specialise in a topic.
 The user will provide guidance on what to improve or add to the existing skill.
-Return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
+
+You have access to NetSuite documentation tools. Use \`search_netsuite_docs\` and \`read_netsuite_doc_page\`
+to look up accurate, up-to-date NetSuite documentation relevant to the skill topic BEFORE generating content.
+This ensures the skill contains correct API signatures, field names, and current behaviour.
 
 Current skill data:
 name: "${existing?.name}"
@@ -461,6 +463,7 @@ domain: "${existing?.domain}"
 content:
 ${existing?.content}
 
+After researching, return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
 JSON schema (only include fields you want to change):
 {
   "name": "...",
@@ -469,13 +472,15 @@ JSON schema (only include fields you want to change):
   "domain": "global" | "sql",
   "content": "Full improved skill content..."
 }
-
 Keep fields you don't need to change exactly as-is.`
       : `You are a skill generator for a NetSuite SuiteScript AI assistant browser extension.
 A skill is a knowledge document injected into the AI's context to help it specialise in a topic.
-Generate a complete skill from the user's description.
-Return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
 
+You have access to NetSuite documentation tools. Use \`search_netsuite_docs\` and \`read_netsuite_doc_page\`
+to look up accurate, up-to-date NetSuite documentation relevant to the skill topic BEFORE generating content.
+This ensures the skill contains correct API signatures, field names, and current behaviour.
+
+After researching, return ONLY a valid JSON object — no markdown, no code blocks, just raw JSON.
 JSON schema:
 {
   "name": "Short descriptive skill name",
@@ -488,14 +493,19 @@ JSON schema:
 domain "sql" means the skill is only injected into the SQL Editor AI context.
 domain "global" means the skill is available to all AI agents.`;
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: prompt }
-    ];
+    const agent = useAgent({
+      systemPrompt,
+      tools: netsuiteDocsTools,
+      keepHistory: false
+    });
 
-    const result = await chatCompletion(messages);
+    await agent.run(prompt);
 
-    let raw = (result.content ?? "").trim();
+    // Extract the last assistant message — that's the JSON output
+    const lastMsg = [...agent.history.value]
+      .reverse()
+      .find((m) => m.role === "assistant");
+    let raw = (lastMsg?.content ?? "").trim();
     raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
     const parsed = JSON.parse(raw);

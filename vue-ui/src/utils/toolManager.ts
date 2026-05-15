@@ -65,7 +65,11 @@ export const tools: ToolDefinition[] = [
   {
     name: "fetch_url",
     description:
-      "Fetches the text content of a public URL, including JavaScript-rendered pages.",
+      "Fetches the text content of a public URL using Jina reader (renders JavaScript). " +
+      "Use ONLY for public web pages such as documentation, articles, or external sites. " +
+      "NEVER use for NetSuite URLs — NetSuite requires an authenticated session cookie that only the netsuite_* tools have access to. " +
+      "Attempting to fetch any *.netsuite.com URL or /core/media/* path with this tool will always return a login page or 'Page Not Found'. " +
+      "To read a file from the NetSuite File Cabinet, use netsuite_get_file_content instead.",
     parameters: {
       type: "object",
       properties: {
@@ -797,7 +801,8 @@ export const tools: ToolDefinition[] = [
       properties: {
         id: {
           type: "string",
-          description: "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
+          description:
+            "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
         },
         name: {
           type: "string",
@@ -851,7 +856,8 @@ export const tools: ToolDefinition[] = [
       properties: {
         id: {
           type: "string",
-          description: "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+          description:
+            "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
         },
         name: {
           type: "string",
@@ -867,6 +873,71 @@ export const tools: ToolDefinition[] = [
         name: input.name
       });
       return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_get_file_content",
+    description:
+      "ALWAYS use this to read the actual content of a file stored in the NetSuite File Cabinet. " +
+      "Fetches the file through the authenticated NetSuite session — unlike fetch_url which CANNOT access any NetSuite URL. " +
+      "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results). " +
+      "Returns { content, contentType, binary }. For text files (JS, JSON, CSV, SQL, etc.) content is the raw string. " +
+      "For binary files content is a base64 data URL. Large files are truncated at 50 000 chars.",
+    parameters: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description:
+            "Internal numeric ID of the file to read (e.g. 21301). Obtain from netsuite_find_file or SuiteQL."
+        }
+      },
+      required: ["fileId"]
+    },
+    execute: async (input) => {
+      // FIND_FILE returns the full signed URL including the auth-hash params
+      // (&c=...&h=...&_xt=...) that NetSuite requires.  The bare
+      // /core/media/media.nl?id=N URL is rejected with a 404 by the server.
+      // We attempt FIND_FILE first and fall back to the bare URL only if it
+      // is unavailable (e.g. permission issue or the call itself fails).
+      let fileUrl = `/core/media/media.nl?id=${input.fileId}`;
+      try {
+        const findResponse = await callApi(RequestRoutes.FIND_FILE, {
+          id: String(input.fileId)
+        });
+        const foundUrl =
+          findResponse.message?.files?.results?.[0]?.url as string | undefined;
+        if (foundUrl) {
+          fileUrl = foundUrl;
+        }
+      } catch {
+        // FIND_FILE unavailable — proceed with bare URL as fallback
+      }
+
+      const contentResponse = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
+        fileUrl
+      });
+      const result = contentResponse.message as {
+        content: string;
+        contentType: string;
+        binary: boolean;
+      };
+
+      // Truncate very large text files to avoid bloating the context window
+      if (
+        result?.content &&
+        !result.binary &&
+        result.content.length > 50_000
+      ) {
+        return {
+          ...result,
+          content: result.content.slice(0, 50_000),
+          truncated: true,
+          originalSize: result.content.length
+        };
+      }
+      return result;
     }
   },
 
@@ -1193,7 +1264,8 @@ export const tools: ToolDefinition[] = [
       "• Use blockquotes for citations, quotes, or excerpts\n" +
       "• Use checkboxes (- [ ] / - [x]) for action items or checklists\n" +
       "• Always include an introductory paragraph under the title before diving into sections\n\n" +
-      "Do NOT describe the document in text or show markdown in the chat — call this tool and the document appears inline.",
+      "Do NOT describe the document in text or show markdown in the chat — call this tool and the document appears inline.\n\n" +
+      "IMPORTANT: After this tool succeeds, the UI automatically shows a **Download** button next to the document — do NOT include any download link, 'click here to download', or download instructions anywhere in your text response. Simply confirm the document was created (e.g. 'Done — your report is ready above.').",
     parameters: {
       type: "object",
       properties: {

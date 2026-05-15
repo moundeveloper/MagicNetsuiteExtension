@@ -42,7 +42,73 @@ export interface ChatCompletionOptions {
 export interface NormalisedResponse {
   content: string | null;
   tool_calls: ToolCall[];
+  /** Extracted reasoning/thinking content — display-only, never sent back to the model */
+  thinking?: string;
 }
+
+// ─────────────────────────────────────────────
+// Thinking / Reasoning helpers
+// ─────────────────────────────────────────────
+
+/**
+ * Strips `<think>...</think>` tags that reasoning models (deepseek-r1, qwq, etc.)
+ * emit inline. Always applied to Ollama responses — models that don't use thinking
+ * simply won't produce the tags, so this is a safe no-op for them.
+ */
+const extractThinkTags = (
+  content: string
+): { thinking?: string; content: string } => {
+  const match = content.match(/^<think>([\s\S]*?)<\/think>\s*/);
+  if (match) {
+    return {
+      thinking: match[1]!.trim() || undefined,
+      content: content.slice(match[0].length).trim()
+    };
+  }
+  return { content };
+};
+
+/**
+ * Parse Claude extended-thinking response content, which may be either:
+ *   - a plain string (Copilot hides thinking blocks)
+ *   - an array of `{ type: "thinking", thinking: "..." }` and `{ type: "text", text: "..." }` blocks
+ */
+const extractClaudeThinking = (
+  content: unknown
+): { text: string; thinking?: string } => {
+  if (typeof content === "string") {
+    // Some providers surface thinking inside the string using <think> tags
+    const parsed = extractThinkTags(content);
+    return { text: parsed.content, thinking: parsed.thinking };
+  }
+  if (!Array.isArray(content)) {
+    return { text: content !== null && content !== undefined ? String(content) : "" };
+  }
+  let text = "";
+  let thinking = "";
+  for (const block of content as Array<{
+    type?: string;
+    text?: string;
+    thinking?: string;
+  }>) {
+    if (block?.type === "thinking" && block.thinking) {
+      thinking += (thinking ? "\n" : "") + block.thinking;
+    } else if (block?.type === "text" && block.text) {
+      text += block.text;
+    }
+  }
+  return { text: text || "", thinking: thinking || undefined };
+};
+
+/** Returns true for Claude model IDs (matches "claude" case-insensitively). */
+const isClaudeModel = (model: string): boolean => /claude/i.test(model);
+
+/**
+ * Returns true for OpenAI reasoning models (o1, o3, o4 with optional suffix).
+ * Used to add `reasoning_effort` instead of the Anthropic thinking param.
+ */
+const isReasoningModel = (model: string): boolean =>
+  /\bo[1-4](-mini|-preview|-high)?\b/i.test(model);
 
 // ─────────────────────────────────────────────
 // Puter adapter
@@ -50,11 +116,18 @@ export interface NormalisedResponse {
 
 const puterChat = async (
   messages: ChatMessage[],
-  options: ChatCompletionOptions
+  options: ChatCompletionOptions,
+  thinkingMode = false,
+  thinkingBudget = 8000
 ): Promise<NormalisedResponse> => {
   const chatOptions: Record<string, unknown> = {};
   if (options.tools && options.tools.length > 0) {
     chatOptions.tools = options.tools;
+  }
+  // Puter uses Claude under the hood — try to enable extended thinking when requested.
+  // If Puter doesn't support the param it will be silently ignored.
+  if (thinkingMode) {
+    chatOptions.thinking = { type: "enabled", budget_tokens: thinkingBudget };
   }
 
   const response = await puter.ai.chat(
@@ -66,27 +139,18 @@ const puterChat = async (
   const msg =
     (
       response as {
-        message?: { content?: string | null; tool_calls?: ToolCall[] };
+        message?: { content?: unknown; tool_calls?: ToolCall[] };
       }
     )?.message ??
-    (response as { content?: string | null; tool_calls?: ToolCall[] });
+    (response as { content?: unknown; tool_calls?: ToolCall[] });
 
-  const normalizeContent = (content: unknown): string | null => {
-    if (content === null || content === undefined) return null;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content
-        .map((c: { type?: string; text?: string }) =>
-          c?.type === "text" ? (c.text ?? "") : ""
-        )
-        .join("\n");
-    }
-    return JSON.stringify(content, null, 2);
-  };
+  // Extract thinking from content array (Claude extended thinking format)
+  const { text: parsedText, thinking } = extractClaudeThinking(msg?.content);
 
   return {
-    content: normalizeContent(msg?.content),
-    tool_calls: (msg as { tool_calls?: ToolCall[] })?.tool_calls ?? []
+    content: parsedText || null,
+    tool_calls: (msg as { tool_calls?: ToolCall[] })?.tool_calls ?? [],
+    thinking
   };
 };
 
@@ -125,9 +189,14 @@ const ollamaChat = async (
       }
     })) ?? [];
 
+  // Always parse <think>...</think> — reasoning models emit them regardless of any flag.
+  // For non-thinking models this is a safe no-op.
+  const { thinking, content } = extractThinkTags(rawMsg?.content ?? "");
+
   return {
-    content: rawMsg?.content ?? null,
-    tool_calls: toolCalls
+    content: content || null,
+    tool_calls: toolCalls,
+    thinking
   };
 };
 
@@ -138,6 +207,43 @@ const ollamaChat = async (
 /** VS Code's public GitHub OAuth client ID — used by many open-source tools. */
 export const COPILOT_CLIENT_ID = "01ab8ac9400c4e429b23";
 
+// ─────────────────────────────────────────────
+// Chain-of-thought injection
+// ─────────────────────────────────────────────
+
+/**
+ * Returns true when the provider/model combination does NOT have native thinking
+ * support (Claude extended thinking or Ollama <think> tags).
+ * For these providers we inject an explicit CoT instruction into the system prompt
+ * so the model writes its reasoning inside <think>...</think> tags, which we then
+ * parse and surface in the UI.
+ */
+const needsCoTInjection = (provider: string, copilotModel: string): boolean => {
+  if (provider === "puter") return true;
+  if (provider === "copilot") {
+    // Claude and o1/o3/o4 handle reasoning natively — no injection needed
+    return !isClaudeModel(copilotModel) && !isReasoningModel(copilotModel);
+  }
+  return false; // ollama parses <think> natively; opencode is server-managed
+};
+
+const COT_SYSTEM_INSTRUCTION =
+  "\n\n--- Thinking Mode ---\n" +
+  "Reason step by step inside <think>...</think> tags before your final answer. " +
+  "Keep the reasoning block focused and concise — cover only what is needed to reach a correct answer. " +
+  "Your response after the closing </think> tag should be clean and concise, with no repeated reasoning.";
+
+/**
+ * Prepend a CoT instruction to the first system message so the model knows
+ * to output its reasoning in <think> tags, which we then strip and display
+ * separately (token-efficient: reasoning never gets sent back to the model).
+ */
+const injectCoTSystemPrompt = (messages: ChatMessage[]): ChatMessage[] =>
+  messages.map((m, i) =>
+    i === 0 && m.role === "system"
+      ? { ...m, content: (m.content ?? "") + COT_SYSTEM_INSTRUCTION }
+      : m
+  );
 /** In-memory Copilot API token cache (expires ~30 min). */
 let cachedCopilotApiToken: { token: string; expiresAt: number } | null = null;
 
@@ -214,9 +320,21 @@ const copilotChat = async (
   messages: ChatMessage[],
   options: ChatCompletionOptions,
   githubToken: string,
-  model: string
+  model: string,
+  thinkingMode = false,
+  thinkingBudget = 8000
 ): Promise<NormalisedResponse> => {
   const copilotToken = await getCopilotApiToken(githubToken);
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${copilotToken}`,
+    "Content-Type": "application/json",
+    "Editor-Version": "vscode/1.95.3",
+    "Editor-Plugin-Version": "copilot-chat/0.22.4",
+    "Copilot-Integration-Id": "vscode-chat",
+    "OpenAI-Intent": "conversation-panel",
+    "User-Agent": "MagicNetsuiteExtension"
+  };
 
   const body: Record<string, unknown> = {
     model,
@@ -229,17 +347,25 @@ const copilotChat = async (
     body.tool_choice = "auto";
   }
 
+  // ── Thinking / Reasoning mode ──────────────────────────────────────────
+  if (thinkingMode) {
+    if (isClaudeModel(model)) {
+      // Claude extended thinking: requires the interleaved-thinking beta header
+      body.thinking = { type: "enabled", budget_tokens: thinkingBudget };
+      headers["anthropic-beta"] = "interleaved-thinking-2025-05-14";
+    } else if (isReasoningModel(model)) {
+      // o1/o3/o4 models: map budget to a reasoning effort tier
+      const effort =
+        thinkingBudget >= 16000 ? "high" : thinkingBudget >= 4000 ? "medium" : "low";
+      body.reasoning_effort = effort;
+    }
+    // For all other models (e.g. gpt-4o) there is no standard thinking param —
+    // thinking mode has no API effect but the toggle still shows as active.
+  }
+
   const res = await fetch("https://api.githubcopilot.com/chat/completions", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${copilotToken}`,
-      "Content-Type": "application/json",
-      "Editor-Version": "vscode/1.95.3",
-      "Editor-Plugin-Version": "copilot-chat/0.22.4",
-      "Copilot-Integration-Id": "vscode-chat",
-      "OpenAI-Intent": "conversation-panel",
-      "User-Agent": "MagicNetsuiteExtension"
-    },
+    headers,
     body: JSON.stringify(body),
     signal: options.signal
   });
@@ -252,7 +378,7 @@ const copilotChat = async (
   const data = (await res.json()) as {
     choices: Array<{
       message: {
-        content: string | null;
+        content: string | Array<{ type?: string; text?: string; thinking?: string }> | null;
         tool_calls?: Array<{
           id: string;
           type: string;
@@ -263,14 +389,19 @@ const copilotChat = async (
   };
 
   const msg = data.choices[0]?.message;
+
+  // Content may be a string or a Claude content-block array (extended thinking)
+  const { text: parsedText, thinking } = extractClaudeThinking(msg?.content);
+
   return {
-    content: msg?.content ?? null,
+    content: parsedText || null,
     tool_calls:
       msg?.tool_calls?.map((tc) => ({
         id: tc.id,
         type: "function" as const,
         function: { name: tc.function.name, arguments: tc.function.arguments }
-      })) ?? []
+      })) ?? [],
+    thinking
   };
 };
 
@@ -428,9 +559,20 @@ export const useAiProvider = () => {
 
     const provider = settings.aiProvider;
 
+    // ── Chain-of-thought injection for providers without native thinking ──
+    // When thinking mode is on but the provider can't natively surface reasoning
+    // tokens, we inject a system-level instruction so the model writes its thinking
+    // inside <think>...</think> tags. Those are then parsed out of the response and
+    // shown as a collapsible "Reasoning" block — never fed back to the model.
+    const effectiveMessages =
+      settings.thinkingMode &&
+      needsCoTInjection(provider, settings.copilotModel || "gpt-4o")
+        ? injectCoTSystemPrompt(messages)
+        : messages;
+
     if (provider === "ollama") {
       return ollamaChat(
-        messages,
+        effectiveMessages,
         options,
         settings.ollamaBaseUrl || "http://localhost:11434",
         options.model || settings.ollamaModel || "llama3.2"
@@ -439,7 +581,7 @@ export const useAiProvider = () => {
 
     if (provider === "opencode") {
       return opencodeChat(
-        messages,
+        effectiveMessages,
         options,
         settings.opencodeBaseUrl || "http://localhost:4096",
         settings.opencodeModel || undefined
@@ -448,15 +590,17 @@ export const useAiProvider = () => {
 
     if (provider === "copilot") {
       return copilotChat(
-        messages,
+        effectiveMessages,
         options,
         settings.githubToken,
-        settings.copilotModel || "gpt-4o"
+        settings.copilotModel || "gpt-4o",
+        settings.thinkingMode,
+        settings.thinkingBudget
       );
     }
 
     // Default: puter
-    return puterChat(messages, options);
+    return puterChat(effectiveMessages, options, settings.thinkingMode, settings.thinkingBudget);
   };
 
   return { chatCompletion, settings };

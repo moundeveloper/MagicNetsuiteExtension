@@ -28,7 +28,8 @@ const allLinks = computed(() => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
       !blackList.includes(link.name.toLowerCase()) &&
-      (mode === "development" || link.status === RouteStatus.release)
+      (mode === "development" || link.status === RouteStatus.release) &&
+      (!link.adminOnly || isAdmin.value)
     );
   });
 });

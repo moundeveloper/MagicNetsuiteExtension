@@ -67,6 +67,12 @@ export interface AgentMessage {
    * API messages — the AI sees the file contents as part of the user turn.
    */
   attachments?: MessageAttachment[];
+  /**
+   * Reasoning/thinking content from the model — stored for display only.
+   * Never included in the messages array sent back to the API, keeping
+   * context lean (token efficiency).
+   */
+  thinking?: string;
   timestamp: Date;
 }
 
@@ -1217,7 +1223,7 @@ export const useAgent = (options: AgentOptions = {}) => {
           JSON.stringify(messages, null, 2)
         );
 
-        let response: { content: string | null; tool_calls: ToolCall[] };
+        let response: { content: string | null; tool_calls: ToolCall[]; thinking?: string };
         try {
           response = await chatCompletion(messages, { tools: allTools.length > 0 ? allTools : undefined, signal });
           console.log(
@@ -1241,7 +1247,8 @@ export const useAgent = (options: AgentOptions = {}) => {
         if (toolCalls.length === 0) {
           pushMessage({
             role: "assistant",
-            content: assistantText || "[no response]"
+            content: assistantText || "[no response]",
+            thinking: response.thinking || undefined
           });
           currentResponse.value = assistantText;
           // Tag recent messages with topics for future relevance scoring
@@ -1260,6 +1267,7 @@ export const useAgent = (options: AgentOptions = {}) => {
           role: "assistant",
           content: assistantText || "",
           toolCalls, // ← key fix: stored for replay
+          thinking: response.thinking || undefined,
           timestamp: new Date()
         });
 

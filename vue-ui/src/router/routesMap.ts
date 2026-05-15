@@ -23,6 +23,7 @@ import McpServerView from "../views/McpServerView.vue";
 import AgentsView from "../views/AgentsView.vue";
 import ApiTesterView from "../views/ApiTesterView.vue";
 import MultiAgentView from "../views/MultiAgentView.vue";
+import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -44,6 +45,7 @@ export type RouteItem = {
   status: RouteStatus;
   breadcrumb?: string;
   breadcrumbParents?: Array<{ label: string; route: string }>;
+  adminOnly?: boolean;
 };
 
 export type Route = {
@@ -272,6 +274,15 @@ export const routes: FullRoute[] = [
     component: MultiAgentView,
     status: RouteStatus.release,
     breadcrumb: "Multi-Agent"
+  },
+  {
+    route: "/netsuite-api-tester",
+    name: "NetSuite API Tester",
+    icon: "pi pi-bolt",
+    component: NetsuiteApiTesterView,
+    status: RouteStatus.release,
+    breadcrumb: "NetSuite API Tester",
+    adminOnly: true
   }
 ];
 
@@ -282,7 +293,8 @@ export const getRouteMap = (): RouteItem[] => {
     icon: route.icon,
     status: route.status,
     breadcrumb: route.breadcrumb,
-    breadcrumbParents: route.breadcrumbParents
+    breadcrumbParents: route.breadcrumbParents,
+    adminOnly: route.adminOnly
   }));
 };
 
