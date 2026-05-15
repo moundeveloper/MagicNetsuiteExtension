@@ -5,8 +5,8 @@ import { Button } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
-import MTable from "../components/universal/table/MTable.vue";
-import MTableColumn from "../components/universal/table/MTableColumn.vue";
+import MTableStatic from "../components/universal/table/MTableStatic.vue";
+import MTableColumnStatic from "../components/universal/table/MTableColumnStatic.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import {
   fetchBundleComponents,
@@ -313,15 +313,12 @@ const navigateBack = () => {
                     subGroup.components.length
                   }}</span>
                 </div>
-                <MTable
+                <MTableStatic
                   :rows="subGroup.components"
-                  height="auto"
-                  :autoRowHeight="true"
-                  :rowHeight="32"
                   class="subgroup-table"
                 >
-                  <MTableColumn label="Name" field="name" width="3fr" />
-                  <MTableColumn
+                  <MTableColumnStatic label="Name" field="name" width="3fr" />
+                  <MTableColumnStatic
                     label="Script / Record ID"
                     field="id"
                     width="2fr"
@@ -330,8 +327,8 @@ const navigateBack = () => {
                       <code v-if="value" class="id-code">{{ value }}</code>
                       <span v-else class="text-[var(--p-slate-400)]">—</span>
                     </template>
-                  </MTableColumn>
-                  <MTableColumn
+                  </MTableColumnStatic>
+                  <MTableColumnStatic
                     label="Referenced By"
                     field="referencedBy"
                     width="2fr"
@@ -340,8 +337,8 @@ const navigateBack = () => {
                       <span v-if="value">{{ value }}</span>
                       <span v-else class="text-[var(--p-slate-400)]">—</span>
                     </template>
-                  </MTableColumn>
-                  <MTableColumn label="Locked" field="isLocked" width="80px">
+                  </MTableColumnStatic>
+                  <MTableColumnStatic label="Locked" field="isLocked" width="80px">
                     <template #default="{ value }">
                       <span
                         v-if="value"
@@ -352,8 +349,8 @@ const navigateBack = () => {
                         >No</span
                       >
                     </template>
-                  </MTableColumn>
-                </MTable>
+                  </MTableColumnStatic>
+                </MTableStatic>
               </div>
             </div>
           </template>

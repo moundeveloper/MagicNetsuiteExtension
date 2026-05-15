@@ -48,7 +48,8 @@ const filteredBundles = computed(() => {
       b.name.toLowerCase().includes(q) ||
       b.bundleId.toLowerCase().includes(q) ||
       b.abstract.toLowerCase().includes(q) ||
-      b.appId.toLowerCase().includes(q)
+      b.appId.toLowerCase().includes(q) ||
+      b.createdBy.toLowerCase().includes(q)
   );
 });
 
@@ -78,6 +79,20 @@ const navigateToBundle = (bundle: Bundle) => {
     query: { data: JSON.stringify(bundle) },
   });
 };
+
+// ── Context menus ──────────────────────────────────────────────────────────
+const bundleIdContextMenu = [
+  {
+    label: "Copy Bundle ID",
+    icon: "pi pi-copy",
+    action: (row: Bundle) => navigator.clipboard.writeText(row.bundleId),
+  },
+  {
+    label: "View Details",
+    icon: "pi pi-eye",
+    action: (row: Bundle) => navigateToBundle(row),
+  },
+];
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────
 onMounted(loadBundles);
@@ -223,7 +238,7 @@ onMounted(loadBundles);
           :loading="loading"
           style="flex: 1; min-height: 0;"
         >
-          <MTableColumnStatic label="Name" field="name" width="2fr">
+          <MTableColumnStatic label="Name" field="name" width="2fr" :filterable="true">
             <template #default="{ value, row }">
               <div
                 class="bundle-name-cell group"
@@ -241,11 +256,11 @@ onMounted(loadBundles);
               </span>
             </template>
           </MTableColumnStatic>
-          <MTableColumnStatic label="Bundle ID" field="bundleId" width="100px" />
+          <MTableColumnStatic label="Bundle ID" field="bundleId" width="100px" :filterable="true" :contextMenu="bundleIdContextMenu" />
           <MTableColumnStatic label="Version" field="version" width="90px" />
           <MTableColumnStatic label="App ID" field="appId" width="100px" />
-          <MTableColumnStatic label="Abstract" field="abstract" width="3fr" />
-          <MTableColumnStatic label="Created By" field="createdBy" width="1fr" />
+          <MTableColumnStatic label="Abstract" field="abstract" width="3fr" :filterable="true" />
+          <MTableColumnStatic label="Created By" field="createdBy" width="1fr" :filterable="true" />
           <MTableColumnStatic label="Created On" field="createdOn" width="110px" />
           <MTableColumnStatic label="Last Update" field="lastUpdate" width="110px" />
 

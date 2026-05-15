@@ -828,6 +828,46 @@ async function handleRequest({ requestId, method, params }) {
               required: ["url"]
             }
           },
+          // ── Record Tools ──
+          {
+            name: "netsuite_get_record_fields",
+            description:
+              "Get all available body fields and sublist fields for a NetSuite record type. Uses record.create() internally on a temporary in-memory record — no data is saved. Call this first to discover what fields exist before calling netsuite_load_record.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The record type ID (e.g. 'salesorder', 'customer', 'invoice', 'customrecord_foo'). Use the SuiteScript internal record type string."
+                }
+              },
+              required: ["recordType"]
+            }
+          },
+          {
+            name: "netsuite_load_record",
+            description:
+              "Load a NetSuite record by type and internal ID. Returns all body field values (both the stored value and the display text) plus all sublist rows. For large transaction records, use sublistIds to limit which sublists are returned and avoid excessive data.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The record type ID (e.g. 'salesorder', 'customer', 'invoice', 'customrecord_foo')."
+                },
+                recordId: {
+                  type: "string",
+                  description: "The internal ID of the record to load (e.g. '12345')."
+                },
+                sublistIds: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Optional list of sublist IDs to include (e.g. ['item', 'expense']). Omit to return all sublists — may be large on transactions."
+                }
+              },
+              required: ["recordType", "recordId"]
+            }
+          },
           // ── Bundle Tools ──
           {
             name: "netsuite_list_bundles",
@@ -885,6 +925,10 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuitListBundles(args);
         } else if (name === "netsuite_get_bundle_components") {
           result = await handleNetsuiteGetBundleComponents(args);
+        } else if (name === "netsuite_load_record") {
+          result = await handleNetsuiteLoadRecord(args);
+        } else if (name === "netsuite_get_record_fields") {
+          result = await handleNetsuiteGetRecordFields(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -1189,6 +1233,70 @@ async function handleNetsuiteGetBundleComponents(args) {
     content: [{
       type: "text",
       text: JSON.stringify({ bundleId, components, count: components.length }, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// Record Tool Helpers
+// -----------------------------
+
+async function handleNetsuiteLoadRecord(args) {
+  const recordType = String(args.recordType ?? "");
+  const recordId = String(args.recordId ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "LOAD_RECORD",
+    data: { type: recordType, id: recordId, sublistIds: args.sublistIds ?? null },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to load record ${recordType}/${recordId}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetRecordFields(args) {
+  const recordType = String(args.recordType ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "GET_RECORD_FIELDS",
+    data: { type: recordType },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to get fields for record type ${recordType}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
     }]
   };
 }

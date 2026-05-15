@@ -78,6 +78,27 @@
       </div>
     </div>
 
+    <!-- Column Filter Row -->
+    <div
+      v-if="hasFilterableColumns"
+      class="m-table-filter-row"
+      :style="{ gridTemplateColumns }"
+    >
+      <div
+        v-for="(column, index) in visibleColumns"
+        :key="index"
+        class="m-table-filter-cell"
+      >
+        <input
+          v-if="column.filterable"
+          type="text"
+          v-model="columnFilters[column.field]"
+          :placeholder="`Filter…`"
+          class="column-filter-input"
+        />
+      </div>
+    </div>
+
     <!-- Body — scrolls naturally, no fixed height -->
     <div class="m-table-body">
       <!-- Loading -->
@@ -142,6 +163,7 @@ interface Column {
   slotContent?: any;
   contextMenu?: ContextMenuItem[];
   searchable?: boolean;
+  filterable?: boolean;
 }
 
 interface ColumnWithVisibility extends Column {
@@ -176,6 +198,9 @@ const dropdownStyle = ref<{ left: string; top: string }>({ left: "0", top: "0" }
 
 const { showContextMenu } = useMContextMenu();
 
+const columnFilters = ref<Record<string, string>>({});
+const hasFilterableColumns = computed(() => visibleColumns.value.some((c) => c.filterable));
+
 // ── Column definitions extracted from default slot VNodes ─────────────────
 const columns = computed<Column[]>(() => {
   const defaultSlot = slots.default?.();
@@ -192,6 +217,8 @@ const columns = computed<Column[]>(() => {
       const contextMenu = p.contextMenu || p["context-menu"] || null;
       const searchableProp = p.searchable;
       const searchable = searchableProp === false || searchableProp === "false" ? false : true;
+      const filterableProp = p.filterable;
+      const filterable = filterableProp === true || filterableProp === "true" ? true : false;
       return {
         label: p.label || "",
         field: p.field || "",
@@ -199,6 +226,7 @@ const columns = computed<Column[]>(() => {
         slotContent,
         contextMenu,
         searchable,
+        filterable,
       };
     });
 });
@@ -225,18 +253,35 @@ const gridTemplateColumns = computed(() => {
 
 // ── Search / filter ───────────────────────────────────────────────────────
 const filteredRows = computed(() => {
-  if (!searchQuery.value.trim()) return props.rows;
-  const query = searchQuery.value.toLowerCase();
-  const searchableCols = columns.value.filter((c) => c.searchable);
-  return props.rows.filter((row) =>
-    searchableCols.some((col) => {
-      const val = row[col.field];
-      return val != null && String(val).toLowerCase().includes(query);
-    })
-  );
+  let rows = props.rows;
+
+  // Global search
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    const searchableCols = columns.value.filter((c) => c.searchable);
+    rows = rows.filter((row) =>
+      searchableCols.some((col) => {
+        const val = row[col.field];
+        return val != null && String(val).toLowerCase().includes(query);
+      })
+    );
+  }
+
+  // Per-column filters
+  const activeFilters = Object.entries(columnFilters.value).filter(([, v]) => v.trim());
+  if (activeFilters.length > 0) {
+    rows = rows.filter((row) =>
+      activeFilters.every(([field, filterVal]) => {
+        const val = row[field];
+        return val != null && String(val).toLowerCase().includes(filterVal.toLowerCase());
+      })
+    );
+  }
+
+  return rows;
 });
 
-watch(() => props.rows, () => { searchQuery.value = ""; });
+watch(() => props.rows, () => { searchQuery.value = ""; columnFilters.value = {}; });
 
 // ── Collapsible column visibility ─────────────────────────────────────────
 const STORAGE_PREFIX = "m-table-static-";
@@ -464,6 +509,42 @@ onUnmounted(() => { document.removeEventListener("click", handleOutsideClick); }
 
 .column-control-item:hover { background: var(--p-slate-100); }
 .column-control-item input { cursor: pointer; }
+
+/* ── Column filter row ───────────────────────────────────────────────────── */
+.m-table-filter-row {
+  display: grid;
+  border-bottom: 1px solid var(--p-slate-300);
+  background: var(--p-slate-50);
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.m-table-filter-cell {
+  padding: 4px 8px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.column-filter-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  outline: none;
+  background: #fff;
+  color: var(--p-slate-700);
+}
+
+.column-filter-input:focus {
+  border-color: var(--p-indigo-400);
+}
+
+.column-filter-input::placeholder {
+  color: var(--p-slate-400);
+}
 
 /* ── Column header ───────────────────────────────────────────────────────── */
 .m-table-header {

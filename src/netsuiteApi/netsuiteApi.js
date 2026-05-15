@@ -380,6 +380,14 @@ const handlers = {
     console.log("Execute HTTP Request action received", { method, url });
     return await window.executeHttpRequest(null, { method, url, headers: headers ?? {}, body });
   },
+  LOAD_RECORD: async ({ modules, payload: { type, id, sublistIds } }) => {
+    console.log("Load Record action received", { type, id });
+    return window.loadRecordById(modules, { type, id, sublistIds: sublistIds ?? null });
+  },
+  GET_RECORD_FIELDS: async ({ modules, payload: { type } }) => {
+    console.log("Get Record Fields action received", { type });
+    return window.getRecordFields(modules, { type });
+  },
   FETCH_ACCOUNTS: async () => {
     console.log("Fetch Accounts action received");
     try {
