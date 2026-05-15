@@ -417,7 +417,10 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_all_record_types",
     description:
-      "Get all available record types (standard and custom) in NetSuite.",
+      "Get all available record types (standard and custom) in NetSuite. " +
+      "Use ONLY when you cannot infer the recordType string from context. " +
+      "Common types you already know: customer, lead, prospect, contact, vendor, employee, salesorder, invoice, purchaseorder, itemfulfillment, vendorbill, estimate, creditnote, journalentry, inventoryadjustment, script, scriptdeployment, workflowdefinition. " +
+      "Do NOT call this just to load a record — use netsuite_load_record directly with the type you infer.",
     parameters: {
       type: "object",
       properties: {},
@@ -425,6 +428,70 @@ export const tools: ToolDefinition[] = [
     },
     execute: async () => {
       const response = await callApi(RequestRoutes.GET_ALL_RECORD_TYPES);
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_load_record",
+    description:
+      "ALWAYS use this when the user asks to show, view, get, open, or retrieve a specific NetSuite record. " +
+      "Do NOT use SuiteQL as a substitute — SuiteQL internal IDs do NOT match record API IDs. " +
+      "Returns all body fields and sublist lines. " +
+      "Common recordType values: customer, lead, prospect, contact, vendor, employee, salesorder, invoice, purchaseorder, itemfulfillment, vendorbill, estimate, journalentry, inventoryadjustment, script, scriptdeployment, workflowdefinition. " +
+      "For custom records use the custom record type internal ID string (e.g. 'customrecord_my_type').",
+    parameters: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description:
+            "The record type string (e.g. 'customer', 'salesorder', 'invoice', 'script'). See tool description for common values."
+        },
+        id: {
+          type: "string",
+          description: "The internal numeric ID of the record to load."
+        },
+        sublistIds: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional list of sublist IDs to include (e.g. ['item', 'expense']). Omit to include all sublists."
+        }
+      },
+      required: ["recordType", "id"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.LOAD_RECORD, {
+        type: input.recordType,
+        id: input.id,
+        sublistIds: input.sublistIds ?? null
+      });
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_get_record_fields",
+    description:
+      "Get the list of all body fields and sublists available on a given record type — without loading a specific record. " +
+      "Use this when you need to know field IDs before building a query or script. " +
+      "NOT needed before netsuite_load_record — load the record directly to see both field metadata and values.",
+    parameters: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description:
+            "The record type string (e.g. 'customer', 'salesorder', 'invoice')."
+        }
+      },
+      required: ["recordType"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.GET_RECORD_FIELDS, {
+        type: input.recordType
+      });
       return response.message;
     }
   },
@@ -670,7 +737,10 @@ export const tools: ToolDefinition[] = [
   // ========== NetSuite File Cabinet ==========
   {
     name: "netsuite_get_root_folders",
-    description: "Get root folders in the NetSuite file cabinet.",
+    description:
+      "Get the top-level (root) folders in the NetSuite File Cabinet. " +
+      "Use this ONLY to list folders at the root level. " +
+      "Do NOT use this when looking for a specific folder by name — use netsuite_find_folder instead, which searches the entire File Cabinet globally.",
     parameters: {
       type: "object",
       properties: {},
@@ -678,6 +748,91 @@ export const tools: ToolDefinition[] = [
     },
     execute: async () => {
       const response = await callApi(RequestRoutes.ROOT_FOLDERS);
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_find_folder",
+    description:
+      "Search the ENTIRE NetSuite File Cabinet for folders matching a name or ID. Searches globally — not just root. " +
+      "ALWAYS use this first when you need a folder's internal ID and don't already know it. " +
+      "After finding the folder, call netsuite_list_folder with the returned id to see its contents. " +
+      "Returns matching folders with id, name, and parent folder id.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
+        },
+        name: {
+          type: "string",
+          description:
+            "Partial folder name to search for globally (case-insensitive LIKE match). E.g. 'SuiteScripts' will match any folder containing that text anywhere in the File Cabinet."
+        }
+      },
+      required: []
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.FIND_FOLDER, {
+        id: input.id,
+        name: input.name
+      });
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_list_folder",
+    description:
+      "List the immediate contents of a File Cabinet folder — returns both subfolders and files in a single call. " +
+      "Use this after netsuite_find_folder to explore a folder's contents. " +
+      "Returns { folderId, subfolders: [{id, name}], files: [{id, name, filesize, filetype, url}] }.",
+    parameters: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "string",
+          description:
+            "Internal numeric ID of the folder to list (e.g. '12345'). Obtain this from netsuite_find_folder."
+        }
+      },
+      required: ["folderId"]
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.LIST_FOLDER, {
+        folderId: input.folderId
+      });
+      return response.message;
+    }
+  },
+
+  {
+    name: "netsuite_find_file",
+    description:
+      "Search the ENTIRE NetSuite File Cabinet for files matching a name or ID. Searches globally across all folders. " +
+      "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+        },
+        name: {
+          type: "string",
+          description:
+            "Partial file name to search globally (case-insensitive LIKE match). E.g. 'myScript' will match 'myScript.js' anywhere in the File Cabinet."
+        }
+      },
+      required: []
+    },
+    execute: async (input) => {
+      const response = await callApi(RequestRoutes.FIND_FILE, {
+        id: input.id,
+        name: input.name
+      });
       return response.message;
     }
   },

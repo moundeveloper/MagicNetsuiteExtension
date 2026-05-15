@@ -841,43 +841,63 @@ async function handleRequest({ requestId, method, params }) {
             }
           },
           // ── Record Tools ──
-          {
-            name: "netsuite_get_record_fields",
-            description:
-              "Get all available body fields and sublist fields for a NetSuite record type. Uses record.create() internally on a temporary in-memory record — no data is saved. Call this first to discover what fields exist before calling netsuite_load_record.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                recordType: {
-                  type: "string",
-                  description: "The record type ID (e.g. 'salesorder', 'customer', 'invoice', 'customrecord_foo'). Use the SuiteScript internal record type string."
-                }
-              },
-              required: ["recordType"]
-            }
-          },
+          // Workflow: show/view/get any record → netsuite_load_record (directly, no other steps needed)
+          //           unsure of recordType string → netsuite_list_record_types first
+          //           want to know what fields a type has → netsuite_get_record_fields
           {
             name: "netsuite_load_record",
             description:
-              "Load a NetSuite record by type and internal ID. Returns all body field values (both the stored value and the display text) plus all sublist rows. For large transaction records, use sublistIds to limit which sublists are returned and avoid excessive data.",
+              "ALWAYS use this tool when the user asks to 'show', 'view', 'display', 'get', or 'load' a NetSuite record by ID. " +
+              "Do NOT use SuiteQL as a substitute — this tool returns all body field values (value + display text) and sublist rows directly from the record API. " +
+              "Common recordType values: 'script' (SuiteScript), 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'item', 'customrecord_<scriptid>' for custom records. " +
+              "If you are unsure of the correct recordType string, call netsuite_list_record_types first. " +
+              "For large transaction records pass sublistIds to limit sublists returned.",
             inputSchema: {
               type: "object",
               properties: {
                 recordType: {
                   type: "string",
-                  description: "The record type ID (e.g. 'salesorder', 'customer', 'invoice', 'customrecord_foo')."
+                  description: "The SuiteScript record type ID. Examples: 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_foo'. Call netsuite_list_record_types if unsure."
                 },
                 recordId: {
                   type: "string",
-                  description: "The internal ID of the record to load (e.g. '12345')."
+                  description: "The internal numeric ID of the record to load (e.g. '3309')."
                 },
                 sublistIds: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Optional list of sublist IDs to include (e.g. ['item', 'expense']). Omit to return all sublists — may be large on transactions."
+                  description: "Optional: limit which sublists are returned (e.g. ['item', 'expense']). Omit to return all sublists — can be large on transactions."
                 }
               },
               required: ["recordType", "recordId"]
+            }
+          },
+          {
+            name: "netsuite_list_record_types",
+            description:
+              "List ALL available NetSuite record types — both standard built-in types and custom record types in this account. Returns { name, id } pairs. " +
+              "Use this ONLY when you need to discover the correct `recordType` string to pass to netsuite_load_record or netsuite_get_record_fields and you cannot infer it from context. " +
+              "Most common types (no lookup needed): 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_<scriptid>'.",
+            inputSchema: {
+              type: "object",
+              properties: {}
+            }
+          },
+          {
+            name: "netsuite_get_record_fields",
+            description:
+              "Get the list of available body fields and sublist fields for a record type, WITHOUT loading a real record. " +
+              "Use this as a metadata/discovery tool when you need to know what fields a type exposes before querying or building logic around it. " +
+              "You do NOT need to call this before netsuite_load_record — load_record already returns all fields.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The record type ID (e.g. 'script', 'salesorder', 'customer', 'customrecord_foo')."
+                }
+              },
+              required: ["recordType"]
             }
           },
           // ── Bundle Tools ──
@@ -915,6 +935,68 @@ async function handleRequest({ requestId, method, params }) {
               },
               required: ["bundleId"]
             }
+          },
+          // ── File Cabinet Tools ──
+          // Recommended workflow:
+          //   1. netsuite_find_folder(name:"test") → get folder id
+          //   2. netsuite_list_folder(folderId:"123") → see files + subfolders
+          //   3. netsuite_find_file(name:"foo") → locate a specific file globally
+          {
+            name: "netsuite_find_folder",
+            description:
+              "Search the ENTIRE NetSuite File Cabinet for folders matching a name or ID. Searches globally (not just root). " +
+              "Use this first when you don't know a folder's ID. " +
+              "After finding the folder, call netsuite_list_folder with the returned id to see its contents. " +
+              "Returns matching folders with id, name, and parent folder id.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
+                },
+                name: {
+                  type: "string",
+                  description: "Partial folder name to search for globally (case-insensitive). E.g. 'test to remove' will find any folder containing that text anywhere in the File Cabinet."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_list_folder",
+            description:
+              "List the immediate contents of a File Cabinet folder — returns both files and subfolders in a single call. " +
+              "Use this after netsuite_find_folder to explore a folder's contents. " +
+              "Returns { folderId, subfolders: [{id, name}], files: [{id, name, filesize, filetype, url}] }.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                folderId: {
+                  type: "string",
+                  description: "Internal ID of the folder to list (e.g. '12345'). Obtain from netsuite_find_folder."
+                }
+              },
+              required: ["folderId"]
+            }
+          },
+          {
+            name: "netsuite_find_file",
+            description:
+              "Search the ENTIRE NetSuite File Cabinet for files matching a name or ID. Searches globally across all folders. " +
+              "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+                },
+                name: {
+                  type: "string",
+                  description: "Partial file name to search globally (case-insensitive LIKE match). E.g. 'myScript' will match 'myScript.js' anywhere in the File Cabinet."
+                }
+              }
+            }
           }
         ]
       };
@@ -937,10 +1019,18 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuitListBundles(args);
         } else if (name === "netsuite_get_bundle_components") {
           result = await handleNetsuiteGetBundleComponents(args);
+        } else if (name === "netsuite_list_record_types") {
+          result = await handleNetsuiteListRecordTypes();
         } else if (name === "netsuite_load_record") {
           result = await handleNetsuiteLoadRecord(args);
         } else if (name === "netsuite_get_record_fields") {
           result = await handleNetsuiteGetRecordFields(args);
+        } else if (name === "netsuite_find_file") {
+          result = await handleNetsuiteFindFile(args);
+        } else if (name === "netsuite_find_folder") {
+          result = await handleNetsuiteFindFolder(args);
+        } else if (name === "netsuite_list_folder") {
+          result = await handleNetsuiteListFolder(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -1309,6 +1399,154 @@ async function handleNetsuiteGetRecordFields(args) {
     content: [{
       type: "text",
       text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListRecordTypes() {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "GET_ALL_RECORD_TYPES",
+    data: {},
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to get record types";
+    throw new Error(errMsg);
+  }
+
+  const records = response.message ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: records.length, recordTypes: records }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteFindFile(args) {
+  const { id, name } = args ?? {};
+  if (!id && !name) throw new Error("At least one of 'id' or 'name' is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const conditions = [];
+  if (id) conditions.push(`id = ${parseInt(id, 10)}`);
+  if (name) conditions.push(`LOWER(name) LIKE LOWER('%${String(name).replace(/'/g, "''")}%')`);
+  const whereClause = conditions.length === 1 ? conditions[0] : `(${conditions.join(" OR ")})`;
+  const sql = `SELECT id, name, folder, filesize, filetype, url FROM file WHERE ${whereClause} AND ROWNUM <= 25`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 25 },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to find files";
+    throw new Error(errMsg);
+  }
+
+  const files = response.message ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: files.length, files }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteFindFolder(args) {
+  const { id, name } = args ?? {};
+  if (!id && !name) throw new Error("At least one of 'id' or 'name' is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const conditions = [];
+  if (id) conditions.push(`id = ${parseInt(id, 10)}`);
+  if (name) conditions.push(`LOWER(name) LIKE LOWER('%${String(name).replace(/'/g, "''")}%')`);
+  const whereClause = conditions.length === 1 ? conditions[0] : `(${conditions.join(" OR ")})`;
+  const sql = `SELECT id, name, parent FROM MediaItemFolder WHERE ${whereClause} AND ROWNUM <= 25`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 25 },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to find folders";
+    throw new Error(errMsg);
+  }
+
+  const folders = response.message ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: folders.length, folders }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListFolder(args) {
+  const folderId = String(args?.folderId ?? "").trim();
+  if (!folderId) throw new Error("folderId is required.");
+  const idNum = parseInt(folderId, 10);
+  if (isNaN(idNum)) throw new Error("folderId must be a numeric folder ID.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  // Run both queries in parallel
+  const [subfoldersResp, filesResp] = await Promise.all([
+    sendMessageToTab(tab.id, {
+      action: "RUN_SUITEQL_QUERY",
+      data: { sql: `SELECT id, name FROM MediaItemFolder WHERE parent = ${idNum} AND ROWNUM <= 200`, limit: 200 },
+      mode: "normal"
+    }),
+    sendMessageToTab(tab.id, {
+      action: "RUN_SUITEQL_QUERY",
+      data: { sql: `SELECT id, name, filesize, filetype, url FROM file WHERE folder = ${idNum} AND ROWNUM <= 200`, limit: 200 },
+      mode: "normal"
+    })
+  ]);
+
+  if (!subfoldersResp || subfoldersResp.status === "error") {
+    const msg = subfoldersResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list subfolders");
+  }
+  if (!filesResp || filesResp.status === "error") {
+    const msg = filesResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list files");
+  }
+
+  const subfolders = subfoldersResp.message ?? [];
+  const files = filesResp.message ?? [];
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        folderId: idNum,
+        subfolderCount: subfolders.length,
+        fileCount: files.length,
+        subfolders,
+        files
+      }, null, 2)
     }]
   };
 }

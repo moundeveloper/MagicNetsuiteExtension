@@ -140,6 +140,15 @@ interface McpTool {
 
 const mcpTools = ref<McpTool[]>([]);
 const toolsLoading = ref(false);
+const toolFilter = ref("");
+
+const filteredTools = computed(() => {
+  const q = toolFilter.value.trim().toLowerCase();
+  if (!q) return mcpTools.value;
+  return mcpTools.value.filter(
+    (t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
+  );
+});
 
 const fetchMcpTools = async () => {
   toolsLoading.value = true;
@@ -394,18 +403,35 @@ onBeforeUnmount(() => {
         <div v-if="toolsLoading" class="fetch-status">
           <i class="pi pi-spin pi-spinner" /> Loading tools...
         </div>
-        <div v-else-if="mcpTools.length === 0" class="usage-empty">
-          No tools found. Make sure the MCP server is enabled.
-        </div>
-        <div v-else class="tools-list">
-          <div v-for="tool in mcpTools" :key="tool.name" class="tool-card">
-            <div class="tool-name">
-              <i class="pi pi-wrench" />
-              <code>{{ tool.name }}</code>
-            </div>
-            <div class="tool-description">{{ tool.description }}</div>
+        <template v-else>
+          <div class="tools-filter-row">
+            <i class="pi pi-search tools-filter-icon" />
+            <input
+              v-model="toolFilter"
+              class="tools-filter-input"
+              type="text"
+              placeholder="Filter tools…"
+            />
+            <span v-if="toolFilter" class="tools-filter-count">
+              {{ filteredTools.length }} / {{ mcpTools.length }}
+            </span>
           </div>
-        </div>
+          <div v-if="mcpTools.length === 0" class="usage-empty">
+            No tools found. Make sure the MCP server is enabled.
+          </div>
+          <div v-else-if="filteredTools.length === 0" class="usage-empty">
+            No tools match "{{ toolFilter }}".
+          </div>
+          <div v-else class="tools-list">
+            <div v-for="tool in filteredTools" :key="tool.name" class="tool-card">
+              <div class="tool-name">
+                <i class="pi pi-wrench" />
+                <code>{{ tool.name }}</code>
+              </div>
+              <div class="tool-description">{{ tool.description }}</div>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- Usage Tracking Section -->
@@ -663,10 +689,48 @@ onBeforeUnmount(() => {
 
 /* ── Tools ── */
 
+.tools-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.4rem;
+  background: var(--surface-card);
+}
+
+.tools-filter-icon {
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+}
+
+.tools-filter-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.8rem;
+  color: var(--p-slate-700);
+}
+
+.tools-filter-input::placeholder {
+  color: var(--p-slate-400);
+}
+
+.tools-filter-count {
+  font-size: 0.7rem;
+  color: var(--p-slate-400);
+  flex-shrink: 0;
+}
+
 .tools-list {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .tool-card {
