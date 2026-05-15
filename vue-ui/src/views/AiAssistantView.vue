@@ -63,7 +63,20 @@
           </template>
         </ExpandableSidebar>
 
-        <div class="chat-area">
+        <div
+          class="chat-area"
+          :class="{ 'chat-drag-over': isDragOverChat }"
+          @dragenter.prevent="onChatDragEnter"
+          @dragover.prevent="onChatDragOver"
+          @dragleave="onChatDragLeave"
+          @drop.prevent="onChatDrop"
+        >
+          <!-- Drag zone overlay (FileCabinet-style) -->
+          <div v-if="isDragOverChat" class="chat-drop-overlay">
+            <i class="pi pi-cloud-upload" style="font-size: 2.5rem; color: var(--p-indigo-500)" />
+            <p>Drop files to attach</p>
+            <span>PDF, text, code files supported</span>
+          </div>
           <!-- Empty state -->
           <div v-if="messages.length === 0" class="empty-state">
             <div class="empty-icon">
@@ -119,6 +132,18 @@
                 >
                   <span class="chip-dot" :style="{ background: msg.agentContext.color }" />
                   /{{ msg.agentContext.slug }}
+                </div>
+                <!-- Attachment chips on sent message -->
+                <div v-if="msg.attachments && msg.attachments.length > 0" class="msg-attachments">
+                  <div
+                    v-for="(att, idx) in msg.attachments"
+                    :key="idx"
+                    class="msg-attachment-chip"
+                  >
+                    <i :class="att.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" class="attachment-chip-icon" />
+                    <span class="attachment-chip-name">{{ att.name }}</span>
+                    <span class="attachment-chip-size">{{ formatFileSize(att.size) }}</span>
+                  </div>
                 </div>
                 <div class="msg-user-content">{{ msg.content }}</div>
               </div>
@@ -352,7 +377,7 @@
                 <!-- Response content -->
                 <div class="msg-assistant-content">
                   <div
-                    v-if="msg.isStreaming && !msg.content"
+                    v-if="msg.isStreaming && !msg.content && (!msg.generatedFiles || msg.generatedFiles.length === 0)"
                     class="thinking-indicator"
                   >
                     <span class="thinking-dot" />
@@ -360,6 +385,50 @@
                     <span class="thinking-dot" />
                   </div>
                   <MessageContentRenderer v-else :content="msg.content" @open-in-sql-editor="openInSqlEditor" @question-answer="handleQuestionAnswer" />
+                </div>
+
+                <!-- Generated PDF viewer(s) -->
+                <div
+                  v-if="msg.generatedFiles && msg.generatedFiles.length > 0"
+                  class="generated-pdf-list"
+                >
+                  <div
+                     v-for="(gf, gIdx) in msg.generatedFiles"
+                     :key="gIdx"
+                     class="generated-pdf-card"
+                   >
+                     <div class="generated-pdf-header">
+                       <i class="pi pi-file-pdf generated-pdf-icon" />
+                       <span class="generated-pdf-name">{{ gf.filename }}</span>
+                       <span class="generated-pdf-size">{{ formatFileSize(gf.bytes) }}</span>
+                       <a
+                         :href="gf.url"
+                         target="_blank"
+                         rel="noopener"
+                         class="generated-pdf-action"
+                         title="Open preview in new tab"
+                       >
+                         <i class="pi pi-external-link" />
+                         Preview
+                       </a>
+                       <button
+                         class="generated-pdf-action generated-pdf-download"
+                         :class="{ 'generated-pdf-downloading': downloadingGfKey === `${msg.id}-${gIdx}` }"
+                         :disabled="downloadingGfKey === `${msg.id}-${gIdx}`"
+                         :title="downloadingGfKey === `${msg.id}-${gIdx}` ? 'Generating PDF…' : 'Download PDF'"
+                         @click="downloadGeneratedDoc(gf, msg.id, gIdx)"
+                       >
+                         <i :class="downloadingGfKey === `${msg.id}-${gIdx}` ? 'pi pi-spin pi-spinner' : 'pi pi-download'" />
+                         {{ downloadingGfKey === `${msg.id}-${gIdx}` ? 'Generating…' : 'Download' }}
+                       </button>
+                     </div>
+                     <iframe
+                       :src="gf.url"
+                       class="generated-pdf-iframe"
+                      frameborder="0"
+                      title="Generated document preview"
+                    />
+                  </div>
                 </div>
               </div>
             </template>
@@ -421,6 +490,15 @@
             </div>
 
             <div class="input-row">
+              <!-- Hidden file input -->
+              <input
+                ref="fileInputRef"
+                type="file"
+                multiple
+                accept=".pdf,.txt,.md,.markdown,.json,.xml,.csv,.html,.htm,.js,.ts,.jsx,.tsx,.css,.scss,.sql,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.sh,.yaml,.yml,.toml"
+                style="display: none"
+                @change="onFileInputChange"
+              />
               <div
                 ref="inputRef"
                 class="chat-input"
@@ -432,6 +510,15 @@
                 @paste.prevent="onInputPaste"
               />
               <button
+                class="attach-btn"
+                :disabled="loading || isProcessingFiles"
+                title="Attach file (PDF, text, code)"
+                @click="triggerFileInput"
+              >
+                <i v-if="isProcessingFiles" class="pi pi-spin pi-spinner" style="font-size: 0.75rem" />
+                <i v-else class="pi pi-paperclip" />
+              </button>
+              <button
                 v-if="loading"
                 class="stop-btn"
                 @click="stopAgent"
@@ -442,11 +529,27 @@
               <button
                 v-else
                 class="send-btn"
-                :disabled="!inputHasContent"
+                :disabled="!inputHasContent && pendingAttachments.length === 0"
                 @click="() => sendMessage()"
               >
                 <i class="pi pi-arrow-up" />
               </button>
+            </div>
+
+            <!-- Pending attachment chips (shown below input, above send) -->
+            <div v-if="pendingAttachments.length > 0" class="pending-attachments">
+              <div
+                v-for="(att, idx) in pendingAttachments"
+                :key="idx"
+                class="pending-attachment-chip"
+              >
+                <i :class="att.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" class="attachment-chip-icon" />
+                <span class="attachment-chip-name">{{ att.name }}</span>
+                <span class="attachment-chip-size">{{ formatFileSize(att.size) }}</span>
+                <button class="attachment-remove-btn" @click="removeAttachment(idx)" title="Remove">
+                  <i class="pi pi-times" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -533,6 +636,8 @@ import {
 } from "../utils/agentsDb";
 import { getSkillContent } from "../utils/skillsDb";
 import { DIAGRAM_DOCS } from "../utils/diagramDocs";
+import { extractPdfText, revokePdfUrl, downloadDocumentAsPdf } from "../utils/pdfUtils";
+import type { MessageAttachment } from "../composables/useAgent";
 
 const { settings } = useSettings();
 const router = useRouter();
@@ -558,6 +663,24 @@ interface ChatMessage {
     slug: string;
     color: string;
   };
+  /** Files attached by the user (text or PDF) */
+  attachments?: MessageAttachment[];
+  /** PDFs generated by the AI via the generate_pdf tool */
+  generatedFiles?: GeneratedFile[];
+}
+
+/** A document produced by the generate_pdf tool, held on the assistant message */
+interface GeneratedFile {
+  filename: string;
+  /** Blob URL — transient, invalidated on page refresh. Always recreate from htmlContent. */
+  url: string;
+  bytes: number;
+  /** Raw HTML source — persisted to DB so the blob URL can be recreated after refresh. */
+  htmlContent: string;
+  /** Original markdown — used by pdfmake to generate a real text-based PDF on download. */
+  markdown: string;
+  /** Document title — used as the PDF heading. */
+  title: string;
 }
 
 interface Chat {
@@ -631,6 +754,132 @@ const approvalVisible = ref(false);
 const approvalToolName = ref("");
 const approvalToolInput = ref<unknown>(null);
 let approvalResolve: ((approved: boolean) => void) | null = null;
+
+// ── File attachment state ──
+const pendingAttachments = ref<MessageAttachment[]>([]);
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const isProcessingFiles = ref(false);
+/** FileCabinet-style drag-over for the whole chat area */
+const isDragOverChat = ref(false);
+
+const ACCEPTED_TEXT_EXTENSIONS = new Set([
+  "txt", "md", "markdown", "json", "xml", "csv", "html", "htm",
+  "js", "ts", "jsx", "tsx", "css", "scss", "sql", "py", "java",
+  "c", "cpp", "cs", "go", "rb", "php", "sh", "yaml", "yml", "toml"
+]);
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const getFileExtension = (name: string): string =>
+  name.split(".").pop()?.toLowerCase() ?? "";
+
+const processFiles = async (files: FileList | File[]) => {
+  isProcessingFiles.value = true;
+  const fileArray = Array.from(files);
+
+  for (const file of fileArray) {
+    const ext = getFileExtension(file.name);
+    const isPdf = ext === "pdf" || file.type === "application/pdf";
+    const isText = ACCEPTED_TEXT_EXTENSIONS.has(ext) || file.type.startsWith("text/");
+
+    if (!isPdf && !isText) continue;
+
+    try {
+      let content: string;
+      if (isPdf) {
+        const result = await extractPdfText(file);
+        content = result.pages
+          .map((p) => `<page ${p.pageNumber}>\n${p.text}\n</page ${p.pageNumber}>`)
+          .join("\n\n");
+      } else {
+        content = await file.text();
+      }
+
+      pendingAttachments.value.push({
+        name: file.name,
+        type: isPdf ? "pdf" : "text",
+        content,
+        size: file.size
+      });
+    } catch (err) {
+      console.error(`[AiAssistant] Failed to process file "${file.name}":`, err);
+    }
+  }
+
+  isProcessingFiles.value = false;
+};
+
+const triggerFileInput = () => {
+  fileInputRef.value?.click();
+};
+
+const onFileInputChange = async (e: Event) => {
+  const input = e.target as HTMLInputElement;
+  if (input.files?.length) {
+    await processFiles(input.files);
+  }
+  // Reset so the same file can be re-selected
+  input.value = "";
+};
+
+const removeAttachment = (index: number) => {
+  pendingAttachments.value.splice(index, 1);
+};
+
+// ── Chat-area drag zone (FileCabinet-style) ──────────────────────────────────
+const onChatDragEnter = (e: DragEvent) => {
+  if (e.dataTransfer?.types.includes("Files")) {
+    isDragOverChat.value = true;
+  }
+};
+
+const onChatDragOver = (e: DragEvent) => {
+  if (e.dataTransfer?.types.includes("Files")) {
+    isDragOverChat.value = true;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+};
+
+const onChatDragLeave = (e: DragEvent) => {
+  // Only dismiss when leaving the container itself, not a child element
+  const related = e.relatedTarget as Node | null;
+  const target = e.currentTarget as HTMLElement;
+  if (!related || !target.contains(related)) {
+    isDragOverChat.value = false;
+  }
+};
+
+const onChatDrop = async (e: DragEvent) => {
+  isDragOverChat.value = false;
+  if (e.dataTransfer?.files?.length) {
+    await processFiles(e.dataTransfer.files);
+  }
+};
+
+// ── Download generated document as PDF ─────────────────────────────────────
+/** Key of the file currently being downloaded, e.g. "msgId-0". Drives loading state. */
+const downloadingGfKey = ref<string | null>(null);
+
+const downloadGeneratedDoc = async (
+  gf: GeneratedFile,
+  msgId: number,
+  idx: number
+) => {
+  const key = `${msgId}-${idx}`;
+  if (downloadingGfKey.value === key) return; // already in progress
+  downloadingGfKey.value = key;
+  try {
+    await downloadDocumentAsPdf(gf.markdown, gf.title || gf.filename, gf.filename);
+  } catch (err) {
+    console.error("[downloadGeneratedDoc] Failed:", err);
+  } finally {
+    downloadingGfKey.value = null;
+  }
+};
 
 const requestToolApproval = (
   name: string,
@@ -927,7 +1176,7 @@ ${DIAGRAM_DOCS}`,
     });
     scrollToBottom();
   },
-  onToolResult(name, _result) {
+  onToolResult(name, result) {
     activeTools.value = activeTools.value.filter((t) => t !== name);
     // Remove matching entry — find last match to handle unlikely duplicate names
     const toolIndex = [...inProgressTools.value].reverse()
@@ -938,6 +1187,32 @@ ${DIAGRAM_DOCS}`,
     // Clear active chain context once the step finishes
     if (activeChainContext.value) {
       activeChainContext.value = null;
+    }
+
+    // ── Intercept generate_pdf results ──────────────────────────────
+    // When the AI calls generate_pdf, attach the blob URL to the current
+    // streaming assistant message so the inline viewer renders immediately.
+    if (name === "generate_pdf" && result && typeof result === "object") {
+      const r = result as Record<string, unknown>;
+      if (r.__pdf_result__ && typeof r.url === "string") {
+        const assistantMsg = messages.value.find(
+          (m) => m.id === currentAssistantMsgId.value
+        );
+        if (assistantMsg) {
+          if (!assistantMsg.generatedFiles) {
+            assistantMsg.generatedFiles = [];
+          }
+          assistantMsg.generatedFiles.push({
+            filename: String(r.filename ?? "document.pdf"),
+            url: String(r.url),
+            bytes: Number(r.bytes ?? 0),
+            htmlContent: String(r.htmlContent ?? ""),
+            markdown: String(r.markdown ?? ""),
+            title: String(r.title ?? ""),
+          });
+          messages.value = [...messages.value];
+        }
+      }
     }
   },
   onChainProgress(event) {
@@ -1132,6 +1407,23 @@ const saveActiveChatId = () => {
   setAiAssistantUiState("activeChatId", activeChatId.value).catch(console.error);
 };
 
+/**
+ * Blob URLs die on page refresh. After loading persisted messages, recreate
+ * fresh blob URLs for every generated file that has stored htmlContent.
+ */
+const refreshBlobUrls = (msgs: ChatMessage[]) => {
+  for (const msg of msgs) {
+    if (!msg.generatedFiles) continue;
+    for (const gf of msg.generatedFiles) {
+      if (!gf.htmlContent) continue;
+      // Revoke the stale URL (no-op if already dead) and create a fresh one
+      try { URL.revokeObjectURL(gf.url); } catch { /* ignore */ }
+      const blob = new Blob([gf.htmlContent], { type: "text/html; charset=utf-8" });
+      gf.url = URL.createObjectURL(blob);
+    }
+  }
+};
+
 const loadChatHistory = async () => {
   try {
     // One-time migration from chrome.storage.local
@@ -1189,6 +1481,11 @@ const loadChatHistory = async () => {
       updatedAt: c.updatedAt,
       messages: Array.isArray(c.messages) ? c.messages : Object.values(c.messages || {})
     }));
+
+    // Recreate blob URLs for all generated files across all loaded chats
+    for (const chat of chatHistory.value) {
+      refreshBlobUrls(chat.messages);
+    }
 
     if (typeof storedActiveId === "string" && storedActiveId) {
       const chat = chatHistory.value.find((c) => c.id === storedActiveId);
@@ -1406,6 +1703,7 @@ const loadChat = (chatId: string) => {
   const chat = chatHistory.value.find((c) => c.id === chatId);
   if (chat) {
     activeChatId.value = chatId;
+    refreshBlobUrls(chat.messages);
     messages.value = Array.isArray(chat.messages)
       ? [...chat.messages]
       : Object.values(chat.messages || {});
@@ -1928,8 +2226,12 @@ const sendMessage = async (overrideText?: string) => {
   const rawText = overrideText !== undefined ? overrideText : getInputText().trim();
   const chipAgent = activeChipAgent.value;
   const hasAgent = overrideText === undefined && !!chipAgent;
-  if (!rawText && !hasAgent) return;
+  if (!rawText && !hasAgent && pendingAttachments.value.length === 0) return;
   if (loading.value) return;
+
+  // Snapshot attachments then clear pending list
+  const attachmentsSnapshot = [...pendingAttachments.value];
+  pendingAttachments.value = [];
 
   inProgressTools.value = [];
   if (overrideText === undefined) {
@@ -1967,6 +2269,7 @@ const sendMessage = async (overrideText?: string) => {
     id: Date.now() + Math.random(),
     role: "user",
     content: actualPrompt,
+    attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
     agentContext: agentConfig
       ? { name: agentConfig.name, slug: agentConfig.slug, color: agentConfig.color }
       : undefined
@@ -2003,12 +2306,14 @@ const sendMessage = async (overrideText?: string) => {
         blockedTools: agentConfig.limits.blockedTools.length > 0
           ? agentConfig.limits.blockedTools
           : undefined,
-        blockDestructive: !agentConfig.limits.canExecuteDestructive
+        blockDestructive: !agentConfig.limits.canExecuteDestructive,
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
       });
     } else {
       // ── Normal run (with passive agent awareness) ──
       finalText = await agent.run(actualPrompt, {
-        signal: abortController.signal
+        signal: abortController.signal,
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
       });
     }
 
@@ -2072,6 +2377,41 @@ const handleQuestionAnswer = (answer: string) => {
   flex-direction: column;
   min-width: 0;
   background: white;
+  position: relative; /* needed for the drop overlay */
+}
+
+/* Dashed outline when files are dragged over the whole chat */
+.chat-area.chat-drag-over {
+  outline: 2px dashed var(--p-indigo-400);
+  outline-offset: -4px;
+  background: rgba(99, 102, 241, 0.02);
+}
+
+/* Full-area overlay shown during drag */
+.chat-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.93);
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+.chat-drop-overlay p {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--p-indigo-600);
+  margin: 0;
+}
+
+.chat-drop-overlay span {
+  font-size: 0.78rem;
+  color: var(--p-indigo-400);
 }
 
 /* ── Empty State ── */
@@ -2864,6 +3204,230 @@ const handleQuestionAnswer = (answer: string) => {
 
 .stop-btn:hover {
   background: var(--p-red-700);
+}
+
+/* ── Attach Button ── */
+.attach-btn {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--p-slate-400);
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-size: 0.8rem;
+}
+
+.attach-btn:hover:not(:disabled) {
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  border-color: var(--p-slate-300);
+}
+
+.attach-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Pending Attachments (pre-send chips) ── */
+.pending-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  padding: 0.375rem 0 0;
+}
+
+.pending-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--p-blue-50, #eff6ff);
+  border: 1px solid var(--p-blue-200, #bfdbfe);
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.375rem 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  color: var(--p-blue-700, #1d4ed8);
+  max-width: 220px;
+}
+
+.attachment-chip-icon {
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+.attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.attachment-chip-size {
+  color: var(--p-blue-400, #60a5fa);
+  white-space: nowrap;
+  font-size: 0.65rem;
+}
+
+.attachment-remove-btn {
+  background: none;
+  border: none;
+  padding: 0 0 0 2px;
+  cursor: pointer;
+  color: var(--p-blue-400, #60a5fa);
+  font-size: 0.6rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.attachment-remove-btn:hover {
+  color: var(--p-red-500);
+}
+
+/* ── Message Attachment Chips (on sent messages) ── */
+.msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  justify-content: flex-end;
+  margin-bottom: 0.3rem;
+}
+
+.msg-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--p-slate-200);
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.375rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  color: var(--p-slate-600);
+  max-width: 200px;
+}
+
+.msg-attachment-chip .attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Generated PDF Card ── */
+.generated-pdf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.generated-pdf-card {
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--p-slate-50);
+}
+
+.generated-pdf-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--p-slate-100);
+  border-bottom: 1px solid var(--p-slate-200);
+  font-size: 0.78rem;
+}
+
+.generated-pdf-icon {
+  color: var(--p-red-500);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.generated-pdf-name {
+  font-weight: 600;
+  color: var(--p-slate-700);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.generated-pdf-size {
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.generated-pdf-download {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  background: var(--p-slate-800);
+  color: white;
+  border-radius: 0.375rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.generated-pdf-download:hover {
+  background: var(--p-slate-900);
+}
+
+.generated-pdf-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.6rem;
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.375rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.generated-pdf-action:hover {
+  background: var(--p-slate-200);
+}
+
+.generated-pdf-download {
+  background: var(--p-indigo-600);
+  color: white;
+  border-color: var(--p-indigo-700);
+}
+
+.generated-pdf-download:hover:not(:disabled) {
+  background: var(--p-indigo-700);
+}
+
+.generated-pdf-downloading {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.generated-pdf-iframe {
+  width: 100%;
+  height: 480px;
+  display: block;
+  border: none;
 }
 
 /* ── Token Counter styles ── */

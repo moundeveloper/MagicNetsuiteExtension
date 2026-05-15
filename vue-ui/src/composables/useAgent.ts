@@ -61,7 +61,25 @@ export interface AgentMessage {
     totalSteps: number;
     stepLabel: string;
   };
+  /**
+   * File attachments uploaded by the user.
+   * The extracted text is injected into the prompt context when building
+   * API messages — the AI sees the file contents as part of the user turn.
+   */
+  attachments?: MessageAttachment[];
   timestamp: Date;
+}
+
+/** A file attached to a user message */
+export interface MessageAttachment {
+  /** Original filename */
+  name: string;
+  /** "text" = plain text / source code, "pdf" = extracted PDF text */
+  type: "text" | "pdf";
+  /** Extracted text content sent to the AI as context */
+  content: string;
+  /** File size in bytes (original file) */
+  size: number;
 }
 
 export interface AgentRunOptions {
@@ -81,6 +99,11 @@ export interface AgentRunOptions {
    * When true, destructive tools are blocked even if they pass other filters.
    */
   blockDestructive?: boolean;
+  /**
+   * File attachments from the user's message.
+   * Passed through to pushMessage so the extracted text is included in context.
+   */
+  attachments?: MessageAttachment[];
 }
 
 export interface AgentOptions {
@@ -809,6 +832,9 @@ export const useAgent = (options: AgentOptions = {}) => {
 
   /**
    * Format a single AgentMessage into the API-compatible shape.
+   * For user messages that carry file attachments, the extracted text is
+   * appended to the content using XML-style fences so the AI can locate
+   * each file clearly in context.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const formatMessageForApi = (m: AgentMessage): any => {
@@ -835,6 +861,22 @@ export const useAgent = (options: AgentOptions = {}) => {
         content: m.content
       };
     }
+
+    // User message — inject attachment text as context blocks
+    if (m.role === "user" && m.attachments && m.attachments.length > 0) {
+      const attachmentContext = m.attachments
+        .map((a) => {
+          const label = a.type === "pdf" ? `[PDF file: ${a.name}]` : `[File: ${a.name}]`;
+          return `${label}\n${a.content}\n[/end of ${a.name}]`;
+        })
+        .join("\n\n");
+
+      return {
+        role: "user",
+        content: `${m.content}\n\n---\n${attachmentContext}`
+      };
+    }
+
     return { role: m.role, content: m.content };
   };
 
@@ -1127,7 +1169,8 @@ export const useAgent = (options: AgentOptions = {}) => {
       signal,
       allowedTools,
       blockedTools,
-      blockDestructive
+      blockDestructive,
+      attachments
     } = runOptions;
 
     loading.value = true;
@@ -1139,7 +1182,7 @@ export const useAgent = (options: AgentOptions = {}) => {
     try {
       await loadMCPTools();
 
-      pushMessage({ role: "user", content: prompt });
+      pushMessage({ role: "user", content: prompt, attachments });
 
       const toolFilters = (allowedTools || blockedTools || blockDestructive)
         ? { allowedTools, blockedTools, blockDestructive }
