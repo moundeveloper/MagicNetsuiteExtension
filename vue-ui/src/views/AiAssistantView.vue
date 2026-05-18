@@ -4357,9 +4357,8 @@ const handleQuestionAnswer = (answer: string) => {
 /* ── Cache Panel ─────────────────────────────────────────────────────── */
 .cache-panel {
   max-height: 420px;
-  background: var(--p-slate-900, #0f172a);
-  border-top: 1px solid var(--p-slate-700, #334155);
-  border-bottom: 1px solid var(--p-slate-700, #334155);
+  background: var(--p-surface-0, #fff);
+  border-top: 1px solid var(--p-slate-200);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4370,25 +4369,26 @@ const handleQuestionAnswer = (answer: string) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--p-slate-700, #334155);
+  padding: 0.45rem 0.875rem;
+  background: var(--p-indigo-50, #eef2ff);
+  border-bottom: 1px solid var(--p-indigo-100, #e0e7ff);
   flex-shrink: 0;
 }
 
 .cache-panel-icon {
-  font-size: 13px;
-  color: var(--p-indigo-400, #818cf8);
+  font-size: 12px;
+  color: var(--p-indigo-500, #6366f1);
 }
 
 .cache-panel-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--p-slate-200, #e2e8f0);
+  color: var(--p-slate-700, #334155);
 }
 
 .cache-panel-count {
   font-size: 11px;
-  color: var(--p-slate-500, #64748b);
+  color: var(--p-slate-400, #94a3b8);
   flex: 1;
 }
 
@@ -4396,45 +4396,46 @@ const handleQuestionAnswer = (answer: string) => {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  padding: 2px 8px;
   font-size: 11px;
   background: transparent;
-  border: 1px solid var(--p-red-800, #991b1b);
-  color: var(--p-red-400, #f87171);
+  border: 1px solid var(--p-red-200, #fecaca);
+  color: var(--p-red-500, #ef4444);
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .cache-panel-clear-btn:hover {
-  background: var(--p-red-950, #450a0a);
+  background: var(--p-red-50, #fef2f2);
+  border-color: var(--p-red-300, #fca5a5);
 }
 
 .cache-panel-close-btn {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--p-slate-500, #64748b);
+  color: var(--p-slate-400, #94a3b8);
   cursor: pointer;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 10px;
   transition: all 0.15s ease;
 }
 
 .cache-panel-close-btn:hover {
-  background: var(--p-slate-800, #1e293b);
-  color: var(--p-slate-200, #e2e8f0);
+  background: var(--p-slate-100, #f1f5f9);
+  color: var(--p-slate-600, #475569);
 }
 
 .cache-panel-empty {
-  padding: 24px;
+  padding: 20px;
   text-align: center;
   font-size: 12px;
-  color: var(--p-slate-500, #64748b);
+  color: var(--p-slate-400, #94a3b8);
 }
 
 .cache-panel-list {
@@ -4443,24 +4444,28 @@ const handleQuestionAnswer = (answer: string) => {
 }
 
 .cache-entry {
-  border-bottom: 1px solid var(--p-slate-800, #1e293b);
+  border-bottom: 1px solid var(--p-slate-100, #f1f5f9);
+}
+
+.cache-entry:last-child {
+  border-bottom: none;
 }
 
 .cache-entry-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
+  padding: 0.4rem 0.875rem;
   cursor: pointer;
   transition: background 0.1s ease;
 }
 
 .cache-entry-header:hover {
-  background: var(--p-slate-900, #0f172a);
+  background: var(--p-slate-50, #f8fafc);
 }
 
 .cache-entry-icon {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--p-indigo-400, #818cf8);
   flex-shrink: 0;
 }
@@ -4469,7 +4474,7 @@ const handleQuestionAnswer = (answer: string) => {
   font-family: "JetBrains Mono", monospace;
   font-size: 11px;
   font-weight: 600;
-  color: var(--p-slate-200, #e2e8f0);
+  color: var(--p-slate-700, #334155);
   flex-shrink: 0;
 }
 
@@ -4484,41 +4489,43 @@ const handleQuestionAnswer = (answer: string) => {
 
 .cache-entry-size {
   font-size: 10px;
-  color: var(--p-slate-500, #64748b);
+  color: var(--p-slate-400, #94a3b8);
   flex-shrink: 0;
 }
 
 .cache-entry-chevron {
-  font-size: 10px;
-  color: var(--p-slate-500, #64748b);
+  font-size: 9px;
+  color: var(--p-slate-400, #94a3b8);
   flex-shrink: 0;
 }
 
 .cache-entry-delete-btn {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--p-slate-600, #475569);
+  color: var(--p-slate-300, #cbd5e1);
   cursor: pointer;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 9px;
   flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
 .cache-entry-delete-btn:hover {
-  background: var(--p-red-950, #450a0a);
+  background: var(--p-red-50, #fef2f2);
   color: var(--p-red-400, #f87171);
 }
 
 .cache-entry-preview {
-  padding: 0 14px 10px;
-  max-height: 300px;
+  padding: 0 0.875rem 10px;
+  max-height: 280px;
   overflow-y: auto;
+  background: var(--p-slate-50, #f8fafc);
+  border-top: 1px solid var(--p-slate-100, #f1f5f9);
 }
 
 /* ── Cache Panel Button ── */
@@ -4548,7 +4555,7 @@ const handleQuestionAnswer = (answer: string) => {
 .cache-panel-btn--active {
   background: var(--p-indigo-50, #eef2ff);
   color: var(--p-indigo-600, #4f46e5);
-  border-color: var(--p-indigo-400, #818cf8);
+  border-color: var(--p-indigo-300, #a5b4fc);
 }
 
 .cache-panel-badge {
