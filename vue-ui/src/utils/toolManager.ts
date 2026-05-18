@@ -6,6 +6,7 @@ import { Parser } from "expr-eval";
 import { searchSkills, getSkillContent } from "./skillsDb";
 import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 import { generateDocument } from "./pdfUtils";
+import { agentCache } from "./agentCacheStore";
 
 export const tools: ToolDefinition[] = [
   {
@@ -206,7 +207,12 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_script_files",
     description:
-      "Fetch the source code files for one or more scripts by their internal numeric IDs. This is the follow-up tool after netsuite_get_scripts: first search scripts to get their numeric 'id' values, then pass those IDs here to retrieve the actual source code. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code, or null on error). Accepts a single ID like [523] or multiple IDs like [523, 841, 102].",
+      "Fetch the source code for one or more scripts by their internal numeric IDs. " +
+      "Each script's source is stored in the conversation cache automatically — it does NOT appear in your context. " +
+      "Returns metadata only: an array of { scriptName, scriptType, scriptId, id, cacheKey, sizeChars }. " +
+      "To DISPLAY a script, call cache_display(cacheKey). " +
+      "To ANALYZE a script, call cache_retrieve(cacheKey) to bring it into context. " +
+      "Accepts a single ID like [523] or multiple IDs like [523, 841, 102].",
     parameters: {
       type: "object",
       properties: {
@@ -223,7 +229,24 @@ export const tools: ToolDefinition[] = [
       const response = await callApi(RequestRoutes.SCRIPT_FILES, {
         scriptIds: input.scriptIds
       });
-      return response.message;
+      const scripts = response.message as Array<{
+        scriptName: string;
+        scriptType: string;
+        scriptId: string;
+        id: number;
+        fileId?: number;
+        fileFolderId?: number;
+        scriptFile: string | null;
+      }>;
+      if (!Array.isArray(scripts)) return scripts;
+      return scripts.map((s) => {
+        const cacheKey = `script_${s.id}`;
+        if (s.scriptFile) {
+          agentCache.set(cacheKey, s.scriptFile, `${s.scriptName} (${s.scriptType}, ID ${s.id})`);
+        }
+        const { scriptFile: _, ...meta } = s;
+        return { ...meta, cacheKey, sizeChars: s.scriptFile?.length ?? 0 };
+      });
     }
   },
 
@@ -879,11 +902,12 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_file_content",
     description:
-      "ALWAYS use this to read the actual content of a file stored in the NetSuite File Cabinet. " +
-      "Fetches the file through the authenticated NetSuite session — unlike fetch_url which CANNOT access any NetSuite URL. " +
-      "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results). " +
-      "Returns { content, contentType, binary }. For text files (JS, JSON, CSV, SQL, etc.) content is the raw string. " +
-      "For binary files content is a base64 data URL. Large files are truncated at 50 000 chars.",
+      "Read a file from the NetSuite File Cabinet. " +
+      "The full content is stored in the conversation cache automatically — it does NOT appear in your context. " +
+      "Returns metadata only: { cacheKey, fileId, contentType, sizeChars, binary }. " +
+      "To DISPLAY the content to the user, call cache_display(cacheKey). " +
+      "To ANALYZE the content, call cache_retrieve(cacheKey) to bring it into context. " +
+      "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results).",
     parameters: {
       type: "object",
       properties: {
@@ -924,20 +948,23 @@ export const tools: ToolDefinition[] = [
         binary: boolean;
       };
 
-      // Truncate very large text files to avoid bloating the context window
-      if (
-        result?.content &&
-        !result.binary &&
-        result.content.length > 50_000
-      ) {
-        return {
-          ...result,
-          content: result.content.slice(0, 50_000),
-          truncated: true,
-          originalSize: result.content.length
-        };
-      }
-      return result;
+      if (!result) return { error: "Failed to fetch file content." };
+
+      // Auto-cache the full content — it never enters the LLM context window.
+      // The LLM receives only metadata and uses cache_display or cache_retrieve as needed.
+      const content = result.binary
+        ? result.content
+        : result.content?.slice(0, 500_000) ?? "";
+      const cacheKey = `file_${input.fileId}`;
+      agentCache.set(cacheKey, content, `File ID ${input.fileId} (${result.contentType})`);
+
+      return {
+        cacheKey,
+        fileId: input.fileId,
+        contentType: result.contentType,
+        sizeChars: content.length,
+        binary: result.binary
+      };
     }
   },
 
@@ -1358,6 +1385,159 @@ export const tools: ToolDefinition[] = [
         description: member.description,
         details: member.details ?? undefined
       };
+    }
+  },
+
+  // ============================================================
+  // Conversation Cache
+  // ============================================================
+
+  {
+    name: "cache_store",
+    description:
+      "Store any string content in the conversation cache under a key. " +
+      "Use this to save large file contents, generated scripts, or query results so you can retrieve them later without repeating them in your response. " +
+      "The cache is scoped to the current conversation and cleared when a new chat starts.",
+    parameters: {
+      type: "object",
+      properties: {
+        key: {
+          type: "string",
+          description: "A short unique key to identify this content (e.g. 'original_script', 'generated_code', 'query_results')."
+        },
+        content: {
+          type: "string",
+          description: "The full string content to store."
+        },
+        description: {
+          type: "string",
+          description: "Optional short description of what this content is (e.g. 'Customer onboarding suitelet, file ID 12345')."
+        }
+      },
+      required: ["key", "content"]
+    },
+    execute: (input) => {
+      const key = String(input.key);
+      const content = String(input.content);
+      agentCache.set(key, content, input.description ? String(input.description) : undefined);
+      return { stored: true, key, sizeChars: content.length };
+    }
+  },
+
+  {
+    name: "cache_retrieve",
+    description:
+      "Retrieve content previously stored in the conversation cache. Returns the full content. " +
+      "Always call this before cache_upload_file to verify the content is correct before writing.",
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "The cache key to retrieve." }
+      },
+      required: ["key"]
+    },
+    execute: (input) => {
+      const entry = agentCache.get(String(input.key));
+      if (!entry) return { found: false, key: input.key, message: "No entry found for this key." };
+      return {
+        found: true,
+        key: input.key,
+        content: entry.content,
+        description: entry.description,
+        storedAt: entry.storedAt,
+        sizeChars: entry.sizeChars
+      };
+    }
+  },
+
+  {
+    name: "cache_display",
+    description:
+      "Display cached content to the user verbatim — without it passing through your text output. " +
+      "Use this whenever the user wants to VIEW a file or script. " +
+      "The content is rendered directly from the cache as-is. " +
+      "Do NOT include the content in your text response — just call this tool and say the content is shown below.",
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "The cache key to display." }
+      },
+      required: ["key"]
+    },
+    execute: (input) => {
+      const entry = agentCache.get(String(input.key));
+      if (!entry) return { found: false, key: input.key, message: "No entry found for this key. Fetch the file first." };
+      return {
+        found: true,
+        key: input.key,
+        description: entry.description,
+        sizeChars: entry.sizeChars
+        // content intentionally omitted — template reads from agentCache directly to avoid truncation
+      };
+    }
+  },
+
+  {
+    name: "cache_list",
+    description: "List all keys currently in the conversation cache with their descriptions and sizes. Use this to see what is cached.",
+    parameters: { type: "object", properties: {}, required: [] },
+    execute: () => {
+      const entries = agentCache.list();
+      if (entries.length === 0) return { entries: [], message: "Cache is empty." };
+      return { entries };
+    }
+  },
+
+  {
+    name: "cache_delete",
+    description: "Remove a specific entry from the conversation cache.",
+    parameters: {
+      type: "object",
+      properties: {
+        key: { type: "string", description: "The cache key to remove." }
+      },
+      required: ["key"]
+    },
+    execute: (input) => {
+      const deleted = agentCache.delete(String(input.key));
+      return { deleted, key: input.key };
+    }
+  },
+
+  {
+    name: "cache_upload_file",
+    description:
+      "Upload a file from the conversation cache directly to the NetSuite File Cabinet. " +
+      "The cached content is written as-is WITHOUT passing through your response, preserving the exact structure. " +
+      "IMPORTANT: Always call cache_retrieve first to verify the content is correct. " +
+      "If the content needs changes to fix errors, update it with cache_store before calling this. " +
+      "Returns the upload result.",
+    destructive: true,
+    parameters: {
+      type: "object",
+      properties: {
+        cacheKey: { type: "string", description: "The cache key containing the file content." },
+        fileName: { type: "string", description: "File name to create (e.g. 'my_script.js')." },
+        folderId: {
+          type: "number",
+          description: "Internal ID of the target NetSuite folder. Use -15 for the SuiteScripts root."
+        }
+      },
+      required: ["cacheKey", "fileName", "folderId"]
+    },
+    execute: async (input) => {
+      const entry = agentCache.get(String(input.cacheKey));
+      if (!entry) {
+        return {
+          error: `No cache entry found for key "${input.cacheKey}". Use cache_store to store the content first.`
+        };
+      }
+      const response = await callApi(RequestRoutes.UPLOAD_FILE, {
+        fileName: input.fileName,
+        fileContent: entry.content,
+        folderId: input.folderId ?? -15
+      });
+      return response.message;
     }
   }
 ];

@@ -2,14 +2,13 @@
  * useAiProvider
  *
  * Thin adapter layer that normalises calls to different AI backends
- * (Puter, Ollama, OpenCode, GitHub Copilot) into a single `chatCompletion`
+ * (Ollama, OpenCode, GitHub Copilot, OpenRouter) into a single `chatCompletion`
  * function that returns an OpenAI-compatible message object.
  *
  * Consumers only need to call `chatCompletion(messages, options)` —
  * the active provider is read from chrome.storage.sync via settingsState.
  */
 
-import { puter } from "@heyputer/puter.js";
 import { Ollama } from "ollama/browser";
 import { useSettings } from "../states/settingsState";
 
@@ -118,53 +117,6 @@ const isReasoningModel = (model: string): boolean =>
   /\bo[1-4](-mini|-preview|-high)?\b/i.test(model);
 
 // ─────────────────────────────────────────────
-// Puter adapter
-// ─────────────────────────────────────────────
-
-const puterChat = async (
-  messages: ChatMessage[],
-  options: ChatCompletionOptions,
-  model = ""
-): Promise<NormalisedResponse> => {
-  const chatOptions: Record<string, unknown> = {};
-  if (options.tools && options.tools.length > 0) {
-    chatOptions.tools = options.tools;
-    // Note: tool_choice is not in Puter SDK's PARAMS_TO_PASS — silently dropped,
-    // but harmless. Puter defaults to auto tool selection.
-  }
-  // Pass selected model when set (non-empty); otherwise let Puter auto-select.
-  if (model.trim()) {
-    chatOptions.model = model.trim();
-  }
-  // NOTE: Puter SDK's PARAMS_TO_PASS does not include "thinking" — any extended
-  // thinking config is silently dropped. CoT is handled via system-prompt injection
-  // in needsCoTInjection() instead.
-
-  const response = await puter.ai.chat(
-    messages as Parameters<typeof puter.ai.chat>[0],
-    chatOptions
-  );
-
-  // Puter may wrap in { message: {...} } or return the message directly
-  const msg =
-    (
-      response as {
-        message?: { content?: unknown; tool_calls?: ToolCall[] };
-      }
-    )?.message ??
-    (response as { content?: unknown; tool_calls?: ToolCall[] });
-
-  // Extract thinking from content array (Claude extended thinking format)
-  const { text: parsedText, thinking } = extractClaudeThinking(msg?.content);
-
-  return {
-    content: parsedText || null,
-    tool_calls: (msg as { tool_calls?: ToolCall[] })?.tool_calls ?? [],
-    thinking
-  };
-};
-
-// ─────────────────────────────────────────────
 // Ollama adapter (using ollama/browser library)
 // ─────────────────────────────────────────────
 
@@ -228,10 +180,7 @@ export const COPILOT_CLIENT_ID = "01ab8ac9400c4e429b23";
  * so the model writes its reasoning inside <think>...</think> tags, which we then
  * parse and surface in the UI.
  */
-const needsCoTInjection = (provider: string, copilotModel: string, puterModel = ""): boolean => {
-  if (provider === "puter") {
-    return false; // Never inject CoT for Puter — breaks tool calling
-  }
+const needsCoTInjection = (provider: string, copilotModel: string): boolean => {
   if (provider === "copilot") {
     // Claude and o1/o3/o4 handle reasoning natively — no injection needed
     return !isClaudeModel(copilotModel) && !isReasoningModel(copilotModel);
@@ -675,8 +624,7 @@ export const useAiProvider = () => {
       settings.thinkingMode &&
       needsCoTInjection(
         provider,
-        provider === "openrouter" ? (settings.openrouterModel || "openrouter/free") : (settings.copilotModel || "gpt-4o"),
-        settings.puterModel || "claude-sonnet-4-5"
+        provider === "openrouter" ? (settings.openrouterModel || "openrouter/free") : (settings.copilotModel || "gpt-4o")
       )
         ? injectCoTSystemPrompt(messages)
         : messages;
@@ -720,12 +668,7 @@ export const useAiProvider = () => {
       );
     }
 
-    // Default: puter
-    return puterChat(
-      effectiveMessages,
-      options,
-      settings.puterModel || "claude-sonnet-4-5"
-    );
+    throw new Error(`Unknown AI provider: "${provider}". Please select a provider in Settings.`);
   };
 
   return { chatCompletion, settings };

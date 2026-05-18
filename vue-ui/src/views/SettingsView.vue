@@ -13,11 +13,10 @@ import {
 const { settings } = useSettings();
 
 const providerOptions = [
-  { label: "Puter (free, no API key)", value: "puter" },
   { label: "OpenRouter (free models + paid)", value: "openrouter" },
+  { label: "GitHub Copilot", value: "copilot" },
   { label: "Ollama (local)", value: "ollama" },
-  { label: "OpenCode (opencode serve)", value: "opencode" },
-  { label: "GitHub Copilot", value: "copilot" }
+  { label: "OpenCode (opencode serve)", value: "opencode" }
 ];
 
 const compactionModeOptions = [
@@ -679,24 +678,6 @@ const modelLabel = (m: OllamaModel) => {
           >[System.Environment]::SetEnvironmentVariable("OLLAMA_ORIGINS", "*",
           "User")</code
         >
-      </p>
-    </template>
-
-    <template v-else-if="settings.aiProvider === 'puter'">
-      <div class="shortcut-item">
-        <label for="puter-model">Model:</label>
-        <InputText
-          id="puter-model"
-          v-model="settings.puterModel"
-          placeholder="e.g., claude-sonnet-4-5"
-          class="url-input"
-        />
-      </div>
-      <p class="provider-hint">
-        Puter routes to free AI models — no API key required. Defaults to
-        <code>claude-sonnet-4-5</code> for reliable tool calling. You can use
-        any model from Puter's 500+ catalog (e.g. <code>gpt-4o</code>,
-        <code>claude-opus-4-5</code>, <code>gemini-2.5-flash</code>).
       </p>
     </template>
 

@@ -105,6 +105,32 @@
 
           <!-- Message thread -->
           <div v-else class="message-list" ref="messageListRef">
+            <!-- Agent todos panel — sticky at top of chat while agent is working -->
+            <div v-if="agentTodos.length > 0" class="agent-todos-panel">
+              <div class="agent-todos-header" @click="todosPanelCollapsed = !todosPanelCollapsed">
+                <i class="pi pi-check-square agent-todos-icon" />
+                <span class="agent-todos-title">Agent Tasks</span>
+                <span class="agent-todos-progress">
+                  {{ agentTodos.filter(t => t.status === 'done').length }}/{{ agentTodos.length }}
+                </span>
+                <i :class="todosPanelCollapsed ? 'pi pi-chevron-right' : 'pi pi-chevron-down'" class="agent-todos-chevron" />
+              </div>
+              <div v-if="!todosPanelCollapsed" class="agent-todos-list">
+                <div
+                  v-for="todo in agentTodos"
+                  :key="todo.id"
+                  :class="['todo-item', `todo-${todo.status}`]"
+                >
+                  <i :class="{
+                    'pi pi-check-circle': todo.status === 'done',
+                    'pi pi-spin pi-spinner': todo.status === 'in_progress',
+                    'pi pi-circle': todo.status === 'pending'
+                  }" class="todo-icon" />
+                  <span class="todo-content">{{ todo.content }}</span>
+                </div>
+              </div>
+            </div>
+
             <template v-for="msg in messages" :key="msg.id">
               <!-- Compaction indicator -->
               <div v-if="msg.role === 'compaction'" class="msg msg-compaction">
@@ -406,6 +432,32 @@
                   </template>
                 </div>
 
+                <!-- Inline cache_display blocks — content rendered verbatim, bypassing collapsed tool list -->
+                <template v-if="getCacheDisplayMessagesForAssistant(msg.id).length > 0">
+                  <div
+                    v-for="dm in getCacheDisplayMessagesForAssistant(msg.id)"
+                    :key="dm.id"
+                    class="cache-display-block"
+                  >
+                    <template v-if="parseCacheDisplayResult(dm.content).found">
+                      <div class="cache-display-header">
+                        <i class="pi pi-file-code cache-display-icon" />
+                        <span class="cache-display-description">{{ parseCacheDisplayResult(dm.content).description ?? String(dm.id) }}</span>
+                        <span class="cache-display-size">{{ ((parseCacheDisplayResult(dm.content).sizeChars ?? 0) / 1000).toFixed(1) }}k chars</span>
+                      </div>
+                      <MessageContentRenderer
+                        :content="(() => { const c = agentCache.get(parseCacheDisplayResult(dm.content).key)?.content ?? ''; return '\`\`\`' + detectLanguage(c) + '\n' + c + '\n\`\`\`'; })()"
+                        @open-in-sql-editor="openInSqlEditor"
+                        @question-answer="handleQuestionAnswer"
+                      />
+                    </template>
+                    <div v-else class="cache-display-error">
+                      <i class="pi pi-exclamation-circle" />
+                      {{ parseCacheDisplayResult(dm.content).message ?? 'Content not found in cache.' }}
+                    </div>
+                  </div>
+                </template>
+
                 <!-- Response content -->
                 <div class="msg-assistant-content">
                   <div
@@ -686,6 +738,9 @@ import { getSkillContent } from "../utils/skillsDb";
 import { DIAGRAM_DOCS } from "../utils/diagramDocs";
 import { extractPdfText, revokePdfUrl, downloadDocumentAsPdf } from "../utils/pdfUtils";
 import type { MessageAttachment } from "../composables/useAgent";
+import { agentCache } from "../utils/agentCacheStore";
+import { createTodoTools } from "../utils/todoTools";
+import type { AgentTodo } from "../utils/todoTools";
 
 const { settings } = useSettings();
 const router = useRouter();
@@ -1072,6 +1127,15 @@ const delegateToAgentTool: ToolDefinition = {
   }
 };
 
+// Agent task todos — created by agent_todo_write, displayed in the chat
+const agentTodos = ref<AgentTodo[]>([]);
+const todosPanelCollapsed = ref(false);
+
+const todoTools = createTodoTools(
+  (todos) => { agentTodos.value = todos; },
+  () => agentTodos.value
+);
+
 const agent = useAgent({
   systemPrompt: `You are a helpful NetSuite assistant that provides well-structured, expressive responses.
 
@@ -1210,8 +1274,52 @@ When asked for data related to an entity (e.g. "files for lead 181"):
 
 Do NOT search filenames by a bare number or pass one entity's ID to another entity's tool.
 
+## Task Management — Todos
+For any request that involves 2 or more distinct steps, call \`agent_todo_write\` as your FIRST action to create a task list. **Break the work into concrete, specific steps** — not vague categories. Each todo should be one actionable unit of work (e.g. "Fetch script source for ID 1324" not "Get scripts").
+
+- Set the current task to \`in_progress\`, all others to \`pending\`.
+- Call \`agent_todo_write\` again each time a task is completed or a new one starts.
+- Only one task may be \`in_progress\` at a time.
+- Before sending your final response, call \`agent_todo_read\` to confirm all todos are \`done\`. If any are not, continue working.
+
+## Content Cache
+The cache exists for one purpose: **to prevent content from passing through your text generation**. When content goes through your output, tokens can be dropped, lines reordered, or code silently modified. The cache bypasses this entirely.
+
+Tools:
+- \`cache_store(key, content, description?)\` — save content under a short key. For manually created content only; read tools auto-cache.
+- \`cache_display(key)\` — **show content verbatim to the user from the cache**. The content renders as-is, bypassing your text output. Use this for all view/read requests.
+- \`cache_retrieve(key)\` — bring cached content into your context. Use this only when you need to **analyze** the content (inspect, debug, modify).
+- \`cache_list()\` — see what is cached.
+- \`cache_delete(key)\` — remove an entry.
+- \`cache_upload_file(cacheKey, fileName, folderId)\` — write cached bytes directly to the NetSuite File Cabinet, bypassing your text output entirely.
+
+**Read tools auto-cache.** \`netsuite_get_file_content\` and \`netsuite_get_script_files\` automatically store content in the cache and return only metadata (cacheKey, size, type). You never see the full content unless you explicitly call \`cache_retrieve\`.
+
+**Viewing content (user wants to see a file/script):**
+1. Call the read tool → get metadata + cacheKey back.
+2. Call \`cache_display(cacheKey)\` — content shown to user verbatim.
+3. Your text: one short sentence ("Here is the file:"). Nothing else. Do NOT reproduce the content.
+
+**Analyzing content (user wants you to inspect, debug, or modify):**
+1. Call the read tool → get metadata + cacheKey.
+2. Call \`cache_retrieve(cacheKey)\` → content enters your context.
+3. Now analyze it. Keep your analysis to what was asked.
+
+**Upload workflow (content must not change):**
+1. Read tool → cacheKey.
+2. \`cache_retrieve\` — verify it is what you expect, point out any issues you notice to the user.
+3. \`cache_upload_file\` — bytes written to NetSuite verbatim.
+
+**Upload workflow (targeted modification requested):**
+1. Read tool → cacheKey.
+2. \`cache_retrieve\` — content in context.
+3. Apply only the requested change. Do not rewrite surrounding code.
+4. \`cache_store\` with the modified content.
+5. \`cache_retrieve\` again — confirm only the intended change is present.
+6. \`cache_upload_file\`.
+
 ${DIAGRAM_DOCS}`,
-  tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools, delegateToAgentTool],
+  tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools, ...todoTools, delegateToAgentTool],
   chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,
@@ -1404,6 +1512,7 @@ interface InProgressTool {
 
 const inProgressTools = ref<InProgressTool[]>([]);
 const currentAssistantMsgId = ref<number>(0);
+
 
 /**
  * Tracks the active chain execution so onToolStart can attach chain context
@@ -1616,6 +1725,8 @@ const createNewChat = () => {
   activeChatId.value = "";
   agent.clearHistory();
   syncedToolCallIds.value.clear();
+  agentTodos.value = [];
+  agentCache.clear();
   scrollToBottom();
 };
 
@@ -1785,6 +1896,8 @@ const loadChat = (chatId: string) => {
     const restoredHistory = chatMessagesToAgentHistory(messages.value);
     agent.setHistory(restoredHistory);
     rebuildToolMessageMap();
+    agentTodos.value = [];
+    agentCache.clear();
     saveActiveChatId();
     scrollToBottom();
   }
@@ -1889,7 +2002,7 @@ const getSkillMessagesForAssistant = (assistantId: number) => {
 
 const getNonSkillToolMessagesForAssistant = (assistantId: number) => {
   return getToolMessagesForAssistant(assistantId).filter(
-    (m) => !isSkillTool(m.toolName) && !m.chainContext && !chainNameSet.has(m.toolName ?? "")
+    (m) => !isSkillTool(m.toolName) && !m.chainContext && !chainNameSet.has(m.toolName ?? "") && m.toolName !== "cache_display"
   );
 };
 
@@ -1914,6 +2027,38 @@ const getChainGroupsForAssistant = (assistantId: number) => {
     msgs.sort((a, b) => (a.chainContext?.stepIndex ?? 0) - (b.chainContext?.stepIndex ?? 0));
   }
   return groups;
+};
+
+/** cache_display tool messages — rendered inline as code blocks, not in the collapsed tool list */
+const getCacheDisplayMessagesForAssistant = (assistantId: number) => {
+  return getToolMessagesForAssistant(assistantId).filter(
+    (m) => m.toolName === "cache_display"
+  );
+};
+
+interface CacheDisplayResult {
+  found: boolean;
+  key: string;
+  description?: string;
+  sizeChars?: number;
+  message?: string;
+  // content is NOT in the tool result — read from agentCache directly to avoid truncation
+}
+
+const parseCacheDisplayResult = (raw: string | null | undefined): CacheDisplayResult => {
+  try {
+    return JSON.parse(raw ?? "{}") as CacheDisplayResult;
+  } catch {
+    return { found: false, key: "", message: "Could not parse display result." };
+  }
+};
+
+const detectLanguage = (content: string): string => {
+  const trimmed = content.trimStart();
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "json";
+  if (trimmed.includes("@NApiVersion") || trimmed.includes("define(") || trimmed.includes("function ")) return "javascript";
+  if (trimmed.startsWith("<")) return "xml";
+  return "text";
 };
 
 const getSkillDisplayName = (toolName: string): string => {
@@ -2560,6 +2705,94 @@ const handleQuestionAnswer = (answer: string) => {
   scroll-behavior: smooth;
 }
 
+/* ── Agent Todos Panel ── */
+.agent-todos-panel {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--p-surface-0, #fff);
+  border: 1px solid var(--p-indigo-200, #c7d2fe);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.08);
+}
+
+.agent-todos-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  background: var(--p-indigo-50, #eef2ff);
+  transition: background 0.15s;
+}
+
+.agent-todos-header:hover {
+  background: var(--p-indigo-100, #e0e7ff);
+}
+
+.agent-todos-icon {
+  color: var(--p-indigo-500, #6366f1);
+  font-size: 0.9rem;
+}
+
+.agent-todos-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--p-indigo-700, #4338ca);
+  flex: 1;
+}
+
+.agent-todos-progress {
+  font-size: 0.75rem;
+  color: var(--p-indigo-500, #6366f1);
+  font-weight: 500;
+}
+
+.agent-todos-chevron {
+  font-size: 0.7rem;
+  color: var(--p-indigo-400, #818cf8);
+}
+
+.agent-todos-list {
+  padding: 0.4rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.3rem 0.25rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.todo-icon {
+  margin-top: 0.1rem;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.todo-pending .todo-icon { color: var(--p-slate-400, #94a3b8); }
+.todo-in_progress .todo-icon { color: var(--p-indigo-500, #6366f1); }
+.todo-done .todo-icon { color: var(--p-green-500, #22c55e); }
+
+.todo-content { color: var(--p-slate-700, #334155); }
+.todo-done .todo-content {
+  text-decoration: line-through;
+  color: var(--p-slate-400, #94a3b8);
+}
+.todo-in_progress .todo-content {
+  font-weight: 500;
+  color: var(--p-indigo-700, #4338ca);
+}
+
 /* ── Messages ── */
 .msg {
   width: 100%;
@@ -3179,6 +3412,55 @@ const handleQuestionAnswer = (answer: string) => {
 
 .tool-result-row:last-child {
   border-bottom: none;
+}
+
+/* ── Inline cache_display blocks ─────────────────────────────── */
+.cache-display-block {
+  margin: 8px 0;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cache-display-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: var(--color-bg-subtle, #2d2d2d);
+  border-bottom: 1px solid var(--color-border, #3a3a3a);
+  font-size: 12px;
+  color: var(--color-text-muted, #94a3b8);
+}
+
+.cache-display-icon {
+  font-size: 13px;
+  color: var(--color-text-muted, #94a3b8);
+  flex-shrink: 0;
+}
+
+.cache-display-description {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text, #cbd5e1);
+  font-weight: 500;
+}
+
+.cache-display-size {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-muted, #64748b);
+}
+
+.cache-display-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  color: var(--color-error, #f87171);
+  font-size: 13px;
 }
 
 .tool-result-name {

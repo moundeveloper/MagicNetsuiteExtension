@@ -229,7 +229,7 @@ export class ToolRejectedError extends Error {
 }
 
 // ─────────────────────────────────────────────
-// Puter tool format
+// Tool format (OpenAI-compatible function calling)
 // ─────────────────────────────────────────────
 
 function toExternalTool(t: ToolDefinition) {

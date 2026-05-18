@@ -1,7 +1,7 @@
 // settingsState.ts
 import { onMounted, reactive, ref, watch } from "vue";
 
-export type AiProvider = "puter" | "ollama" | "opencode" | "copilot" | "openrouter";
+export type AiProvider = "ollama" | "opencode" | "copilot" | "openrouter";
 export type CompactionMode = "auto" | "ask";
 
 export interface ShortcutsSettings {
@@ -16,8 +16,6 @@ export interface ShortcutsSettings {
   ollamaModel: string;
   opencodeBaseUrl: string;
   opencodeModel: string;
-  // Puter
-  puterModel: string;
   // GitHub Copilot
   githubToken: string;
   copilotModel: string;
@@ -46,8 +44,7 @@ const defaultSettings: ShortcutsSettings = {
   modulesSearch: "ctrl+m",
   openOnCustomizationPage: true,
   preferredFeatures: [],
-  aiProvider: "puter",
-  puterModel: "claude-sonnet-4-5",
+  aiProvider: "openrouter",
   ollamaBaseUrl: "http://localhost:11434",
   ollamaModel: "llama3.2",
   opencodeBaseUrl: "http://localhost:4096",
@@ -83,8 +80,9 @@ export function useSettings() {
         settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
-        settings.aiProvider = stored.aiProvider ?? defaultSettings.aiProvider;
-        settings.puterModel = stored.puterModel || defaultSettings.puterModel;
+        settings.aiProvider = stored.aiProvider === "puter" || !stored.aiProvider
+          ? defaultSettings.aiProvider
+          : stored.aiProvider;
         settings.ollamaBaseUrl = stored.ollamaBaseUrl || defaultSettings.ollamaBaseUrl;
         settings.ollamaModel = stored.ollamaModel || defaultSettings.ollamaModel;
         settings.opencodeBaseUrl = stored.opencodeBaseUrl || defaultSettings.opencodeBaseUrl;
