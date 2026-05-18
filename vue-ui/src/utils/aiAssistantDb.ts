@@ -18,6 +18,18 @@ export interface AiAssistantUiStateRecord {
   value: any;
 }
 
+export interface CacheEntry {
+  content: string;
+  description?: string;
+  storedAt: string;
+  sizeChars: number;
+}
+
+export interface AiChatCacheRecord {
+  chatId: string;
+  entries: Record<string, CacheEntry>;
+}
+
 // ─────────────────────────────────────────────
 // Database
 // ─────────────────────────────────────────────
@@ -25,11 +37,18 @@ export interface AiAssistantUiStateRecord {
 const db = new Dexie("MagicNetsuiteAiAssistant") as Dexie & {
   chats: EntityTable<AiChatRecord, "chatId">;
   uiState: EntityTable<AiAssistantUiStateRecord, "key">;
+  chatCache: EntityTable<AiChatCacheRecord, "chatId">;
 };
 
 db.version(1).stores({
   chats: "&chatId, title, createdAt, updatedAt",
   uiState: "&key"
+});
+
+db.version(2).stores({
+  chats: "&chatId, title, createdAt, updatedAt",
+  uiState: "&key",
+  chatCache: "&chatId"
 });
 
 // ─────────────────────────────────────────────
@@ -69,6 +88,23 @@ export const setAiAssistantUiState = async (
   value: any
 ): Promise<void> => {
   await db.uiState.put({ key, value });
+};
+
+// ─────────────────────────────────────────────
+// Chat Cache CRUD
+// ─────────────────────────────────────────────
+
+export const getChatCache = async (chatId: string): Promise<Record<string, CacheEntry>> => {
+  const record = await db.chatCache.get(chatId);
+  return record?.entries ?? {};
+};
+
+export const setChatCache = async (chatId: string, entries: Record<string, CacheEntry>): Promise<void> => {
+  await db.chatCache.put({ chatId, entries });
+};
+
+export const deleteChatCache = async (chatId: string): Promise<void> => {
+  await db.chatCache.delete(chatId);
 };
 
 export { db as aiAssistantDb };

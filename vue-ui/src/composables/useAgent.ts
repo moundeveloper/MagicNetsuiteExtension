@@ -385,10 +385,10 @@ async function executeToolWithRetry(
   throw lastError ?? new Error(`Tool "${tool.name}" failed after ${maxRetries + 1} attempts`);
 }
 
-/** Cap a string at a max length with a truncation note. */
-function truncateResult(text: string, maxLength = 5000): string {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength) + `\n… [truncated: ${text.length - maxLength} more chars]`;
+/** No-op kept for call-site compatibility — truncation is intentionally removed. */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function truncateResult(text: string, _maxLength = 5000): string {
+  return text;
 }
 
 /**

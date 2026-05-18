@@ -208,18 +208,6 @@
                   {{ msg.agentContext.name }}
                 </div>
 
-                <!-- Thinking / Reasoning block -->
-                <details
-                  v-if="msg.thinking"
-                  class="thinking-block"
-                >
-                  <summary class="thinking-block-summary">
-                    <i class="pi pi-sparkles thinking-block-icon" />
-                    <span>Reasoning</span>
-                    <i class="pi pi-chevron-down thinking-block-chevron" />
-                  </summary>
-                  <pre class="thinking-block-content">{{ msg.thinking }}</pre>
-                </details>
                 <!-- Skill usage (shown above tools with distinct styling) -->
                 <div
                   v-if="
@@ -432,32 +420,6 @@
                   </template>
                 </div>
 
-                <!-- Inline cache_display blocks — content rendered verbatim, bypassing collapsed tool list -->
-                <template v-if="getCacheDisplayMessagesForAssistant(msg.id).length > 0">
-                  <div
-                    v-for="dm in getCacheDisplayMessagesForAssistant(msg.id)"
-                    :key="dm.id"
-                    class="cache-display-block"
-                  >
-                    <template v-if="parseCacheDisplayResult(dm.content).found">
-                      <div class="cache-display-header">
-                        <i class="pi pi-file-code cache-display-icon" />
-                        <span class="cache-display-description">{{ parseCacheDisplayResult(dm.content).description ?? String(dm.id) }}</span>
-                        <span class="cache-display-size">{{ ((parseCacheDisplayResult(dm.content).sizeChars ?? 0) / 1000).toFixed(1) }}k chars</span>
-                      </div>
-                      <MessageContentRenderer
-                        :content="(() => { const c = agentCache.get(parseCacheDisplayResult(dm.content).key)?.content ?? ''; return '\`\`\`' + detectLanguage(c) + '\n' + c + '\n\`\`\`'; })()"
-                        @open-in-sql-editor="openInSqlEditor"
-                        @question-answer="handleQuestionAnswer"
-                      />
-                    </template>
-                    <div v-else class="cache-display-error">
-                      <i class="pi pi-exclamation-circle" />
-                      {{ parseCacheDisplayResult(dm.content).message ?? 'Content not found in cache.' }}
-                    </div>
-                  </div>
-                </template>
-
                 <!-- Response content -->
                 <div class="msg-assistant-content">
                   <div
@@ -468,7 +430,7 @@
                     <span class="thinking-dot" />
                     <span class="thinking-dot" />
                   </div>
-                  <MessageContentRenderer v-else :content="msg.content" @open-in-sql-editor="openInSqlEditor" @question-answer="handleQuestionAnswer" />
+                  <MessageContentRenderer v-else :content="resolveViewPlaceholders(msg.content)" @open-in-sql-editor="openInSqlEditor" @question-answer="handleQuestionAnswer" />
                 </div>
 
                 <!-- Generated PDF viewer(s) -->
@@ -523,14 +485,7 @@
               class="msg msg-assistant"
             >
               <div class="msg-assistant-content">
-                <div v-if="settings.thinkingMode" class="thinking-in-progress">
-                  <i class="pi pi-sparkles thinking-in-progress-icon" />
-                  <span class="thinking-in-progress-label">Reasoning</span>
-                  <span class="thinking-dot" />
-                  <span class="thinking-dot" />
-                  <span class="thinking-dot" />
-                </div>
-                <div v-else class="thinking-indicator">
+                <div class="thinking-indicator">
                   <span class="thinking-dot" />
                   <span class="thinking-dot" />
                   <span class="thinking-dot" />
@@ -543,6 +498,58 @@
           <div v-if="agent.error.value" class="error-banner">
             <i class="pi pi-exclamation-triangle" />
             <span>{{ String(agent.error.value) }}</span>
+          </div>
+
+          <!-- Cache Panel -->
+          <div v-if="showCachePanel" class="cache-panel">
+            <div class="cache-panel-header">
+              <i class="pi pi-database cache-panel-icon" />
+              <span class="cache-panel-title">Conversation Cache</span>
+              <span class="cache-panel-count">{{ cacheEntryCount }} entries</span>
+              <button
+                v-if="cacheEntryCount > 0"
+                class="cache-panel-clear-btn"
+                title="Clear all cached entries"
+                @click="clearAllCache"
+              >
+                <i class="pi pi-trash" /> Clear all
+              </button>
+              <button class="cache-panel-close-btn" @click="showCachePanel = false">
+                <i class="pi pi-times" />
+              </button>
+            </div>
+            <div v-if="cacheEntryCount === 0" class="cache-panel-empty">
+              No entries cached for this conversation.
+            </div>
+            <div v-else class="cache-panel-list">
+              <div
+                v-for="entry in cacheEntries"
+                :key="entry.key"
+                class="cache-entry"
+              >
+                <div class="cache-entry-header" @click="toggleCacheEntryPreview(entry.key)">
+                  <i class="pi pi-file-code cache-entry-icon" />
+                  <span class="cache-entry-key">{{ entry.key }}</span>
+                  <span v-if="entry.description" class="cache-entry-desc">{{ entry.description }}</span>
+                  <span class="cache-entry-size">{{ (entry.sizeChars / 1000).toFixed(1) }}k</span>
+                  <i :class="expandedCacheKeys.has(entry.key) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="cache-entry-chevron" />
+                  <button
+                    class="cache-entry-delete-btn"
+                    title="Remove from cache"
+                    @click.stop="deleteCacheEntry(entry.key)"
+                  >
+                    <i class="pi pi-times" />
+                  </button>
+                </div>
+                <div v-if="expandedCacheKeys.has(entry.key)" class="cache-entry-preview">
+                  <MessageContentRenderer
+                    :content="getCacheEntryPreviewContent(entry.key)"
+                    @open-in-sql-editor="openInSqlEditor"
+                    @question-answer="handleQuestionAnswer"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Input wrapper (bg + border) -->
@@ -610,13 +617,13 @@
                 <i v-else class="pi pi-paperclip" />
               </button>
               <button
-                class="thinking-toggle-btn"
-                :class="{ 'thinking-toggle-btn--active': settings.thinkingMode }"
-                :title="settings.thinkingMode ? 'Thinking mode ON — click to disable' : 'Enable thinking mode for deeper reasoning'"
-                :disabled="loading"
-                @click="settings.thinkingMode = !settings.thinkingMode"
+                class="cache-panel-btn"
+                :class="{ 'cache-panel-btn--active': showCachePanel }"
+                :title="`Conversation cache (${cacheEntryCount} entries)`"
+                @click="showCachePanel = !showCachePanel"
               >
-                <i class="pi pi-sparkles" />
+                <i class="pi pi-database" />
+                <span v-if="cacheEntryCount > 0" class="cache-panel-badge">{{ cacheEntryCount }}</span>
               </button>
               <button
                 v-if="loading"
@@ -738,7 +745,7 @@ import { getSkillContent } from "../utils/skillsDb";
 import { DIAGRAM_DOCS } from "../utils/diagramDocs";
 import { extractPdfText, revokePdfUrl, downloadDocumentAsPdf } from "../utils/pdfUtils";
 import type { MessageAttachment } from "../composables/useAgent";
-import { agentCache } from "../utils/agentCacheStore";
+import { agentCache, cacheVersion } from "../utils/agentCacheStore";
 import { createTodoTools } from "../utils/todoTools";
 import type { AgentTodo } from "../utils/todoTools";
 
@@ -1131,6 +1138,72 @@ const delegateToAgentTool: ToolDefinition = {
 const agentTodos = ref<AgentTodo[]>([]);
 const todosPanelCollapsed = ref(false);
 
+// ── Cache Panel ──────────────────────────────────────────────────────────
+const showCachePanel = ref(false);
+const expandedCacheKeys = ref(new Set<string>());
+
+const cacheEntryCount = computed(() => {
+  void cacheVersion.value; // reactivity dependency
+  return agentCache.list().length;
+});
+
+const cacheEntries = computed(() => {
+  void cacheVersion.value; // reactivity dependency
+  return agentCache.list();
+});
+
+const toggleCacheEntryPreview = (key: string): void => {
+  if (expandedCacheKeys.value.has(key)) {
+    expandedCacheKeys.value.delete(key);
+  } else {
+    expandedCacheKeys.value.add(key);
+  }
+  expandedCacheKeys.value = new Set(expandedCacheKeys.value);
+};
+
+const getCacheEntryPreviewContent = (key: string): string => {
+  void cacheVersion.value; // reactivity dependency
+  const entry = agentCache.get(key);
+  if (!entry) return "";
+  const lang = detectCacheLanguage(entry.content);
+  return `\`\`\`${lang}\n${entry.content}\n\`\`\``;
+};
+
+const deleteCacheEntry = (key: string): void => {
+  agentCache.delete(key);
+  expandedCacheKeys.value.delete(key);
+  expandedCacheKeys.value = new Set(expandedCacheKeys.value);
+};
+
+const clearAllCache = (): void => {
+  agentCache.clear();
+  expandedCacheKeys.value = new Set();
+};
+
+/** Detect language from content for syntax highlighting. */
+const detectCacheLanguage = (content: string): string => {
+  const t = content.trimStart();
+  if (t.startsWith("{") || t.startsWith("[")) return "json";
+  if (t.includes("@NApiVersion") || t.includes("define(") || /\bfunction\b/.test(t)) return "javascript";
+  if (t.startsWith("<")) return "xml";
+  if (/^SELECT\b/i.test(t)) return "sql";
+  return "text";
+};
+
+/** Replace [VIEW:key] placeholders in assistant message content with rendered cache content. */
+const resolveViewPlaceholders = (content: string | null | undefined): string => {
+  if (!content) return content ?? "";
+  void cacheVersion.value; // reactivity dependency — re-evaluates when cache changes
+  return content.replace(/\[VIEW:([^\]]+)\]/g, (_match, key: string) => {
+    const entry = agentCache.get(key);
+    if (!entry) {
+      return `\n\n> **[Cache miss: \`${key}\`]** — This content was removed from cache. Ask me to re-fetch it.\n\n`;
+    }
+    const lang = detectCacheLanguage(entry.content);
+    return `\n\n\`\`\`${lang}\n${entry.content}\n\`\`\`\n\n`;
+  });
+};
+
 const todoTools = createTodoTools(
   (todos) => { agentTodos.value = todos; },
   () => agentTodos.value
@@ -1283,27 +1356,31 @@ For any request that involves 2 or more distinct steps, call \`agent_todo_write\
 - Before sending your final response, call \`agent_todo_read\` to confirm all todos are \`done\`. If any are not, continue working.
 
 ## Content Cache
-The cache exists for one purpose: **to prevent content from passing through your text generation**. When content goes through your output, tokens can be dropped, lines reordered, or code silently modified. The cache bypasses this entirely.
+The cache prevents large content from bloating your context window. Read tools auto-cache content and return only metadata.
 
 Tools:
-- \`cache_store(key, content, description?)\` — save content under a short key. For manually created content only; read tools auto-cache.
-- \`cache_display(key)\` — **show content verbatim to the user from the cache**. The content renders as-is, bypassing your text output. Use this for all view/read requests.
-- \`cache_retrieve(key)\` — bring cached content into your context. Use this only when you need to **analyze** the content (inspect, debug, modify).
-- \`cache_list()\` — see what is cached.
+- \`cache_store(key, content, description?)\` — manually store content under a key.
+- \`cache_display(key)\` — mark content as displayed in history (LLM reference). After calling this, you MUST also write \`[VIEW:{key}]\` verbatim in your text (e.g. "Here is the file: [VIEW:file_21301]"). The UI replaces that token with the rendered content. Never reproduce the content in your text.
+- \`cache_retrieve(key)\` — bring cached content into your context for analysis. Use only when you need to inspect, debug, or modify.
+- \`cache_list()\` — list all cached entries.
 - \`cache_delete(key)\` — remove an entry.
-- \`cache_upload_file(cacheKey, fileName, folderId)\` — write cached bytes directly to the NetSuite File Cabinet, bypassing your text output entirely.
+- \`cache_upload_file(cacheKey, fileName, folderId)\` — write cached bytes directly to the NetSuite File Cabinet.
 
 **Read tools auto-cache.** \`netsuite_get_file_content\` and \`netsuite_get_script_files\` automatically store content in the cache and return only metadata (cacheKey, size, type). You never see the full content unless you explicitly call \`cache_retrieve\`.
 
 **Viewing content (user wants to see a file/script):**
 1. Call the read tool → get metadata + cacheKey back.
-2. Call \`cache_display(cacheKey)\` — content shown to user verbatim.
-3. Your text: one short sentence ("Here is the file:"). Nothing else. Do NOT reproduce the content.
+2. Call \`cache_display(cacheKey)\` — records the display in history.
+3. In your text response write: "Here is the file: [VIEW:{cacheKey}]" — the UI replaces \`[VIEW:{cacheKey}]\` with the rendered content.
 
 **Analyzing content (user wants you to inspect, debug, or modify):**
 1. Call the read tool → get metadata + cacheKey.
 2. Call \`cache_retrieve(cacheKey)\` → content enters your context.
 3. Now analyze it. Keep your analysis to what was asked.
+
+**If cache_retrieve returns "not found"** (user may have cleared the cache):
+- The content reference is still in the conversation history via its \`[VIEW:{key}]\` marker or cache_display call.
+- Re-fetch the original content: for \`file_{id}\` keys call \`netsuite_get_file_content({ fileId: {id} })\`; for \`script_{id}\` keys call \`netsuite_get_script_files([{id}])\`.
 
 **Upload workflow (content must not change):**
 1. Read tool → cacheKey.
@@ -1678,6 +1755,8 @@ const loadChatHistory = async () => {
         const restoredHistory = chatMessagesToAgentHistory(messages.value);
         agent.setHistory(restoredHistory);
         rebuildToolMessageMap();
+        // Restore the cache for this conversation so [VIEW:key] placeholders resolve
+        agentCache.init(storedActiveId).catch(console.error);
       }
     }
 
@@ -1715,6 +1794,7 @@ const createNewChat = () => {
       };
       chatHistory.value.unshift(newChat);
       activeChatId.value = newChat.id;
+      agentCache.migrate(newChat.id).catch(console.error);
     }
 
     saveChatHistory();
@@ -1726,7 +1806,7 @@ const createNewChat = () => {
   agent.clearHistory();
   syncedToolCallIds.value.clear();
   agentTodos.value = [];
-  agentCache.clear();
+  agentCache.init("").catch(console.error); // blank chat — clears in-memory cache
   scrollToBottom();
 };
 
@@ -1897,7 +1977,7 @@ const loadChat = (chatId: string) => {
     agent.setHistory(restoredHistory);
     rebuildToolMessageMap();
     agentTodos.value = [];
-    agentCache.clear();
+    agentCache.init(chatId).catch(console.error);
     saveActiveChatId();
     scrollToBottom();
   }
@@ -1914,6 +1994,7 @@ const deleteChat = (chatId: string) => {
   }
 
   deleteAiChat(chatId).catch(console.error);
+  agentCache.deleteForChat(chatId).catch(console.error);
   saveChatHistory(true);
   saveActiveChatId();
 };
@@ -1941,6 +2022,8 @@ const autoSaveCurrentChat = () => {
   };
   chatHistory.value.unshift(newChat);
   activeChatId.value = newChat.id;
+  // Migrate any in-memory cache entries to the new persistent chatId
+  agentCache.migrate(newChat.id).catch(console.error);
   saveChatHistory();
   saveActiveChatId();
 };
@@ -2002,7 +2085,7 @@ const getSkillMessagesForAssistant = (assistantId: number) => {
 
 const getNonSkillToolMessagesForAssistant = (assistantId: number) => {
   return getToolMessagesForAssistant(assistantId).filter(
-    (m) => !isSkillTool(m.toolName) && !m.chainContext && !chainNameSet.has(m.toolName ?? "") && m.toolName !== "cache_display"
+    (m) => !isSkillTool(m.toolName) && !m.chainContext && !chainNameSet.has(m.toolName ?? "")
   );
 };
 
@@ -2029,37 +2112,8 @@ const getChainGroupsForAssistant = (assistantId: number) => {
   return groups;
 };
 
-/** cache_display tool messages — rendered inline as code blocks, not in the collapsed tool list */
-const getCacheDisplayMessagesForAssistant = (assistantId: number) => {
-  return getToolMessagesForAssistant(assistantId).filter(
-    (m) => m.toolName === "cache_display"
-  );
-};
-
-interface CacheDisplayResult {
-  found: boolean;
-  key: string;
-  description?: string;
-  sizeChars?: number;
-  message?: string;
-  // content is NOT in the tool result — read from agentCache directly to avoid truncation
-}
-
-const parseCacheDisplayResult = (raw: string | null | undefined): CacheDisplayResult => {
-  try {
-    return JSON.parse(raw ?? "{}") as CacheDisplayResult;
-  } catch {
-    return { found: false, key: "", message: "Could not parse display result." };
-  }
-};
-
-const detectLanguage = (content: string): string => {
-  const trimmed = content.trimStart();
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "json";
-  if (trimmed.includes("@NApiVersion") || trimmed.includes("define(") || trimmed.includes("function ")) return "javascript";
-  if (trimmed.startsWith("<")) return "xml";
-  return "text";
-};
+/** cache_display tool messages — kept in collapsed tool list (no special rendering needed now) */
+// (getToolMessagesForAssistant handles all tools uniformly)
 
 const getSkillDisplayName = (toolName: string): string => {
   if (toolName === "search_skills") return "Searching skills";
@@ -2563,14 +2617,6 @@ const sendMessage = async (overrideText?: string) => {
       typeof finalText === "string"
         ? finalText
         : JSON.stringify(finalText, null, 2);
-
-    // Extract thinking content from the final assistant history entry and attach
-    // to the UI message for display. Thinking is NOT stored in agent history context
-    // (formatMessageForApi ignores the field) — this is the token efficiency benefit.
-    const lastHistoryEntry = agent.history.value[agent.history.value.length - 1];
-    if (lastHistoryEntry?.role === "assistant" && lastHistoryEntry.thinking) {
-      assistantMsg.thinking = lastHistoryEntry.thinking;
-    }
 
     assistantMsg.isStreaming = false;
     messages.value = [...messages.value];
@@ -3414,54 +3460,7 @@ const handleQuestionAnswer = (answer: string) => {
   border-bottom: none;
 }
 
-/* ── Inline cache_display blocks ─────────────────────────────── */
-.cache-display-block {
-  margin: 8px 0;
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.cache-display-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  background: var(--color-bg-subtle, #2d2d2d);
-  border-bottom: 1px solid var(--color-border, #3a3a3a);
-  font-size: 12px;
-  color: var(--color-text-muted, #94a3b8);
-}
-
-.cache-display-icon {
-  font-size: 13px;
-  color: var(--color-text-muted, #94a3b8);
-  flex-shrink: 0;
-}
-
-.cache-display-description {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text, #cbd5e1);
-  font-weight: 500;
-}
-
-.cache-display-size {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--color-text-muted, #64748b);
-}
-
-.cache-display-error {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  color: var(--color-error, #f87171);
-  font-size: 13px;
-}
+/* ── (cache-display-block CSS removed — replaced by [VIEW:key] placeholder approach) ── */
 
 .tool-result-name {
   font-family: "JetBrains Mono", monospace;
@@ -4354,71 +4353,177 @@ const handleQuestionAnswer = (answer: string) => {
 .msg-agent-badge { display: none; }
 .msg-agent-response-badge { display: none; }
 
-/* ── Thinking / Reasoning Block ── */
-.thinking-block {
-  margin-bottom: 0.5rem;
-  border: 1px solid var(--p-violet-200, #ddd6fe);
-  border-radius: 0.5rem;
+
+/* ── Cache Panel ─────────────────────────────────────────────────────── */
+.cache-panel {
+  max-height: 420px;
+  background: var(--p-slate-900, #0f172a);
+  border-top: 1px solid var(--p-slate-700, #334155);
+  border-bottom: 1px solid var(--p-slate-700, #334155);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  font-size: 0.75rem;
+  flex-shrink: 0;
 }
 
-.thinking-block-summary {
+.cache-panel-header {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.65rem;
-  background: var(--p-violet-50, #f5f3ff);
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--p-slate-700, #334155);
+  flex-shrink: 0;
+}
+
+.cache-panel-icon {
+  font-size: 13px;
+  color: var(--p-indigo-400, #818cf8);
+}
+
+.cache-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--p-slate-200, #e2e8f0);
+}
+
+.cache-panel-count {
+  font-size: 11px;
+  color: var(--p-slate-500, #64748b);
+  flex: 1;
+}
+
+.cache-panel-clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--p-red-800, #991b1b);
+  color: var(--p-red-400, #f87171);
+  border-radius: 4px;
   cursor: pointer;
-  color: var(--p-violet-700, #6d28d9);
-  font-size: 0.75rem;
-  font-weight: 500;
-  list-style: none;
-  user-select: none;
-  transition: background 0.15s ease;
+  transition: all 0.15s ease;
 }
 
-.thinking-block-summary::-webkit-details-marker {
-  display: none;
+.cache-panel-clear-btn:hover {
+  background: var(--p-red-950, #450a0a);
 }
 
-.thinking-block-summary:hover {
-  background: var(--p-violet-100, #ede9fe);
+.cache-panel-close-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--p-slate-500, #64748b);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 11px;
+  transition: all 0.15s ease;
 }
 
-.thinking-block-icon {
-  font-size: 0.7rem;
-  color: var(--p-violet-500, #8b5cf6);
+.cache-panel-close-btn:hover {
+  background: var(--p-slate-800, #1e293b);
+  color: var(--p-slate-200, #e2e8f0);
 }
 
-.thinking-block-chevron {
-  margin-left: auto;
-  font-size: 0.6rem;
-  color: var(--p-violet-400, #a78bfa);
-  transition: transform 0.2s ease;
+.cache-panel-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--p-slate-500, #64748b);
 }
 
-.thinking-block[open] .thinking-block-chevron {
-  transform: rotate(180deg);
+.cache-panel-list {
+  overflow-y: auto;
+  flex: 1;
 }
 
-.thinking-block-content {
-  padding: 0.625rem 0.75rem;
-  background: var(--p-slate-50);
-  border-top: 1px solid var(--p-violet-100, #ede9fe);
-  font-size: 0.75rem;
-  line-height: 1.6;
-  color: var(--p-slate-600);
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  font-family: inherit;
+.cache-entry {
+  border-bottom: 1px solid var(--p-slate-800, #1e293b);
+}
+
+.cache-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.cache-entry-header:hover {
+  background: var(--p-slate-900, #0f172a);
+}
+
+.cache-entry-icon {
+  font-size: 12px;
+  color: var(--p-indigo-400, #818cf8);
+  flex-shrink: 0;
+}
+
+.cache-entry-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--p-slate-200, #e2e8f0);
+  flex-shrink: 0;
+}
+
+.cache-entry-desc {
+  font-size: 11px;
+  color: var(--p-slate-400, #94a3b8);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cache-entry-size {
+  font-size: 10px;
+  color: var(--p-slate-500, #64748b);
+  flex-shrink: 0;
+}
+
+.cache-entry-chevron {
+  font-size: 10px;
+  color: var(--p-slate-500, #64748b);
+  flex-shrink: 0;
+}
+
+.cache-entry-delete-btn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--p-slate-600, #475569);
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 10px;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.cache-entry-delete-btn:hover {
+  background: var(--p-red-950, #450a0a);
+  color: var(--p-red-400, #f87171);
+}
+
+.cache-entry-preview {
+  padding: 0 14px 10px;
   max-height: 300px;
   overflow-y: auto;
 }
 
-/* ── Thinking Toggle Button ── */
-.thinking-toggle-btn {
+/* ── Cache Panel Button ── */
+.cache-panel-btn {
+  position: relative;
   flex-shrink: 0;
   width: 2rem;
   height: 2rem;
@@ -4434,51 +4539,33 @@ const handleQuestionAnswer = (answer: string) => {
   font-size: 0.8rem;
 }
 
-.thinking-toggle-btn:hover:not(:disabled) {
-  background: var(--p-violet-50, #f5f3ff);
-  color: var(--p-violet-500, #8b5cf6);
-  border-color: var(--p-violet-300, #c4b5fd);
+.cache-panel-btn:hover {
+  background: var(--p-indigo-50, #eef2ff);
+  color: var(--p-indigo-500, #6366f1);
+  border-color: var(--p-indigo-300, #a5b4fc);
 }
 
-.thinking-toggle-btn--active {
-  background: var(--p-violet-50, #f5f3ff);
-  color: var(--p-violet-600, #7c3aed);
-  border-color: var(--p-violet-400, #a78bfa);
+.cache-panel-btn--active {
+  background: var(--p-indigo-50, #eef2ff);
+  color: var(--p-indigo-600, #4f46e5);
+  border-color: var(--p-indigo-400, #818cf8);
 }
 
-.thinking-toggle-btn--active:hover:not(:disabled) {
-  background: var(--p-violet-100, #ede9fe);
-  color: var(--p-violet-700, #6d28d9);
-}
-
-.thinking-toggle-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* ── Thinking-in-progress indicator (loading state with thinking mode ON) ── */
-.thinking-in-progress {
+.cache-panel-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  background: var(--p-indigo-500, #6366f1);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 7px;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  color: var(--p-violet-600, #7c3aed);
-  font-size: 0.8rem;
-}
-
-.thinking-in-progress-icon {
-  font-size: 0.75rem;
-  animation: thinking-pulse 1.5s ease-in-out infinite;
-}
-
-.thinking-in-progress-label {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--p-violet-600, #7c3aed);
-  margin-right: 0.15rem;
-}
-
-@keyframes thinking-pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  justify-content: center;
+  line-height: 1;
 }
 </style>

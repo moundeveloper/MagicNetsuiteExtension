@@ -210,7 +210,7 @@ export const tools: ToolDefinition[] = [
       "Fetch the source code for one or more scripts by their internal numeric IDs. " +
       "Each script's source is stored in the conversation cache automatically — it does NOT appear in your context. " +
       "Returns metadata only: an array of { scriptName, scriptType, scriptId, id, cacheKey, sizeChars }. " +
-      "To DISPLAY a script, call cache_display(cacheKey). " +
+      "To DISPLAY a script: call cache_display(cacheKey) AND include [VIEW:{cacheKey}] verbatim in your text response. " +
       "To ANALYZE a script, call cache_retrieve(cacheKey) to bring it into context. " +
       "Accepts a single ID like [523] or multiple IDs like [523, 841, 102].",
     parameters: {
@@ -905,7 +905,7 @@ export const tools: ToolDefinition[] = [
       "Read a file from the NetSuite File Cabinet. " +
       "The full content is stored in the conversation cache automatically — it does NOT appear in your context. " +
       "Returns metadata only: { cacheKey, fileId, contentType, sizeChars, binary }. " +
-      "To DISPLAY the content to the user, call cache_display(cacheKey). " +
+      "To DISPLAY the content to the user: call cache_display(cacheKey) AND include [VIEW:{cacheKey}] verbatim in your text response. " +
       "To ANALYZE the content, call cache_retrieve(cacheKey) to bring it into context. " +
       "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results).",
     parameters: {
@@ -1453,10 +1453,11 @@ export const tools: ToolDefinition[] = [
   {
     name: "cache_display",
     description:
-      "Display cached content to the user verbatim — without it passing through your text output. " +
-      "Use this whenever the user wants to VIEW a file or script. " +
-      "The content is rendered directly from the cache as-is. " +
-      "Do NOT include the content in your text response — just call this tool and say the content is shown below.",
+      "Signal that cached content should be displayed to the user. " +
+      "This call is kept in conversation history so the AI remembers what was shown. " +
+      "IMPORTANT: After calling this tool you MUST also write [VIEW:{key}] verbatim in your text response " +
+      "(e.g. 'Here is the file: [VIEW:file_21301]'). The UI replaces that token with the rendered content. " +
+      "Do NOT reproduce the content in your text — only the [VIEW:{key}] marker.",
     parameters: {
       type: "object",
       properties: {
