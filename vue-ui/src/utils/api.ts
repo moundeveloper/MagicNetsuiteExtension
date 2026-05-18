@@ -1,4 +1,4 @@
-import type { RequestRoutes } from "../types/request";
+import { RequestRoutes } from "../types/request";
 
 export type ApiResponse = {
   status: "ok" | "error";
@@ -30,7 +30,18 @@ const callApi = async (
   mode: ApiRequestType = ApiRequestType.NORMAL,
   streamHandler?: Function
 ): Promise<ApiResponse> => {
-  const activeTab = await getActiveNetsuiteTab();
+  let activeTab: chrome.tabs.Tab;
+
+  try {
+    activeTab = await getActiveNetsuiteTab();
+  } catch {
+    try {
+      activeTab = await findExistingNetsuiteTab();
+    } catch {
+      throw new Error("No NetSuite tab found. Open a NetSuite page first.");
+    }
+  }
+
   const messagePayload: MessagePayload = {
     action: route,
     data: payload,
@@ -42,7 +53,18 @@ const callApi = async (
   // =========================
   if (mode === ApiRequestType.STREAM) {
     return new Promise(async (resolve, reject) => {
-      const activeTab = await getActiveNetsuiteTab();
+      let activeTab: chrome.tabs.Tab;
+
+      try {
+        activeTab = await getActiveNetsuiteTab();
+      } catch {
+        try {
+          activeTab = await findExistingNetsuiteTab();
+        } catch {
+          reject(new Error("No NetSuite tab found. Open a NetSuite page first."));
+          return;
+        }
+      }
 
       const connectAndStream = (tabId: number, isTemp = false): void => {
         const port = chrome.tabs.connect(tabId, {
@@ -52,15 +74,21 @@ const callApi = async (
         port.onMessage.addListener(async (message: any) => {
           // 🚨 STREAM-SPECIFIC FALLBACK
           if (message.status === "API_NOT_AVAILABLE" && !isTemp) {
-            console.log("[callApi] Stream API not available — using temp tab");
+            console.log("[callApi] Stream API not available — trying existing NetSuite tab");
 
             port.disconnect();
 
+            // Try existing NetSuite tabs from the same account first
             try {
-              const tempTab = await createTemporaryTab(activeTab.url!);
-              connectAndStream(tempTab.id!, true);
-            } catch (err) {
-              reject(err);
+              const existingTab = await findExistingNetsuiteTab(activeTab.url);
+              connectAndStream(existingTab.id!, false);
+            } catch {
+              try {
+                const tempTab = await createTemporaryTab(activeTab.url!);
+                connectAndStream(tempTab.id!, true);
+              } catch (err) {
+                reject(err);
+              }
             }
 
             return;
@@ -101,6 +129,15 @@ const callApi = async (
   try {
     return await sendMessageToTab(activeTab.id!, messagePayload);
   } catch (error) {
+    // Before creating a temp tab, try existing NetSuite tabs from the same account
+    try {
+      const existingTab = await findExistingNetsuiteTab(activeTab.url);
+      if (existingTab.id !== activeTab.id) {
+        return await sendMessageToTab(existingTab.id!, messagePayload);
+      }
+    } catch {
+      // No existing tab works, fall back to temp tab
+    }
     return await handleFallbackWithTempTab(activeTab, messagePayload);
   }
 };
@@ -141,6 +178,69 @@ const isNetsuiteTab = (tab: chrome.tabs.Tab): boolean => {
   } catch {
     return false;
   }
+};
+
+const extractAccountIdFromUrl = (url: string): string | null => {
+  try {
+    const hostname = new URL(url).hostname;
+    const parts = hostname.split(".");
+    if (parts.length < 3) return null;
+    return parts[0]!.toUpperCase().replace(/-/g, "_");
+  } catch {
+    return null;
+  }
+};
+
+const findExistingNetsuiteTab = async (
+  currentUrl?: string
+): Promise<chrome.tabs.Tab> => {
+  const allTabs = await chrome.tabs.query({});
+  const netsuiteTabs = allTabs.filter(
+    (tab) => tab.url?.includes("app.netsuite.com") && tab.id && !tab.url.includes("tempTab=true")
+  );
+
+  if (netsuiteTabs.length === 0) {
+    throw new Error("No NetSuite tabs found in any window");
+  }
+
+  // Check connection status for each NS tab in parallel (same pattern as getPreferredNetsuiteTab)
+  const connectionChecks = netsuiteTabs.map(async (tab) => {
+    try {
+      const response = await sendMessageToTab(tab.id!, {
+        action: RequestRoutes.CHECK_CONNECTION,
+        data: {},
+        mode: ApiRequestType.NORMAL
+      });
+      return {
+        tab,
+        connected: response?.message === "connected",
+        accountId: extractAccountIdFromUrl(tab.url!)
+      };
+    } catch {
+      return { tab, connected: false, accountId: null };
+    }
+  });
+
+  const results = await Promise.all(connectionChecks);
+  const connectedTabs = results.filter((r) => r.connected);
+
+  if (connectedTabs.length === 0) {
+    throw new Error("No connected NetSuite tabs found");
+  }
+
+  // If we know the target account (same environment as sidepanel's tab), match by account ID
+  if (currentUrl) {
+    const targetAccountId = extractAccountIdFromUrl(currentUrl);
+    if (targetAccountId) {
+      const matchingTab = connectedTabs.find((r) => r.accountId === targetAccountId);
+      if (matchingTab) {
+        return matchingTab.tab;
+      }
+    }
+  }
+
+  // Fall back to the first connected tab from any account
+  return connectedTabs[0]!.tab;
 };
 
 const isTemporaryTab = (tab: chrome.tabs.Tab): boolean => {
@@ -197,6 +297,16 @@ const handleFallbackWithTempTab = async (
   currentTab: chrome.tabs.Tab,
   payload: MessagePayload
 ): Promise<ApiResponse> => {
+  // Try existing NetSuite tabs from the same account first
+  try {
+    const existingTab = await findExistingNetsuiteTab(currentTab.url);
+    if (existingTab.id !== currentTab.id) {
+      return await sendMessageToTab(existingTab.id!, payload);
+    }
+  } catch {
+    // No existing tab works, fall back to temp tab
+  }
+
   console.log("API not available, creating temp tab");
 
   const netsuiteUrl = buildTempTabUrl(currentTab.url!);
@@ -271,7 +381,15 @@ const getNetsuiteEnvironment = async (): Promise<string> => {
       return url.hostname;
     }
   } catch {
-    // Fall through
+    try {
+      const tab = await findExistingNetsuiteTab();
+      if (tab.url) {
+        const url = new URL(tab.url);
+        return url.hostname;
+      }
+    } catch {
+      // Fall through
+    }
   }
   return "unknown";
 };
