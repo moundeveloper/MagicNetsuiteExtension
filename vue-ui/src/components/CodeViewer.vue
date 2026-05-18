@@ -93,7 +93,7 @@ const nordHighlightStyle = HighlightStyle.define([
   { tag: tags.number,               color: "#B48EAD" },
   { tag: tags.bool,                 color: "#81A1C1" },
   { tag: tags.null,                 color: "#81A1C1" },
-  { tag: tags.comment,              color: "#616E88", fontStyle: "italic" },
+  { tag: tags.comment,              color: "#A0AEBE", fontStyle: "italic" },
   { tag: tags.name,                 color: "#D8DEE9" },
   { tag: tags.variableName,         color: "#D8DEE9" },
   { tag: tags.function(tags.variableName), color: "#88C0D0" },

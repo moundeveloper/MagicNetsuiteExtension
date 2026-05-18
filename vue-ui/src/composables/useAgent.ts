@@ -392,6 +392,42 @@ function truncateResult(text: string, maxLength = 5000): string {
 }
 
 /**
+ * Detect weak-model premature stop.
+ *
+ * Only check: did the model just receive tool results AND respond with
+ * effectively nothing? If so, it stopped mid-task — nudge it to continue.
+ *
+ * No tool-name checks, no content pattern matching. Every task type is
+ * covered the same way.
+ */
+function detectPrematureStop(history: AgentMessage[], assistantText: string): string | null {
+  // Walk back through history looking for tool results from the previous
+  // iteration. Stop at the nearest prior assistant message (which contained
+  // the tool_calls that produced these results).
+  let hasRecentToolResults = false;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i]!;
+    if (msg.role === "tool" && msg.toolName) {
+      hasRecentToolResults = true;
+      continue;
+    }
+    if (msg.role === "assistant") break;
+    if (msg.role === "compaction") break;
+  }
+
+  // No tool results in the last iteration → model wasn't mid-task,
+  // this is a genuine final answer or a simple chat turn.
+  if (!hasRecentToolResults) return null;
+
+  // Tool results exist but the model's response is under 80 chars.
+  // ~80 chars ≈ 20 tokens. The real failure case is ~9 tokens (36 chars).
+  // A genuine answer that processes tool results will never be this short.
+  if (assistantText.trim().length >= 80) return null;
+
+  return "You stopped without completing the task. Look at the tool results you just received and provide a complete answer to the user's original request.";
+}
+
+/**
  * Build a stable call signature for repetition detection.
  * Sorts object keys so {a:1, b:2} and {b:2, a:1} produce the same hash.
  */
@@ -1470,8 +1506,20 @@ export const useAgent = (options: AgentOptions = {}) => {
           continue;
         }
 
-        // ── No tool calls → final answer ───────
+        // ── No tool calls → check for premature stop before accepting as final answer ──
         if (toolCalls.length === 0) {
+          const prematureNudge = detectPrematureStop(history.value, assistantText);
+          if (prematureNudge) {
+            console.warn("[useAgent] Premature stop detected — nudging model to continue:", prematureNudge);
+            pushMessage({
+              role: "assistant",
+              content: assistantText || "",
+              thinking: response.thinking || undefined
+            });
+            pushMessage({ role: "user", content: prematureNudge });
+            continue;
+          }
+
           pushMessage({
             role: "assistant",
             content: assistantText || "[no response]",
