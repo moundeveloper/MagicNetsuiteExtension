@@ -530,13 +530,13 @@ async function handleMcp(req) {
           {
             name: "netsuite_read_doc_page",
             description:
-              "Read the full text content of a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs'. Returns the page's main text (up to 10 000 characters). Always include a References section with the page URL in your response after reading.",
+              "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's main text (up to 10 000 characters) with inline Markdown links preserved, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
             inputSchema: {
               type: "object",
               properties: {
                 url: {
                   type: "string",
-                  description: "Full URL of the NetSuite help page (from netsuite_search_docs results)."
+                  description: "Full NetSuite help center URL, either from netsuite_search_docs results or from the links array returned by netsuite_read_doc_page."
                 }
               },
               required: ["url"]
