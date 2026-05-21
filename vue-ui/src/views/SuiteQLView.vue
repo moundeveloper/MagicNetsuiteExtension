@@ -712,6 +712,10 @@ import {
   getUiState,
   setUiState
 } from "../utils/suiteqlDb";
+import {
+  explainSuiteQLError,
+  lintSuiteQL
+} from "../utils/suiteqlLinter";
 
 const router = useRouter();
 
@@ -1362,6 +1366,7 @@ const runCurrentQuery = async () => {
   if (!file || file.isExecuting) return;
 
   showLimitConfirm.value = false;
+  if (!validateSuiteQLBeforeExecution(file)) return;
 
   // If unlimited, check count first
   if (limitValue.value === null) {
@@ -1390,17 +1395,47 @@ const confirmUnlimitedQuery = async (file: QueryFile) => {
   await executeQuery(file, null);
 };
 
+const getSuiteQLSchemaContext = () => ({
+  tableIds: tables.value.map((table) => table.id),
+  fieldsByTable: Object.fromEntries(
+    Object.values(tableDetailCache.value).map((detail) => [
+      detail.id,
+      detail.fields.filter((field) => field.isColumn).map((field) => field.id)
+    ])
+  )
+});
+
+const validateSuiteQLBeforeExecution = (file: QueryFile): boolean => {
+  const schemaContext = getSuiteQLSchemaContext();
+  const lintResult = lintSuiteQL(file.code, schemaContext);
+  if (lintResult.ok) return true;
+
+  file.results = [];
+  file.columns = [];
+  file.totalCount = 0;
+  file.error = explainSuiteQLError(
+    file.code,
+    "Query was not sent to NetSuite because local validation found errors.",
+    schemaContext
+  );
+  bottomTab.value = "results";
+  return false;
+};
+
 const executeQuery = async (file: QueryFile, limit: number | null) => {
   console.log(`[SuiteQLView] executeQuery — file="${file.name}" limit=${limit ?? "none"}`);
   console.log(`[SuiteQLView] SQL:\n${file.code}`);
-  file.isExecuting = true;
   file.results = [];
   file.columns = [];
   file.error = "";
   file.totalCount = 0;
   bottomTab.value = "results";
 
-  detectAndLoadTablesFromQuery(file.code);
+  if (!validateSuiteQLBeforeExecution(file)) return;
+
+  file.isExecuting = true;
+
+  await detectAndLoadTablesFromQuery(file.code);
 
   try {
     const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
@@ -1409,7 +1444,11 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
     })) as ApiResponse;
     console.log(`[SuiteQLView] executeQuery — response status: ${response.status}`);
     if (response.status === "error") {
-      file.error = response.message || "Query execution failed";
+      file.error = explainSuiteQLError(
+        file.code,
+        response.message || "Query execution failed",
+        getSuiteQLSchemaContext()
+      );
       console.error(`[SuiteQLView] executeQuery — error response:`, response.message);
       return;
     }
@@ -1433,7 +1472,11 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
     }
   } catch (error: any) {
     console.error("[SuiteQLView] executeQuery — caught exception:", error);
-    file.error = `Execution failed: ${error?.message ?? error}`;
+    file.error = explainSuiteQLError(
+      file.code,
+      error?.message ?? error,
+      getSuiteQLSchemaContext()
+    );
   } finally {
     file.isExecuting = false;
   }

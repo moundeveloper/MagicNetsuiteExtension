@@ -592,6 +592,24 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_get_deployed_scripts",
+            description:
+              "Get all currently deployed scripts attached to a specific record type, including full source code for analysis. " +
+              "Pass a record type ID from netsuite_list_record_types, such as 'salesorder', 'customer', 'itemfulfillment', or 'customrecord_my_type'. " +
+              "Returns scriptName, scriptType, scriptId, internal numeric id, and scriptFile content for each deployed script.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description:
+                    "The NetSuite record type ID. Use netsuite_list_record_types first if you do not know the exact value."
+                }
+              },
+              required: ["recordType"]
+            }
+          },
+          {
             name: "netsuite_get_logs",
             description:
               "Get script execution logs from a live NetSuite account. Defaults to the last 7 days. Filter by scriptIds for targeted debugging. Focus on 'ERROR' and 'System' type logs for failures.",

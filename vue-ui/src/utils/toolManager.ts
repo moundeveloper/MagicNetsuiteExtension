@@ -205,7 +205,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_deployed_scripts",
     description:
-      "Get all deployed scripts attached to a specific record type, including their full source code. Returns an array of objects with: scriptName, scriptType, scriptId (string ID), id (internal numeric ID), and scriptFile (the full script source code). Use this to inspect what scripts run on a given record type. If you already know specific script numeric IDs and just need their source code, use netsuite_get_script_files instead.",
+      "Get all deployed scripts attached to a specific record type. Source files are stored in the conversation cache automatically to handle large scripts. Returns metadata with cacheKey and sizeChars. Use cache_retrieve(cacheKey) to analyze a specific script. If you already know specific script numeric IDs and just need their source code, use netsuite_get_script_files instead.",
     parameters: {
       type: "object",
       properties: {
@@ -221,7 +221,26 @@ export const tools: ToolDefinition[] = [
       const response = await callApi(RequestRoutes.SCRIPTS_DEPLOYED, {
         recordType: input.recordType
       });
-      return response.message;
+      const scripts = response.message as Array<{
+        scriptName: string;
+        scriptType: string;
+        scriptFile: string | null;
+        scriptId: string;
+        id: number;
+      }>;
+      if (!Array.isArray(scripts)) return scripts;
+      return scripts.map((s) => {
+        const cacheKey = `deployed_script_${input.recordType}_${s.id}`;
+        if (s.scriptFile) {
+          agentCache.set(
+            cacheKey,
+            s.scriptFile,
+            `${s.scriptName} (${s.scriptType}, ${input.recordType}, ID ${s.id})`
+          );
+        }
+        const { scriptFile: _, ...meta } = s;
+        return { ...meta, cacheKey, sizeChars: s.scriptFile?.length ?? 0 };
+      });
     }
   },
 

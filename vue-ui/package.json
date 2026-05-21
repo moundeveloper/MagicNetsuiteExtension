@@ -39,6 +39,7 @@
     "lodash": "^4.17.21",
     "mark.js": "^8.11.1",
     "monaco-editor": "^0.54.0",
+    "node-sql-parser": "^5.4.0",
     "ollama": "^0.6.3",
     "onigasm": "^2.2.5",
     "pdfjs-dist": "^5.7.284",
