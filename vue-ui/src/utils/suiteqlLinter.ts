@@ -23,6 +23,7 @@ export interface SuiteQLLintResult {
 export interface SuiteQLSchemaContext {
   tableIds?: string[];
   fieldsByTable?: Record<string, string[]>;
+  fieldTypesByTable?: Record<string, Record<string, string>>;
 }
 
 interface TableSource {
@@ -54,6 +55,7 @@ interface SuiteQLAnalysisContext {
   schema: {
     tableIds: Set<string>;
     fieldsByTable: Map<string, Set<string>>;
+    fieldTypesByTable: Map<string, Map<string, string>>;
   };
 }
 
@@ -84,6 +86,20 @@ const MUTATING_STATEMENTS = new Set([
 ]);
 
 const SPECIAL_COLUMNS = new Set(["*", "rownum"]);
+
+const VALUE_COMPARISON_OPERATORS = new Set([
+  "=",
+  "!=",
+  "<>",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "LIKE",
+  "NOT LIKE"
+]);
+
+const LIST_COMPARISON_OPERATORS = new Set(["IN", "NOT IN"]);
 
 const offsetToLineColumn = (text: string, offset: number) => {
   const safeOffset = Math.max(0, Math.min(offset, text.length));
@@ -476,6 +492,220 @@ const describeColumnRefs = (refs: ColumnRef[]) => {
   return [...new Set(labels)].join(", ");
 };
 
+const columnRefFromNode = (value: unknown): ColumnRef | null => {
+  if (!value || typeof value !== "object") return null;
+  const node = value as Record<string, unknown>;
+  if (node.type !== "column_ref") return null;
+
+  const column = identifierToString(node.column);
+  if (!column || column === "*") return null;
+
+  return {
+    table: identifierToString(node.table),
+    column
+  };
+};
+
+const isPlainUnqualifiedIdentifier = (ref: ColumnRef) =>
+  !ref.table && /^[A-Za-z_][A-Za-z0-9_$]*$/.test(ref.column);
+
+const getReferencedTable = (context: SuiteQLAnalysisContext, ref: ColumnRef) =>
+  ref.table ? context.aliasToTable.get(ref.table.toLowerCase()) ?? null : null;
+
+const knownFieldTables = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const columnLower = ref.column.toLowerCase();
+  const table = getReferencedTable(context, ref);
+
+  if (table) {
+    return context.schema.fieldsByTable.get(table.toLowerCase())?.has(columnLower)
+      ? [table]
+      : [];
+  }
+
+  return context.tableSources
+    .filter((source) => !source.isCte)
+    .filter((source) =>
+      context.schema.fieldsByTable.get(source.table.toLowerCase())?.has(columnLower)
+    )
+    .map((source) => source.table);
+};
+
+const isKnownFieldRef = (context: SuiteQLAnalysisContext, ref: ColumnRef) =>
+  knownFieldTables(context, ref).length > 0;
+
+const isUnknownValueIdentifier = (
+  context: SuiteQLAnalysisContext,
+  ref: ColumnRef
+) =>
+  isPlainUnqualifiedIdentifier(ref) &&
+  !context.aliasToTable.has(ref.column.toLowerCase()) &&
+  !isKnownFieldRef(context, ref);
+
+const fieldTypeForRef = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const tables = knownFieldTables(context, ref);
+  for (const table of tables) {
+    const fieldType = context.schema.fieldTypesByTable
+      .get(table.toLowerCase())
+      ?.get(ref.column.toLowerCase());
+    if (fieldType) return fieldType;
+  }
+  return "";
+};
+
+const isDateLikeField = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const type = fieldTypeForRef(context, ref).toLowerCase();
+  if (/\b(date|datetime|timestamp|time)\b/.test(type)) return true;
+  return /date|time|period|created|modified|trandate|duedate|closedate|startdate|enddate/i.test(
+    ref.column
+  );
+};
+
+const regexIndex = (text: string, regex: RegExp) => {
+  const match = regex.exec(text);
+  if (!match) return null;
+  return { start: match.index, end: match.index + match[0].length, text: match[0] };
+};
+
+const flattenNumberChain = (
+  value: unknown,
+  operator: string
+): number[] | null => {
+  if (!value || typeof value !== "object") return null;
+  const node = value as Record<string, unknown>;
+  if (node.type === "number" && typeof node.value === "number") return [node.value];
+  if (node.type !== "binary_expr" || node.operator !== operator) return null;
+
+  const left = flattenNumberChain(node.left, operator);
+  const right = flattenNumberChain(node.right, operator);
+  if (!left || !right) return null;
+  return [...left, ...right];
+};
+
+const nearestDateToken = (sql: string, expr: unknown) => {
+  const anchor = findExpressionStart(sql, expr);
+  const pattern =
+    /\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}-[A-Za-z]{3,9}-\d{2,4}|[A-Za-z]{3,9}-\d{1,2}-\d{2,4})\b/g;
+  const matches = [...sql.matchAll(pattern)]
+    .filter((match) => match.index !== undefined)
+    .map((match) => ({
+      start: match.index as number,
+      end: (match.index as number) + match[0].length,
+      text: match[0]
+    }));
+  if (matches.length === 0) return null;
+
+  return matches.sort((left, right) => {
+    const leftDistance =
+      anchor >= left.start && anchor <= left.end
+        ? 0
+        : Math.min(Math.abs(anchor - left.start), Math.abs(anchor - left.end));
+    const rightDistance =
+      anchor >= right.start && anchor <= right.end
+        ? 0
+        : Math.min(Math.abs(anchor - right.start), Math.abs(anchor - right.end));
+    return leftDistance - rightDistance;
+  })[0];
+};
+
+const inferDateFormatMask = (text: string) => {
+  if (/^\d{8}$/.test(text)) return "YYYYMMDD";
+  if (/^\d{6}$/.test(text)) return "YYMMDD";
+  if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(text)) return "YYYY-MM-DD";
+  if (/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(text)) return "YYYY/MM/DD";
+  if (/^\d{1,2}-[A-Za-z]{3,9}-\d{2,4}$/.test(text)) {
+    return text.split("-")[2]?.length === 2 ? "DD-MON-YY" : "DD-MON-YYYY";
+  }
+  if (/^[A-Za-z]{3,9}-\d{1,2}-\d{2,4}$/.test(text)) {
+    return text.split("-")[2]?.length === 2 ? "MON-DD-YY" : "MON-DD-YYYY";
+  }
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text)) {
+    const parts = text.split("/");
+    const year = parts[2]?.length === 2 ? "YY" : "YYYY";
+    return `${Number(parts[0]) > 12 ? "DD/MM" : "MM/DD"}/${year}`;
+  }
+  return "<matching format mask>";
+};
+
+const dateLikeExpressionInfo = (sql: string, expr: unknown) => {
+  if (!expr || typeof expr !== "object") return null;
+  const node = expr as Record<string, unknown>;
+
+  for (const operator of ["-", "/"]) {
+    const parts = flattenNumberChain(expr, operator);
+    if (!parts || parts.length !== 3) continue;
+
+    const separator = operator === "-" ? "-" : "/";
+    const partPatterns = parts.map((part) => `0*${String(part)}`);
+    const pattern = new RegExp(
+      `\\b${partPatterns.join(`\\s*\\${separator}\\s*`)}\\b`
+    );
+    const match = regexIndex(sql, pattern);
+    return {
+      start: match?.start ?? findExpressionStart(sql, expr),
+      end: match?.end ?? findExpressionStart(sql, expr) + 1,
+      text: match?.text ?? parts.join(separator)
+    };
+  }
+
+  if (node.type === "number" && typeof node.value === "number") {
+    const text = String(node.value);
+    if (/^\d{6}(\d{2})?$/.test(text)) {
+      const match = regexIndex(sql, new RegExp(`\\b${text}\\b`));
+      return {
+        start: match?.start ?? findExpressionStart(sql, expr),
+        end: match?.end ?? findExpressionStart(sql, expr) + text.length,
+        text
+      };
+    }
+  }
+
+  const nearest = nearestDateToken(sql, expr);
+  if (nearest) return nearest;
+
+  return null;
+};
+
+const collectUnquotedLiteralNames = (context: SuiteQLAnalysisContext) => {
+  const names = new Set<string>();
+
+  const inspectValue = (field: ColumnRef | null, value: unknown) => {
+    if (!field || !isKnownFieldRef(context, field)) return;
+    const ref = columnRefFromNode(value);
+    if (ref && isUnknownValueIdentifier(context, ref)) {
+      names.add(ref.column.toLowerCase());
+      return;
+    }
+
+    const dateInfo = dateLikeExpressionInfo(context.sql, value);
+    const compactDate = dateInfo ? /^\d{6}(\d{2})?$/.test(dateInfo.text) : false;
+    if (dateInfo && (!compactDate || isDateLikeField(context, field))) {
+      collectNonAggregateColumnRefs(value)
+        .filter((valueRef) => isUnknownValueIdentifier(context, valueRef))
+        .forEach((valueRef) => names.add(valueRef.column.toLowerCase()));
+    }
+  };
+
+  for (const statement of context.ast) {
+    walkAst(statement, (node) => {
+      if (node.type !== "binary_expr") return;
+      const operator = String(node.operator ?? "").toUpperCase();
+
+      if (VALUE_COMPARISON_OPERATORS.has(operator)) {
+        const left = columnRefFromNode(node.left);
+        const right = columnRefFromNode(node.right);
+        inspectValue(left, node.right);
+        inspectValue(right, node.left);
+      } else if (LIST_COMPARISON_OPERATORS.has(operator) || operator === "BETWEEN") {
+        const field = columnRefFromNode(node.left);
+        const values = (node.right as Record<string, unknown> | undefined)?.value;
+        if (field && Array.isArray(values)) values.forEach((value) => inspectValue(field, value));
+      }
+    });
+  }
+
+  return names;
+};
+
 const buildAnalysisContext = (
   sql: string,
   schemaContext: SuiteQLSchemaContext = {}
@@ -562,6 +792,17 @@ const buildAnalysisContext = (
         Object.entries(schemaContext.fieldsByTable ?? {}).map(([table, fields]) => [
           table.toLowerCase(),
           new Set(fields.map((field) => field.toLowerCase()))
+        ])
+      ),
+      fieldTypesByTable: new Map(
+        Object.entries(schemaContext.fieldTypesByTable ?? {}).map(([table, fields]) => [
+          table.toLowerCase(),
+          new Map(
+            Object.entries(fields).map(([field, type]) => [
+              field.toLowerCase(),
+              type.toLowerCase()
+            ])
+          )
         ])
       )
     },
@@ -764,6 +1005,85 @@ const astRules: SuiteQLRule[] = [
             indexOfRegex(sql, /\bBUILTIN\.OF\b/i) + "BUILTIN.OF".length
           )
         )
+  },
+  {
+    id: "UNQUOTED_COMPARISON_LITERALS",
+    check: (context) => {
+      const { sql } = context;
+      const issues: SuiteQLLintIssue[] = [];
+
+      const makeTextIssue = (field: ColumnRef, value: ColumnRef, expr: unknown) => {
+        const start = findExpressionStart(sql, expr);
+        const fieldName = [field.table, field.column].filter(Boolean).join(".");
+        issues.push(
+          makeIssue(
+            sql,
+            "error",
+            "UNQUOTED_TEXT_LITERAL",
+            `"${value.column}" is being parsed as a field name. If you meant the value ${value.column}, wrap it in single quotes: ${fieldName} = '${value.column}'.`,
+            start,
+            start + value.column.length
+          )
+        );
+      };
+
+      const makeDateIssue = (field: ColumnRef, expr: unknown) => {
+        const info = dateLikeExpressionInfo(sql, expr);
+        if (!info) return;
+
+        const compactDate = /^\d{6}(\d{2})?$/.test(info.text);
+        if (compactDate && !isDateLikeField(context, field)) return;
+
+        issues.push(
+          makeIssue(
+            sql,
+            "error",
+            "UNQUOTED_DATE_LITERAL",
+            `Date value ${info.text} is unquoted. SuiteQL parses that as arithmetic, not as a date. Use a date function such as TO_DATE('${info.text}', '${inferDateFormatMask(info.text)}').`,
+            info.start,
+            info.end
+          )
+        );
+      };
+
+      const inspectValue = (field: ColumnRef | null, value: unknown) => {
+        if (!field || !isKnownFieldRef(context, field)) return;
+
+        const valueRef = columnRefFromNode(value);
+        if (valueRef && isUnknownValueIdentifier(context, valueRef)) {
+          makeTextIssue(field, valueRef, value);
+          return;
+        }
+
+        makeDateIssue(field, value);
+      };
+
+      for (const statement of context.ast) {
+        walkAst(statement, (node) => {
+          if (node.type !== "binary_expr") return;
+
+          const operator = String(node.operator ?? "").toUpperCase();
+          if (VALUE_COMPARISON_OPERATORS.has(operator)) {
+            const left = columnRefFromNode(node.left);
+            const right = columnRefFromNode(node.right);
+
+            inspectValue(left, node.right);
+            inspectValue(right, node.left);
+          } else if (
+            LIST_COMPARISON_OPERATORS.has(operator) ||
+            operator === "BETWEEN"
+          ) {
+            const field = columnRefFromNode(node.left);
+            const values = (node.right as Record<string, unknown> | undefined)?.value;
+            if (Array.isArray(values)) {
+              values.forEach((value) => inspectValue(field, value));
+            }
+          }
+        });
+      }
+
+      return issues;
+    }
   },
   {
     id: "AGGREGATE_QUERY_REFERENCES",
@@ -1053,16 +1373,19 @@ const metadataRules: SuiteQLRule[] = [
   },
   {
     id: "UNKNOWN_ALIAS_OR_FIELD",
-    check: ({ sql, schema, tableSources, aliasToTable, selectAliases, columnRefs }) => {
+    check: (context) => {
+      const { sql, schema, tableSources, aliasToTable, selectAliases, columnRefs } = context;
       if (schema.fieldsByTable.size === 0) return [];
 
       const realTables = tableSources.filter((source) => !source.isCte);
+      const unquotedLiteralNames = collectUnquotedLiteralNames(context);
       const issues: SuiteQLLintIssue[] = [];
 
       for (const ref of columnRefs) {
         const columnLower = ref.column.toLowerCase();
         if (SPECIAL_COLUMNS.has(columnLower)) continue;
         if (!ref.table && selectAliases.has(columnLower)) continue;
+        if (!ref.table && unquotedLiteralNames.has(columnLower)) continue;
 
         if (ref.table) {
           const table = aliasToTable.get(ref.table.toLowerCase());

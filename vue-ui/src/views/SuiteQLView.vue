@@ -1402,6 +1402,19 @@ const getSuiteQLSchemaContext = () => ({
       detail.id,
       detail.fields.filter((field) => field.isColumn).map((field) => field.id)
     ])
+  ),
+  fieldTypesByTable: Object.fromEntries(
+    Object.values(tableDetailCache.value).map((detail) => [
+      detail.id,
+      Object.fromEntries(
+        detail.fields
+          .filter((field) => field.isColumn)
+          .map((field) => [
+            field.id,
+            [field.dataType, field.fieldType].filter(Boolean).join(" ")
+          ])
+      )
+    ])
   )
 });
 
