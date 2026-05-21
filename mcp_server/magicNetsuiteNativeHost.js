@@ -251,6 +251,16 @@ function handleExtensionMessage(message) {
     return;
   }
 
+  // Direct queries from the extension (not through MCP client pipeline)
+  if (message.type === "GET_BASE_DIR") {
+    const response = { type: "BASE_DIR", baseDir: BASE_DIR };
+    if (message.requestId) {
+      response.requestId = message.requestId;
+    }
+    sendToExtension(response);
+    return;
+  }
+
   const nativeRequestId = message.requestId;
   const entry = pending.get(nativeRequestId);
   if (!entry) {

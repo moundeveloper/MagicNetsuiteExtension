@@ -6,11 +6,14 @@ import { RequestRoutes } from "../types/request";
 import Select from "primevue/select";
 import Button from "primevue/button";
 import ToggleSwitch from "primevue/toggleswitch";
+import Toast from "primevue/toast";
+import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
 
 const props = defineProps<{ vhOffset: number }>();
 
 const { settings } = useSettings();
+const toast = useToast();
 
 // ── Safe chrome.runtime wrapper ──
 // Guards every sendMessage call against "Extension context invalidated" which
@@ -49,6 +52,48 @@ interface McpDedicatedTabInfo {
 
 const mcpConnections = ref<McpConnectionDetail[]>([]);
 const mcpDedicatedTab = ref<McpDedicatedTabInfo | null>(null);
+
+// ── Install Info ──
+
+const extensionId = ref("");
+const extensionRoot = ref("");
+const installInfoLoading = ref(false);
+
+const installCommand = computed(() => {
+  const root = extensionRoot.value.trim() || "C:\\path\\to\\extension";
+  const cleanRoot = root.replace(/\/?$/, "").replace(/\\$/, "");
+  const psPath = `"${cleanRoot}\\mcpServer\\installNativeHost.ps1"`;
+  return `powershell -NoProfile -ExecutionPolicy Bypass -File ${psPath} -ExtensionId ${extensionId.value}`;
+});
+
+const fetchInstallInfo = async () => {
+  installInfoLoading.value = true;
+  try {
+    const resp = await safeSendMessage<{ extensionId: string }>({ type: "MCP_INSTALL_INFO" });
+    if (resp?.extensionId) {
+      extensionId.value = resp.extensionId;
+    }
+  } catch {
+    extensionId.value = chrome.runtime?.id || "";
+  } finally {
+    installInfoLoading.value = false;
+  }
+};
+
+const copyCommand = async () => {
+  try {
+    await navigator.clipboard.writeText(installCommand.value);
+  } catch {
+    // Fallback for older browsers
+    const textarea = document.createElement("textarea");
+    textarea.value = installCommand.value;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+  toast.add({ severity: "success", summary: "Copied", detail: "Command copied to clipboard", life: 2000 });
+};
 
 const nativeBridge = computed(() => mcpConnections.value[0] ?? null);
 const nativeBridgeError = computed(() => nativeBridge.value?.error || "");
@@ -277,6 +322,7 @@ onMounted(() => {
   checkMcpStatus();
   fetchAccounts();
   fetchMcpTools();
+  fetchInstallInfo();
   if (settings.mcpEnabled) {
     fetchUsage();
     // Poll status every 5s and usage every 10s only while enabled
@@ -298,6 +344,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <Toast />
   <MCard outlined elevated flex direction="column" autoHeight>
     <div
       class="flex flex-col gap-4 overflow-y-auto p-2"
@@ -388,6 +435,52 @@ onBeforeUnmount(() => {
             Dedicated MCP tab active (account: <strong>{{ mcpDedicatedTab.accountId }}</strong>)
           </span>
         </div>
+      </div>
+
+      <!-- Native Host Install Section -->
+      <div class="mcp-section">
+        <h2>Native Host Install</h2>
+        <p class="section-description">
+          Run this command to register the native messaging host with Chrome.
+          The extension ID and path are pre-filled below.
+        </p>
+
+        <div v-if="installInfoLoading" class="fetch-status">
+          <i class="pi pi-spin pi-spinner" /> Detecting install path...
+        </div>
+
+        <template v-else>
+          <div v-if="extensionId" class="install-detail-row">
+            <label>Extension ID:</label>
+            <code class="install-detail-value">{{ extensionId }}</code>
+          </div>
+
+          <div class="install-path-row">
+            <label for="mcp-ext-path">Extension Root:</label>
+            <input
+              id="mcp-ext-path"
+              v-model="extensionRoot"
+              class="install-path-input"
+              type="text"
+              placeholder="C:\path\to\extension"
+            />
+            <span class="install-path-hint">The command will use <code>\mcpServer\installNativeHost.ps1</code> under this path.</span>
+          </div>
+
+          <div class="install-command-box">
+            <code class="install-command-text">{{ installCommand }}</code>
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              @click="copyCommand"
+              title="Copy command to clipboard"
+            >
+              <i class="pi pi-copy" />
+              Copy
+            </Button>
+          </div>
+        </template>
       </div>
 
       <!-- Account Preference Section -->
@@ -1299,5 +1392,105 @@ onBeforeUnmount(() => {
   color: var(--p-slate-500);
   padding: 0.6rem 0;
   font-style: italic;
+}
+
+/* ── Install Command ── */
+
+.install-path-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.install-path-row {
+  flex-wrap: wrap;
+}
+
+.install-path-row label {
+  min-width: 100px;
+  font-weight: 500;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.install-path-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.35rem;
+  font-size: 0.78rem;
+  font-family: "JetBrains Mono", monospace;
+  background: var(--surface-card);
+  color: var(--p-slate-700);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.install-path-input:focus {
+  border-color: var(--p-primary-color);
+}
+
+.install-path-input::placeholder {
+  color: var(--p-slate-400);
+  font-family: inherit;
+}
+
+.install-path-hint {
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--p-slate-500);
+  margin-left: 108px;
+}
+
+.install-path-hint code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+}
+
+.install-detail-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.install-detail-row label {
+  min-width: 100px;
+  font-weight: 500;
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+
+.install-detail-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8rem;
+  color: var(--p-primary-color);
+  padding: 0.2rem 0.4rem;
+  background: var(--p-slate-100);
+  border-radius: 0.25rem;
+}
+
+.install-command-box {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.4rem;
+  background: var(--p-slate-50);
+  margin-top: 0.5rem;
+}
+
+.install-command-text {
+  flex: 1;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--p-slate-700);
+  word-break: break-all;
+  white-space: pre-wrap;
+  user-select: all;
 }
 </style>
