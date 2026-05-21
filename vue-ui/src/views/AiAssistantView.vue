@@ -105,32 +105,6 @@
 
           <!-- Message thread -->
           <div v-else class="message-list" ref="messageListRef">
-            <!-- Agent todos panel — sticky at top of chat while agent is working -->
-            <div v-if="agentTodos.length > 0" class="agent-todos-panel">
-              <div class="agent-todos-header" @click="todosPanelCollapsed = !todosPanelCollapsed">
-                <i class="pi pi-check-square agent-todos-icon" />
-                <span class="agent-todos-title">Agent Tasks</span>
-                <span class="agent-todos-progress">
-                  {{ agentTodos.filter(t => t.status === 'done').length }}/{{ agentTodos.length }}
-                </span>
-                <i :class="todosPanelCollapsed ? 'pi pi-chevron-right' : 'pi pi-chevron-down'" class="agent-todos-chevron" />
-              </div>
-              <div v-if="!todosPanelCollapsed" class="agent-todos-list">
-                <div
-                  v-for="todo in agentTodos"
-                  :key="todo.id"
-                  :class="['todo-item', `todo-${todo.status}`]"
-                >
-                  <i :class="{
-                    'pi pi-check-circle': todo.status === 'done',
-                    'pi pi-spin pi-spinner': todo.status === 'in_progress',
-                    'pi pi-circle': todo.status === 'pending'
-                  }" class="todo-icon" />
-                  <span class="todo-content">{{ todo.content }}</span>
-                </div>
-              </div>
-            </div>
-
             <template v-for="msg in messages" :key="msg.id">
               <!-- Compaction indicator -->
               <div v-if="msg.role === 'compaction'" class="msg msg-compaction">
@@ -285,96 +259,141 @@
                   </template>
                 </div>
 
-                <!-- Tool executions (shown above the response text, excludes skill tools) -->
+                <!-- Tool executions (persistent panel during & after execution) -->
                 <div
                   v-if="
-                    getNonSkillToolMessagesForAssistant(msg.id).length > 0 ||
                     (msg.isStreaming &&
                       msg.id === currentAssistantMsgId &&
-                      inProgressTools.filter(
-                        (t) => t.status === 'running' && !isSkillTool(t.name)
-                      ).length > 0)
+                      inProgressTools.filter((t) => !isSkillTool(t.name)).length > 0) ||
+                    (!msg.isStreaming && getNonSkillToolMessagesForAssistant(msg.id).length > 0)
                   "
-                  class="tool-group"
+                  class="tool-panel"
                 >
-                  <!-- While streaming: show running tools -->
+                  <!-- ═══ LIVE TOOLS (during streaming) ═══ -->
                   <template
-                    v-if="
-                      msg.isStreaming &&
-                      msg.id === currentAssistantMsgId &&
-                      inProgressTools.filter(
-                        (t) => t.status === 'running' && !isSkillTool(t.name)
-                      ).length > 0
-                    "
+                    v-if="msg.isStreaming && msg.id === currentAssistantMsgId"
                   >
-                    <template
-                      v-for="tm in inProgressTools.filter(
-                        (t) => t.status === 'running' && !isSkillTool(t.name)
-                      )"
-                      :key="'running-' + tm.name + (tm.chainContext?.stepIndex ?? '')"
-                    >
-                      <!-- Chain step: show chain header + step info -->
-                      <div v-if="tm.chainContext" class="chain-step-running">
-                        <div class="chain-step-header">
-                          <i class="pi pi-sitemap chain-step-icon" />
-                          <span class="chain-step-chain-name">{{ tm.chainContext.chainName }}</span>
-                          <span class="chain-step-progress">
-                            Step {{ tm.chainContext.stepIndex }}/{{ tm.chainContext.totalSteps }}
+                    <div class="tool-panel-header">
+                      <i class="pi pi-bolt tool-panel-icon" />
+                      <span class="tool-panel-title">Tools</span>
+                      <span class="tool-panel-count">{{ inProgressTools.filter((t) => !isSkillTool(t.name)).length }}</span>
+                    </div>
+                    <div class="tool-panel-list">
+                      <template
+                        v-for="(tm, ti) in inProgressTools.filter((t) => !isSkillTool(t.name))"
+                        :key="'live-' + ti"
+                      >
+                        <!-- Delegate tool: sub-agent feed panel -->
+                        <div v-if="tm.name === 'delegate_to_agent' && subAgentFeed" class="sub-agent-panel">
+                          <div class="sub-agent-panel-header">
+                            <span class="tool-spinner sub-agent-spinner" v-if="tm.status === 'running'" />
+                            <i class="pi pi-check-circle tool-done-icon" v-else />
+                            <span
+                              class="sub-agent-chip"
+                              :style="{ backgroundColor: subAgentFeed.color + '33', borderColor: subAgentFeed.color }"
+                            >{{ subAgentFeed.agentName }}</span>
+                            <span class="sub-agent-task">{{ subAgentFeed.task.slice(0, 80) }}{{ subAgentFeed.task.length > 80 ? '…' : '' }}</span>
+                            <span class="tool-elapsed">{{ getElapsed(tm.timestamp) }}</span>
+                          </div>
+                          <div class="sub-agent-tools" v-if="subAgentFeed.tools.length">
+                            <div
+                              v-for="(st, si) in subAgentFeed.tools"
+                              :key="si"
+                              class="sub-tool-row"
+                              :class="st.status"
+                            >
+                              <span class="sub-tool-spinner" v-if="st.status === 'running'" />
+                              <i class="pi pi-check sub-tool-done" v-else />
+                              <span class="sub-tool-label">{{ getToolLabel(st.name) }}</span>
+                              <span v-if="getToolInputSummary(st.name, st.input)" class="sub-tool-summary">{{ getToolInputSummary(st.name, st.input) }}</span>
+                              <span v-if="st.status === 'running'" class="sub-tool-elapsed">{{ getElapsed(st.timestamp) }}</span>
+                            </div>
+                          </div>
+                          <div class="sub-agent-streaming" v-if="subAgentFeed.streamingText">
+                            <MessageContentRenderer
+                              :content="subAgentFeed.streamingText"
+                              @open-in-sql-editor="openInSqlEditor"
+                              @question-answer="handleQuestionAnswer"
+                            />
+                          </div>
+                        </div>
+                        <!-- Chain step tool -->
+                        <div v-else-if="tm.chainContext" class="chain-step-running">
+                          <div class="chain-step-header">
+                            <i class="pi pi-sitemap chain-step-icon" />
+                            <span class="chain-step-chain-name">{{ tm.chainContext.chainName }}</span>
+                            <span class="chain-step-progress">Step {{ tm.chainContext.stepIndex }}/{{ tm.chainContext.totalSteps }}</span>
+                          </div>
+                          <div class="chain-step-body">
+                            <span class="tool-spinner" v-if="tm.status === 'running'" />
+                            <i class="pi pi-check-circle tool-done-icon" v-else />
+                            <span class="chain-step-label">{{ tm.chainContext.stepLabel }}</span>
+                          </div>
+                        </div>
+                        <!-- Standard tool row (expandable) -->
+                        <div v-else class="tool-row" :class="{ expanded: expandedToolIndices.has(ti), done: tm.status === 'done' }" @click="toggleToolExpand(ti)">
+                          <div class="tool-row-header">
+                            <span class="tool-spinner" v-if="tm.status === 'running'" />
+                            <i class="pi pi-check-circle tool-done-icon" v-else />
+                            <span class="tool-row-label">{{ getToolLabel(tm.name) }}</span>
+                            <span v-if="!expandedToolIndices.has(ti) && getToolInputSummary(tm.name, tm.input)" class="tool-row-summary">{{ getToolInputSummary(tm.name, tm.input) }}</span>
+                            <span class="tool-row-right">
+                              <span class="tool-elapsed" v-if="tm.status === 'running'">{{ getElapsed(tm.timestamp) }}</span>
+                              <i :class="expandedToolIndices.has(ti) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="tool-row-chevron" />
+                            </span>
+                          </div>
+                          <div v-if="expandedToolIndices.has(ti)" class="tool-row-expanded" @click.stop>
+                            <div class="tool-expand-section" v-if="tm.input">
+                              <span class="tool-expand-label">Input</span>
+                              <pre class="tool-expand-code">{{ formatToolInput(tm.input) }}</pre>
+                            </div>
+                            <div class="tool-expand-section" v-if="tm.result">
+                              <span class="tool-expand-label">Output</span>
+                              <pre class="tool-expand-code">{{ truncateResult(tm.result, 2000) }}</pre>
+                            </div>
+                            <div v-if="tm.status === 'running' && !tm.result" class="tool-expand-waiting">
+                              Waiting for result…
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+
+                  <!-- ═══ COMPLETED TOOLS (after streaming done) ═══ -->
+                  <template v-else>
+                    <div class="tool-panel-header">
+                      <i class="pi pi-check-circle tool-panel-icon tool-panel-icon-done" />
+                      <span class="tool-panel-title">Used {{ getNonSkillToolMessagesForAssistant(msg.id).length }} tool{{ getNonSkillToolMessagesForAssistant(msg.id).length > 1 ? 's' : '' }}</span>
+                    </div>
+                    <div class="tool-panel-list">
+                      <div
+                        v-for="(tm, ti) in getNonSkillToolMessagesForAssistant(msg.id)"
+                        :key="tm.id"
+                        class="tool-row done"
+                        :class="{ expanded: expandedToolIndices.has(ti + 10000) }"
+                        @click="toggleToolExpand(ti + 10000)"
+                      >
+                        <div class="tool-row-header">
+                          <i class="pi pi-check-circle tool-done-icon" />
+                          <span class="tool-row-label">{{ getToolLabel(tm.toolName ?? "") }}</span>
+                          <span v-if="!expandedToolIndices.has(ti + 10000)" class="tool-row-summary">{{ truncateResult(tm.content, 80) }}</span>
+                          <span class="tool-row-right">
+                            <i :class="expandedToolIndices.has(ti + 10000) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="tool-row-chevron" />
                           </span>
                         </div>
-                        <div class="chain-step-body">
-                          <div class="tool-indicator">
-                            <span class="tool-spinner" />
+                        <div v-if="expandedToolIndices.has(ti + 10000)" class="tool-row-expanded" @click.stop>
+                          <div class="tool-expand-section" v-if="tm.toolInput">
+                            <span class="tool-expand-label">Input</span>
+                            <pre class="tool-expand-code">{{ formatToolInput(tm.toolInput) }}</pre>
                           </div>
-                          <span class="chain-step-label">{{ tm.chainContext.stepLabel }}</span>
-                          <span class="chain-step-tool-name">{{ tm.name }}</span>
+                          <div class="tool-expand-section">
+                            <span class="tool-expand-label">Output</span>
+                            <pre class="tool-expand-code">{{ truncateResult(tm.content, 2000) }}</pre>
+                          </div>
                         </div>
                       </div>
-                      <!-- Standalone tool: plain spinner row -->
-                      <div v-else class="tool-item tool-item-running">
-                        <div class="tool-indicator">
-                          <span class="tool-spinner" />
-                        </div>
-                        <span class="tool-label">{{ tm.name }}</span>
-                      </div>
-                    </template>
-                  </template>
-                  <!-- Completed tools -->
-                  <template v-else>
-                    <details class="tool-details">
-                      <summary class="tool-summary">
-                        <i class="pi pi-check-circle tool-check-icon" />
-                        <span>
-                          Used
-                          {{
-                            getNonSkillToolMessagesForAssistant(msg.id).length
-                          }}
-                          tool{{
-                            getNonSkillToolMessagesForAssistant(msg.id).length >
-                            1
-                              ? "s"
-                              : ""
-                          }}
-                        </span>
-                        <i class="pi pi-chevron-down tool-chevron" />
-                      </summary>
-                      <div class="tool-results-list">
-                        <div
-                          v-for="tm in getNonSkillToolMessagesForAssistant(
-                            msg.id
-                          )"
-                          :key="tm.id"
-                          class="tool-result-row"
-                        >
-                          <span class="tool-result-name">{{
-                            tm.toolName
-                          }}</span>
-                          <span class="tool-result-content">{{
-                            truncate(tm.content, 200)
-                          }}</span>
-                        </div>
-                      </div>
-                    </details>
+                    </div>
                   </template>
                 </div>
 
@@ -418,6 +437,61 @@
                       </div>
                     </details>
                   </template>
+                </div>
+
+                <!-- Agent todos — live while streaming, snapshot after completion -->
+                <div
+                  v-if="(msg.isStreaming && msg.id === currentAssistantMsgId && agentTodos.length > 0) || (msg.todos && msg.todos.length > 0)"
+                  class="msg-todos"
+                >
+                  <template v-if="msg.isStreaming && msg.id === currentAssistantMsgId && agentTodos.length > 0">
+                    <div
+                      v-for="todo in agentTodos"
+                      :key="'live-' + todo.id"
+                      :class="['msg-todo-item', `msg-todo-${todo.status}`]"
+                    >
+                      <i :class="{
+                        'pi pi-check-circle': todo.status === 'done',
+                        'pi pi-spin pi-spinner': todo.status === 'in_progress',
+                        'pi pi-circle': todo.status === 'pending'
+                      }" class="msg-todo-icon" />
+                      <span class="msg-todo-content">{{ todo.content }}</span>
+                    </div>
+                  </template>
+                  <template v-else-if="msg.todos">
+                    <div
+                      v-for="todo in msg.todos"
+                      :key="todo.id"
+                      :class="['msg-todo-item', `msg-todo-${todo.status}`]"
+                    >
+                      <i :class="{
+                        'pi pi-check-circle': todo.status === 'done',
+                        'pi pi-spin pi-spinner': todo.status === 'in_progress',
+                        'pi pi-circle': todo.status === 'pending'
+                      }" class="msg-todo-icon" />
+                      <span class="msg-todo-content">{{ todo.content }}</span>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Nudge indicator banner (shown when model is being repeatedly nudged) -->
+                <div
+                  v-if="msg.isStreaming && msg.id === currentAssistantMsgId && runMetrics.nudgeCount > 0"
+                  class="nudge-banner"
+                >
+                  <i class="pi pi-exclamation-triangle" />
+                  <span>
+                    Model re-prompted (<strong>{{ runMetrics.nudgeCount }}</strong> time{{ runMetrics.nudgeCount > 1 ? 's' : '' }}, reason: <em>{{ runMetrics.lastNudgeReason }}</em>)
+                  </span>
+                </div>
+
+                <!-- Weak model fallback banner -->
+                <div
+                  v-if="msg.isStreaming && msg.id === currentAssistantMsgId && runMetrics.isWeakModelFallback"
+                  class="weak-fallback-banner"
+                >
+                  <i class="pi pi-ban" />
+                  <span>Weak model fallback active — tool calls blocked, forcing final answer</span>
                 </div>
 
                 <!-- Response content -->
@@ -566,6 +640,54 @@
                 />
                 {{ currentAgentName }}
               </span>
+              <!-- Model indicator (shown during run or after first iteration) -->
+              <span v-if="loading" class="model-indicator" :title="`Provider: ${settings.aiProvider}`">
+                <i class="pi pi-microchip" style="font-size: 0.6rem" />
+                {{ currentModelName }}
+              </span>
+              <!-- Iteration counter -->
+              <span v-if="loading && runMetrics.iteration > 1" class="iteration-badge" title="Agent loop iterations so far">
+                <i class="pi pi-sync" style="font-size: 0.6rem" />
+                {{ runMetrics.iteration }} iters
+              </span>
+              <!-- Nudge badge -->
+              <span
+                v-if="loading && runMetrics.nudgeCount > 0"
+                class="nudge-badge"
+                :class="{ 'nudge-badge--warn': runMetrics.nudgeCount >= 2 }"
+                :title="`Model has been nudged ${runMetrics.nudgeCount} times (last: ${runMetrics.lastNudgeReason})`"
+              >
+                <i class="pi pi-exclamation-triangle" style="font-size: 0.6rem" />
+                {{ runMetrics.nudgeCount }} nudge{{ runMetrics.nudgeCount > 1 ? 's' : '' }}
+              </span>
+              <!-- Validation failure badge -->
+              <span
+                v-if="loading && runMetrics.validationFailures > 0"
+                class="val-fail-badge"
+                :class="{ 'val-fail-badge--warn': runMetrics.validationFailures >= 3 }"
+                :title="`Tool argument validation failed ${runMetrics.validationFailures} times`"
+              >
+                <i class="pi pi-times-circle" style="font-size: 0.6rem" />
+                {{ runMetrics.validationFailures }} bad call{{ runMetrics.validationFailures > 1 ? 's' : '' }}
+              </span>
+              <!-- Weak model fallback badge -->
+              <span
+                v-if="loading && runMetrics.isWeakModelFallback"
+                class="weak-fallback-badge"
+                title="Weak model fallback active — tool calls blocked"
+              >
+                <i class="pi pi-ban" style="font-size: 0.6rem" />
+                Fallback
+              </span>
+              <!-- Unknown tool badge -->
+              <span
+                v-if="loading && runMetrics.unknownTools > 0"
+                class="unknown-tool-badge"
+                :title="`Model hallucinated ${runMetrics.unknownTools} non-existent tool(s)`"
+              >
+                <i class="pi pi-question-circle" style="font-size: 0.6rem" />
+                {{ runMetrics.unknownTools }} hallucination{{ runMetrics.unknownTools > 1 ? 's' : '' }}
+              </span>
               <span v-if="tokenCounterLabel" :class="tokenCounterClass">
                 <i class="pi pi-database" style="font-size: 0.6rem" />
                 {{ tokenCounterLabel }} tokens (Context-Window)
@@ -711,13 +833,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, watch, onMounted, onBeforeUnmount, computed } from "vue";
+import { ref, triggerRef, nextTick, watch, onMounted, onBeforeUnmount, computed } from "vue";
 import { useRouter } from "vue-router";
 
 import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent, ToolRejectedError } from "../composables/useAgent";
 import type { ToolDefinition } from "../composables/useAgent";
+import { useAiProvider } from "../composables/useAiProvider";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
@@ -725,8 +848,8 @@ import { tools } from "../utils/toolManager";
 import { skillTools } from "../utils/skillSearchTools";
 import { chainedTools } from "../utils/chainedTools";
 import { createSqlAiTools } from "../utils/sqlAiTools";
-import { netsuiteDocsTools, NETSUITE_DOCS_SYSTEM_PROMPT } from "../utils/netsuiteDocsTools";
-import { bundleTools, BUNDLE_TOOLS_SYSTEM_PROMPT } from "../utils/bundleTools";
+import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
+import { bundleTools } from "../utils/bundleTools";
 import { useSettings } from "../states/settingsState";
 import {
   getAllAiChats,
@@ -738,11 +861,11 @@ import {
 import {
   getEnabledAgents,
   getAgentBySlug,
-  getPassiveAgents,
+  seedPresetAgents,
   type Agent
 } from "../utils/agentsDb";
 import { getSkillContent } from "../utils/skillsDb";
-import { DIAGRAM_DOCS } from "../utils/diagramDocs";
+import { buildMainSystemPrompt } from "../utils/mainSystemPrompt";
 import { extractPdfText, revokePdfUrl, downloadDocumentAsPdf } from "../utils/pdfUtils";
 import type { MessageAttachment } from "../composables/useAgent";
 import { agentCache, cacheVersion } from "../utils/agentCacheStore";
@@ -751,12 +874,14 @@ import type { AgentTodo } from "../utils/todoTools";
 
 const { settings } = useSettings();
 const router = useRouter();
+const { chatCompletion } = useAiProvider();
 
 interface ChatMessage {
   id: number;
   role: "user" | "assistant" | "tool" | "compaction";
   content: string;
   toolName?: string;
+  toolInput?: unknown;
   isStreaming?: boolean;
   isRunning?: boolean;
   compactedCount?: number;
@@ -779,6 +904,8 @@ interface ChatMessage {
   generatedFiles?: GeneratedFile[];
   /** Reasoning/thinking content — shown in a collapsible block above the response */
   thinking?: string;
+  /** Snapshot of the agent's todo list when this message was completed */
+  todos?: AgentTodo[];
 }
 
 /** A document produced by the generate_pdf tool, held on the assistant message */
@@ -812,6 +939,7 @@ const slashSuggestions = ref<Agent[]>([]);
 const showSlashSuggestions = ref(false);
 
 const loadAgents = async () => {
+  await seedPresetAgents();
   availableAgents.value = await getEnabledAgents();
 };
 
@@ -857,6 +985,14 @@ const buildAgentSystemPrompt = async (agentConfig: Agent): Promise<string> => {
   if (limitNotes.length > 0) {
     parts.push("\n\n# Restrictions\n" + limitNotes.join("\n"));
   }
+
+  parts.push(
+    "\n\n# Execution Policy\n" +
+      "- Do not call the same tool repeatedly when it already returned usable data.\n" +
+      "- If a tool returns equivalent results twice, stop calling it and produce your analysis.\n" +
+      "- Prefer synthesis over re-querying: summarize what the existing tool outputs show.\n" +
+      "- When debugging scripts/logs, one successful logs fetch is usually enough unless you have a concrete new hypothesis."
+  );
 
   return parts.join("\n");
 };
@@ -1047,16 +1183,68 @@ const handleCompactionReject = () => {
   compactionApprovalResolve = null;
 };
 
+const SCRIPT_LOG_TASK_PATTERN = /\b(script|suitelet|restlet|userevent|scheduled|map.?reduce|deployment|logs?|execution|error)\b/i;
+
+const isScriptLogTask = (text: string): boolean => SCRIPT_LOG_TASK_PATTERN.test(text);
+
+/** Patterns that indicate a pure documentation/API-reference question — the default agent has
+ *  docs tools (netsuite_search_module_docs, search_netsuite_docs, read_netsuite_doc_page)
+ *  and should handle these directly rather than routing to a specialist agent. */
+const DOCS_QUERY_PATTERN = /\b(limit|limits|documentation|doc|api|reference|signature|method|module|member|parameter|description|what is|what are|how does|explain)\b/i;
+
+const scoreAgentForTask = (agent: Agent, task: string): number => {
+  const haystack = `${agent.name} ${agent.slug} ${agent.description} ${agent.systemPrompt}`.toLowerCase();
+  const taskText = task.toLowerCase();
+  let score = 0;
+
+  // Pure documentation questions should NEVER auto-route to an agent
+  // The default agent has netsuite_search_module_docs, search_netsuite_docs, etc.
+  // Exception: script/log debugging questions (e.g. "explain what happened with this script's logs")
+  // are operational tasks, not docs lookups, and should still be routed.
+  if (DOCS_QUERY_PATTERN.test(taskText) && !isScriptLogTask(taskText) && !/\bdoc|module|api.?reference|help|documentation\b/.test(haystack)) {
+    score -= 10;
+  }
+
+  if (isScriptLogTask(taskText)) {
+    if (/\bscript|suite.?script|debug|log|deployment|error\b/.test(haystack)) score += 5;
+    if (/\brecord|customer|lead|viewer|detail\b/.test(haystack)) score -= 2;
+  }
+  return score;
+};
+
+const pickBestPassiveAgentForTask = async (task: string): Promise<Agent | undefined> => {
+  const all = await getEnabledAgents();
+  const candidates = all.filter((a) => a.mode === "passive" || a.mode === "both");
+  if (candidates.length === 0) return undefined;
+
+  // Skip auto-routing entirely for documentation lookups — the default agent
+  // has all the doc search tools (netsuite_search_module_docs, search_netsuite_docs, etc.)
+  // and no specialist agent is better at this.
+  // Skip docs-only queries from auto-routing, but allow script/log tasks through even
+  // if they contain "explain" or similar words that match DOCS_QUERY_PATTERN.
+  if (DOCS_QUERY_PATTERN.test(task) && !isScriptLogTask(task)) return undefined;
+
+  const ranked = candidates
+    .map((a) => ({ agent: a, score: scoreAgentForTask(a, task) }))
+    .sort((a, b) => b.score - a.score);
+  const best = ranked[0];
+  return best && best.score >= 3 ? best.agent : undefined;
+};
+
 // ── Delegate-to-agent tool ──
 // This tool allows the main agent to delegate tasks to specialized agents.
 // It runs a sub-call through the agent's system prompt with filtered tools.
 const delegateToAgentTool: ToolDefinition = {
   name: "delegate_to_agent",
   description:
-    "Delegate a task to a specialized agent, or list available agents. " +
-    "Call with just agent_slug='list' to see available agents and their capabilities. " +
-    "Call with agent_slug and task to delegate work. " +
-    "The agent will handle the task with its own system prompt, tools, and skills, and return the result.",
+    "LAST RESORT — Delegate a complex task to a specialized agent. " +
+    "ONLY use this AFTER your own direct tools have failed or returned empty. " +
+    "Do NOT delegate documentation/API questions (use netsuite_search_module_docs, " +
+    "search_netsuite_docs, or read_netsuite_doc_page directly). " +
+    "Do NOT delegate routine data retrieval that you can do yourself. " +
+    "Call with agent_slug='list' to see available agents, " +
+    "or agent_slug + task to delegate work. " +
+    "The delegated agent starts with NO conversation history — include ALL context.",
   parameters: {
     type: "object",
     properties: {
@@ -1079,12 +1267,12 @@ const delegateToAgentTool: ToolDefinition = {
 
     // List mode
     if (slug === "list") {
-      const passive = await getPassiveAgents();
-      if (passive.length === 0) {
-        return { message: "No passive agents available. Agents can be created in the Agents view." };
+      const all = await getEnabledAgents();
+      if (all.length === 0) {
+        return { message: "No agents available. Agents can be created in the Agents view." };
       }
       return {
-        agents: passive.map((a) => ({
+        agents: all.map((a) => ({
           slug: a.slug,
           name: a.name,
           description: a.description,
@@ -1095,32 +1283,69 @@ const delegateToAgentTool: ToolDefinition = {
       };
     }
 
-    const agentConfig = await getAgentBySlug(slug);
+    let agentConfig = await getAgentBySlug(slug);
     if (!agentConfig) {
       return { error: `No agent found with slug "${slug}". Call with agent_slug='list' to see available agents.` };
     }
     if (!agentConfig.enabled) {
       return { error: `Agent "${agentConfig.name}" is disabled.` };
     }
-    if (agentConfig.mode === "active") {
-      return { error: `Agent "${agentConfig.name}" is set to active-only mode. It can only be invoked directly by the user via /${agentConfig.slug}.` };
-    }
 
     if (!task) {
       return { error: "A task description is required when delegating to an agent." };
     }
 
+    // Lightweight rerouting: if the chosen agent looks weak for script/log analysis,
+    // prefer a better passive-capable specialist when available.
+    if (isScriptLogTask(task)) {
+      const all = await getEnabledAgents();
+      const chosenScore = scoreAgentForTask(agentConfig, task);
+      const better = all
+        .filter((a) => a.mode === "passive" || a.mode === "both")
+        .map((a) => ({ agent: a, score: scoreAgentForTask(a, task) }))
+        .sort((a, b) => b.score - a.score)[0];
+      if (better && better.score >= chosenScore + 2) {
+        agentConfig = better.agent;
+      }
+    }
+
     const agentSystemPrompt = await buildAgentSystemPrompt(agentConfig);
+
+    subAgentFeed.value = {
+      agentName: agentConfig.name,
+      slug: agentConfig.slug,
+      color: agentConfig.color,
+      task,
+      tools: [],
+      streamingText: "",
+      done: false
+    };
+    isDelegating = true;
 
     try {
       const result = await agent.run(task, {
         systemPrompt: agentSystemPrompt,
+        isolateHistory: true,
         allowedTools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
         blockedTools: agentConfig.limits.blockedTools.length > 0
           ? agentConfig.limits.blockedTools
           : undefined,
-        blockDestructive: !agentConfig.limits.canExecuteDestructive
+        blockDestructive: !agentConfig.limits.canExecuteDestructive,
+        onTextStream(chunk) {
+          if (subAgentFeed.value) {
+            subAgentFeed.value.streamingText += chunk;
+          }
+        },
+        onIterationStart() {
+          if (subAgentFeed.value) {
+            subAgentFeed.value.streamingText = "";
+          }
+        }
       });
+      if (subAgentFeed.value) {
+        subAgentFeed.value.streamingText = result;
+        subAgentFeed.value.done = true;
+      }
       return {
         agent: agentConfig.name,
         response: result
@@ -1130,13 +1355,14 @@ const delegateToAgentTool: ToolDefinition = {
         agent: agentConfig.name,
         error: `Agent failed: ${String(err)}`
       };
+    } finally {
+      isDelegating = false;
     }
   }
 };
 
-// Agent task todos — created by agent_todo_write, displayed in the chat
+// Agent task todos — created by agent_todo_write, displayed inline in the assistant message
 const agentTodos = ref<AgentTodo[]>([]);
-const todosPanelCollapsed = ref(false);
 
 // ── Cache Panel ──────────────────────────────────────────────────────────
 const showCachePanel = ref(false);
@@ -1209,193 +1435,29 @@ const todoTools = createTodoTools(
   () => agentTodos.value
 );
 
+const mainSystemPrompt = computed(() => {
+  if (availableAgents.value.length === 0) return buildMainSystemPrompt();
+
+  const agentList = availableAgents.value
+    .map((a) => `- **${a.name}** (slug: \`${a.slug}\`): ${a.description}`)
+    .join("\n");
+
+  const hasDebugExpert = availableAgents.value.some(
+    (a) => a.slug === "debug-expert" && (a.mode === "passive" || a.mode === "both")
+  );
+
+  const debugLine = hasDebugExpert
+    ? "\n\n**Script debugging** — When asked to diagnose why a script failed or explain what happened with its logs, delegate to `debug-expert` as your FIRST action. Do not attempt manual log analysis with `netsuite_get_scripts` + `netsuite_get_logs` directly for this type of question."
+    : "";
+
+  return buildMainSystemPrompt(
+    `## Agent Delegation\n\n**Available agents:**\n${agentList}${debugLine}\n\nFor all other tasks: call \`delegate_to_agent\` ONLY after your direct tools have failed. Always exhaust \`sql_execute_query\`, \`netsuite_get_scripts\`, and other data tools first.`
+  );
+});
+
 const agent = useAgent({
-  systemPrompt: `You are a helpful NetSuite assistant that provides well-structured, expressive responses.
-
-## Tool Usage — ALWAYS prefer tools
-You have tools available. **Always use the appropriate tool** when one exists for the task — even for simple tasks. Do NOT answer from memory when a tool can provide a verified result.
-
-**DO NOT narrate, plan, or explain what you are about to do before calling a tool.**
-Call the tool immediately as your very first action. Write text ONLY after you have received tool results.
-Never write phrases like "I'll start by...", "First I need to...", "Let me search for...", "I'm going to call..." — just call the tool.
-
-Examples:
-- Math questions → call \`calculate\`
-- Need current time → call \`get_current_time\`
-- Need to fetch a **public** URL (docs, articles) → call \`fetch_url\` — **NEVER for NetSuite URLs**
-- Need to read a file from NetSuite File Cabinet → ALWAYS use \`netsuite_get_file_content\` — NEVER use \`fetch_url\` for this (NetSuite requires an authenticated session that only the netsuite_* tools have)
-- Need to find scripts or files in NetSuite → call the appropriate \`netsuite_*\` tool
-- **Need to find, fetch, or query records/data → use \`sql_execute_query\` with SuiteQL — always**
-- Need to write code → first call \`search_skills\`, then \`load_skill\`, then \`netsuite_search_module_docs\`
-- Need to OPEN a Suitelet → use \`netsuite_open_deployment_suitelet\` (opens in new tab)
-- Just need Suitelet URL to copy → use \`netsuite_get_suitelet_url\`
-
-**Efficiency rules** (for multi-tool chains only):
-- Never repeat a tool call if you already have its result in the conversation.
-- When chaining tools, extract IDs from previous results — don't re-query.
-- If you need to filter data, do it from results you already received.
-
-## Fetching / Searching Records — SuiteQL First
-When a user asks you to find, fetch, retrieve, or search for any record (standard or custom):
-1. **Always use SuiteQL** via \`sql_execute_query\` — never navigate to list views or ask the user for field IDs.
-2. If you don't know the field IDs, call \`sql_get_table_fields\` to discover them first.
-3. If you don't know the table name, call \`sql_search_tables\` to find it.
-4. For status/type/category fields, call \`sql_discover_field_values\` to find the correct coded values before filtering.
-5. **Never ask the user for field IDs or table names** — discover them yourself with the SQL tools.
-
-Custom record tables use the format \`customrecord_<scriptid_lowercase>\`.
-
-## Skills Library
-You have access to a local skill library with specialized knowledge, code patterns, and documentation. Skill rules **override your default knowledge** when applicable.
-
-**Before writing ANY code, call \`search_skills\` first — no exceptions.**
-This includes: writing scripts, creating suitelets, generating examples, modifying code, debugging, scaffolding, or producing any code snippet.
-
-When \`search_skills\` is NOT needed:
-- Retrieving or displaying existing scripts/files/records from the environment
-- Answering questions that require no code output
-
-**Code-writing workflow:**
-1. Call \`search_skills\` with keywords for the code you're about to write.
-2. Call \`load_skill\` for every relevant skill returned.
-3. Call \`netsuite_search_module_docs\` for every N/* module you plan to use.
-4. Call \`netsuite_get_module_member_details\` for any method/object whose exact signature you need.
-5. Apply loaded skill rules (they override your defaults).
-6. Generate code only AFTER steps 1–5.
-
-## SuiteScript Module Documentation
-You have access to the local SuiteScript 2.x module documentation via:
-- \`netsuite_search_module_docs\` — search methods, objects, properties, and enums across all N/* modules
-- \`netsuite_get_module_member_details\` — get full parameter list, return type, syntax, and errors for a specific member
-
-**Always look up the correct API signature before using any N/* module member in code.** Do NOT rely on your training knowledge for method signatures — the docs tool is authoritative.
-
-## Context Compaction
-If you see a "[Context Summary]" system message, treat it as authoritative prior context. Do NOT ask the user to repeat compacted information.
-
-## Response Formatting
-Format responses using standard markdown:
-- **Bold** and *italic* for emphasis
-- Headings (##, ###) to organize sections
-- Bullet/numbered lists for grouped items
-- \`inline code\` for identifiers, field names, script IDs
-- Fenced code blocks with language tags
-- Tables for structured data
-- Blockquotes for callouts
-
-Keep responses concise and well-structured.
-
-## Diff View — Code Changes
-When you are **modifying, refactoring, or showing an updated version of existing code**, use the \`diff-view\` fence to show a side-by-side diff instead of a plain code block:
-
-\`\`\`diff-view
----ORIGINAL---
-// the original code here
----MODIFIED---
-// the updated code here
-\`\`\`
-
-Use this ONLY when you have both the original and the modified version. For new code (no original exists), use a regular code block.
-
-## File Upload — Folder ID Rules
-When the user mentions a folder ID in their message (e.g. "folder 2543", "put it in 2543", "upload to folder 123"), you **MUST** pass that exact numeric ID as the \`folderId\` parameter when calling \`netsuite_upload_file\` or as \`parentFolderId\` when calling \`netsuite_create_folder\`. **Never ignore or omit a user-specified folder ID.** The default folder (-15) should ONLY be used when the user has NOT mentioned any folder.
-
-## Clarifying Questions
-When you need the user to choose between options before you can proceed (e.g. ambiguous intent, multiple valid approaches), use the \`question\` fence instead of asking in plain text:
-
-\`\`\`question
-What type of script do you want to create?
----
-UserEventScript
-Suitelet
-RESTlet
-MapReduceScript
-\`\`\`
-
-Rules:
-- The question text goes **before** the \`---\` separator.
-- Each answer option goes on its own line **after** the separator.
-- Provide 2–6 meaningful options. The UI automatically adds a "Type your own answer" field.
-- **Always use this format** when asking the user any question — never ask in plain prose.
-  This includes when you need to clarify requirements, gather preferences, or the user explicitly asks you to ask them questions.
-- For multiple questions at once, emit multiple consecutive \`question\` fences — one per question.
-- After the user selects or types an answer, continue the task using their response.
-
-${NETSUITE_DOCS_SYSTEM_PROMPT}
-
-${BUNDLE_TOOLS_SYSTEM_PROMPT}
-
-## Chained Tools — Pipeline Priority
-When a chained tool is available (e.g. \`generate_script_deployment\`), **always prefer it** over manually calling individual tools for the same task. Chained tools handle the full pipeline (folder creation, code generation, file upload) in a single call with guaranteed data flow between steps. Only fall back to individual tools if the chained tool is not available or if the user explicitly asks you to do things step by step.
-
-## Agent Delegation
-You may have specialized agents available via the \`delegate_to_agent\` tool. When a task clearly falls within a specialized agent's domain, delegate to it by calling the tool with the agent's slug and the task description. The agent will handle the task with its own specialized tools and skills, and return the result. Only delegate when the agent's specialization is a strong match — otherwise handle the task yourself.
-
-## Entity Types
-Each entity type has its own table and its own ID namespace. A Lead ID and a File ID are different things even if the number is the same.
-| Entity Type | Table | ID Field |
-|-------------|-------|----------|
-| Lead | lead | id |
-| File | file | id |
-| Customer | customer | id |
-| Transaction | transaction | id |
-
-When asked for data related to an entity (e.g. "files for lead 181"):
-1. Query the entity's table by its ID
-2. Use sql_get_table_joins to find how it relates to the target table
-3. Write a JOIN to get the related data
-
-Do NOT search filenames by a bare number or pass one entity's ID to another entity's tool.
-
-## Task Management — Todos
-For any request that involves 2 or more distinct steps, call \`agent_todo_write\` as your FIRST action to create a task list. **Break the work into concrete, specific steps** — not vague categories. Each todo should be one actionable unit of work (e.g. "Fetch script source for ID 1324" not "Get scripts").
-
-- Set the current task to \`in_progress\`, all others to \`pending\`.
-- Call \`agent_todo_write\` again each time a task is completed or a new one starts.
-- Only one task may be \`in_progress\` at a time.
-- Before sending your final response, call \`agent_todo_read\` to confirm all todos are \`done\`. If any are not, continue working.
-
-## Content Cache
-The cache prevents large content from bloating your context window. Read tools auto-cache content and return only metadata.
-
-Tools:
-- \`cache_store(key, content, description?)\` — manually store content under a key.
-- \`cache_display(key)\` — mark content as displayed in history (LLM reference). After calling this, you MUST also write \`[VIEW:{key}]\` verbatim in your text (e.g. "Here is the file: [VIEW:file_21301]"). The UI replaces that token with the rendered content. Never reproduce the content in your text.
-- \`cache_retrieve(key)\` — bring cached content into your context for analysis. Use only when you need to inspect, debug, or modify.
-- \`cache_list()\` — list all cached entries.
-- \`cache_delete(key)\` — remove an entry.
-- \`cache_upload_file(cacheKey, fileName, folderId)\` — write cached bytes directly to the NetSuite File Cabinet.
-
-**Read tools auto-cache.** \`netsuite_get_file_content\` and \`netsuite_get_script_files\` automatically store content in the cache and return only metadata (cacheKey, size, type). You never see the full content unless you explicitly call \`cache_retrieve\`.
-
-**Viewing content (user wants to see a file/script):**
-1. Call the read tool → get metadata + cacheKey back.
-2. Call \`cache_display(cacheKey)\` — records the display in history.
-3. In your text response write: "Here is the file: [VIEW:{cacheKey}]" — the UI replaces \`[VIEW:{cacheKey}]\` with the rendered content.
-
-**Analyzing content (user wants you to inspect, debug, or modify):**
-1. Call the read tool → get metadata + cacheKey.
-2. Call \`cache_retrieve(cacheKey)\` → content enters your context.
-3. Now analyze it. Keep your analysis to what was asked.
-
-**If cache_retrieve returns "not found"** (user may have cleared the cache):
-- The content reference is still in the conversation history via its \`[VIEW:{key}]\` marker or cache_display call.
-- Re-fetch the original content: for \`file_{id}\` keys call \`netsuite_get_file_content({ fileId: {id} })\`; for \`script_{id}\` keys call \`netsuite_get_script_files([{id}])\`.
-
-**Upload workflow (content must not change):**
-1. Read tool → cacheKey.
-2. \`cache_retrieve\` — verify it is what you expect, point out any issues you notice to the user.
-3. \`cache_upload_file\` — bytes written to NetSuite verbatim.
-
-**Upload workflow (targeted modification requested):**
-1. Read tool → cacheKey.
-2. \`cache_retrieve\` — content in context.
-3. Apply only the requested change. Do not rewrite surrounding code.
-4. \`cache_store\` with the modified content.
-5. \`cache_retrieve\` again — confirm only the intended change is present.
-6. \`cache_upload_file\`.
-
-${DIAGRAM_DOCS}`,
+  chatCompletion,
+  systemPrompt: mainSystemPrompt.value,
   tools: [...tools, ...skillTools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools, ...todoTools, delegateToAgentTool],
   chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
@@ -1423,23 +1485,48 @@ ${DIAGRAM_DOCS}`,
     activeTools.value.push(name);
   },
   onToolStart(name, input) {
-    inProgressTools.value.push({
-      name,
-      input,
-      status: "running",
-      timestamp: Date.now(),
-      // Attach chain context if a chain step is currently executing
-      chainContext: activeChainContext.value ? { ...activeChainContext.value } : undefined
-    });
+    // Store input keyed by toolName for later attachment to ChatMessage
+    toolInputByKey.set(name + "::" + Date.now(), input);
+    // Also store by just name (latest call wins) for simple lookup
+    toolInputByKey.set(name, input);
+
+    if (isDelegating && subAgentFeed.value) {
+      // Route sub-agent tool calls to the feed panel
+      subAgentFeed.value.tools.push({
+        name,
+        input,
+        status: "running",
+        timestamp: Date.now()
+      });
+    } else {
+      inProgressTools.value.push({
+        name,
+        input,
+        status: "running",
+        timestamp: Date.now(),
+        chainContext: activeChainContext.value ? { ...activeChainContext.value } : undefined
+      });
+    }
     scrollToBottom();
   },
   onToolResult(name, result) {
+    if (isDelegating && subAgentFeed.value) {
+      // Mark the sub-agent tool as done
+      const entry = [...subAgentFeed.value.tools].reverse().find(t => t.name === name && t.status === "running");
+      if (entry) {
+        entry.status = "done";
+        entry.result = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+      }
+      return;
+    }
+
     activeTools.value = activeTools.value.filter((t) => t !== name);
-    // Remove matching entry — find last match to handle unlikely duplicate names
-    const toolIndex = [...inProgressTools.value].reverse()
-      .findIndex((t) => t.name === name);
-    if (toolIndex !== -1) {
-      inProgressTools.value.splice(inProgressTools.value.length - 1 - toolIndex, 1);
+    // Mark matching entry as done (keep it in the list for persistent display)
+    const entry = [...inProgressTools.value].reverse()
+      .find((t) => t.name === name && t.status === "running");
+    if (entry) {
+      entry.status = "done";
+      entry.result = typeof result === "string" ? result : JSON.stringify(result, null, 2);
     }
     // Clear active chain context once the step finishes
     if (activeChainContext.value) {
@@ -1523,9 +1610,22 @@ ${DIAGRAM_DOCS}`,
   }
 });
 
-const { loading } = agent;
+const { loading, runMetrics } = agent;
 const contextTokens = agent.contextTokens;
 let abortController: AbortController | null = null;
+
+/** Human-readable model name from current settings */
+const currentModelName = computed(() => {
+  const s = settings;
+  if (!s.aiProvider) return "No provider";
+  switch (s.aiProvider) {
+    case "ollama": return s.ollamaModel || "llama3.2";
+    case "copilot": return s.copilotModel || "gpt-4o";
+    case "openrouter": return s.openrouterModel || "openrouter/free";
+    case "opencode": return s.opencodeModel || "opencode";
+    default: return s.aiProvider;
+  }
+});
 
 /** Estimate tokens from UI messages (used as fallback when agent history is empty, e.g. after chat load) */
 const estimateUiTokens = (): number => {
@@ -1561,6 +1661,21 @@ const tokenCounterClass = computed(() => {
 });
 
 const messages = ref<ChatMessage[]>([]);
+
+// ── Throttled reactivity trigger for streaming updates ──────────────
+// Mutating msg.content inside a ref array doesn't trigger Vue re-render.
+// We call this after each chunk; it batches triggers via requestAnimationFrame.
+let streamTriggerScheduled = false;
+const triggerMessagesUpdate = () => {
+  if (!streamTriggerScheduled) {
+    streamTriggerScheduled = true;
+    requestAnimationFrame(() => {
+      streamTriggerScheduled = false;
+      triggerRef(messages);
+    });
+  }
+};
+
 const prompt = ref("");
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 const inputRef = ref<HTMLDivElement | null>(null);
@@ -1589,12 +1704,147 @@ interface InProgressTool {
 
 const inProgressTools = ref<InProgressTool[]>([]);
 const currentAssistantMsgId = ref<number>(0);
+/** Set of tool indices that are expanded to show full input/output */
+const expandedToolIndices = ref<Set<number>>(new Set());
+
+// ── Sub-agent live feed ───────────────────────────────────────────────────
+/** Set to true while delegate_to_agent.execute is running a nested agent.run(). */
+let isDelegating = false;
+
+interface SubAgentFeed {
+  agentName: string;
+  slug: string;
+  color: string;
+  task: string;
+  tools: InProgressTool[];
+  streamingText: string;
+  done: boolean;
+}
+const subAgentFeed = ref<SubAgentFeed | null>(null);
+
+// ── Elapsed-time ticker ───────────────────────────────────────────────────
+const tickNow = ref(Date.now());
+let tickInterval: ReturnType<typeof setInterval> | null = null;
+
+watch(
+  () => inProgressTools.value.filter(t => t.status === "running").length + (subAgentFeed.value?.tools.filter(t => t.status === "running").length ?? 0),
+  (count) => {
+    if (count > 0 && !tickInterval) {
+      tickInterval = setInterval(() => { tickNow.value = Date.now(); }, 1000);
+    } else if (count === 0 && tickInterval) {
+      clearInterval(tickInterval);
+      tickInterval = null;
+    }
+  }
+);
+
+const getElapsed = (timestamp: number): string => {
+  const secs = Math.floor((tickNow.value - timestamp) / 1000);
+  if (secs < 60) return `${secs}s`;
+  return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+};
+
+// ── Tool label helpers ────────────────────────────────────────────────────
+const TOOL_LABELS: Record<string, string> = {
+  sql_execute_query:            "Running SQL query",
+  sql_get_table_fields:         "Inspecting table fields",
+  sql_search_tables:            "Searching tables",
+  sql_discover_field_values:    "Sampling field values",
+  sql_get_table_joins:          "Finding table joins",
+  netsuite_get_file_content:    "Reading file",
+  netsuite_get_script_files:    "Reading scripts",
+  netsuite_search_scripts:      "Searching scripts",
+  netsuite_search_files:        "Searching files",
+  netsuite_upload_file:         "Uploading file",
+  netsuite_create_folder:       "Creating folder",
+  netsuite_run_script_server_side: "Running script",
+  netsuite_open_deployment_suitelet: "Opening Suitelet",
+  netsuite_get_suitelet_url:    "Getting Suitelet URL",
+  netsuite_search_module_docs:  "Looking up module docs",
+  netsuite_get_module_member_details: "Getting API details",
+  cache_retrieve:               "Reading from cache",
+  cache_display:                "Displaying cached content",
+  cache_store:                  "Storing to cache",
+  cache_upload_file:            "Uploading from cache",
+  cache_list:                   "Listing cache",
+  cache_delete:                 "Deleting from cache",
+  search_skills:                "Searching skill library",
+  load_skill:                   "Loading skill",
+  agent_todo_write:             "Updating task list",
+  agent_todo_read:              "Reading task list",
+  delegate_to_agent:            "Delegating to agent",
+  calculate:                    "Calculating",
+  fetch_url:                    "Fetching URL",
+  get_current_time:             "Getting time",
+  generate_script_deployment:   "Generating deployment",
+  generate_pdf:                 "Generating PDF",
+  question:                     "Asking question",
+};
+
+const getToolLabel = (name: string): string => {
+  if (TOOL_LABELS[name]) return TOOL_LABELS[name];
+  // fallback: convert snake_case to Title Case words
+  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const getToolInputSummary = (name: string, input: unknown): string => {
+  if (!input || typeof input !== "object") return "";
+  const i = input as Record<string, unknown>;
+  const truncStr = (s: unknown, max = 60): string =>
+    String(s ?? "").slice(0, max) + (String(s ?? "").length > max ? "…" : "");
+
+  switch (name) {
+    case "sql_execute_query":      return truncStr(i.sql ?? i.query, 70);
+    case "sql_get_table_fields":   return String(i.tableName ?? "");
+    case "sql_get_table_joins":    return String(i.tableName ?? "");
+    case "sql_discover_field_values": return `${i.tableName}.${i.fieldId}`;
+    case "netsuite_get_file_content": return `File #${i.fileId}`;
+    case "netsuite_get_script_files": {
+      const ids = Array.isArray(i.scriptIds) ? i.scriptIds : [];
+      return ids.length ? `Scripts #[${ids.slice(0, 3).join(", ")}${ids.length > 3 ? "…" : ""}]` : "";
+    }
+    case "netsuite_search_scripts": return truncStr(i.searchTerm ?? i.query);
+    case "netsuite_search_files":   return truncStr(i.searchTerm ?? i.query);
+    case "netsuite_upload_file":    return String(i.fileName ?? i.name ?? "");
+    case "netsuite_search_module_docs": return truncStr(i.query);
+    case "netsuite_get_module_member_details": return String(i.memberName ?? "");
+    case "cache_retrieve":          return String(i.key ?? "");
+    case "cache_store":             return String(i.key ?? "");
+    case "cache_display":           return String(i.key ?? "");
+    case "cache_upload_file":       return String(i.fileName ?? i.cacheKey ?? "");
+    case "fetch_url": {
+      try { return new URL(String(i.url ?? "")).hostname; } catch { return truncStr(i.url); }
+    }
+    case "delegate_to_agent":       return String(i.agent_slug ?? "");
+    case "load_skill":              return String(i.skillId ?? i.name ?? "");
+    case "search_skills":           return truncStr(i.query);
+    default: return "";
+  }
+};
+
+/** Toggle expansion of a tool row by its index in inProgressTools */
+const toggleToolExpand = (index: number) => {
+  const s = new Set(expandedToolIndices.value);
+  if (s.has(index)) s.delete(index);
+  else s.add(index);
+  expandedToolIndices.value = s;
+};
+
+/** Format tool input for display in expanded view */
+const formatToolInput = (input: unknown): string => {
+  if (!input) return "";
+  if (typeof input === "string") return input;
+  return JSON.stringify(input, null, 2);
+};
+
+/** Truncate tool result for the collapsed summary */
+const truncateResult = (text: string | undefined, max = 120): string => {
+  if (!text) return "";
+  if (text.length <= max) return text;
+  return text.slice(0, max) + "…";
+};
 
 
-/**
- * Tracks the active chain execution so onToolStart can attach chain context
- * to the InProgressTool entry for the current step.
- */
 const activeChainContext = ref<{
   chainName: string;
   stepIndex: number;
@@ -2422,6 +2672,9 @@ const getToolMessagesForAssistant = (assistantId: number) => {
 //       same tool returning the same result.
 const syncedToolCallIds = ref<Set<string>>(new Set());
 
+/** Map tool call key → input args (populated by onToolStart, read when creating ChatMessages) */
+const toolInputByKey = new Map<string, unknown>();
+
 // Watch for new tool messages and link them to the last assistant message
 watch(
   agent.history,
@@ -2451,6 +2704,7 @@ watch(
         role: "tool",
         content: tm.content,
         toolName: tm.toolName,
+        toolInput: tm.toolName ? toolInputByKey.get(tm.toolName) : undefined,
         // Tag with chain context if this tool was part of a chain step
         chainContext: tm.chainContext ?? (tm.toolName
           ? chainContextByToolKey.value.get(tm.toolName)
@@ -2561,14 +2815,21 @@ const sendMessage = async (overrideText?: string) => {
     }
   }
 
+  // Auto-route to a passive specialist when the prompt strongly implies one
+  // and the user did not explicitly choose /agent for this message.
+  if (!agentConfig && actualPrompt.trim()) {
+    const autoAgent = await pickBestPassiveAgentForTask(actualPrompt);
+    if (autoAgent) {
+      agentConfig = autoAgent;
+      activeAgentSlug.value = autoAgent.slug;
+    }
+  }
+
   const userMsg: ChatMessage = {
     id: Date.now() + Math.random(),
     role: "user",
     content: actualPrompt,
-    attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
-    agentContext: agentConfig
-      ? { name: agentConfig.name, slug: agentConfig.slug, color: agentConfig.color }
-      : undefined
+    attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
   };
   messages.value.push(userMsg);
   await scrollToBottom();
@@ -2585,6 +2846,7 @@ const sendMessage = async (overrideText?: string) => {
   messages.value.push(assistantMsg);
   currentAssistantMsgId.value = assistantMsg.id;
   inProgressTools.value = [];
+  expandedToolIndices.value = new Set();
   await scrollToBottom();
 
   try {
@@ -2603,14 +2865,53 @@ const sendMessage = async (overrideText?: string) => {
           ? agentConfig.limits.blockedTools
           : undefined,
         blockDestructive: !agentConfig.limits.canExecuteDestructive,
-        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+        onIterationStart() {
+          const msg = messages.value.find(m => m.id === currentAssistantMsgId.value);
+          if (msg) {
+            msg.content = "";
+            triggerMessagesUpdate();
+          }
+        },
+        onTextStream(chunk) {
+          const msg = messages.value.find(m => m.id === currentAssistantMsgId.value);
+          if (msg) {
+            msg.content = (msg.content || "") + chunk;
+            triggerMessagesUpdate();
+          }
+        }
       });
     } else {
       // ── Normal run (with passive agent awareness) ──
+      subAgentFeed.value = null;
+
       finalText = await agent.run(actualPrompt, {
+  systemPrompt: mainSystemPrompt.value,
         signal: abortController.signal,
-        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
+        onIterationStart() {
+          const msg = messages.value.find(m => m.id === currentAssistantMsgId.value);
+          if (msg) {
+            msg.content = "";
+            triggerMessagesUpdate();
+          }
+        },
+        onTextStream(chunk) {
+          const msg = messages.value.find(m => m.id === currentAssistantMsgId.value);
+          if (msg) {
+            msg.content = (msg.content || "") + chunk;
+            triggerMessagesUpdate();
+          }
+        }
       });
+    }
+
+    // If the main agent returned empty text but a sub-agent produced a result
+    // (via delegate_to_agent), surface the sub-agent's response directly.
+    // This handles the case where the LLM omits its own synthesis after delegation.
+    const subAgentText = subAgentFeed.value?.streamingText?.trim() ?? "";
+    if (typeof finalText === "string" && !finalText.trim() && subAgentText) {
+      finalText = subAgentText;
     }
 
     assistantMsg.content =
@@ -2619,6 +2920,11 @@ const sendMessage = async (overrideText?: string) => {
         : JSON.stringify(finalText, null, 2);
 
     assistantMsg.isStreaming = false;
+    // Snapshot todos into this message so they persist inline, then clear the live panel
+    if (agentTodos.value.length > 0) {
+      assistantMsg.todos = [...agentTodos.value];
+      agentTodos.value = [];
+    }
     messages.value = [...messages.value];
 
     inProgressTools.value = [];
@@ -2640,6 +2946,11 @@ const sendMessage = async (overrideText?: string) => {
       console.error(e);
     }
     assistantMsg.isStreaming = false;
+    // Snapshot any partial todos into the message on error/abort
+    if (agentTodos.value.length > 0) {
+      assistantMsg.todos = [...agentTodos.value];
+      agentTodos.value = [];
+    }
     messages.value = [...messages.value];
 
     inProgressTools.value = [];
@@ -2751,90 +3062,43 @@ const handleQuestionAnswer = (answer: string) => {
   scroll-behavior: smooth;
 }
 
-/* ── Agent Todos Panel ── */
-.agent-todos-panel {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: var(--p-surface-0, #fff);
-  border: 1px solid var(--p-indigo-200, #c7d2fe);
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  overflow: hidden;
-  box-shadow: 0 1px 4px rgba(99, 102, 241, 0.08);
-}
-
-.agent-todos-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.55rem 0.75rem;
-  cursor: pointer;
-  user-select: none;
-  background: var(--p-indigo-50, #eef2ff);
-  transition: background 0.15s;
-}
-
-.agent-todos-header:hover {
-  background: var(--p-indigo-100, #e0e7ff);
-}
-
-.agent-todos-icon {
-  color: var(--p-indigo-500, #6366f1);
-  font-size: 0.9rem;
-}
-
-.agent-todos-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--p-indigo-700, #4338ca);
-  flex: 1;
-}
-
-.agent-todos-progress {
-  font-size: 0.75rem;
-  color: var(--p-indigo-500, #6366f1);
-  font-weight: 500;
-}
-
-.agent-todos-chevron {
-  font-size: 0.7rem;
-  color: var(--p-indigo-400, #818cf8);
-}
-
-.agent-todos-list {
-  padding: 0.4rem 0.6rem;
+/* ── Agent Todos (inline in assistant message) ── */
+.msg-todos {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
+  margin-bottom: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--p-indigo-50, #eef2ff);
+  border-left: 3px solid var(--p-indigo-300, #a5b4fc);
+  border-radius: 0 6px 6px 0;
 }
 
-.todo-item {
+.msg-todo-item {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.3rem 0.25rem;
-  border-radius: 4px;
-  font-size: 0.8rem;
+  gap: 0.4rem;
+  font-size: 0.78rem;
   line-height: 1.4;
+  padding: 0.1rem 0;
 }
 
-.todo-icon {
+.msg-todo-icon {
   margin-top: 0.1rem;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   flex-shrink: 0;
 }
 
-.todo-pending .todo-icon { color: var(--p-slate-400, #94a3b8); }
-.todo-in_progress .todo-icon { color: var(--p-indigo-500, #6366f1); }
-.todo-done .todo-icon { color: var(--p-green-500, #22c55e); }
+.msg-todo-pending .msg-todo-icon { color: var(--p-slate-400, #94a3b8); }
+.msg-todo-in_progress .msg-todo-icon { color: var(--p-indigo-500, #6366f1); }
+.msg-todo-done .msg-todo-icon { color: var(--p-green-500, #22c55e); }
 
-.todo-content { color: var(--p-slate-700, #334155); }
-.todo-done .todo-content {
+.msg-todo-content { color: var(--p-slate-700, #334155); }
+.msg-todo-done .msg-todo-content {
   text-decoration: line-through;
   color: var(--p-slate-400, #94a3b8);
 }
-.todo-in_progress .todo-content {
+.msg-todo-in_progress .msg-todo-content {
   font-weight: 500;
   color: var(--p-indigo-700, #4338ca);
 }
@@ -2978,8 +3242,157 @@ const handleQuestionAnswer = (answer: string) => {
 }
 
 /* ── Tool Group ── */
-.tool-group {
+.tool-panel {
   margin-bottom: 0.5rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+}
+
+.tool-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: var(--p-slate-50);
+  border-bottom: 1px solid var(--p-slate-200);
+  user-select: none;
+}
+
+.tool-panel-icon {
+  font-size: 0.7rem;
+  color: var(--p-blue-500);
+}
+
+.tool-panel-icon-done {
+  color: var(--p-green-500);
+}
+
+.tool-panel-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--p-slate-600);
+}
+
+.tool-panel-count {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  margin-left: auto;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.tool-panel-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* ── Individual tool row ── */
+.tool-row {
+  border-bottom: 1px solid var(--p-slate-100);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.tool-row:last-child {
+  border-bottom: none;
+}
+
+.tool-row:hover {
+  background: var(--p-slate-50);
+}
+
+.tool-row.expanded {
+  background: var(--p-slate-50);
+}
+
+.tool-row-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  min-height: 32px;
+}
+
+.tool-done-icon {
+  font-size: 0.7rem;
+  color: var(--p-green-500);
+  flex-shrink: 0;
+}
+
+.tool-row-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--p-slate-700);
+  white-space: nowrap;
+}
+
+.tool-row-summary {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-row-right {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tool-row-chevron {
+  font-size: 0.55rem;
+  color: var(--p-slate-400);
+  transition: transform 0.2s ease;
+}
+
+/* ── Expanded tool detail ── */
+.tool-row-expanded {
+  padding: 0 0.65rem 0.5rem;
+  border-top: 1px solid var(--p-slate-100);
+  cursor: default;
+}
+
+.tool-expand-section {
+  margin-top: 0.35rem;
+}
+
+.tool-expand-label {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 600;
+  color: var(--p-slate-500);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.tool-expand-code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.65rem;
+  color: var(--p-slate-600);
+  background: var(--p-slate-100);
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.35rem;
+  padding: 0.4rem 0.5rem;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.tool-expand-waiting {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  font-style: italic;
+  margin-top: 0.3rem;
 }
 
 /* ── Skill Group ── */
@@ -3166,18 +3579,6 @@ const handleQuestionAnswer = (answer: string) => {
 }
 
 /* Running tool indicator */
-.tool-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.3rem 0;
-  font-size: 0.75rem;
-}
-
-.tool-item-running {
-  color: var(--p-slate-500);
-}
-
 /* Chain step running indicator */
 .chain-step-running {
   display: flex;
@@ -3366,14 +3767,6 @@ const handleQuestionAnswer = (answer: string) => {
   text-overflow: ellipsis;
 }
 
-.tool-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-}
-
 .tool-spinner {
   width: 12px;
   height: 12px;
@@ -3381,6 +3774,7 @@ const handleQuestionAnswer = (answer: string) => {
   border-top-color: var(--p-blue-500);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
 }
 
 @keyframes spin {
@@ -3389,93 +3783,120 @@ const handleQuestionAnswer = (answer: string) => {
   }
 }
 
-.tool-label {
+.tool-elapsed {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+  white-space: nowrap;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.7rem;
-  color: var(--p-slate-500);
 }
 
-/* Completed tool details */
-.tool-details {
-  border: 1px solid var(--p-slate-200);
-  border-radius: 0.5rem;
-  overflow: hidden;
-  font-size: 0.75rem;
+/* Sub-agent live feed panel */
+.sub-agent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 2px solid var(--p-violet-400, #a78bfa);
+  border-radius: 0 0.4rem 0.4rem 0;
+  background: var(--p-violet-50, #f5f3ff);
+  margin-bottom: 0.25rem;
 }
 
-.tool-summary {
+.sub-agent-panel-header {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.4rem 0.65rem;
-  background: var(--p-slate-50);
-  cursor: pointer;
-  color: var(--p-slate-600);
-  font-size: 0.75rem;
-  font-weight: 500;
-  list-style: none;
-  user-select: none;
-  transition: background 0.15s ease;
+  flex-wrap: wrap;
 }
 
-.tool-summary::-webkit-details-marker {
-  display: none;
+.sub-agent-spinner {
+  border-top-color: var(--p-violet-500, #8b5cf6);
 }
 
-.tool-summary:hover {
-  background: var(--p-slate-100);
+.sub-agent-chip {
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
 }
 
-.tool-check-icon {
-  font-size: 0.7rem;
-  color: var(--p-green-600);
+.sub-agent-task {
+  font-size: 0.68rem;
+  color: var(--p-slate-500);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tool-chevron {
-  font-size: 0.55rem;
-  margin-left: auto;
-  color: var(--p-slate-400);
-  transition: transform 0.2s ease;
-}
-
-.tool-details[open] .tool-chevron {
-  transform: rotate(180deg);
-}
-
-.tool-results-list {
-  border-top: 1px solid var(--p-slate-200);
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.tool-result-row {
+.sub-agent-tools {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
-  padding: 0.4rem 0.65rem;
-  border-bottom: 1px solid var(--p-slate-100);
+  padding-left: 0.5rem;
 }
 
-.tool-result-row:last-child {
-  border-bottom: none;
+.sub-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.68rem;
 }
 
-/* ── (cache-display-block CSS removed — replaced by [VIEW:key] placeholder approach) ── */
+.sub-tool-row.done {
+  opacity: 0.6;
+}
 
-.tool-result-name {
+.sub-tool-spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--p-slate-300);
+  border-top-color: var(--p-violet-500, #8b5cf6);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.sub-tool-done {
+  font-size: 0.6rem;
+  color: var(--p-green-500);
+  flex-shrink: 0;
+}
+
+.sub-tool-label {
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.675rem;
-  font-weight: 600;
+  font-size: 0.67rem;
   color: var(--p-slate-600);
 }
 
-.tool-result-content {
-  font-size: 0.675rem;
+.sub-tool-summary {
+  font-size: 0.64rem;
   color: var(--p-slate-400);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 200px;
 }
+
+.sub-tool-elapsed {
+  font-size: 0.62rem;
+  color: var(--p-slate-400);
+  margin-left: auto;
+}
+
+.sub-agent-streaming {
+  font-size: 0.72rem;
+  color: var(--p-slate-600);
+  padding-top: 0.2rem;
+  border-top: 1px solid var(--p-violet-100, #ede9fe);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* ── (cache-display-block CSS removed — replaced by [VIEW:key] placeholder approach) ── */
 
 /* ── Thinking Indicator ── */
 .thinking-indicator {
@@ -4574,5 +4995,140 @@ const handleQuestionAnswer = (answer: string) => {
   align-items: center;
   justify-content: center;
   line-height: 1;
+}
+
+/* ── Toolbar Badges ── */
+.model-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  color: var(--p-slate-400);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-slate-50);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.iteration-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--p-blue-600);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-blue-50);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.nudge-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--p-amber-700);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-amber-50);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.nudge-badge--warn {
+  color: var(--p-orange-700);
+  background: var(--p-orange-50);
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.val-fail-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--p-red-600);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-red-50);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.val-fail-badge--warn {
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.weak-fallback-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--p-red-700);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-red-100);
+  border-radius: 4px;
+  white-space: nowrap;
+  animation: pulse-badge 1.5s ease-in-out infinite;
+}
+
+.unknown-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 500;
+  color: var(--p-purple-600);
+  padding: 0.1rem 0.4rem;
+  background: var(--p-purple-50);
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* ── Nudge Banner ── */
+.nudge-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.5rem;
+  background: var(--p-amber-50);
+  border: 1px solid var(--p-amber-200);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--p-amber-800);
+}
+
+.nudge-banner i {
+  font-size: 0.75rem;
+  color: var(--p-amber-500);
+  flex-shrink: 0;
+}
+
+/* ── Weak Model Fallback Banner ── */
+.weak-fallback-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  margin-bottom: 0.5rem;
+  background: var(--p-red-50);
+  border: 1px solid var(--p-red-200);
+  border-radius: 6px;
+  font-size: 0.72rem;
+  color: var(--p-red-800);
+  animation: pulse-badge 2s ease-in-out infinite;
+}
+
+.weak-fallback-banner i {
+  font-size: 0.75rem;
+  color: var(--p-red-500);
+  flex-shrink: 0;
 }
 </style>

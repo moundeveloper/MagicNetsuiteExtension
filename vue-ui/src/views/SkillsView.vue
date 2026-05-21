@@ -319,6 +319,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useAgent } from "../composables/useAgent";
+import { useAiProvider } from "../composables/useAiProvider";
 import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 
 import MCard from "../components/universal/card/MCard.vue";
@@ -349,6 +350,7 @@ const editingId = ref<number | null>(null);
 const deleteTarget = ref<Skill | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const props = defineProps<{ vhOffset: number }>();
+const { chatCompletion } = useAiProvider();
 
 // ── AI Generate state ──────────────────────
 const skillGenMode = ref<"manual" | "ai">("manual");
@@ -500,6 +502,7 @@ domain "sql" means the skill is only injected into the SQL Editor AI context.
 domain "global" means the skill is available to all AI agents.`;
 
     const agent = useAgent({
+      chatCompletion,
       systemPrompt,
       tools: netsuiteDocsTools,
       keepHistory: false,

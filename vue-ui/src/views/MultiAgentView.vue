@@ -463,6 +463,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import Button from "primevue/button";
 import { useAgent, ToolRejectedError } from "../composables/useAgent";
 import type { ToolDefinition } from "../composables/useAgent";
+import { useAiProvider } from "../composables/useAiProvider";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
@@ -490,6 +491,7 @@ import {
 
 // ── Props ──
 const props = defineProps<{ vhOffset: number }>();
+const { chatCompletion } = useAiProvider();
 
 // ── Types ──
 interface OrchestratorMessage {
@@ -759,6 +761,7 @@ const executeSubAgent = async (
 
   // Create a temporary useAgent instance for the sub-agent
   const subAgentInstance = useAgent({
+    chatCompletion,
     systemPrompt,
     tools: [...tools, ...createSqlAiTools(), ...netsuiteDocsTools, ...bundleTools],
     keepHistory: false,
@@ -1118,6 +1121,7 @@ const getAgentResultsTool: ToolDefinition = {
 
 // ── Orchestrator Agent ──
 const orchestrator = useAgent({
+  chatCompletion,
   systemPrompt: `You are a multi-agent orchestrator. You PLAN, DELEGATE to parallel agents, COLLECT results, and SYNTHESIZE. You NEVER do the actual work yourself.
 
 ## Your Tools

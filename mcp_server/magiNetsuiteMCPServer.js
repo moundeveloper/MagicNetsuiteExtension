@@ -4,8 +4,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const http = require("http");
-const { WebSocketServer } = require("ws");
+const os = require("os");
+const net = require("net");
 
 // -----------------------------------------------
 // CONFIG + BASE DIR
@@ -27,11 +27,15 @@ const { WebSocketServer } = require("ws");
 //   shouldLog  boolean  — write log files (default: true)
 let shouldLog = true;
 let BASE_DIR = __dirname; // fallback
+let hostConfig = {};
 
 for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
   try {
     const configPath = path.join(candidateDir, "host.config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const config = JSON.parse(
+      fs.readFileSync(configPath, "utf8").replace(/^\uFEFF/, "")
+    );
+    hostConfig = config;
     if (typeof config.shouldLog === "boolean") {
       shouldLog = config.shouldLog;
     }
@@ -72,111 +76,151 @@ function log(...args) {
 }
 
 // -----------------------------------------------
-// WS SERVER
+// NATIVE BRIDGE IPC CLIENT
 // -----------------------------------------------
-const PORT_RANGE_START = 9700;
-const PORT_RANGE_END = 9720;
+const DEFAULT_PIPE_NAME = "magic_netsuite_mcp_bridge";
+const BRIDGE_PIPE_NAME =
+  process.env.MAGIC_NETSUITE_MCP_PIPE ||
+  hostConfig.nativeBridgePipeName ||
+  DEFAULT_PIPE_NAME;
+const BRIDGE_PIPE_PATH =
+  hostConfig.nativeBridgePipePath ||
+  (process.platform === "win32"
+    ? `\\\\.\\pipe\\${BRIDGE_PIPE_NAME}`
+    : path.join(os.tmpdir(), `${BRIDGE_PIPE_NAME}.sock`));
 
-let extensionSocket = null;
+let bridgeSocket = null;
+let bridgeConnecting = null;
+let bridgeBuffer = "";
 let pending = new Map();
 let idCounter = 0;
+let currentAccount = null; // Account ID from latest extension response
 
-// -----------------------------------------------
-// PORT BIND
-//
-// Uses an async loop with explicit cleanup so each failed port attempt
-// is fully torn down before trying the next one.  The previous approach
-// (recursive calls with fresh servers) still left unreleased handles on
-// Windows when the listen() callback never fired.
-// -----------------------------------------------
-function tryPort(port) {
-  return new Promise((resolve) => {
-    log("trying port", port);
+function writeBridgeMessage(socket, message) {
+  socket.write(JSON.stringify(message) + "\n");
+}
 
-    const server = http.createServer();
-    const wss = new WebSocketServer({ server });
+function rejectAllPending(reason) {
+  for (const [requestId, cb] of pending.entries()) {
+    pending.delete(requestId);
+    cb.reject(reason);
+  }
+}
 
-    const cleanup = () => {
-      try { wss.close(); } catch {}
-      try { server.close(); } catch {}
-    };
+function attachBridgeHandlers(socket) {
+  socket.setEncoding("utf8");
 
-    // ws v8.x registers server.on('error', (err) => wss.emit('error', err)).
-    // Its listener fires BEFORE any server.once('error', ...) we register, and
-    // if the wss has no error handler Node throws the re-emitted error as an
-    // uncaught exception — killing the process before the port-retry loop can
-    // move to the next port.  Handle errors on the wss directly; ws's
-    // forwarding ensures we receive all server-level errors here.
-    wss.on("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        log("port", port, "in use");
-        cleanup();
-        resolve(null);
-      } else {
-        log("server error on port", port, err.message);
-        cleanup();
-        process.exit(1);
+  socket.on("data", (chunk) => {
+    bridgeBuffer += chunk;
+    const lines = bridgeBuffer.split("\n");
+    bridgeBuffer = lines.pop();
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      let msg;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        log("invalid native bridge JSON", line);
+        continue;
       }
-    });
 
-    server.listen(port, "127.0.0.1", () => {
-      log("listening", port);
+      log("← native bridge", msg);
 
-      // Wire up WebSocket connection handler
-      wss.on("connection", (ws) => {
-        log("extension connected");
-        extensionSocket = ws;
+      if (msg.account) {
+        currentAccount = msg.account;
+      }
 
-        ws.on("message", (data) => {
-          let msg;
-          try {
-            msg = JSON.parse(data);
-          } catch {
-            return;
-          }
+      const cb = pending.get(msg.requestId);
+      if (!cb) continue;
 
-          log("← extension", msg);
+      pending.delete(msg.requestId);
 
-          const cb = pending.get(msg.requestId);
-          if (!cb) return;
+      if (msg.success) cb.resolve(msg.result);
+      else cb.reject(new Error(msg.error || "Extension error"));
+    }
+  });
 
-          pending.delete(msg.requestId);
+  socket.on("close", () => {
+    if (bridgeSocket === socket) {
+      bridgeSocket = null;
+      bridgeBuffer = "";
+    }
+    rejectAllPending(new Error("Native bridge disconnected"));
+    log("native bridge disconnected");
+  });
 
-          if (msg.success) cb.resolve(msg.result);
-          else cb.reject(new Error(msg.error || "Extension error"));
-        });
-
-        ws.on("close", () => {
-          log("extension disconnected");
-          extensionSocket = null;
-        });
-      });
-
-      resolve({ server, wss, port });
-    });
+  socket.on("error", (err) => {
+    log("native bridge socket error", err.message);
   });
 }
 
-(async () => {
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-    const result = await tryPort(port);
-    if (result) return; // bound successfully
+function connectNativeBridge() {
+  if (bridgeSocket && !bridgeSocket.destroyed) {
+    return Promise.resolve(bridgeSocket);
   }
-  log("no free port in range", PORT_RANGE_START, "-", PORT_RANGE_END);
-  process.exit(1);
-})();
+
+  if (bridgeConnecting) {
+    return bridgeConnecting;
+  }
+
+  bridgeConnecting = new Promise((resolve, reject) => {
+    log("connecting to native bridge", BRIDGE_PIPE_PATH);
+
+    const socket = net.createConnection(BRIDGE_PIPE_PATH);
+    let settled = false;
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
+
+    const timer = setTimeout(() => {
+      socket.destroy();
+      settle(
+        reject,
+        new Error(
+          "Chrome native bridge is not connected. Open the extension MCP Server page and enable the bridge."
+        )
+      );
+    }, 2000);
+
+    const onInitialError = (err) => {
+      if (settled) return;
+      socket.destroy();
+      settle(
+        reject,
+        new Error(`Chrome native bridge is not connected: ${err.message}`)
+      );
+    };
+
+    socket.once("connect", () => {
+      socket.removeListener("error", onInitialError);
+      bridgeSocket = socket;
+      attachBridgeHandlers(socket);
+      log("connected to native bridge", BRIDGE_PIPE_PATH);
+      settle(resolve, socket);
+    });
+
+    socket.once("error", onInitialError);
+  }).finally(() => {
+    bridgeConnecting = null;
+  });
+
+  return bridgeConnecting;
+}
 
 // -----------------------------------------------
 // EXTENSION CALL (NON-BLOCKING SAFE)
 // -----------------------------------------------
-function callExtension(method, params) {
+async function callExtension(method, params) {
+  const socket = await connectNativeBridge();
+  const requestId = ++idCounter;
+
   return new Promise((resolve, reject) => {
-    if (!extensionSocket) {
-      return reject(new Error("Extension not connected"));
-    }
-
-    const requestId = ++idCounter;
-
     const timer = setTimeout(() => {
       if (pending.has(requestId)) {
         pending.delete(requestId);
@@ -196,9 +240,15 @@ function callExtension(method, params) {
     });
 
     const payload = { requestId, method, params };
-    log("→ extension", payload);
+    log("→ native bridge", payload);
 
-    extensionSocket.send(JSON.stringify(payload));
+    try {
+      writeBridgeMessage(socket, payload);
+    } catch (err) {
+      pending.delete(requestId);
+      clearTimeout(timer);
+      reject(err);
+    }
   });
 }
 
@@ -357,14 +407,16 @@ async function handleMcp(req) {
         },
         serverInfo: {
           name: "chrome-extension-bridge",
-          version: "1.0.0"
+          version: "1.0.0",
+          account: currentAccount
         }
       };
     } else if (method === "notifications/initialized") {
       return;
     }
 
-    // ✅ CRITICAL: DO NOT WAIT FOR EXTENSION HERE
+    // Keep tools/list local and immediate. MCP clients may call it before the
+    // browser-side native bridge is connected.
     else if (method === "tools/list") {
       result = {
         tools: [
@@ -489,6 +541,273 @@ async function handleMcp(req) {
               },
               required: ["url"]
             }
+          },
+          {
+            name: "netsuite_get_scripts",
+            description:
+              "Search and list scripts from a live NetSuite account. Returns scriptid, id, name, scripttype, owner, scriptfile. " +
+              "Supports SQL-level filtering by scriptId (exact match), scriptType, name (partial match), and owner (partial match) — these run server-side and reduce data transfer. " +
+              "Also supports a client-side 'search' parameter for fuzzy keyword matching across all fields when you don't know which field to filter on. " +
+              "Call with no parameters to list ALL scripts. Pass the numeric 'id' values to netsuite_get_script_files to read source code.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                scriptId: {
+                  type: "string",
+                  description: "Exact script ID string (e.g. 'customscript_my_suitelet'). Only use when you know the full exact ID."
+                },
+                scriptType: {
+                  type: "string",
+                  description: "Filter by script type (e.g. 'CLIENT', 'USEREVENT', 'SCRIPTLET', 'MAPREDUCE', 'SCHEDULED', 'SUITELET', 'RESTLET', 'WORKFLOWACTION', 'PORTLET', 'BUNDLEINSTALLATION', 'MASSUPDATESCRIPT'). Case-insensitive. Filters at the SQL level."
+                },
+                name: {
+                  type: "string",
+                  description: "Partial script name to search for (case-insensitive LIKE match). Filters at the SQL level. E.g. 'Project' will match any script with 'Project' in the name."
+                },
+                owner: {
+                  type: "string",
+                  description: "Partial owner name to filter by (case-insensitive LIKE match). Filters at the SQL level. E.g. 'John' will match scripts owned by any user with 'John' in their entity ID."
+                },
+                search: {
+                  type: "string",
+                  description: "Fuzzy client-side keyword search across name, scriptid, owner, and scriptfile (case-insensitive). Use this as a general-purpose search when you don't know which specific field to filter on. Applied AFTER server-side filters."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_get_script_files",
+            description:
+              "Fetch the full source code for one or more scripts by their internal numeric IDs (the 'id' field from netsuite_get_scripts).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                scriptIds: {
+                  type: "array",
+                  items: { type: "number" },
+                  description: "One or more script internal numeric IDs (e.g. [523] or [523, 841])."
+                }
+              },
+              required: ["scriptIds"]
+            }
+          },
+          {
+            name: "netsuite_get_logs",
+            description:
+              "Get script execution logs from a live NetSuite account. Defaults to the last 7 days. Filter by scriptIds for targeted debugging. Focus on 'ERROR' and 'System' type logs for failures.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                startDate: {
+                  type: "string",
+                  description: "Start date ISO string (e.g. '2025-05-11T00:00:00Z'). Defaults to 7 days ago."
+                },
+                endDate: {
+                  type: "string",
+                  description: "End date ISO string. Defaults to now."
+                },
+                scriptIds: {
+                  type: "array",
+                  items: { type: "number" },
+                  description: "Filter by script internal IDs. Always provide this when investigating a specific script."
+                },
+                type: {
+                  type: "string",
+                  description: "Log type filter: 'ERROR', 'DEBUG', 'AUDIT', 'EMERGENCY', or 'System'."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_load_record",
+            description:
+              "ALWAYS use this tool when the user asks to 'show', 'view', 'display', 'get', or 'load' a NetSuite record by ID. " +
+              "Returns body fields only (no sublist rows) — fast and token-efficient. " +
+              "If the user also needs line items or sublist rows, call netsuite_get_record_sublists afterward. " +
+              "Do NOT use SuiteQL as a substitute — this tool returns all body field values (value + display text) directly from the record API. " +
+              "Common recordType values: 'script' (SuiteScript), 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'item', 'customrecord_<scriptid>' for custom records. " +
+              "If you are unsure of the correct recordType string, call netsuite_list_record_types first.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The SuiteScript record type ID. Examples: 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_foo'. Call netsuite_list_record_types if unsure."
+                },
+                recordId: {
+                  type: "string",
+                  description: "The internal numeric ID of the record to load (e.g. '3309')."
+                }
+              },
+              required: ["recordType", "recordId"]
+            }
+          },
+          {
+            name: "netsuite_get_record_sublists",
+            description:
+              "Get the sublist rows (line items) for a NetSuite record. " +
+              "Use this after netsuite_load_record when the user specifically needs line-item data (e.g. order items, expense lines, inventory lines). " +
+              "Do NOT call this unless sublists are explicitly needed — sublist data can be very large. " +
+              "Specify sublistIds to limit which sublists are returned; omit to get all sublists. " +
+              "Common sublists: 'item' (line items), 'expense' (expense lines), 'apply' (applied transactions), 'links' (related records).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The SuiteScript record type ID (e.g. 'salesorder', 'invoice', 'purchaseorder')."
+                },
+                recordId: {
+                  type: "string",
+                  description: "The internal numeric ID of the record (e.g. '3309')."
+                },
+                sublistIds: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Optional: limit which sublists are returned (e.g. ['item', 'expense']). Omit to return all sublists — can be large on transactions."
+                }
+              },
+              required: ["recordType", "recordId"]
+            }
+          },
+          {
+            name: "netsuite_list_record_types",
+            description:
+              "List ALL available NetSuite record types — both standard built-in types and custom record types in this account. Returns { name, id } pairs. " +
+              "Use this ONLY when you need to discover the correct `recordType` string to pass to netsuite_load_record or netsuite_get_record_fields and you cannot infer it from context. " +
+              "Most common types (no lookup needed): 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_<scriptid>'.",
+            inputSchema: {
+              type: "object",
+              properties: {}
+            }
+          },
+          {
+            name: "netsuite_get_record_fields",
+            description:
+              "Get the list of available body fields and sublist fields for a record type, WITHOUT loading a real record. " +
+              "Use this as a metadata/discovery tool when you need to know what fields a type exposes before querying or building logic around it. " +
+              "You do NOT need to call this before netsuite_load_record — load_record already returns all fields.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The record type ID (e.g. 'script', 'salesorder', 'customer', 'customrecord_foo')."
+                }
+              },
+              required: ["recordType"]
+            }
+          },
+          {
+            name: "netsuite_list_bundles",
+            description:
+              "List SuiteApp bundles in the current NetSuite account. Returns each bundle's name, ID, version, app ID, abstract, creator, dates, and a `type` field ('installed' or 'created'). Use the `filter` parameter to narrow results: 'installed' returns only marketplace/3rd-party bundles, 'created' returns only bundles built and published in-house, 'all' (default) returns both.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filter: {
+                  type: "string",
+                  enum: ["all", "installed", "created"],
+                  description:
+                    "'all' (default) – both installed and created bundles. 'installed' – only bundles downloaded from the SuiteApp marketplace (type=I). 'created' – only bundles built and published in-house (type=S)."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_get_bundle_components",
+            description:
+              "Get the detailed list of components installed by a specific bundle, identified by its Bundle ID. Returns components grouped by category (e.g. 'Script Files', 'Custom Records') and subcategory, with each component's name, script/record ID, references, and lock status.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                bundleId: {
+                  type: "string",
+                  description: "The numeric Bundle ID to inspect (e.g. '123456'). Obtain this from netsuite_list_bundles."
+                },
+                bundleName: {
+                  type: "string",
+                  description: "Optional bundle name for context."
+                }
+              },
+              required: ["bundleId"]
+            }
+          },
+          {
+            name: "netsuite_find_folder",
+            description:
+              "Search the ENTIRE NetSuite File Cabinet for folders matching a name or ID. Searches globally (not just root). " +
+              "Use this first when you don't know a folder's ID. " +
+              "After finding the folder, call netsuite_list_folder with the returned id to see its contents. " +
+              "Returns matching folders with id, name, and parent folder id.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
+                },
+                name: {
+                  type: "string",
+                  description: "Partial folder name to search for globally (case-insensitive). E.g. 'test to remove' will find any folder containing that text anywhere in the File Cabinet."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_list_folder",
+            description:
+              "List the immediate contents of a File Cabinet folder — returns both files and subfolders in a single call. " +
+              "Use this after netsuite_find_folder to explore a folder's contents. " +
+              "Returns { folderId, subfolders: [{id, name}], files: [{id, name, filesize, filetype, url}] }.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                folderId: {
+                  type: "string",
+                  description: "Internal ID of the folder to list (e.g. '12345'). Obtain from netsuite_find_folder."
+                }
+              },
+              required: ["folderId"]
+            }
+          },
+          {
+            name: "netsuite_find_file",
+            description:
+              "Search the ENTIRE NetSuite File Cabinet for files matching a name or ID. Searches globally across all folders. " +
+              "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url. " +
+              "To read the actual content of a file after finding it, call netsuite_read_file with the file id.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+                },
+                name: {
+                  type: "string",
+                  description: "Partial file name to search globally (case-insensitive LIKE match). E.g. 'myScript' will match 'myScript.js' anywhere in the File Cabinet."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_read_file",
+            description:
+              "Read the actual content of a NetSuite File Cabinet file by its internal ID. " +
+              "ALWAYS use this tool when you have a file ID (e.g. from a SuiteQL query result or from netsuite_find_file) and the user wants to see or display the file contents. " +
+              "Returns the file name, content type, and full text content (or base64 for binary files). " +
+              "Works with any text-based file: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                fileId: {
+                  type: "string",
+                  description: "The internal numeric ID of the file to read (e.g. '21301'). Obtain this from a SuiteQL query or from netsuite_find_file."
+                }
+              },
+              required: ["fileId"]
+            }
           }
         ]
       };
@@ -496,8 +815,11 @@ async function handleMcp(req) {
 
     // suiteql_get_guide is handled locally — no extension needed
     else if (method === "tools/call" && params?.name === "suiteql_get_guide") {
+      const accountNote = currentAccount
+        ? `\n\n## CURRENT ACCOUNT\nYou are connected to NetSuite account: **${currentAccount}**`
+        : "";
       result = {
-        content: [{ type: "text", text: SUITEQL_GUIDE }]
+        content: [{ type: "text", text: SUITEQL_GUIDE + accountNote }]
       };
     }
 
@@ -550,8 +872,8 @@ process.on("SIGTERM", () => process.exit(0));
 
 // Catch any unhandled errors so the process doesn't die silently.
 // Without these, a pkg-specific require failure or an uncaught promise
-// rejection would kill the process with no log entry, making it look like
-// the port was never bound (background.js scan finds nothing on 9701+).
+// rejection would kill the process with no log entry, making bridge failures
+// hard to diagnose from the AI client side.
 process.on("uncaughtException", (err) => {
   log("UNCAUGHT EXCEPTION — process will exit", err.message, err.stack || "");
   process.exit(1);

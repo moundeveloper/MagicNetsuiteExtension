@@ -12,7 +12,6 @@ import {
   keymap,
   lineNumbers,
   Decoration,
-  drawSelection,
   highlightActiveLine,
   type DecorationSet
 } from "@codemirror/view";
@@ -183,13 +182,12 @@ const createEditor = async () => {
     doc: formattedCode,
     extensions: [
       lineNumbers(),
-      drawSelection(),
       highlightActiveLine(),
       highlightSelectionMatches(),
       keymap.of(searchKeymap),
       nordLikeTheme,
       syntaxHighlighting(nordHighlightStyle, { fallback: true }),
-      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
       EditorView.lineWrapping,
       langExtension,
       searchDecorationsField,

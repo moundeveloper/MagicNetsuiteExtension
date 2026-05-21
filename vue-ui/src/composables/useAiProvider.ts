@@ -36,6 +36,8 @@ export interface ChatCompletionOptions {
   tools?: unknown[];
   model?: string;
   signal?: AbortSignal;
+  /** When provided, the response is streamed and each text delta is forwarded here. */
+  onChunk?: (text: string) => void;
 }
 
 export interface NormalisedResponse {
@@ -101,12 +103,110 @@ const extractClaudeThinking = (
       thinking += (thinking ? "\n" : "") + block.thinking;
     } else if (block?.type === "text" && block.text) {
       text += block.text;
-    }
+     }
   }
   return { text: text || "", thinking: thinking || undefined };
 };
 
-/** Returns true for Claude model IDs (matches "claude" case-insensitively). */
+// ─────────────────────────────────────────────
+// Shared OpenAI-compatible SSE streaming helper
+// ─────────────────────────────────────────────
+
+/**
+ * Consumes an OpenAI-compatible SSE response stream.
+ * Calls `onChunk` for each visible text delta (think-block content is suppressed).
+ * Accumulates and returns the full NormalisedResponse when the stream ends.
+ */
+const streamOpenAICompatible = async (
+  res: Response,
+  onChunk: (text: string) => void
+): Promise<NormalisedResponse> => {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = "";
+  let rawContent = "";
+  const toolCallsAccum = new Map<number, { id: string; name: string; arguments: string }>();
+
+  // <think> block streaming filter — suppress reasoning tokens from the live display
+  let inThink = false;
+
+  const emitVisible = (text: string) => {
+    let remaining = text;
+    while (remaining.length > 0) {
+      if (inThink) {
+        const closeIdx = remaining.indexOf("</think>");
+        if (closeIdx === -1) return; // still inside think block, discard
+        inThink = false;
+        remaining = remaining.slice(closeIdx + "</think>".length);
+      } else {
+        const openIdx = remaining.indexOf("<think>");
+        if (openIdx === -1) { onChunk(remaining); return; }
+        if (openIdx > 0) onChunk(remaining.slice(0, openIdx));
+        inThink = true;
+        remaining = remaining.slice(openIdx + "<think>".length);
+      }
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split("\n");
+    sseBuffer = lines.pop()!;
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+
+      let chunk: {
+        choices?: Array<{
+          delta?: {
+            content?: string | null;
+            tool_calls?: Array<{
+              index: number;
+              id?: string;
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+        }>;
+      };
+      try { chunk = JSON.parse(data); } catch { continue; }
+
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        rawContent += delta.content;
+        emitVisible(delta.content);
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const existing = toolCallsAccum.get(tc.index) ?? { id: "", name: "", arguments: "" };
+          if (tc.id) existing.id += tc.id;
+          if (tc.function?.name) existing.name += tc.function.name;
+          if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+          toolCallsAccum.set(tc.index, existing);
+        }
+      }
+    }
+  }
+
+  const { thinking, content } = extractThinkTags(rawContent);
+  const toolCalls = Array.from(toolCallsAccum.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([, tc]) => ({
+      id: tc.id,
+      type: "function" as const,
+      function: { name: tc.name, arguments: tc.arguments }
+    }));
+
+  return { content: content || null, tool_calls: toolCalls, thinking };
+};
+
+
 const isClaudeModel = (model: string): boolean => /claude/i.test(model);
 
 /**
@@ -304,7 +404,7 @@ const copilotChat = async (
   const body: Record<string, unknown> = {
     model,
     messages,
-    stream: false
+    stream: !!options.onChunk
   };
 
   if (options.tools && options.tools.length > 0) {
@@ -312,7 +412,6 @@ const copilotChat = async (
     body.tool_choice = "auto";
   }
 
-  // ── Thinking / Reasoning mode ──────────────────────────────────────────
   if (thinkingMode) {
     if (isClaudeModel(model)) {
       // Claude extended thinking: requires the interleaved-thinking beta header
@@ -340,6 +439,12 @@ const copilotChat = async (
     throw new Error(`Copilot chat failed (${res.status}): ${err}`);
   }
 
+  // ── Streaming path ──────────────────────────────────────────────────────
+  if (options.onChunk) {
+    return streamOpenAICompatible(res, options.onChunk);
+  }
+
+  // ── Non-streaming path ──────────────────────────────────────────────────
   const data = (await res.json()) as {
     choices: Array<{
       message: {
@@ -477,7 +582,7 @@ const openrouterChat = async (
   const body: Record<string, unknown> = {
     model: model || "openrouter/free",
     messages,
-    stream: false
+    stream: !!options.onChunk
   };
 
   if (options.tools && options.tools.length > 0) {
@@ -513,6 +618,12 @@ const openrouterChat = async (
     throw new Error(`OpenRouter chat failed (${res.status}): ${err}`);
   }
 
+  // ── Streaming path ──────────────────────────────────────────────────────
+  if (options.onChunk) {
+    return streamOpenAICompatible(res, options.onChunk);
+  }
+
+  // ── Non-streaming path ──────────────────────────────────────────────────
   const data = (await res.json()) as {
     choices: Array<{
       message: {

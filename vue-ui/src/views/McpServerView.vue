@@ -35,20 +35,52 @@ const safeSendMessage = <T = unknown>(msg: Record<string, unknown>): Promise<T |
 const mcpStatus = ref<"connected" | "disconnected" | "checking">("checking");
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
+interface McpConnectionDetail {
+  id: string;
+  label: string;
+  state: "open" | "closed";
+  error?: string | null;
+}
+
+interface McpDedicatedTabInfo {
+  tabId: number;
+  accountId: string;
+}
+
+const mcpConnections = ref<McpConnectionDetail[]>([]);
+const mcpDedicatedTab = ref<McpDedicatedTabInfo | null>(null);
+
+const nativeBridge = computed(() => mcpConnections.value[0] ?? null);
+const nativeBridgeError = computed(() => nativeBridge.value?.error || "");
+
 const checkMcpStatus = async () => {
   try {
-    const resp = await safeSendMessage<{ status: string }>({ type: "MCP_STATUS" });
+    const resp = await safeSendMessage<{
+      status: string;
+      connections: McpConnectionDetail[];
+      dedicatedTab: McpDedicatedTabInfo | null;
+    }>({ type: "MCP_STATUS" });
     mcpStatus.value = resp?.status === "connected" ? "connected" : "disconnected";
+    mcpConnections.value = resp?.connections ?? [];
+    mcpDedicatedTab.value = resp?.dedicatedTab ?? null;
   } catch {
     mcpStatus.value = "disconnected";
+    mcpConnections.value = [];
+    mcpDedicatedTab.value = null;
   }
 };
 
 const connectMcp = async () => {
   mcpStatus.value = "checking";
   try {
-    const resp = await safeSendMessage<{ status: string }>({ type: "MCP_CONNECT" });
+    const resp = await safeSendMessage<{
+      status: string;
+      connections: McpConnectionDetail[];
+      dedicatedTab: McpDedicatedTabInfo | null;
+    }>({ type: "MCP_CONNECT" });
     mcpStatus.value = resp?.status === "connected" ? "connected" : "disconnected";
+    mcpConnections.value = resp?.connections ?? [];
+    mcpDedicatedTab.value = resp?.dedicatedTab ?? null;
   } catch {
     mcpStatus.value = "disconnected";
   }
@@ -60,6 +92,7 @@ const disconnectMcp = async () => {
     await safeSendMessage({ type: "MCP_DISCONNECT" });
   } catch { /* context may be invalidated — ignore */ }
   mcpStatus.value = "disconnected";
+  mcpConnections.value = [];
 };
 
 // Watch settings.mcpEnabled to trigger connect/disconnect and manage poll intervals
@@ -276,8 +309,7 @@ onBeforeUnmount(() => {
         <p class="section-description">
           The MCP server allows <strong>locally-running</strong> AI assistants
           (OpenCode, Claude Desktop, etc.) to interact with your NetSuite
-          account via a WebSocket bridge. Cloud-based assistants cannot reach
-          this server directly.
+          account through one Chrome Native Messaging bridge.
         </p>
 
         <div class="connection-bar">
@@ -291,11 +323,13 @@ onBeforeUnmount(() => {
               }"
             />
             <span class="status-text">
-              <template v-if="mcpStatus === 'connected'">Connected</template>
+              <template v-if="mcpStatus === 'connected'">
+                Native bridge connected
+              </template>
               <template v-else-if="mcpStatus === 'checking'">
                 <i class="pi pi-spin pi-spinner" /> Checking...
               </template>
-              <template v-else>Disconnected</template>
+              <template v-else>Native bridge disconnected</template>
             </span>
           </div>
 
@@ -324,6 +358,35 @@ onBeforeUnmount(() => {
               {{ settings.mcpEnabled ? "Disable" : "Enable" }}
             </Button>
           </div>
+        </div>
+
+        <div v-if="nativeBridge" class="native-bridge-detail">
+          <div
+            class="connection-item"
+            :class="{ 'conn-open': nativeBridge.state === 'open', 'conn-closed': nativeBridge.state === 'closed' }"
+            :title="nativeBridge.error ?? ''"
+          >
+            <span
+              class="status-dot small"
+              :class="nativeBridge.state === 'open' ? 'connected' : 'disconnected'"
+            />
+            <code class="conn-label">{{ nativeBridge.label }}</code>
+            <span class="conn-state">{{ nativeBridge.state === 'open' ? 'Ready' : 'Closed' }}</span>
+          </div>
+          <span class="native-bridge-note">MCP clients share this bridge.</span>
+        </div>
+
+        <div v-if="nativeBridgeError" class="native-bridge-error">
+          <i class="pi pi-exclamation-triangle" />
+          <span>{{ nativeBridgeError }}</span>
+        </div>
+
+        <!-- Dedicated MCP tab indicator -->
+        <div v-if="mcpDedicatedTab" class="dedicated-tab-info">
+          <i class="pi pi-bookmark" />
+          <span>
+            Dedicated MCP tab active (account: <strong>{{ mcpDedicatedTab.accountId }}</strong>)
+          </span>
         </div>
       </div>
 
@@ -696,6 +759,95 @@ onBeforeUnmount(() => {
 .connection-actions {
   display: flex;
   gap: 0.5rem;
+}
+
+/* ── Native bridge detail ── */
+
+.native-bridge-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.connection-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.3rem;
+  font-size: 0.75rem;
+  background: var(--surface-card);
+}
+
+.connection-item.conn-open {
+  border-color: var(--p-green-300);
+  background: var(--p-green-50);
+}
+
+.connection-item.conn-closed {
+  border-color: var(--p-red-200);
+  opacity: 0.6;
+}
+
+.status-dot.small {
+  width: 7px;
+  height: 7px;
+}
+
+.conn-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--p-primary-color);
+}
+
+.conn-state {
+  font-size: 0.7rem;
+  color: var(--p-slate-500);
+}
+
+.native-bridge-note {
+  font-size: 0.72rem;
+  color: var(--p-slate-500);
+}
+
+.native-bridge-error {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.35rem;
+  font-size: 0.75rem;
+  background: var(--p-red-50);
+  color: var(--p-red-700);
+  border-left: 3px solid var(--p-red-400);
+}
+
+.native-bridge-error i {
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+/* ── Dedicated MCP tab ── */
+
+.dedicated-tab-info {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.35rem;
+  font-size: 0.78rem;
+  background: var(--p-blue-50);
+  color: var(--p-blue-700);
+  border-left: 3px solid var(--p-blue-400);
+}
+
+.dedicated-tab-info i {
+  font-size: 0.7rem;
 }
 
 /* ── Settings rows ── */

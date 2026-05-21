@@ -440,6 +440,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useAgent } from "../composables/useAgent";
+import { useAiProvider } from "../composables/useAiProvider";
 import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 
 import MCard from "../components/universal/card/MCard.vue";
@@ -468,6 +469,7 @@ import { createSqlAiTools } from "../utils/sqlAiTools";
 
 // ── Props ──────────────────────────────────
 const props = defineProps<{ vhOffset: number }>();
+const { chatCompletion } = useAiProvider();
 
 // ── All available tool names ───────────────
 const allToolNames = computed(() => {
@@ -680,6 +682,7 @@ Rules:
 - color: pastel, desaturated hex that visually fits the domain`;
 
     const agent = useAgent({
+      chatCompletion,
       systemPrompt,
       tools: netsuiteDocsTools,
       keepHistory: false,

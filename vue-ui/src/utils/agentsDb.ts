@@ -279,4 +279,63 @@ export const importAgents = async (agents: AgentExport[]): Promise<number> => {
   return agents.length;
 };
 
+// ─────────────────────────────────────────────
+// Preset agents
+// ─────────────────────────────────────────────
+
+const DEBUG_EXPERT_SYSTEM_PROMPT = `You are a NetSuite script debug specialist.
+Your ONLY job is to diagnose a specific script failure using its source code and execution logs.
+
+Workflow (always follow this order):
+1. Find the script: call netsuite_get_scripts with the script name or a fragment of it.
+2. Fetch source: call netsuite_get_script_files with the script's numeric internal ID.
+3. Fetch logs: call netsuite_get_logs with the script's string scriptId (e.g. customscript_xxx).
+4. Analyse: cross-reference the ERROR and AUDIT log entries with the source code to identify the root cause.
+5. Report with:
+   - Script name, type, owner, and scriptId
+   - Chronological log sequence leading to the failure
+   - The specific function / code section that failed
+   - Root cause in plain language
+   - A concrete, actionable fix suggestion
+
+Keep your report concise. One successful log fetch is enough unless you have a concrete new hypothesis.
+Do not call the same tool more than once for the same data.`;
+
+export const PRESET_AGENTS: Array<Omit<Agent, "agentId" | "createdAt" | "updatedAt" | "enabled">> = [
+  {
+    name: "Debug Expert",
+    slug: "debug-expert",
+    description: "Diagnoses NetSuite script failures by analysing source code and execution logs. Identifies root causes and suggests fixes.",
+    systemPrompt: DEBUG_EXPERT_SYSTEM_PROMPT,
+    skillIds: [],
+    tools: [],
+    limits: { canExecuteDestructive: false, blockedTools: [] },
+    color: generateAgentColor(
+      "Debug Expert",
+      "Diagnoses NetSuite script failures by analysing source code and execution logs."
+    ),
+    mode: "passive",
+  },
+];
+
+/**
+ * Seed preset agents that do not yet exist in the database.
+ * Idempotent — agents already present by slug are never overwritten.
+ */
+export const seedPresetAgents = async (): Promise<void> => {
+  for (const preset of PRESET_AGENTS) {
+    const existing = await db.agents.where("slug").equals(preset.slug).first();
+    if (!existing) {
+      const now = new Date().toISOString();
+      await db.agents.add({
+        ...preset,
+        agentId: `agent_preset_${preset.slug}`,
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  }
+};
+
 export { db as agentsDb };

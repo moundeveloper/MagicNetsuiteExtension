@@ -13,8 +13,7 @@
 //                then pass the final assistant content + tool results to
 //                the step's outputMapper.
 
-import type { ToolDefinition } from "../composables/useAgent";
-import type { ChatMessage, NormalisedResponse } from "../composables/useAiProvider";
+import type { ChatMessage, NormalisedResponse, ToolDefinition } from "../composables/useAgent";
 
 // ─────────────────────────────────────────────
 // Context bag

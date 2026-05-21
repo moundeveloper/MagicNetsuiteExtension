@@ -156,8 +156,13 @@ export const netsuiteDocsTools: ToolDefinition[] = [
 export const NETSUITE_DOCS_SYSTEM_PROMPT = `## NetSuite Documentation — Mandatory Tool Use
 You have two tools for accessing the official NetSuite documentation: \`search_netsuite_docs\` and \`read_netsuite_doc_page\`.
 
-**When to use them — NO exceptions:**
-Use these tools whenever the user asks ANYTHING that requires factual knowledge about NetSuite: how a feature works, what a field does, how to configure something, what a record type supports, scripting behaviour, workflow rules, saved search capabilities, SuiteCommerce, SuiteTax, SuiteAnalytics, bundle management, permissions, roles, integrations, or any other NetSuite topic.
+**When to use them:**
+Use these tools when the user asks about **NetSuite product documentation** — how a feature works, what a field means, configuration steps, API behaviour, workflow rules, saved search capabilities, SuiteCommerce, SuiteTax, SuiteAnalytics, bundle management, permissions, roles, integrations, scripting reference, or any other general NetSuite topic.
+
+**DO NOT use these tools for:**
+- Locating records, scripts, files, or transactions in your NetSuite account — those are operational data queries. Use \`sql_execute_query\` (SuiteQL) or the appropriate \`netsuite_*\` tool instead.
+- Looking up script deployment details, script IDs, script owners, or script status — use SuiteQL on the \`script\` or \`scriptdeployment\` tables.
+- Any question that asks "find me X in my account" — that's a data query, not a documentation lookup.
 
 **Do NOT answer NetSuite knowledge questions from your training data.** Your training data may be outdated or wrong. Always fetch the official docs first.
 

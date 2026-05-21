@@ -12,6 +12,7 @@ vue-ui/node_modules
 src/dist
 dist-ssr
 *.local
+vue-ui/.env*.local
 
 # Editor directories and files
 .vscode/*

@@ -14,8 +14,8 @@ echo ====================================
 echo Step 1.5: Building MCP Server
 echo ====================================
 
-echo Writing host.config.json (shouldLog=true)...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "@{shouldLog=$true} | ConvertTo-Json | Set-Content '%~dp0mcp_server\host.config.json' -Encoding UTF8"
+echo Writing host.config.json (shouldLog=true, nativeBridgePipeName=magic_netsuite_mcp_bridge)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "@{shouldLog=$true; nativeBridgePipeName='magic_netsuite_mcp_bridge'} | ConvertTo-Json | Set-Content '%~dp0mcp_server\host.config.json' -Encoding UTF8"
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Failed to write host.config.json!
     exit /b 1
@@ -70,9 +70,21 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+copy /y "%~dp0mcp_server\magicNetsuiteNativeHost.exe" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy MCP Native Host exe!
+    exit /b 1
+)
+
 copy /y "%~dp0mcp_server\host.config.json" "%MCP_DEST%\"
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Failed to copy host.config.json!
+    exit /b 1
+)
+
+copy /y "%~dp0mcp_server\installNativeHost.ps1" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy installNativeHost.ps1!
     exit /b 1
 )
 
@@ -97,6 +109,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$timestamp = [int][doubl
 
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Failed to update watch.json
+    exit /b 1
+)
+
+echo.
+echo ====================================
+echo Step 5: Installing native messaging host
+echo ====================================
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST_FOLDER%\mcpServer\installNativeHost.ps1" -ExtensionId nnkjegioomnaelmeiemdfmhipcpgomlp
+
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to install native messaging host
     exit /b 1
 )
 

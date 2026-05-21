@@ -16,12 +16,12 @@ export function createTodoTools(
     {
       name: "agent_todo_write",
       description:
-        "Create or fully replace the agent task list for the current request. " +
-        "Call this at the start of any request that has 3 or more distinct steps. " +
-        "Each item needs a 'content' (short task description) and 'status': 'pending', 'in_progress', or 'done'. " +
-        "Only one item should be 'in_progress' at a time. Mark items 'in_progress' when you start them and 'done' when finished. " +
-        "Call this tool again to update statuses as you progress. " +
-        "You MUST ensure all items are 'done' before sending your final response to the user.",
+        "Create or fully replace the agent task list. " +
+        "Call this FIRST for any request with 2+ distinct steps, then again whenever a task status changes. " +
+        "You MUST pass a 'todos' array. Each item must have 'content' (string) and 'status' ('pending'|'in_progress'|'done'). " +
+        "Only one item should be 'in_progress' at a time. " +
+        "Before your final response, ensure all items are 'done'. " +
+        "Example call: { \"todos\": [{ \"content\": \"Search for script\", \"status\": \"done\" }, { \"content\": \"Read file\", \"status\": \"in_progress\" }] }",
       parameters: {
         type: "object",
         properties: {
@@ -29,8 +29,9 @@ export function createTodoTools(
             type: "array",
             items: { type: "object" },
             description:
-              "The complete todo list replacing any existing list. " +
-              "Each item must have 'content' (string) and 'status' ('pending' | 'in_progress' | 'done')."
+              "The complete todo list (replaces any existing list). " +
+              "Each item MUST have: 'content' (string) and 'status' ('pending'|'in_progress'|'done'). " +
+              "Example: [{ \"content\": \"Search script\", \"status\": \"done\" }, { \"content\": \"Read file\", \"status\": \"in_progress\" }]"
           }
         },
         required: ["todos"]

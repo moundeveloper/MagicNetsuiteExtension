@@ -4,14 +4,12 @@
   "description": "",
   "main": "magiNetsuiteMCPServer.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node magiNetsuiteMCPServer.js"
+    "check": "node --check magiNetsuiteMCPServer.js && node --check magicNetsuiteNativeHost.js",
+    "start": "node magiNetsuiteMCPServer.js",
+    "start:native-host": "node magicNetsuiteNativeHost.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "ws": "^8.20.0"
-  }
+  "type": "commonjs"
 }

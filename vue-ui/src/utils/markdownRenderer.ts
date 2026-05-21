@@ -109,32 +109,33 @@ export const processTables = (text: string): string => {
   const lines = text.split("\n");
   const result: string[] = [];
   let inTable = false;
-  let headerDone = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
-    const tableMatch = trimmed.match(/^\|(.+)\|$/);
 
-    if (!tableMatch) {
+    // A table row must start with | and contain at least one more |
+    const isTableRow = trimmed.startsWith("|") && trimmed.indexOf("|", 1) !== -1;
+
+    if (!isTableRow) {
       if (inTable) {
         result.push("</tbody></table>");
         inTable = false;
-        headerDone = false;
       }
       result.push(line);
       continue;
     }
 
     // Skip separator rows like |---|---|
-    if (/^\|[\s\-:|]+\|$/.test(trimmed)) {
+    if (/^\|[\s\-:|]+\|?\s*$/.test(trimmed)) {
       continue;
     }
 
-    const cells = tableMatch[1]!.split("|").map((c: string) => c.trim());
+    // Strip leading/trailing | then split
+    const stripped = trimmed.replace(/^\|/, "").replace(/\|$/, "");
+    const cells = stripped.split("|").map((c: string) => c.trim());
 
     if (!inTable) {
       inTable = true;
-      headerDone = true;
       const headers = cells.map((c: string) => `<th>${escapeHtml(c)}</th>`).join("");
       result.push(
         `<table class="md-table"><thead><tr>${headers}</tr></thead><tbody>`

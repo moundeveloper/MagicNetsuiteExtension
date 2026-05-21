@@ -112,8 +112,11 @@
             </button>
           </div>
         </div>
-        <div v-else-if="globalSearchQuery.trim() && !globalSearchLoading" class="fc-search-empty">
+        <div v-else-if="globalSearchQuery.trim().length >= 3 && !globalSearchLoading" class="fc-search-empty">
           No results found
+        </div>
+        <div v-else-if="globalSearchQuery.trim().length > 0 && globalSearchQuery.trim().length < 3 && !globalSearchLoading" class="fc-search-empty">
+          Type at least 3 characters to search
         </div>
       </div>
 
@@ -1922,8 +1925,8 @@ let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 const handleGlobalSearch = () => {
   if (searchDebounce) clearTimeout(searchDebounce);
   const q = globalSearchQuery.value.trim();
-  if (!q) { globalSearchResults.value = []; return; }
-  searchDebounce = setTimeout(() => executeGlobalSearch(q), 300);
+  if (!q || q.length < 3) { globalSearchResults.value = []; return; }
+  searchDebounce = setTimeout(() => executeGlobalSearch(q), 500);
 };
 
 const executeGlobalSearch = async (query: string) => {

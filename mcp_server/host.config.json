@@ -1,3 +1,4 @@
 ﻿{
-    "shouldLog":  true
+    "shouldLog":  false,
+    "nativeBridgePipeName":  "magic_netsuite_mcp_bridge"
 }

@@ -1,7 +1,48 @@
 import { ref, readonly } from "vue";
-import { useAiProvider } from "./useAiProvider";
+import { agentCache } from "../utils/agentCacheStore";
 import type { ChainedToolDefinition, ChainProgressEvent, ChainStepMessage } from "../utils/chainedToolManager";
 import { toToolDefinition, matchChainedToolIntent } from "../utils/chainedToolManager";
+import {
+  buildToolRouterHarness,
+  buildPostResultEvaluation,
+  rankToolsByCost,
+  toolTelemetry,
+  type ToolTelemetryEntry,
+} from "../utils/toolRoutingPolicy";
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string | Record<string, unknown>;
+  };
+}
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}
+
+export interface ChatCompletionOptions {
+  tools?: unknown[];
+  model?: string;
+  signal?: AbortSignal;
+  onChunk?: (text: string) => void;
+}
+
+export interface NormalisedResponse {
+  content: string | null;
+  tool_calls: ToolCall[];
+  thinking?: string;
+}
+
+export type AgentChatCompletion = (
+  messages: ChatMessage[],
+  options?: ChatCompletionOptions
+) => Promise<NormalisedResponse>;
 
 // ─────────────────────────────────────────────
 // Types
@@ -33,6 +74,18 @@ export interface ToolDefinition {
   };
   /** When true, the agent will pause and request user approval before executing */
   destructive?: boolean;
+  /**
+   * Optional inline routing hints surfaced to the policy harness.
+   * When present, these supplement the global TOOL_METADATA registry.
+   */
+  routing?: {
+    /** Conditions under which this tool should be preferred */
+    preferWhen?: string;
+    /** Conditions under which this tool must not be used */
+    avoidWhen?: string;
+    /** Known failure modes for this tool */
+    failureModes?: string[];
+  };
   execute: (input: Record<string, unknown>) => Promise<unknown> | unknown;
 }
 
@@ -110,6 +163,26 @@ export interface AgentRunOptions {
    * Passed through to pushMessage so the extracted text is included in context.
    */
   attachments?: MessageAttachment[];
+  /**
+   * Called just before each LLM completion request in the run loop.
+   * Use this to reset any streaming display state between iterations.
+   */
+  onIterationStart?: () => void;
+  /**
+   * Called with each text delta as the model streams its response.
+   * Only fires for the provider adapters that support streaming (copilot, openrouter).
+   * NOT forwarded to nested agent.run() calls (e.g. delegate_to_agent) — pass your own
+   * onTextStream in the nested run options to capture sub-agent text separately.
+   */
+  onTextStream?: (chunk: string) => void;
+  /**
+   * When true, this run executes with an isolated (empty) history.
+   * The caller's existing history is saved before the run and restored
+   * afterwards — sub-agent messages never contaminate the main history.
+   * The circuit breaker (repetition counter + start time) is also isolated.
+   * Use this for all nested / delegated agent runs.
+   */
+  isolateHistory?: boolean;
 }
 
 export interface AgentOptions {
@@ -160,6 +233,20 @@ export interface AgentOptions {
    * shows each step live as it executes (not only after the whole chain finishes).
    */
   onChainStepMessage?: (msg: ChainStepMessage) => void;
+  /**
+   * When true (default), inject the tool router harness into the system prompt.
+   * The harness adds decision policy rules, planning instructions, few-shot
+   * examples, and post-result evaluation nudges.
+   * Set to false for sub-agents or simple chat instances where the overhead
+   * is not needed.
+   */
+  enableToolRouterPolicy?: boolean;
+  /**
+   * Provider used for LLM calls.
+   * The Vue UI passes useAiProvider().chatCompletion, while the Node sandbox
+   * injects an OpenRouter-compatible provider without chrome/settings coupling.
+   */
+  chatCompletion?: AgentChatCompletion;
 }
 
 // ─────────────────────────────────────────────
@@ -240,15 +327,6 @@ function toExternalTool(t: ToolDefinition) {
       description: t.description,
       parameters: t.parameters
     }
-  };
-}
-
-interface ToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string | Record<string, unknown>;
   };
 }
 
@@ -387,8 +465,28 @@ async function executeToolWithRetry(
 
 /** No-op kept for call-site compatibility — truncation is intentionally removed. */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function truncateResult(text: string, _maxLength = 5000): string {
-  return text;
+function truncateResult(text: string, toolName?: string): string {
+  // Tool results over this limit are truncated in-context.
+  // The full content is stored in agentCache for on-demand retrieval.
+  const MAX_TOOL_RESULT_IN_CONTEXT = 3000;
+
+  if (text.length <= MAX_TOOL_RESULT_IN_CONTEXT) return text;
+
+  // Store full content in cache with a descriptive key
+  const cacheKey = `tool_result_${toolName ?? "unknown"}_${Date.now()}`;
+  try {
+    agentCache.set(
+      cacheKey,
+      text,
+      `Full result from ${toolName ?? "tool"} (${text.length} chars)`
+    );
+  } catch {
+    // If cache fails, still truncate to prevent context blowup
+  }
+
+  // Return a truncated version with metadata
+  const truncated = text.slice(0, MAX_TOOL_RESULT_IN_CONTEXT);
+  return `${truncated}\n\n[… truncated from ${text.length} chars. Full content cached as "${cacheKey}" — use cache_retrieve tool if you need more detail.]`;
 }
 
 /**
@@ -434,6 +532,103 @@ function detectPrematureStop(history: AgentMessage[], assistantText: string): st
 function callSignature(toolName: string, args: Record<string, unknown>): string {
   const canonical = JSON.stringify(args, Object.keys(args).sort());
   return `${toolName}::${canonical}`;
+}
+
+// ── Tool safety guards ───────────────────────
+
+const ENTITY_ID_PATTERNS: Array<{ entity: string; regex: RegExp }> = [
+  { entity: "lead", regex: /\blead\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "customer", regex: /\bcustomer\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "prospect", regex: /\bprospect\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "contact", regex: /\bcontact\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "entity", regex: /\bentity\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "vendor", regex: /\bvendor\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "employee", regex: /\bemployee\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "transaction", regex: /\btransaction\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "invoice", regex: /\binvoice\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "sales order", regex: /\bsales\s*order\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "opportunity", regex: /\bopportunity\s*(?:id\s*)?#?\s*(\d+)\b/i },
+];
+
+const FILE_RELATIONSHIP_PROMPT_PATTERN =
+  /\b(report|file|document|attachment|pdf)\b[\s\S]*\b(for|of|on|related\s+to|associated\s+with|attached\s+to)\b/i;
+
+const EXPLICIT_FILE_ID_PATTERN =
+  /\b(file|document|attachment|pdf)\s*(?:internal\s*)?id\s*#?\s*\d+\b/i;
+
+const RELATIONSHIP_LOOKUP_ENTITY_PATTERN =
+  /\b(lead|customer|prospect|contact|entity|vendor|employee|transaction|invoice|sales\s*order|opportunity)\s*(?:id\s*)?#?\s*\d+\b/i;
+
+function isDirectFileReadTool(toolName: string): boolean {
+  return (
+    toolName === "netsuite_get_file_content" ||
+    toolName === "netsuite_read_file" ||
+    toolName.endsWith("__netsuite_get_file_content") ||
+    toolName.endsWith("__netsuite_read_file")
+  );
+}
+
+function isRelationshipFileLookupPrompt(prompt: string): boolean {
+  return (
+    FILE_RELATIONSHIP_PROMPT_PATTERN.test(prompt) &&
+    RELATIONSHIP_LOOKUP_ENTITY_PATTERN.test(prompt) &&
+    !EXPLICIT_FILE_ID_PATTERN.test(prompt)
+  );
+}
+
+function hasRelationshipSqlLookup(history: AgentMessage[]): boolean {
+  return history.some((m) => {
+    if (m.role !== "tool") return false;
+    const toolName = m.toolName ?? "";
+    if (
+      toolName !== "sql_execute_query" &&
+      !toolName.endsWith("__suiteql_execute_query")
+    ) {
+      return false;
+    }
+    const content = m.content ?? "";
+    return /\b(file|mediaitem|attachment|document|note)\b/i.test(content);
+  });
+}
+
+function getNumericArg(args: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = args[key];
+    if (value === undefined || value === null || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+}
+
+function validateDirectFileReadAgainstPrompt(
+  toolName: string,
+  args: Record<string, unknown>,
+  prompt: string
+): string | null {
+  if (!isDirectFileReadTool(toolName)) return null;
+  if (!FILE_RELATIONSHIP_PROMPT_PATTERN.test(prompt)) return null;
+  if (EXPLICIT_FILE_ID_PATTERN.test(prompt)) return null;
+
+  const requestedFileId = getNumericArg(args, ["fileId", "id"]);
+  if (requestedFileId === null) return null;
+
+  for (const { entity, regex } of ENTITY_ID_PATTERNS) {
+    const match = prompt.match(regex);
+    if (!match) continue;
+    const entityId = Number(match[1]);
+    if (entityId !== requestedFileId) continue;
+
+    return (
+      `Blocked unsafe direct file read: the user asked for a ${entity} ${entityId} related ` +
+      `report/file, so ${entityId} is the ${entity} ID, not a verified File Cabinet ID. ` +
+      `Use SuiteQL relationship discovery first (sql_search_tables/sql_get_table_fields/` +
+      `sql_get_table_joins/sql_execute_query), then call ${toolName} only with a file ID ` +
+      `returned by that lookup.`
+    );
+  }
+
+  return null;
 }
 
 // ─────────────────────────────────────────────
@@ -773,14 +968,24 @@ export const useAgent = (options: AgentOptions = {}) => {
     onCompactionRequest,
     ephemeralTools = [],
     onChainProgress,
-    onChainStepMessage
+    onChainStepMessage,
+    enableToolRouterPolicy = true,
+    chatCompletion: injectedChatCompletion,
   } = options;
+
+  /** Cached tool router harness (built once, appended to every system prompt) */
+  const TOOL_ROUTER_HARNESS = enableToolRouterPolicy ? buildToolRouterHarness() : "";
 
   /** Resolve threshold — supports both static number and getter for reactive settings */
   const getCompactionThreshold = (): number =>
     typeof rawThreshold === "function" ? rawThreshold() : rawThreshold;
 
-  const { chatCompletion } = useAiProvider();
+  if (!injectedChatCompletion) {
+    throw new Error(
+      "useAgent requires a chatCompletion provider. Pass useAiProvider().chatCompletion in Vue or an injected provider in the Node sandbox."
+    );
+  }
+  const chatCompletion = injectedChatCompletion;
 
   const loading = ref(false);
   const error = ref<unknown>(null);
@@ -793,41 +998,95 @@ export const useAgent = (options: AgentOptions = {}) => {
   const contextTokens = ref(0);
 
   // ── Circuit breaker state ──
-  const MAX_REPETITIONS = 3;
-  const MAX_RUN_TOKENS = 120000;
+  const MAX_REPETITIONS = 2; // block tool on 2nd identical call (was 3)
+  const MAX_TOOL_CALLS_PER_NAME = 3; // max calls to any single tool regardless of args
+  const MAX_RUN_TOKENS = 400000;
   const MAX_RUN_TIME_MS = 300000; // 5 min
+  const MAX_NUDGES = 3; // max nudges for thinking-only / premature-stop before force-final
+  const MAX_VALIDATION_FAILURES = 5; // max tool arg validation errors before forcing final answer
+  const MAX_UNKNOWN_TOOLS = 3; // max hallucinated tool names before forcing final answer
   let cbCallSignatures = new Map<string, number>();
+  let cbToolNameCounts = new Map<string, number>(); // total calls per tool name
+  let cbBlockedToolNames = new Set<string>(); // tools temporarily blocked for this run
   let cbStartTime = 0;
-  let cbTotalTokens = 0;
+  let compactionPerformed = false;
+  let cbNudgeCount = 0; // weak model nudges this run
+  let cbValidationFailureCount = 0; // tool arg validation failures this run
+  let cbUnknownToolCount = 0; // hallucinated tool names this run
+
+  /** Metrics exposed to the UI for transparency into the agent loop */
+  const runMetrics = ref({
+    iteration: 0,
+    nudgeCount: 0,
+    validationFailures: 0,
+    unknownTools: 0,
+    toolCallsThisIteration: 0,
+    lastNudgeReason: "",
+    isWeakModelFallback: false,
+  });
 
   const resetCircuitBreaker = () => {
     cbCallSignatures = new Map();
+    cbToolNameCounts = new Map();
+    cbBlockedToolNames = new Set();
     cbStartTime = Date.now();
-    cbTotalTokens = 0;
+    compactionPerformed = false;
+    cbNudgeCount = 0;
+    cbValidationFailureCount = 0;
+    cbUnknownToolCount = 0;
+    runMetrics.value = {
+      iteration: 0,
+      nudgeCount: 0,
+      validationFailures: 0,
+      unknownTools: 0,
+      toolCallsThisIteration: 0,
+      lastNudgeReason: "",
+      isWeakModelFallback: false,
+    };
   };
 
   /**
-   * Check repetition detector: same tool + same args called N times.
+   * Check repetition detector:
+   * 1. Same tool + same args called N times → blocked
+   * 2. Same tool name called too many times regardless of args → blocked
    * Returns a warning message for the model, or null if OK.
+   *
+   * IMPORTANT: Always increments BOTH counters (signature + per-name) before
+   * any early return, so the per-name limit can eventually block the tool
+   * even when the same args are repeated every time.
    */
   const checkRepetition = (toolName: string, args: Record<string, unknown>): string | null => {
+    // Always increment per-tool-name count FIRST (regardless of args)
+    const nameCount = (cbToolNameCounts.get(toolName) ?? 0) + 1;
+    cbToolNameCounts.set(toolName, nameCount);
+
+    // Exact signature check (same tool + same args)
     const sig = callSignature(toolName, args);
-    const count = (cbCallSignatures.get(sig) ?? 0) + 1;
-    cbCallSignatures.set(sig, count);
-    if (count >= MAX_REPETITIONS) {
-      return `You called "${toolName}" with the same arguments ${count} times. This appears to be a loop. Please try a different approach or provide your best answer with the results you already have.`;
+    const sigCount = (cbCallSignatures.get(sig) ?? 0) + 1;
+    cbCallSignatures.set(sig, sigCount);
+
+    // Per-tool-name limit (regardless of args) — checked first for blocking
+    if (nameCount > MAX_TOOL_CALLS_PER_NAME) {
+      cbBlockedToolNames.add(toolName);
+      return `You have called "${toolName}" ${nameCount} times this run. STOP calling this tool — it clearly doesn't have what you need. Use a different tool (e.g. sql_execute_query for data lookups, netsuite_get_scripts for script search) or provide your best answer with the information you already have.`;
     }
+
+    // Same-args repetition check
+    if (sigCount >= MAX_REPETITIONS) {
+      cbBlockedToolNames.add(toolName);
+      return `You called "${toolName}" with the same arguments ${sigCount} times. This is a loop — "${toolName}" is now BLOCKED. Use a DIFFERENT tool for this task. For finding scripts/records/data, use sql_execute_query or netsuite_get_scripts.`;
+    }
+
     return null;
   };
 
   /** Check token and time budgets. Returns a stop message or null. */
-  const checkBudgets = (): string | null => {
+  const checkBudgets = (maxTokens: number = MAX_RUN_TOKENS): string | null => {
     const elapsed = Date.now() - cbStartTime;
     if (elapsed > MAX_RUN_TIME_MS) {
       return `Time budget exceeded (${Math.round(elapsed / 1000)}s). Please provide your best answer now.`;
     }
-    cbTotalTokens += contextTokens.value;
-    if (cbTotalTokens > MAX_RUN_TOKENS) {
+    if (contextTokens.value > maxTokens) {
       return `Token budget exceeded. Please provide your best answer now.`;
     }
     return null;
@@ -943,10 +1202,34 @@ export const useAgent = (options: AgentOptions = {}) => {
    * the summarized context without breaking the message format.
    */
   const buildMessages = (systemPrompt: string, currentPrompt?: string) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const msgs: any[] = [{ role: "system", content: systemPrompt }];
+    // Append the tool router harness to the system prompt so the model reasons
+    // under explicit policy rules before every tool call.
+    const effectiveSystemPrompt =
+      TOOL_ROUTER_HARNESS
+        ? `${systemPrompt}\n\n${TOOL_ROUTER_HARNESS}`
+        : systemPrompt;
 
-    const source = keepHistory ? history.value : history.value.slice(-20);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const msgs: any[] = [{ role: "system", content: effectiveSystemPrompt }];
+
+    // ── Safety: remove orphaned assistant tool_calls before sending ──
+    // If an assistant message has tool_calls whose IDs have no matching
+    // tool result in subsequent messages, drop those tool_calls from the
+    // message (or the entire message if it has no text content either).
+    // This prevents 400 errors when tool execution was interrupted.
+    const presentToolCallIds = new Set(
+      history.value.filter((m) => m.role === "tool" && m.toolCallId).map((m) => m.toolCallId!)
+    );
+    const sanitizedHistory = history.value.map((m) => {
+      if (m.role !== "assistant" || !m.toolCalls || m.toolCalls.length === 0) return m;
+      const satisfiedCalls = m.toolCalls.filter((tc) => presentToolCallIds.has(tc.id));
+      if (satisfiedCalls.length === m.toolCalls.length) return m; // all good
+      // Some tool_calls have no result — drop them
+      if (satisfiedCalls.length === 0 && !m.content) return null; // drop entire message
+      return { ...m, toolCalls: satisfiedCalls.length > 0 ? satisfiedCalls : undefined };
+    }).filter((m): m is AgentMessage => m !== null);
+
+    const source = keepHistory ? sanitizedHistory : sanitizedHistory.slice(-20);
 
     // If history is small (< 12 messages), skip smart selection -- send everything
     if (source.length < 12 || !currentPrompt) {
@@ -1125,8 +1408,14 @@ export const useAgent = (options: AgentOptions = {}) => {
    * intact to preserve the active tool-calling context.
    *
    * Returns true if compaction was performed.
+   * Uses a cooldown flag to prevent spiral: max 1 compaction per run.
    */
   const compactIfNeeded = async (systemPrompt: string): Promise<boolean> => {
+    // ── Spiral prevention: only compact once per run ──
+    if (compactionPerformed) {
+      return false;
+    }
+
     const messages = buildMessages(systemPrompt);
     const tokenEstimate = estimateMessagesTokens(messages);
     const threshold = getCompactionThreshold();
@@ -1222,7 +1511,20 @@ export const useAgent = (options: AgentOptions = {}) => {
         ...toKeep
       ];
 
+      // ── Post-compaction safety: truncate oversized tool results ──
+      // If the kept messages still contain huge tool results (e.g. full script
+      // content), truncate them aggressively. Results were already cached by
+      // truncateResult() when first produced.
+      const POST_COMPACT_MAX_TOOL_CONTENT = 1500;
+      for (const msg of history.value) {
+        if (msg.role === "tool" && msg.content && msg.content.length > POST_COMPACT_MAX_TOOL_CONTENT) {
+          msg.content = msg.content.slice(0, POST_COMPACT_MAX_TOOL_CONTENT) +
+            `\n\n[… truncated from ${msg.content.length} chars. Full content available in cache.]`;
+        }
+      }
+
       lastCompaction.value = { summary, compactedCount };
+      compactionPerformed = true; // prevent re-compaction this run
       onCompaction?.(summary, compactedCount);
       return true;
     } catch (compactionErr) {
@@ -1290,28 +1592,172 @@ export const useAgent = (options: AgentOptions = {}) => {
    */
   const GENERAL_ONLY_PATTERNS = /^(what\s+(is|are)\s+\d|calculate|how\s+much\s+is|what\s+time|hello|hi|hey|good\s+(morning|afternoon|evening)|thanks?|thank\s+you)\b/i;
 
+  /**
+   * Patterns that indicate the prompt is about NetSuite data/entities.
+   * When matched, general utility tools (calculate, get_current_time, fetch_url)
+   * are EXCLUDED to prevent the AI from calling irrelevant tools.
+   * This is the inverse of GENERAL_ONLY_PATTERNS.
+   *
+   * Intentionally broad — includes conceptual/documentation questions about
+   * NetSuite scripting (map reduce, governance, limits) so the model never
+   * gets offered get_current_time or netsuite_get_pdf_templates for those.
+   */
+  const NETSUITE_WORK_PATTERNS = /\b(script|record|customer|lead|contact|entity|vendor|partner|employee|transaction|invoice|sales.?order|opportunity|purchase.?order|item|inventory|suitelet|restlet|deploy|search|query|file.?cabinet|folder|bundle|workflow|role|permission|subsidiary|account|journal|credit.?memo|return.?auth|transfer|fulfillment|receipt|bill|estimate|quote|campaign|case|support|issue|task|event|call|message|owner|owned|created\s+by|modified\s+by|list|find|show|get|give|fetch|retrieve|look\s*up|pull|display|map.?reduce|scheduled.?script|user.?event|client.?script|suitescript|suitecloud|governance|quota|n\/[a-z])\b/i;
+
+  /**
+   * General utility tools that should be EXCLUDED when the prompt is
+   * clearly about NetSuite work. These tools confuse weaker models into
+   * calling them for tasks they can't handle (e.g. calculate for script lookups).
+   */
+  const GENERAL_UTILITY_TOOLS = new Set([
+    "calculate",
+    "get_current_time",
+    "fetch_url",
+    "generate_pdf",
+  ]);
+
+  // Tools hidden from the AI to prevent meta-tool distraction.
+  // These are internal infrastructure or crutches the AI reaches for
+  // instead of calling the actual data-fetching tool.
+  const HIDDEN_TOOLS = new Set([
+    "cache_list",
+    "cache_delete",
+    "cache_store",
+    "cache_upload_file",
+    "search_skills",
+    "load_skill",
+    "agent_todo_write",
+    "agent_todo_read",
+  ]);
+
+  /**
+   * Patterns that indicate the prompt actually NEEDS general utility tools.
+   * Overrides NETSUITE_WORK_PATTERNS exclusion when matched.
+   */
+  const NEEDS_GENERAL_TOOLS_PATTERNS = /\b(calculate|compute|math|sum|add|subtract|multiply|divide|average|percentage|what\s+time|current\s+time|today|now|url|website|web\s+page|http|fetch|download\s+page|pdf\s+generate|generate\s+pdf)\b/i;
+
   // Patterns that indicate code generation / writing intent
   const CODE_GEN_PATTERNS = /\b(generate|create|write|build|make|code|script|implement|develop|fix|debug|refactor|modify|update|add|change|edit|scaffold|example|snippet|template|suitelet|restlet|user.?event|client.?script|map.?reduce|scheduled|suitescript)\b/i;
+
+  // Tools that only make sense when the user explicitly asks about the active
+  // NetSuite page/session — e.g. "what record is open?", "who am I?".
+  // Excluding them prevents the AI from making pointless context-discovery calls
+  // at the start of every task (they almost always return null / generic info).
+  const CONTEXT_ONLY_TOOLS = new Set([
+    "netsuite_get_current_record",
+    "netsuite_get_current_user",
+    "netsuite_check_connection",
+  ]);
+  const CONTEXT_TOOL_PATTERNS = /\b(current\s+record|current\s+page|open\s+record|active\s+record|current\s+user|who\s+am\s+i|logged.?in\s+user|my\s+user|my\s+role|my\s+name|my\s+email|check\s+connection|is\s+connected|connection\s+status|am\s+i\s+connected)\b/i;
+
+  // ── Tool category system ───────────────────────────────────────────────
+  // Each tool belongs to a category. selectRelevantTools analyzes the prompt
+  // and only exposes tools from matching categories, preventing the AI from
+  // calling entirely irrelevant tools.
+  const TOOL_CATEGORY: Record<string, string[]> = {
+    query: [
+      "sql_search_tables", "sql_get_table_fields", "sql_get_table_joins",
+      "sql_execute_query", "sql_discover_field_values", "sql_get_editor_query",
+    ],
+    file: [
+      "netsuite_get_file_content", "netsuite_find_file", "netsuite_list_folder",
+      "netsuite_find_folder", "netsuite_get_root_folders", "netsuite_create_folder",
+      "netsuite_upload_file",
+    ],
+    record: [
+      "netsuite_load_record", "netsuite_get_record_sublists",
+      "netsuite_get_record_fields", "netsuite_export_record",
+    ],
+    record_admin: [
+      "netsuite_get_custom_records", "netsuite_get_custom_record_url",
+      "netsuite_get_custom_record_list_url", "netsuite_get_all_record_types",
+    ],
+    script: [
+      "netsuite_get_scripts", "netsuite_get_script_types", "netsuite_get_script_url",
+      "netsuite_get_deployed_scripts", "netsuite_get_script_files",
+      "netsuite_get_script_deployments", "netsuite_get_script_deployment_url",
+      "netsuite_get_suitelet_url", "netsuite_open_deployment_suitelet",
+      "netsuite_run_script", "netsuite_get_logs", "netsuite_create_script",
+    ],
+    pdf: [
+      "netsuite_get_pdf_templates", "netsuite_get_template_content",
+      "netsuite_save_template", "netsuite_preview_template",
+    ],
+    docs: [
+      "netsuite_search_module_docs", "netsuite_get_module_member_details",
+      "search_netsuite_docs", "read_netsuite_doc_page",
+    ],
+    bundle: [
+      "list_bundles", "get_bundle_components",
+    ],
+    config: [
+      "netsuite_check_connection", "netsuite_get_available_modules",
+      "netsuite_get_current_user", "netsuite_get_current_record",
+    ],
+  };
+
+  // Map from tool name → category (built once from TOOL_CATEGORY)
+  const CATEGORY_OF_TOOL = new Map<string, string>();
+  for (const [cat, tools] of Object.entries(TOOL_CATEGORY)) {
+    for (const t of tools) {
+      CATEGORY_OF_TOOL.set(t, cat);
+    }
+  }
+
+  // Keywords that activate each external (non-netsuite) category.
+  // Only used for tools like search_netsuite_docs and list_bundles
+  // — NOT for netsuite_* or sql_* tools (those are always included
+  // during NetSuite work, guided by the system prompt).
+  // Record tools need explicit action verbs for safety.
+  const CATEGORY_MATCHERS: Record<string, RegExp> = {
+    file: /\b(file|cabinet|document|attachment|upload|download|folder)\b/i,
+    record: /\b(load|open|edit|update|save|create|modify|change|delete)\s+(this\s+)?(record|customer|lead|contact|entity|vendor|partner|transaction|invoice|sales.?order|opportunity)\b/i,
+    script: /\b(scripts?|suitelets?|restlets?|userevents?|clients?|mapreduces?|scheduleds?|deploys?|debugs?|logs?)\b/i,
+    pdf: /\b(pdf|templates?|print\s+template|advanced\s+pdf)\b/i,
+    /**
+     * Docs category now matches two distinct documentation needs:
+     *
+     * API-reference questions (netsuite_search_module_docs):
+     *   "module doc", "api reference", "method signature", "n/record", "N/task"
+     *
+     * Help-center conceptual questions (search_netsuite_docs):
+     *   "map reduce limits", "governance", "quota", "how does scheduled script work",
+     *   "best practice", "what is a suitelet", "suitescript 2.1 restrictions"
+     *
+     * Both tool types are unlocked when this category activates; the routing
+     * harness and tool descriptions guide the model to pick the right one.
+     */
+    docs: /\b(module\s+doc|api\s+reference|member\s+details|method\s+signature|n\/[a-z]|limit|governance|quota|suitecloud|best\s+practice|how\s+d(oes|o)\b|what\s+is\s+a?\b|when\s+to\s+use|map.?reduce|scheduled.?script|user.?event|client.?script|suitescript|script\s+type|concurrent|parallel|execution)\b/i,
+    bundle: /\b(bundle|suiteapp|app\s+install|marketplace|add.?on)\b/i,
+  };
+
+  /**
+   * netsuite_* tools that belong to the docs category and should NOT be
+   * shown for every NetSuite work prompt. Without this override they
+   * bypass the category filter (because they start with "netsuite_") and
+   * appear even when the user is doing a data query or code task —
+   * causing the model to call the API-reference tool instead of SuiteQL.
+   */
+  const DOCS_ONLY_NETSUITE_TOOLS = new Set([
+    "netsuite_search_module_docs",
+    "netsuite_get_module_member_details",
+  ]);
 
   /**
    * Select tools relevant to the current prompt.
    *
-   * **Chained tool priority**: When the prompt matches a chained tool's
-   * intent patterns, that chained tool is placed FIRST in the list and
-   * the individual tools it replaces are still included (as fallback),
-   * but the AI description guides it to prefer the chained tool.
+   * Strategy:
+   *   - General-only prompts (greetings, math, time): exclude ALL netsuite/sql
+   *     tools — the user isn't doing NetSuite work.
+   *   - NetSuite work prompts: include ALL netsuite_* and sql_* tools (no
+   *     brittle sub-categorization — the system prompt guides tool choice).
+   *     Category filtering is ONLY applied to non-netsuite external tools
+   *     (docs, bundle) that should not leak into data queries.
+   *   - Ambiguous prompts: include everything as fallback.
    *
-   * This is a **NetSuite extension**, so NetSuite tools are included by
-   * default. They are only excluded when the prompt is short and clearly
-   * general-purpose (e.g. "what is 2+2", "hello").
-   *
-   * Categories:
-   *   - Chained tools: prioritized when intent matches
-   *   - General tools (calculate, get_current_time, fetch_url): always included
-   *   - NetSuite tools (netsuite_*): included by default, excluded only for
-   *     clearly non-NetSuite prompts
-   *   - Skill tools (search_skills, load_skill): included when code generation detected
-   *   - MCP tools (contain "__"): always included (user explicitly configured them)
+   * This avoids the historic bug where a singular/plural mismatch in a
+   * category regex (e.g. \bscript\b vs "scripts") caused ALL data tools
+   * to be hidden, leaving the AI with only cache/skills/todo tools.
    */
   const selectRelevantTools = (
     prompt: string,
@@ -1322,72 +1768,132 @@ export const useAgent = (options: AgentOptions = {}) => {
     }
   ): ReturnType<typeof toExternalTool>[] => {
     const allTools = Array.from(toolRegistry.value.values());
-    const isCodeGen = CODE_GEN_PATTERNS.test(prompt);
-    const ephemeralSet = new Set(ephemeralTools);
+    const isRelationshipLookup = isRelationshipFileLookupPrompt(prompt);
+    const relationshipSqlLookupDone = isRelationshipLookup && hasRelationshipSqlLookup(history.value);
 
     // Only exclude NetSuite tools for short, clearly non-NetSuite prompts
     const isGeneralOnly = prompt.length < 60 && GENERAL_ONLY_PATTERNS.test(prompt.trim());
 
+    // Detect NetSuite-focused work — exclude distracting general utility tools
+    const isNetSuiteWork = NETSUITE_WORK_PATTERNS.test(prompt);
+    const needsGeneralTools = NEEDS_GENERAL_TOOLS_PATTERNS.test(prompt);
+    const excludeGeneralUtility = isNetSuiteWork && !needsGeneralTools;
+
     // Check if a chained tool matches the prompt intent
     const matchedChain = matchChainedToolIntent(prompt, chainedToolDefs);
 
-    // When a chain matches, collect all step tool names it owns so we can exclude
-    // them from the tool list — the chain handles them internally.
+    // When a chain matches, collect all step tool names it owns
     const excludedStepTools = new Set<string>();
     if (matchedChain) {
       const matchedChainDef = chainedToolDefs.find((c) => c.name === matchedChain);
       matchedChainDef?.steps.forEach((s) => excludedStepTools.add(s.toolName));
     }
 
-    // Build filter sets from agent-specific restrictions
-    const allowedSet = filters?.allowedTools
-      ? new Set(filters.allowedTools)
-      : null;
-    const blockedSet = filters?.blockedTools
-      ? new Set(filters.blockedTools)
-      : null;
+    // Agent-level restrictions
+    const allowedSet = filters?.allowedTools ? new Set(filters.allowedTools) : null;
+    const blockedSet = filters?.blockedTools ? new Set(filters.blockedTools) : null;
+    const includeContextTools = CONTEXT_TOOL_PATTERNS.test(prompt);
+
+    // --- Determine which NON-NETSUITE categories are relevant ---
+    // Only used for external tools (docs, bundle). Netsuite_*/sql_* tools
+    // bypass this entirely and are always included during NetSuite work.
+    const activeExternalCategories = new Set<string>();
+    for (const [category, regex] of Object.entries(CATEGORY_MATCHERS)) {
+      if (regex.test(prompt)) {
+        activeExternalCategories.add(category);
+      }
+    }
 
     const selected = allTools.filter((tool) => {
-      // Agent-level tool restrictions
+      // ── Hard overrides ──────────────────────────────────────────────────
       if (allowedSet && !allowedSet.has(tool.name)) return false;
       if (blockedSet && blockedSet.has(tool.name)) return false;
+      if (cbBlockedToolNames.has(tool.name)) return false;
+      if (HIDDEN_TOOLS.has(tool.name)) return false;
       if (filters?.blockDestructive && tool.destructive) return false;
 
-      // Chained tools: include when intent matches, otherwise exclude
+      // ── Relationship lookup guard ──────────────────────────────────────
+      if (isRelationshipLookup) {
+        if (tool.name === "delegate_to_agent") return false;
+        if (
+          !relationshipSqlLookupDone &&
+          (CATEGORY_OF_TOOL.get(tool.name) === "file" || isDirectFileReadTool(tool.name))
+        ) {
+          return false;
+        }
+      }
+
+      // ── Context-only tools ─────────────────────────────────────────────
+      if (CONTEXT_ONLY_TOOLS.has(tool.name)) return includeContextTools;
+
+      // ── Chained tools ──────────────────────────────────────────────────
       if (chainedToolNames.has(tool.name)) {
         return tool.name === matchedChain;
       }
-
-      // Step tools owned by the matched chain: always exclude them — the chain
-      // calls them internally with the correct data flow.
       if (excludedStepTools.has(tool.name)) return false;
 
-      // MCP tools (namespaced with "__") are always included
+      // ── MCP tools: always included ─────────────────────────────────────
       if (tool.name.includes("__")) return true;
 
-      // NetSuite tools: included by default, excluded only for general-only prompts
-      if (tool.name.startsWith("netsuite_")) return !isGeneralOnly;
+      // ── Docs-specialized netsuite tools ───────────────────────────────
+      // netsuite_search_module_docs and netsuite_get_module_member_details
+      // are API-reference tools, not data tools. They must only appear when
+      // the docs category is active; otherwise they pollute every prompt
+      // and the model reaches for them instead of SuiteQL or file tools.
+      if (DOCS_ONLY_NETSUITE_TOOLS.has(tool.name)) {
+        return activeExternalCategories.has("docs");
+      }
 
-      // Skill tools: only when code generation is detected
-      if (ephemeralSet.has(tool.name)) return isCodeGen;
+      // ── General-only prompt: exclude ALL netsuite/sql tools ────────────
+      if (isGeneralOnly) {
+        if (tool.name.startsWith("netsuite_") || tool.name.startsWith("sql_")) {
+          return false;
+        }
+      }
 
-      // General tools: always included
-      return true;
+      // ── Non-netsuite/non-sql tools ────────────────────────────────────
+      if (!tool.name.startsWith("netsuite_") && !tool.name.startsWith("sql_")) {
+        // General utility tools excluded during NetSuite work
+        if (excludeGeneralUtility && GENERAL_UTILITY_TOOLS.has(tool.name)) {
+          return false;
+        }
+        // External tools with registered categories (docs, bundle):
+        // only include when their category is actively matched.
+        const toolCat = CATEGORY_OF_TOOL.get(tool.name);
+        if (toolCat) {
+          return activeExternalCategories.has(toolCat);
+        }
+        // Infrastructure tools (cache_*, skills, todo, delegate): always included
+        return true;
+      }
+
+      // ── Netsuite_* and sql_* tools ────────────────────────────────────
+      // When NetSuite work is detected OR the prompt is ambiguous (neither
+      // general-only nor NetSuite), include ALL of them. The system prompt
+      // and tool descriptions guide the AI's choice — no brittle regex
+      // sub-categorization that can silently hide all data tools.
+      return !isGeneralOnly;
     });
 
-    // If a chained tool matched, move it to the front so the AI sees it first
+    // If a chained tool matched, move it to the front
     if (matchedChain) {
       const chainIdx = selected.findIndex((t) => t.name === matchedChain);
       if (chainIdx > 0) {
         const [chainTool] = selected.splice(chainIdx, 1);
         selected.unshift(chainTool!);
       }
-      console.log(
-        `[useAgent] Chained tool "${matchedChain}" matched prompt intent — prioritized`
-      );
+      console.log(`[useAgent] Chained tool "${matchedChain}" matched — prioritized`);
     }
 
-    return selected.map(toExternalTool);
+    if (excludeGeneralUtility) {
+      console.log(`[useAgent] NetSuite work detected — excluded general utility tools (calculate, get_current_time, fetch_url)`);
+    }
+
+    // ── Cost-aware ranking ──────────────────────────────────────────────
+    // Sort tools by cost/risk/latency so the LLM sees cheaper, safer tools
+    // first and is naturally biased toward selecting the lowest-cost option.
+    const externalTools = selected.map(toExternalTool);
+    return rankToolsByCost(externalTools);
   };
 
   // ── Agentic run loop ────────────────────────
@@ -1401,15 +1907,36 @@ export const useAgent = (options: AgentOptions = {}) => {
       allowedTools,
       blockedTools,
       blockDestructive,
-      attachments
+      attachments,
+      onIterationStart,
+      onTextStream,
+      isolateHistory = false,
     } = runOptions;
+
+    // ── Isolated history: save & restore around this run ──────────────────
+    // When isolateHistory is true (sub-agent / delegation runs), we snapshot
+    // and clear the shared history so the nested run has its own fresh context.
+    // The circuit breaker state is also saved so the outer run's timing and
+    // repetition counts are not corrupted by the nested run.
+    const savedHistory = isolateHistory ? [...history.value] : null;
+    const savedCbSigs = isolateHistory ? new Map(cbCallSignatures) : null;
+    const savedCbToolCounts = isolateHistory ? new Map(cbToolNameCounts) : null;
+    const savedCbBlockedTools = isolateHistory ? new Set(cbBlockedToolNames) : null;
+    const savedCbStart = isolateHistory ? cbStartTime : null;
+    const savedCompactionFlag = isolateHistory ? compactionPerformed : null;
+    const savedCbNudgeCount = isolateHistory ? cbNudgeCount : null;
+    const savedCbValFailCount = isolateHistory ? cbValidationFailureCount : null;
+    const savedCbUnknownCount = isolateHistory ? cbUnknownToolCount : null;
+    if (isolateHistory) {
+      history.value = [];
+    }
 
     loading.value = true;
     error.value = null;
     currentResponse.value = "";
     resetCircuitBreaker();
 
-    console.log("[useAgent] run() →", prompt);
+    console.log(`[useAgent] run() ${isolateHistory ? "(isolated) " : ""}→`, prompt);
 
     try {
       await loadMCPTools();
@@ -1419,16 +1946,14 @@ export const useAgent = (options: AgentOptions = {}) => {
       const toolFilters = (allowedTools || blockedTools || blockDestructive)
         ? { allowedTools, blockedTools, blockDestructive }
         : undefined;
-      const allTools = selectRelevantTools(prompt, toolFilters);
       console.log(
         `[useAgent] Registry: [${Array.from(toolRegistry.value.values()).map((t) => t.name).join(", ") || "no tools"}]`
       );
-      console.log(
-        `[useAgent] Selected tools for this run: [${allTools.map((t) => t.function.name).join(", ") || "none"}]`
-      );
 
       let iterations = 0;
-      const MAX_ITERATIONS = 25;
+      // Sub-agent (isolated) runs get tighter limits to prevent token explosions
+      // but still need enough room for a full debug cycle (read script + logs + analyze)
+      const MAX_ITERATIONS = isolateHistory ? 15 : 25;
 
       while (true) {
         iterations++;
@@ -1451,10 +1976,13 @@ export const useAgent = (options: AgentOptions = {}) => {
         await compactIfNeeded(systemPrompt);
 
         const messages = buildMessages(systemPrompt, prompt);
+        const allTools = selectRelevantTools(prompt, toolFilters);
         contextTokens.value = estimateMessagesTokens(messages);
 
         // ── Circuit breaker: budget checks ──
-        const budgetMsg = checkBudgets();
+        // Sub-agents get a tighter budget (120k) to prevent token explosions
+        const tokenBudget = isolateHistory ? 120000 : MAX_RUN_TOKENS;
+        const budgetMsg = checkBudgets(tokenBudget);
         if (budgetMsg) {
           pushMessage({ role: "assistant", content: budgetMsg });
           currentResponse.value = budgetMsg;
@@ -1462,15 +1990,27 @@ export const useAgent = (options: AgentOptions = {}) => {
           return budgetMsg;
         }
 
+        runMetrics.value.iteration = iterations;
+        runMetrics.value.toolCallsThisIteration = 0;
         console.log(`[useAgent] ── Iteration ${iterations} ──`);
+        console.log(
+          `[useAgent] Selected tools for iteration ${iterations}: [${allTools.map((t) => t.function.name).join(", ") || "none"}]`
+        );
         console.log(
           "[useAgent] Messages being sent:",
           JSON.stringify(messages, null, 2)
         );
 
+        // Notify caller that a new LLM call is starting (lets UI reset streaming display)
+        onIterationStart?.();
+
         let response: { content: string | null; tool_calls: ToolCall[]; thinking?: string };
         try {
-          response = await chatCompletion(messages, { tools: allTools.length > 0 ? allTools : undefined, signal });
+          response = await chatCompletion(messages, {
+            tools: allTools.length > 0 ? allTools : undefined,
+            signal,
+            onChunk: onTextStream
+          });
           console.log(
             "[useAgent] Provider response:",
             JSON.stringify(response, null, 2)
@@ -1492,17 +2032,35 @@ export const useAgent = (options: AgentOptions = {}) => {
         //    (e.g. CoT injection caused Claude to write <think> block and stop).
         //    Inject a nudge so the model follows through on its reasoning. ─────────
         if (toolCalls.length === 0 && !assistantText.trim() && response.thinking) {
+          cbNudgeCount++;
+          runMetrics.value.nudgeCount = cbNudgeCount;
+          runMetrics.value.lastNudgeReason = "thinking-only";
+          if (cbNudgeCount > MAX_NUDGES) {
+            console.warn(`[useAgent] Nudge limit (${MAX_NUDGES}) exceeded — forcing final answer.`);
+            pushMessage({
+              role: "assistant",
+              content: assistantText || "",
+              toolCalls: [],
+              thinking: response.thinking
+            });
+            currentResponse.value = assistantText || "[no response after repeated nudges]";
+            tagRecentMessages(history.value);
+            if (ephemeralTools.length > 0) {
+              pruneEphemeralTools(ephemeralTools);
+            }
+            return currentResponse.value;
+          }
           console.warn("[useAgent] Model returned thinking-only with no content/tools — nudging to continue.");
+          const nudgeMsg = cbNudgeCount >= 2
+            ? "You keep producing reasoning blocks without a response. STOP reasoning and provide your final answer now, or call a tool if you absolutely must."
+            : "You produced a reasoning block but no response. Look at the available tools and call one now, or provide your final answer.";
           pushMessage({
             role: "assistant",
             content: "",
             toolCalls: [],
             thinking: response.thinking
           });
-          pushMessage({
-            role: "user",
-            content: "You produced a reasoning block but no response. Look at the available tools and call one now, or provide your final answer."
-          });
+          pushMessage({ role: "user", content: nudgeMsg });
           continue;
         }
 
@@ -1510,6 +2068,23 @@ export const useAgent = (options: AgentOptions = {}) => {
         if (toolCalls.length === 0) {
           const prematureNudge = detectPrematureStop(history.value, assistantText);
           if (prematureNudge) {
+            cbNudgeCount++;
+            runMetrics.value.nudgeCount = cbNudgeCount;
+            runMetrics.value.lastNudgeReason = "premature-stop";
+            if (cbNudgeCount > MAX_NUDGES) {
+              console.warn(`[useAgent] Nudge limit (${MAX_NUDGES}) exceeded — forcing final answer.`);
+              pushMessage({
+                role: "assistant",
+                content: assistantText || "",
+                thinking: response.thinking || undefined
+              });
+              currentResponse.value = assistantText || "[no response after repeated nudges]";
+              tagRecentMessages(history.value);
+              if (ephemeralTools.length > 0) {
+                pruneEphemeralTools(ephemeralTools);
+              }
+              return currentResponse.value;
+            }
             console.warn("[useAgent] Premature stop detected — nudging model to continue:", prematureNudge);
             pushMessage({
               role: "assistant",
@@ -1547,6 +2122,10 @@ export const useAgent = (options: AgentOptions = {}) => {
         });
 
         // ── Execute tool calls ──────────────────
+        // Track if any tool was rejected — we push a synthetic result first
+        // (to keep history consistent) then throw after all tools complete.
+        let rejectedToolName: string | null = null;
+
         await Promise.all(
           toolCalls.map(async (call) => {
             const toolName = call.function.name;
@@ -1560,10 +2139,16 @@ export const useAgent = (options: AgentOptions = {}) => {
               }
             })();
 
+            // ── Telemetry: per-call tracking ──────────────────────────────
+            const callStart = Date.now();
+            let telemetryValidationFailed = false;
+            let telemetryWasBlocked = false;
+
             const isChain = chainedToolNames.has(toolName);
             const tool = toolRegistry.value.get(toolName);
 
-            console.log(`[useAgent] → Calling tool "${toolName}"`, toolInput);
+            runMetrics.value.toolCallsThisIteration++;
+            console.log(`[useAgent] → Calling tool "${toolName}" (iteration ${runMetrics.value.iteration}, tool call #${runMetrics.value.toolCallsThisIteration})`, toolInput);
 
             // For chained tools: do NOT fire onToolCall (prevents chain appearing
             // in "Used tools" section — steps will show individually instead)
@@ -1576,7 +2161,16 @@ export const useAgent = (options: AgentOptions = {}) => {
             if (!isChain && tool?.destructive && onToolApprovalRequest) {
               const approved = await onToolApprovalRequest(toolName, toolInput);
               if (!approved) {
-                throw new ToolRejectedError(toolName);
+                // Push a synthetic rejection result BEFORE flagging so history stays
+                // consistent — an assistant tool_call always needs a matching result.
+                pushMessage({
+                  role: "tool",
+                  content: JSON.stringify({ error: `Tool "${toolName}" was rejected by the user.` }),
+                  toolName,
+                  toolCallId: call.id
+                });
+                rejectedToolName = toolName;
+                return; // skip execution; throw happens after Promise.all
               }
             }
 
@@ -1589,62 +2183,84 @@ export const useAgent = (options: AgentOptions = {}) => {
             let resultContent: string;
 
             if (!tool) {
-              resultContent = JSON.stringify({
-                error: `Unknown tool: ${toolName}`
-              });
+              cbUnknownToolCount++;
+              runMetrics.value.unknownTools = cbUnknownToolCount;
+              const halluWarning = cbUnknownToolCount >= MAX_UNKNOWN_TOOLS
+                ? `ERROR: "${toolName}" is not a real tool. You have called ${cbUnknownToolCount} non-existent tools this run. STOP hallucinating tool names. Use ONLY the tools listed in your available functions.`
+                : `Unknown tool: "${toolName}". Check the function list and use an available tool.`;
+              resultContent = JSON.stringify({ error: halluWarning });
+              telemetryWasBlocked = true;
               console.warn(
-                `[useAgent] Tool "${toolName}" not found in registry!`
+                `[useAgent] Tool "${toolName}" not found in registry! (${cbUnknownToolCount}/${MAX_UNKNOWN_TOOLS})`
               );
             } else {
               // ── Validation gate ──
               const validationError = validateToolArgs(tool, toolInput);
               if (validationError) {
-                resultContent = JSON.stringify({ error: validationError });
+                cbValidationFailureCount++;
+                runMetrics.value.validationFailures = cbValidationFailureCount;
+                const failureMsg = cbValidationFailureCount >= MAX_VALIDATION_FAILURES
+                  ? `CRITICAL: You have made ${cbValidationFailureCount} invalid tool calls this run. You are providing wrong arguments to the tools. STOP and provide your final answer using the data you already have.`
+                  : validationError;
+                resultContent = JSON.stringify({ error: failureMsg });
+                telemetryValidationFailed = true;
                 console.warn(
-                  `[useAgent] Tool "${toolName}" args validation failed:`,
+                  `[useAgent] Tool "${toolName}" args validation failed (${cbValidationFailureCount}/${MAX_VALIDATION_FAILURES}):`,
                   validationError
                 );
               } else {
-                // ── Circuit breaker: repetition check ──
-                const repetitionWarning = checkRepetition(toolName, toolInput);
-                if (repetitionWarning) {
-                  resultContent = JSON.stringify({ warning: repetitionWarning });
+                const guardError = validateDirectFileReadAgainstPrompt(toolName, toolInput, prompt);
+                if (guardError) {
+                  resultContent = JSON.stringify({ error: guardError });
+                  telemetryWasBlocked = true;
                   console.warn(
-                    `[useAgent] Tool "${toolName}" repetition detected`
+                    `[useAgent] Tool "${toolName}" blocked by prompt-aware guard:`,
+                    guardError
                   );
                 } else {
-                  try {
-                    // ── Execute with retry for transient failures ──
-                    const result = await executeToolWithRetry(tool, toolInput);
-                    resultContent =
-                      typeof result === "string"
-                        ? result
-                        : JSON.stringify(result);
-                    // ── Truncate large results ──
-                    resultContent = truncateResult(resultContent);
-                    console.log(
-                      `[useAgent] ← Tool "${toolName}" result:`,
-                      resultContent.slice(0, 300)
+                  // ── Circuit breaker: repetition check ──
+                  const repetitionWarning = checkRepetition(toolName, toolInput);
+                  if (repetitionWarning) {
+                    // checkRepetition already adds to cbBlockedToolNames when thresholds are exceeded
+                    resultContent = JSON.stringify({ warning: repetitionWarning });
+                    telemetryWasBlocked = true;
+                    console.warn(
+                      `[useAgent] Tool "${toolName}" repetition detected — blocked: ${cbBlockedToolNames.has(toolName)}`
                     );
-                    if (!isChain) {
-                      onToolResult?.(toolName, result);
-                    }
-                    // ┌─────────────────────────────────────────────────────────────
-                    // │ await new Promise(resolve => setTimeout(resolve, 500));
-                    // └─────────────────────────────────────────────────────────────
-                  } catch (execErr) {
-                    const isRetryable = isRetryableError(execErr);
-                    resultContent = JSON.stringify({
-                      error: isRetryable
-                        ? `Tool "${toolName}" failed after retries: ${execErr}`
-                        : String(execErr),
-                    });
-                    console.error(
-                      `[useAgent] Tool "${toolName}" threw:`,
-                      execErr
-                    );
-                    if (!isChain) {
-                      onToolResult?.(toolName, { error: String(execErr) });
+                  } else {
+                    try {
+                      // ── Execute with retry for transient failures ──
+                      const result = await executeToolWithRetry(tool, toolInput);
+                      resultContent =
+                        typeof result === "string"
+                          ? result
+                          : JSON.stringify(result);
+                      // ── Truncate large results ──
+                      resultContent = truncateResult(resultContent, toolName);
+                      console.log(
+                        `[useAgent] ← Tool "${toolName}" result:`,
+                        resultContent.slice(0, 300)
+                      );
+                      if (!isChain) {
+                        onToolResult?.(toolName, result);
+                      }
+                      // ┌─────────────────────────────────────────────────────────────
+                      // │ await new Promise(resolve => setTimeout(resolve, 500));
+                      // └─────────────────────────────────────────────────────────────
+                    } catch (execErr) {
+                      const isRetryable = isRetryableError(execErr);
+                      resultContent = JSON.stringify({
+                        error: isRetryable
+                          ? `Tool "${toolName}" failed after retries: ${execErr}`
+                          : String(execErr),
+                      });
+                      console.error(
+                        `[useAgent] Tool "${toolName}" threw:`,
+                        execErr
+                      );
+                      if (!isChain) {
+                        onToolResult?.(toolName, { error: String(execErr) });
+                      }
                     }
                   }
                 }
@@ -1660,12 +2276,39 @@ export const useAgent = (options: AgentOptions = {}) => {
               toolName,
               toolCallId: call.id
             });
+
+            // ── Telemetry: record this tool call ──────────────────────────
+            if (!isChain) {
+              const telemetryEntry: ToolTelemetryEntry = {
+                timestamp: new Date(),
+                toolName,
+                inputSummary: JSON.stringify(toolInput).slice(0, 200),
+                resultSummary: resultContent.slice(0, 300),
+                latencyMs: Date.now() - callStart,
+                satisfied: null,
+                followUpRequired: null,
+                validationFailed: telemetryValidationFailed,
+                wasBlocked: telemetryWasBlocked,
+                iterationNumber: iterations,
+              };
+              toolTelemetry.record(telemetryEntry);
+              console.log(
+                `[useAgent] [telemetry] tool="${toolName}" latency=${telemetryEntry.latencyMs}ms ` +
+                `validationFailed=${telemetryValidationFailed} blocked=${telemetryWasBlocked}`
+              );
+            }
           })
         );
 
+        // If a tool was rejected, throw NOW (after all results are pushed so
+        // history is consistent and won't cause a 400 on the next API call).
+        if (rejectedToolName !== null) {
+          throw new ToolRejectedError(rejectedToolName);
+        }
+
         // ── Post-tool-result analysis ──
-        // When a SQL query returns 0 results, inject a nudge to guide the model
-        // toward entity-relationship discovery (weak models often stop here).
+        // Inject nudges when tools return empty/unhelpful results to guide the
+        // model toward productive next steps instead of retrying the same tool.
         const emptyNudges: string[] = [];
         for (const call of toolCalls) {
           if (chainedToolNames.has(call.function.name)) continue;
@@ -1686,10 +2329,68 @@ export const useAgent = (options: AgentOptions = {}) => {
                 `The query returned 0 rows. Try: searching a different table (use sql_search_tables), discovering field values first (sql_discover_field_values), or using a JOIN to relate entities instead of searching names.`
               );
             }
-          } catch { /* not JSON, skip */ }
+            // Empty log results — guide toward code analysis
+            if (
+              call.function.name === "netsuite_get_logs" &&
+              Array.isArray(parsed) &&
+              parsed.length === 0
+            ) {
+              emptyNudges.push(
+                `netsuite_get_logs returned 0 results. This means no logs exist for the specified criteria in the time range. Do NOT call netsuite_get_logs again with different parameters — instead, analyze the script source code you already have cached. Use cache_retrieve(cacheKey) to bring the script into context and perform a code review to identify potential issues.`
+              );
+            }
+          } catch {
+            // Check raw empty array string
+            if (
+              call.function.name === "netsuite_get_logs" &&
+              (lastToolMsg.content === "[]" || lastToolMsg.content.trim() === "[]")
+            ) {
+              emptyNudges.push(
+                `netsuite_get_logs returned 0 results. Do NOT retry — analyze the script source code instead. Use cache_retrieve(cacheKey) to get the cached script content and review the code for issues.`
+              );
+            }
+          }
         }
         if (emptyNudges.length > 0) {
           pushMessage({ role: "user", content: emptyNudges.join("\n\n") });
+        }
+
+        // ── Policy: post-result evaluation ─────────────────────────────────
+        // Inject a structured evaluation prompt so the model explicitly checks
+        // whether the tool results satisfied the user's need before deciding to
+        // call more tools. This implements the "evaluate after each tool call"
+        // step from the tool routing policy.
+        if (enableToolRouterPolicy) {
+          const nonChainCalls = toolCalls.filter(
+            (c) => !chainedToolNames.has(c.function.name)
+          );
+          if (nonChainCalls.length > 0) {
+            const evalPrompt = buildPostResultEvaluation(
+              nonChainCalls.map((c) => c.function.name)
+            );
+            // Only inject evaluation when there were no empty nudges for the same
+            // calls — emptyNudges already redirect the model effectively and
+            // stacking two back-to-back user messages would be noisy.
+            if (emptyNudges.length === 0) {
+              pushMessage({ role: "user", content: evalPrompt });
+            }
+          }
+        }
+
+        // ── Weak model fallback: if too many failures, force final answer ──
+        const isWeak = cbValidationFailureCount >= MAX_VALIDATION_FAILURES
+          || cbUnknownToolCount >= MAX_UNKNOWN_TOOLS
+          || cbNudgeCount >= MAX_NUDGES;
+        if (isWeak && !runMetrics.value.isWeakModelFallback) {
+          runMetrics.value.isWeakModelFallback = true;
+          // Block ALL tools so the model cannot make more calls
+          const allToolNames = Array.from(toolRegistry.value.keys());
+          allToolNames.forEach((name) => cbBlockedToolNames.add(name));
+          pushMessage({
+            role: "user",
+            content: "CRITICAL: You have made too many invalid tool calls. ALL tools are now BLOCKED. Provide your best final answer using ONLY the information you already have in the conversation history. Do NOT attempt any more tool calls."
+          });
+          console.warn(`[useAgent] Weak model fallback activated — blocked all ${allToolNames.length} tools.`);
         }
 
         // Loop — tool results now in history, re-query model
@@ -1707,6 +2408,20 @@ export const useAgent = (options: AgentOptions = {}) => {
       return "";
     } finally {
       loading.value = false;
+
+      // ── Restore saved history & circuit-breaker state after isolated run ──
+      if (isolateHistory && savedHistory !== null) {
+        history.value = savedHistory;
+        cbCallSignatures = savedCbSigs!;
+        cbToolNameCounts = savedCbToolCounts!;
+        cbBlockedToolNames = savedCbBlockedTools!;
+        cbStartTime = savedCbStart!;
+        compactionPerformed = savedCompactionFlag!;
+        cbNudgeCount = savedCbNudgeCount!;
+        cbValidationFailureCount = savedCbValFailCount!;
+        cbUnknownToolCount = savedCbUnknownCount!;
+        console.log("[useAgent] Isolated run complete — main history restored.");
+      }
     }
   };
 
@@ -1778,6 +2493,9 @@ export const useAgent = (options: AgentOptions = {}) => {
     currentResponse: readonly(currentResponse),
     mcpToolsLoaded: readonly(mcpToolsLoaded),
     lastCompaction: readonly(lastCompaction),
-    contextTokens: readonly(contextTokens)
+    contextTokens: readonly(contextTokens),
+    runMetrics: readonly(runMetrics),
+    /** Live telemetry log — tool choice, latency, outcome per call */
+    toolTelemetry,
   };
 };

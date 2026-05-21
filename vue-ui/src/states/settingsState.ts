@@ -28,7 +28,7 @@ export interface ShortcutsSettings {
   compactionThreshold: number;
   /** Preferred NetSuite account ID for MCP server tab selection (e.g. "9937091_SB1") */
   mcpPreferredAccount: string;
-  /** Whether the MCP server WebSocket bridge is enabled */
+  /** Whether the MCP server native messaging bridge is enabled */
   mcpEnabled: boolean;
   /** Names of MCP tools that are disabled and should be hidden from AI clients */
   mcpDisabledTools: string[];

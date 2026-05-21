@@ -291,6 +291,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch, onMounted, onBeforeUnmount } from "vue";
 import { useAgent, type ToolDefinition, type AgentMessage } from "../composables/useAgent";
+import { useAiProvider } from "../composables/useAiProvider";
 import MessageContentRenderer from "./MessageContentRenderer.vue";
 import { createSqlAiTools } from "../utils/sqlAiTools";
 import { useSettings } from "../states/settingsState";
@@ -310,6 +311,7 @@ const props = defineProps<{
 }>();
 
 const { settings } = useSettings();
+const { chatCompletion } = useAiProvider();
 
 // ── Types ──
 interface SqlChatMessage {
@@ -656,6 +658,7 @@ const buildSystemPrompt = () =>
 
 // ── Agent setup ──
 const agent = useAgent({
+  chatCompletion,
   systemPrompt: BASE_SYSTEM_PROMPT,
   tools: sqlTools,
   ephemeralTools: [],

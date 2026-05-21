@@ -99,7 +99,10 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_scripts",
     description:
-      "Search and list scripts from NetSuite. Returns an array of objects with fields: scriptid (string ID like 'customscript_xxx'), id (internal numeric ID), name, scripttype, owner, scriptfile. Use 'search' for a fuzzy keyword search across name, scriptid, owner, and scriptfile. Use 'scriptId' only when you know the exact script ID string. Call with no parameters to list all scripts. To read the actual source code of scripts found here, pass the numeric 'id' values to netsuite_get_script_files — do NOT call this tool again for that purpose.",
+      "Search and list scripts from NetSuite. Returns an array of objects with fields: scriptid (string ID like 'customscript_xxx'), id (internal numeric ID), name, scripttype, owner, scriptfile. " +
+      "Supports SQL-level filtering by scriptId (exact match), scriptType, name (partial match), and owner (partial match) — these run server-side and reduce data transfer. " +
+      "Also supports a client-side 'search' parameter for fuzzy keyword matching across all fields when you don't know which field to filter on. " +
+      "Call with no parameters to list ALL scripts. To read the actual source code of scripts found here, pass the numeric 'id' values to netsuite_get_script_files — do NOT call this tool again for that purpose.",
     parameters: {
       type: "object",
       properties: {
@@ -108,17 +111,35 @@ export const tools: ToolDefinition[] = [
           description:
             "Exact script ID string for precise match (e.g. 'customscript_my_suitelet'). Only use when you know the full exact ID."
         },
+        scriptType: {
+          type: "string",
+          description:
+            "Filter by script type (e.g. 'CLIENT', 'USEREVENT', 'SCRIPTLET', 'MAPREDUCE', 'SCHEDULED', 'SUITELET', 'RESTLET', 'WORKFLOWACTION', 'PORTLET', 'BUNDLEINSTALLATION', 'MASSUPDATESCRIPT'). Case-insensitive. Filters at the SQL level."
+        },
+        name: {
+          type: "string",
+          description:
+            "Partial script name to search for (case-insensitive LIKE match). Filters at the SQL level. E.g. 'Project' will match any script with 'Project' in the name."
+        },
+        owner: {
+          type: "string",
+          description:
+            "Partial owner name to filter by (case-insensitive LIKE match). Filters at the SQL level. E.g. 'John' will match scripts owned by any user with 'John' in their entity ID."
+        },
         search: {
           type: "string",
           description:
-            "Fuzzy search keyword to filter results by name, scriptid, owner, or scriptfile (case-insensitive). Use this when looking for scripts by partial name or keyword."
+            "Fuzzy client-side keyword search across name, scriptid, owner, and scriptfile (case-insensitive). Use this as a general-purpose search when you don't know which specific field to filter on. Applied AFTER server-side filters."
         }
       },
       required: []
     },
     execute: async (input) => {
       const response = await callApi(RequestRoutes.SCRIPTS, {
-        scriptId: input.scriptId
+        scriptId: input.scriptId,
+        scriptType: input.scriptType,
+        name: input.name,
+        owner: input.owner
       });
       let results = response.message;
       if (input.search && !input.scriptId && Array.isArray(results)) {
@@ -752,45 +773,81 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_logs",
     description:
-      "Get script execution logs from NetSuite with optional date and filter criteria.",
+      "Get script execution logs from NetSuite. Defaults to the last 7 days if no startDate is provided. " +
+      "IMPORTANT: Always pass scriptIds to filter by the specific script you're investigating. " +
+      "Results are returned newest-first. Use startDate/endDate to narrow the time range. " +
+      "For debugging, focus on 'ERROR' and 'System' type logs — they contain the actual failures.",
     parameters: {
       type: "object",
       properties: {
         startDate: {
           type: "string",
-          description: "Start date (ISO string)"
+          description: "Start date (ISO string, e.g. '2025-05-11T00:00:00Z'). Defaults to 7 days ago if omitted."
         },
         endDate: {
           type: "string",
-          description: "End date (ISO string)"
+          description: "End date (ISO string). Defaults to now if omitted."
         },
         scriptIds: {
           type: "array",
-          items: { type: "string" },
-          description: "Filter by script IDs"
+          items: { type: "number" },
+          description: "Filter by script internal IDs (numeric, e.g. [886]). ALWAYS provide this when investigating a specific script."
         },
         deploymentIds: {
           type: "array",
-          items: { type: "string" },
-          description: "Filter by deployment IDs"
+          items: { type: "number" },
+          description: "Filter by deployment internal IDs (numeric)"
         },
         scriptTypes: {
           type: "array",
           items: { type: "string" },
-          description: "Filter by script types"
+          description: "Filter by script types (e.g. ['SCHEDULED', 'USEREVENT'])"
+        },
+        type: {
+          type: "string",
+          description: "Filter by log type: 'ERROR', 'DEBUG', 'AUDIT', 'EMERGENCY', or 'System'. Use 'ERROR' or 'System' for debugging."
         }
       },
       required: []
     },
     execute: async (input) => {
+      // Normalize IDs so both ["886"] and [886] work reliably.
+      const normalizeNumericIds = (value: unknown): number[] => {
+        if (!Array.isArray(value)) return [];
+        return value
+          .map((v) => Number(v))
+          .filter((v) => Number.isInteger(v) && v > 0);
+      };
+
+      // Default to the last 7 days using full-day bounds so we don't
+      // accidentally hide logs with a restrictive time-of-day filter.
+      const now = new Date();
+      const defaultStartDate = new Date(now);
+      defaultStartDate.setDate(defaultStartDate.getDate() - 7);
+      defaultStartDate.setHours(0, 0, 0, 0);
+
+      const startDate = input.startDate || defaultStartDate.toISOString();
+      const endDate = input.endDate || now.toISOString();
+
       const response = await callApi(RequestRoutes.LOGS, {
-        startDate: input.startDate,
-        endDate: input.endDate,
-        scriptIds: input.scriptIds || [],
-        deploymentIds: input.deploymentIds || [],
-        scriptTypes: input.scriptTypes || []
+        startDate,
+        endDate,
+        scriptIds: normalizeNumericIds(input.scriptIds),
+        deploymentIds: normalizeNumericIds(input.deploymentIds),
+        scriptTypes: input.scriptTypes || [],
+        type: input.type
       });
-      return response.message;
+
+      let results = response.message;
+
+      // Limit to most recent 50 entries to prevent overwhelming context
+      if (Array.isArray(results) && results.length > 50) {
+        const total = results.length;
+        results = results.slice(0, 50);
+        results.push({ _note: `Showing 50 of ${total} logs. Narrow your date range or add type filter for more specific results.` });
+      }
+
+      return results;
     }
   },
 
@@ -902,12 +959,14 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_file_content",
     description:
-      "Read a file from the NetSuite File Cabinet. " +
+      "Read a file from the NetSuite File Cabinet by its numeric ID. " +
       "The full content is stored in the conversation cache automatically — it does NOT appear in your context. " +
       "Returns metadata only: { cacheKey, fileId, contentType, sizeChars, binary }. " +
       "To DISPLAY the content to the user: call cache_display(cacheKey) AND include [VIEW:{cacheKey}] verbatim in your text response. " +
       "To ANALYZE the content, call cache_retrieve(cacheKey) to bring it into context. " +
-      "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results).",
+      "Pass the file's internal numeric ID (from netsuite_find_file, netsuite_list_folder, or SuiteQL results). " +
+      "Do NOT guess that a user-provided number is a file ID if they also mentioned an entity type (e.g. 'lead 181' — 181 is the lead ID, not a file ID). " +
+      "Use SuiteQL to find files related to that entity instead.",
     parameters: {
       type: "object",
       properties: {
