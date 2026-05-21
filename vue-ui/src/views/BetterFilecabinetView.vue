@@ -145,7 +145,14 @@
       <div ref="workspaceRef" class="fc-workspace">
 
         <!-- ── Tab bar: single mode (v-show keeps DOM alive) ──────── -->
-        <div v-show="!isSplit" class="fc-tabbar">
+        <div
+          v-show="!isSplit"
+          class="fc-tabbar"
+          :class="{ 'fc-tabbar-tabs--drop-active': dropZone === 'single' }"
+          @dragover="onSingleTabbarDragOver"
+          @dragleave="onTabbarDragLeave"
+          @drop.prevent="onSingleTabbarDrop"
+        >
           <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
             <div
               v-for="pane in panes"
@@ -178,7 +185,7 @@
             </div>
             <button class="fc-tab-add" @click="addPane" title="New tab · Drop file or folder to open"
               @dragover.prevent
-              @drop.prevent="openItemInNewTab($event)"
+              @drop.prevent.stop="openItemInNewTab($event)"
             >
               <i class="pi pi-plus" style="font-size:0.75rem"></i>
             </button>
@@ -196,7 +203,7 @@
                 'fc-tabbar-tabs--drop-active': dropZone === 'group-left',
               }"
               @dragover.prevent="onTabbarDragOver($event, 'left')"
-              @dragleave="dropZone = null"
+              @dragleave="onTabbarDragLeave"
               @drop.prevent="onTabbarDrop($event, 'left')"
             >
               <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
@@ -230,7 +237,7 @@
                 </div>
                 <button class="fc-tab-add" @click="addPaneToGroup('left')" title="New tab · Drop file or folder to open"
                   @dragover.prevent
-                  @drop.prevent.stop="openItemInNewTab($event)"
+                  @drop.prevent.stop="openItemInNewTab($event, 'left')"
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
@@ -248,7 +255,7 @@
                 'fc-tabbar-tabs--drop-active': dropZone === 'group-right',
               }"
               @dragover.prevent="onTabbarDragOver($event, 'right')"
-              @dragleave="dropZone = null"
+              @dragleave="onTabbarDragLeave"
               @drop.prevent="onTabbarDrop($event, 'right')"
             >
               <div class="fc-tabbar-tabs" @wheel.prevent="onTabBarWheel">
@@ -282,7 +289,7 @@
                 </div>
                 <button class="fc-tab-add" @click="addPaneToGroup('right')" title="New tab · Drop file or folder to open"
                   @dragover.prevent
-                  @drop.prevent.stop="openItemInNewTab($event)"
+                  @drop.prevent.stop="openItemInNewTab($event, 'right')"
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
@@ -571,7 +578,7 @@ const workspaceRef = ref<HTMLElement | null>(null);
 // Drag state
 const draggingTabId = ref<string | null>(null);
 const draggingGroup = ref<"left" | "right" | null>(null);
-const dropZone = ref<"group-left" | "group-right" | null>(null);
+const dropZone = ref<"single" | "group-left" | "group-right" | null>(null);
 const reorderTarget = ref<{ id: string; side: "before" | "after" } | null>(null);
 const splitDropSide = ref<"left" | "right" | null>(null);
 
@@ -849,11 +856,40 @@ const moveTabToGroup = (paneId: string, targetGroup: "left" | "right") => {
   onTabDragEnd();
 };
 
-// ── Tab bar drag/drop handlers (split mode) ───────────────────────────────
+// ── Tab bar drag/drop handlers ────────────────────────────────────────────
 // Handles both tab moves and fc-item drops (open in new tab) on the full bar.
 
+const isFileCabinetItemDrag = (event: DragEvent) =>
+  event.dataTransfer?.types.includes("application/fc-item") ?? false;
+
+const isEventOverTab = (event: DragEvent) =>
+  event.target instanceof Element && event.target.closest(".fc-tab") !== null;
+
+const onTabbarDragLeave = (event: DragEvent) => {
+  const related = event.relatedTarget as Node | null;
+  const target = event.currentTarget as HTMLElement;
+  if (!related || !target.contains(related)) dropZone.value = null;
+};
+
+const onSingleTabbarDragOver = (event: DragEvent) => {
+  if (!isFileCabinetItemDrag(event)) return;
+  event.preventDefault();
+  if (!isEventOverTab(event)) reorderTarget.value = null;
+  dropZone.value = "single";
+};
+
+const onSingleTabbarDrop = (event: DragEvent) => {
+  dropZone.value = null;
+  if (isFileCabinetItemDrag(event)) {
+    openItemInNewTab(event);
+  } else if (draggingTabId.value !== null) {
+    onTabDragEnd();
+  }
+};
+
 const onTabbarDragOver = (event: DragEvent, group: "left" | "right") => {
-  const isFcItem = event.dataTransfer?.types.includes("application/fc-item") ?? false;
+  const isFcItem = isFileCabinetItemDrag(event);
+  if (isFcItem && !isEventOverTab(event)) reorderTarget.value = null;
   // Only highlight for cross-group tab moves or fc-item drops; ignore same-group tab drags.
   const isCrossGroupTab = draggingTabId.value !== null && draggingGroup.value !== null && draggingGroup.value !== group;
   if (isCrossGroupTab || isFcItem) {
@@ -872,13 +908,13 @@ const onTabbarDrop = (event: DragEvent, group: "left" | "right") => {
       onTabDragEnd();
     }
   } else {
-    openItemInNewTab(event);
+    openItemInNewTab(event, group);
   }
 };
 
 // ── Drop file/folder item onto tab bar → open in new tab ──────────────────
 
-const openItemInNewTab = (event: DragEvent) => {
+const openItemInNewTab = (event: DragEvent, targetGroup?: "left" | "right") => {
   const itemJson = event.dataTransfer?.getData("application/fc-item");
   if (!itemJson) return;
   let item: any;
@@ -903,14 +939,14 @@ const openItemInNewTab = (event: DragEvent) => {
   const newPane: PaneDef = { id: newId, label: "File Cabinet", initialFolderId: initialFolderIdForNav, initialFile };
 
   // Determine insert position from reorderTarget (set by onTabItemDragOver)
-  const rt = reorderTarget.value;
+  const rt = isEventOverTab(event) ? reorderTarget.value : null;
   reorderTarget.value = null;
 
   if (isSplit.value) {
     // Determine which group to add to (prefer group the drop target is in, else active group)
     const group = (rt && rightGroupIds.value.includes(rt.id)) ? "right"
       : (rt && leftGroupIds.value.includes(rt.id)) ? "left"
-      : leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+      : targetGroup ?? (leftGroupIds.value.includes(activePaneId.value) ? "left" : "right");
 
     if (rt && ((group === "left" && leftGroupIds.value.includes(rt.id)) || (group === "right" && rightGroupIds.value.includes(rt.id)))) {
       // Insert at reorder position within the group's ID list
