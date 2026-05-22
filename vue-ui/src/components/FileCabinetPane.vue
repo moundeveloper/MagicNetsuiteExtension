@@ -48,6 +48,14 @@
               size="small"
               class="fc-filter-input"
             />
+            <button
+              class="fc-view-toggle"
+              title="Refresh current location"
+              :disabled="isLoading"
+              @click="refreshCurrentFolder"
+            >
+              <i :class="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" class="text-xs"></i>
+            </button>
             <button class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
               <i class="pi pi-folder-plus text-xs"></i>
             </button>
@@ -912,6 +920,7 @@ const rootFolders = ref<FolderItem[]>([]);
 const childFoldersCache = ref<Map<number | null, FolderItem[]>>(new Map());
 const currentSubfolders = ref<FolderItem[]>([]);
 const currentFiles = ref<FileItem[]>([]);
+const currentFolderInfo = ref<FolderItem | null>(null);
 
 const contentSearch = ref("");
 const viewMode = ref<"grid" | "list">("list");
@@ -1059,21 +1068,6 @@ const getCodeLanguage = (item: FileItem): "javascript" | "sql" => {
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
-const currentFolderInfo = computed<FolderItem | null>(() => {
-  if (currentFolderId.value === null) return null;
-  const findInTree = (folders: FolderItem[]): FolderItem | null => {
-    for (const f of folders) {
-      if (f.id === currentFolderId.value) return f;
-      if (f.children) {
-        const found = findInTree(f.children);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-  return findInTree(rootFolders.value);
-});
-
 const allItems = computed<CabinetItem[]>(() => {
   const folders: CabinetItem[] = currentSubfolders.value.map((f) => ({ ...f, type: "folder" as const }));
   const files: CabinetItem[] = currentFiles.value.map((f) => ({ ...f, type: "file" as const }));
@@ -1125,23 +1119,33 @@ const runQuery = async (sql: string): Promise<any[]> => {
 
 // ── Data fetching ──────────────────────────────────────────────────────────
 
+const mapFolderRow = (r: any): FolderItem => ({
+  type: "folder" as const,
+  id: r.id,
+  name: r.name,
+  parent: r.parent,
+  foldertype: r.foldertype || "DEFAULT",
+  numfolderfiles: r.numfolderfiles ?? 0,
+  foldersize: r.foldersize ?? 0,
+  lastmodifieddate: r.lastmodifieddate,
+  description: r.description,
+  children: undefined
+});
+
 const fetchRootFolders = async () => {
   const rows = await runQuery(`
     SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
     FROM MediaItemFolder WHERE parent IS NULL ORDER BY name
   `);
-  rootFolders.value = rows.map((r: any) => ({
-    type: "folder" as const,
-    id: r.id,
-    name: r.name,
-    parent: r.parent,
-    foldertype: r.foldertype || "DEFAULT",
-    numfolderfiles: r.numfolderfiles ?? 0,
-    foldersize: r.foldersize ?? 0,
-    lastmodifieddate: r.lastmodifieddate,
-    description: r.description,
-    children: undefined
-  }));
+  rootFolders.value = rows.map(mapFolderRow);
+};
+
+const fetchFolderInfo = async (folderId: number): Promise<FolderItem | null> => {
+  const rows = await runQuery(`
+    SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
+    FROM MediaItemFolder WHERE id = ${folderId} AND ROWNUM <= 1
+  `);
+  return rows.length > 0 ? mapFolderRow(rows[0]) : null;
 };
 
 const fetchChildFolders = async (parentId: number): Promise<FolderItem[]> => {
@@ -1152,18 +1156,7 @@ const fetchChildFolders = async (parentId: number): Promise<FolderItem[]> => {
     SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
     FROM MediaItemFolder WHERE parent = ${parentId} ORDER BY name
   `);
-  const children: FolderItem[] = rows.map((r: any) => ({
-    type: "folder" as const,
-    id: r.id,
-    name: r.name,
-    parent: r.parent,
-    foldertype: r.foldertype || "DEFAULT",
-    numfolderfiles: r.numfolderfiles ?? 0,
-    foldersize: r.foldersize ?? 0,
-    lastmodifieddate: r.lastmodifieddate,
-    description: r.description,
-    children: undefined
-  }));
+  const children: FolderItem[] = rows.map(mapFolderRow);
   childFoldersCache.value.set(parentId, children);
   return children;
 };
@@ -1213,6 +1206,7 @@ const navigateToFolder = async (folderId: number | null) => {
   selectedItems.value = [];
   detailItem.value = null;
   contentSearch.value = "";
+  currentFolderInfo.value = null;
 
   // Invalidate only this folder's cache so breadcrumb clicks always show fresh contents
   if (folderId !== null) childFoldersCache.value.delete(folderId);
@@ -1224,8 +1218,10 @@ const navigateToFolder = async (folderId: number | null) => {
       currentSubfolders.value = rootFolders.value;
       currentFiles.value = [];
       breadcrumbs.value = [];
+      currentFolderInfo.value = null;
     } else {
-      const [folders, files] = await Promise.all([fetchChildFolders(folderId), fetchFiles(folderId)]);
+      const [folderInfo, folders, files] = await Promise.all([fetchFolderInfo(folderId), fetchChildFolders(folderId), fetchFiles(folderId)]);
+      currentFolderInfo.value = folderInfo;
       currentSubfolders.value = folders;
       currentFiles.value = files;
       await buildBreadcrumbs(folderId);
@@ -1241,9 +1237,9 @@ const navigateToFolder = async (folderId: number | null) => {
   updateLabel();
 };
 
-const refreshCurrentFolder = () => {
+const refreshCurrentFolder = async () => {
   childFoldersCache.value.clear();
-  navigateToFolder(currentFolderId.value);
+  await navigateToFolder(currentFolderId.value);
 };
 
 // ── File content ───────────────────────────────────────────────────────────
@@ -1627,7 +1623,9 @@ const toggleBookmark = async (item: CabinetItem) => {
     toast.add({ severity: "info", summary: "Bookmark Removed", detail: item.name, life: 2000 });
   } else {
     const parentFolderId = item.type === "folder" ? ((item as FolderItem).parent ?? null) : (item as FileItem).folder;
-    const parentFolderName = breadcrumbs.value.length > 0 ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name : "Root";
+    const isCurrentFolder = item.type === "folder" && item.id === currentFolderId.value;
+    const parentCrumbIndex = isCurrentFolder ? breadcrumbs.value.length - 2 : breadcrumbs.value.length - 1;
+    const parentFolderName = parentCrumbIndex >= 0 ? breadcrumbs.value[parentCrumbIndex]!.name : "Root";
     const newBmId = await addBookmark({
       environment: props.currentEnvironment,
       itemType: item.type,
@@ -2330,6 +2328,17 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   border-color: var(--p-slate-500);
   color: var(--p-slate-800);
   background: var(--p-slate-100);
+}
+
+.fc-view-toggle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.fc-view-toggle:disabled:hover {
+  border-color: var(--p-slate-400);
+  color: var(--p-slate-600);
+  background: white;
 }
 
 .fc-view-toggle.active {
