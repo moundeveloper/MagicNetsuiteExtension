@@ -24,6 +24,7 @@ import AgentsView from "../views/AgentsView.vue";
 import ApiTesterView from "../views/ApiTesterView.vue";
 import MultiAgentView from "../views/MultiAgentView.vue";
 import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
+import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -274,6 +275,14 @@ export const routes: FullRoute[] = [
     component: MultiAgentView,
     status: RouteStatus.release,
     breadcrumb: "Multi-Agent"
+  },
+  {
+    route: "/netsuite-agent-harness",
+    name: "NetSuite Agent Harness",
+    icon: "pi pi-compass",
+    component: NetsuiteAgentHarnessView,
+    status: RouteStatus.release,
+    breadcrumb: "NetSuite Agent Harness"
   },
   {
     route: "/netsuite-api-tester",
