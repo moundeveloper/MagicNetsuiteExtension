@@ -714,8 +714,10 @@ import {
 } from "../utils/suiteqlDb";
 import {
   explainSuiteQLError,
+  getSuiteQLReferencedFields,
   lintSuiteQL
 } from "../utils/suiteqlLinter";
+import type { SuiteQLSchemaContext } from "../utils/suiteqlLinter";
 
 const router = useRouter();
 
@@ -769,6 +771,13 @@ interface TableDetail {
   joins: JoinInfo[];
 }
 
+interface RuntimeFieldTypeInfo {
+  id: string;
+  label: string;
+  type: string;
+  error?: string;
+}
+
 // Enriched row types for aggregated display
 interface FieldRow extends FieldInfo {
   tableId: string;
@@ -800,6 +809,10 @@ const queryTableIds = ref<string[]>([]);
 
 // Detail cache keyed by table id (lowercase)
 const tableDetailCache = ref<Record<string, TableDetail>>({});
+const runtimeFieldTypeCache = ref<
+  Record<string, Record<string, RuntimeFieldTypeInfo>>
+>({});
+const runtimeFieldTypeLoadErrors = ref<Record<string, string>>({});
 
 // Bottom panel
 const bottomTab = ref("results");
@@ -1366,7 +1379,7 @@ const runCurrentQuery = async () => {
   if (!file || file.isExecuting) return;
 
   showLimitConfirm.value = false;
-  if (!validateSuiteQLBeforeExecution(file)) return;
+  if (!(await validateSuiteQLBeforeExecution(file))) return;
 
   // If unlimited, check count first
   if (limitValue.value === null) {
@@ -1395,7 +1408,7 @@ const confirmUnlimitedQuery = async (file: QueryFile) => {
   await executeQuery(file, null);
 };
 
-const getSuiteQLSchemaContext = () => ({
+const getSuiteQLSchemaContext = (): SuiteQLSchemaContext => ({
   tableIds: tables.value.map((table) => table.id),
   fieldsByTable: Object.fromEntries(
     Object.values(tableDetailCache.value).map((detail) => [
@@ -1415,10 +1428,108 @@ const getSuiteQLSchemaContext = () => ({
           ])
       )
     ])
+  ),
+  runtimeFieldTypesByTable: Object.fromEntries(
+    Object.entries(runtimeFieldTypeCache.value).map(([tableId, fields]) => [
+      tableId,
+      Object.fromEntries(
+        Object.entries(fields)
+          .filter(([, field]) => Boolean(field.type))
+          .map(([fieldId, field]) => [fieldId, field.type])
+      )
+    ])
   )
 });
 
-const validateSuiteQLBeforeExecution = (file: QueryFile): boolean => {
+const normalizeRuntimeFieldTypeInfo = (
+  fieldId: string,
+  rawInfo: unknown
+): RuntimeFieldTypeInfo => {
+  const info = rawInfo as Partial<RuntimeFieldTypeInfo> | null;
+  const error =
+    info?.error === undefined
+      ? undefined
+      : typeof info.error === "string"
+        ? info.error
+        : String(info.error);
+
+  return {
+    id: String(info?.id ?? fieldId),
+    label: String(info?.label ?? ""),
+    type: String(info?.type ?? ""),
+    ...(error ? { error } : {})
+  };
+};
+
+const hydrateRuntimeFieldTypesForQuery = async (sql: string) => {
+  const referencedFields = getSuiteQLReferencedFields(sql, getSuiteQLSchemaContext());
+  if (referencedFields.length === 0) return;
+
+  const fieldsByTable = new Map<string, { tableId: string; fields: Set<string> }>();
+  for (const ref of referencedFields) {
+    const tableKey = ref.table.toLowerCase();
+    const fieldKey = ref.field.toLowerCase();
+    if (runtimeFieldTypeLoadErrors.value[tableKey]) continue;
+    if (runtimeFieldTypeCache.value[tableKey]?.[fieldKey]) continue;
+
+    const entry =
+      fieldsByTable.get(tableKey) ?? { tableId: ref.table, fields: new Set<string>() };
+    entry.fields.add(ref.field);
+    fieldsByTable.set(tableKey, entry);
+  }
+
+  await Promise.all(
+    [...fieldsByTable.entries()].map(async ([tableKey, entry]) => {
+      try {
+        const response = (await callApi(RequestRoutes.GET_RECORD_FIELD_TYPES, {
+          type: entry.tableId,
+          fieldIds: [...entry.fields]
+        })) as ApiResponse;
+
+        if (response.status === "error") {
+          throw new Error(
+            typeof response.message === "string"
+              ? response.message
+              : JSON.stringify(response.message)
+          );
+        }
+
+        const rawFields = (response.message?.fields ?? {}) as Record<string, unknown>;
+        const nextTableCache = {
+          ...(runtimeFieldTypeCache.value[tableKey] ?? {})
+        };
+
+        for (const [fieldId, rawInfo] of Object.entries(rawFields)) {
+          nextTableCache[fieldId.toLowerCase()] = normalizeRuntimeFieldTypeInfo(
+            fieldId,
+            rawInfo
+          );
+        }
+
+        runtimeFieldTypeCache.value = {
+          ...runtimeFieldTypeCache.value,
+          [tableKey]: nextTableCache
+        };
+      } catch (error: any) {
+        const message = error?.message ?? String(error);
+        runtimeFieldTypeLoadErrors.value = {
+          ...runtimeFieldTypeLoadErrors.value,
+          [tableKey]: message
+        };
+        console.warn(
+          `[SuiteQLView] runtime Field.type unavailable for "${entry.tableId}":`,
+          message
+        );
+      }
+    })
+  );
+};
+
+const validateSuiteQLBeforeExecution = async (
+  file: QueryFile
+): Promise<boolean> => {
+  await detectAndLoadTablesFromQuery(file.code);
+  await hydrateRuntimeFieldTypesForQuery(file.code);
   const schemaContext = getSuiteQLSchemaContext();
   const lintResult = lintSuiteQL(file.code, schemaContext);
   if (lintResult.ok) return true;
@@ -1444,11 +1555,9 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
   file.totalCount = 0;
   bottomTab.value = "results";
 
-  if (!validateSuiteQLBeforeExecution(file)) return;
+  if (!(await validateSuiteQLBeforeExecution(file))) return;
 
   file.isExecuting = true;
-
-  await detectAndLoadTablesFromQuery(file.code);
 
   try {
     const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
@@ -1481,7 +1590,11 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
       file.results = results;
       file.totalCount = totalCount;
     } else {
-      file.error = "Query returned 0 rows";
+      file.error = explainSuiteQLError(
+        file.code,
+        "Query returned 0 rows",
+        getSuiteQLSchemaContext()
+      );
     }
   } catch (error: any) {
     console.error("[SuiteQLView] executeQuery — caught exception:", error);

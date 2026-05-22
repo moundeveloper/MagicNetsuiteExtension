@@ -520,6 +520,14 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.GET_RECORD_FIELD_TYPES,
+    description: "Returns NetSuite Field.type values for specific body fields on a record type.",
+    fields: [
+      f("type", "string", true, "Record type e.g. salesorder, customer"),
+      f("fieldIds", "array", false, "Comma-separated field IDs, e.g. trandate,createddate")
+    ]
+  },
+  {
     route: RequestRoutes.LOAD_RECORD_SUBLISTS,
     description: "Loads the sublist rows for a record. Returns all sublists unless specific IDs are provided.",
     fields: [
@@ -838,6 +846,7 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
     routes: [
       RequestRoutes.LOAD_RECORD,
       RequestRoutes.GET_RECORD_FIELDS,
+      RequestRoutes.GET_RECORD_FIELD_TYPES,
       RequestRoutes.LOAD_RECORD_SUBLISTS,
       RequestRoutes.GET_ALL_RECORD_TYPES,
       RequestRoutes.CUSTOM_RECORDS,

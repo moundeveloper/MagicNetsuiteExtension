@@ -24,6 +24,13 @@ export interface SuiteQLSchemaContext {
   tableIds?: string[];
   fieldsByTable?: Record<string, string[]>;
   fieldTypesByTable?: Record<string, Record<string, string>>;
+  runtimeFieldTypesByTable?: Record<string, Record<string, string>>;
+}
+
+export interface SuiteQLReferencedField {
+  table: string;
+  field: string;
+  source: "qualified" | "unqualified";
 }
 
 interface TableSource {
@@ -56,6 +63,7 @@ interface SuiteQLAnalysisContext {
     tableIds: Set<string>;
     fieldsByTable: Map<string, Set<string>>;
     fieldTypesByTable: Map<string, Map<string, string>>;
+    runtimeFieldTypesByTable: Map<string, Map<string, string>>;
   };
 }
 
@@ -552,17 +560,41 @@ const fieldTypeForRef = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
   return "";
 };
 
+const runtimeFieldTypeForRef = (
+  context: SuiteQLAnalysisContext,
+  ref: ColumnRef
+) => {
+  const tables = knownFieldTables(context, ref);
+  for (const table of tables) {
+    const fieldType = context.schema.runtimeFieldTypesByTable
+      .get(table.toLowerCase())
+      ?.get(ref.column.toLowerCase());
+    if (fieldType) return fieldType;
+  }
+  return "";
+};
+
 const isDateLikeField = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const runtimeType = runtimeFieldTypeForRef(context, ref).toLowerCase();
+  if (runtimeType) {
+    return /\b(date|datetime(?:tz)?|timestamp|time)\b/.test(runtimeType);
+  }
+
   const type = fieldTypeForRef(context, ref).toLowerCase();
-  if (/\b(date|datetime|timestamp|time)\b/.test(type)) return true;
+  if (/\b(date|datetime(?:tz)?|timestamp|time)\b/.test(type)) return true;
   return /date|time|period|created|modified|trandate|duedate|closedate|startdate|enddate/i.test(
     ref.column
   );
 };
 
 const isDateTimeLikeField = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const runtimeType = runtimeFieldTypeForRef(context, ref).toLowerCase();
+  if (runtimeType) {
+    return /\b(datetime(?:tz)?|timestamp|time)\b/.test(runtimeType);
+  }
+
   const type = fieldTypeForRef(context, ref).toLowerCase();
-  if (/\b(datetime|timestamp)\b/.test(type)) return true;
+  if (/\b(datetime(?:tz)?|timestamp|time)\b/.test(type)) return true;
   return /createddate|lastmodified|modifieddate|lastmodifieddate|datecreated|time/i.test(
     ref.column
   );
@@ -861,10 +893,46 @@ const buildAnalysisContext = (
             ])
           )
         ])
+      ),
+      runtimeFieldTypesByTable: new Map(
+        Object.entries(schemaContext.runtimeFieldTypesByTable ?? {}).map(([table, fields]) => [
+          table.toLowerCase(),
+          new Map(
+            Object.entries(fields).map(([field, type]) => [
+              field.toLowerCase(),
+              type.toLowerCase()
+            ])
+          )
+        ])
       )
     },
     lexicalIssues
   };
+};
+
+export const getSuiteQLReferencedFields = (
+  sql: string,
+  schemaContext: SuiteQLSchemaContext = {}
+): SuiteQLReferencedField[] => {
+  const context = buildAnalysisContext(sql ?? "", schemaContext);
+  const fields: SuiteQLReferencedField[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of context.columnRefs) {
+    const columnLower = ref.column.toLowerCase();
+    if (SPECIAL_COLUMNS.has(columnLower)) continue;
+    if (!ref.table && context.selectAliases.has(columnLower)) continue;
+
+    const source = ref.table ? "qualified" : "unqualified";
+    for (const table of knownFieldTables(context, ref)) {
+      const key = `${table.toLowerCase()}.${columnLower}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      fields.push({ table, field: ref.column, source });
+    }
+  }
+
+  return fields;
 };
 
 const lexicalCompatibilityRules: SuiteQLRule[] = [
@@ -1156,6 +1224,10 @@ const astRules: SuiteQLRule[] = [
         if (!literal) return;
 
         const fieldName = [field.table, field.column].filter(Boolean).join(".");
+        const runtimeType = runtimeFieldTypeForRef(context, field);
+        const fieldTypeMessage = runtimeType
+          ? `${fieldName} has NetSuite Field.type ${runtimeType.toUpperCase()}`
+          : `${fieldName} looks like a datetime/timestamp field`;
         const mask = inferDateFormatMask(literal);
         const start = findLiteralStart(sql, literal, expr);
         issues.push(
@@ -1163,7 +1235,7 @@ const astRules: SuiteQLRule[] = [
             sql,
             "warning",
             "DATETIME_DATE_EQUALITY",
-            `${fieldName} looks like a datetime/timestamp field. Equality to date-only value '${literal}' only matches rows exactly at midnight. Prefer ${fieldName} >= TO_DATE('${literal}', '${mask}') and ${fieldName} < TO_DATE('<next day>', '${mask}'), or compare TRUNC(${fieldName}) to TO_DATE('${literal}', '${mask}').`,
+            `${fieldTypeMessage}. Equality to date-only value '${literal}' only matches rows exactly at midnight. Prefer ${fieldName} >= TO_DATE('${literal}', '${mask}') and ${fieldName} < TO_DATE('<next day>', '${mask}'), or compare TRUNC(${fieldName}) to TO_DATE('${literal}', '${mask}').`,
             start,
             start + literal.length
           )
