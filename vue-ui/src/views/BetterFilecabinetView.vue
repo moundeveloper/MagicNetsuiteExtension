@@ -467,6 +467,7 @@
       <!-- Backdrop: click-away to close -->
       <div class="fc-bm-ctx-backdrop" @click="bookmarkCtxMenu = null" @contextmenu.prevent="bookmarkCtxMenu = null"></div>
       <div
+        ref="bookmarkCtxMenuRef"
         class="fc-bm-ctx-menu"
         :style="{ left: bookmarkCtxMenu.x + 'px', top: bookmarkCtxMenu.y + 'px' }"
         @click.stop
@@ -498,6 +499,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import FolderTreeNode from "../components/FolderTreeNode.vue";
 import FileCabinetPane from "../components/FileCabinetPane.vue";
+import { getViewportBoundedMenuPosition } from "../utils/viewportPosition";
 import {
   getTrashedItems,
   removeFromTrash,
@@ -1316,9 +1318,18 @@ const getBookmarkStatusIcon = (bm: Bookmark) => {
 // ── Bookmark context menu ───────────────────────────────────────────────────
 
 const bookmarkCtxMenu = ref<{ bm: Bookmark; x: number; y: number } | null>(null);
+const bookmarkCtxMenuRef = ref<HTMLElement | null>(null);
 
 const showBookmarkCtxMenu = (event: MouseEvent, bm: Bookmark) => {
-  bookmarkCtxMenu.value = { bm, x: event.clientX, y: event.clientY };
+  const cursorX = event.clientX;
+  const cursorY = event.clientY;
+  bookmarkCtxMenu.value = { bm, x: cursorX, y: cursorY };
+
+  void nextTick(() => {
+    if (!bookmarkCtxMenuRef.value || !bookmarkCtxMenu.value) return;
+    const position = getViewportBoundedMenuPosition(cursorX, cursorY, bookmarkCtxMenuRef.value);
+    bookmarkCtxMenu.value = { ...bookmarkCtxMenu.value, x: position.x, y: position.y };
+  });
 };
 
 const openBookmarkInNewTab = async (bm: Bookmark) => {
@@ -1820,6 +1831,7 @@ onMounted(async () => {
   position: fixed; z-index: 9999; min-width: 160px; padding: 0.25rem 0;
   background: white; border: 1px solid var(--p-slate-200); border-radius: 6px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.14); font-size: 0.78rem;
+  max-height: calc(100vh - 16px); overflow-y: auto;
 }
 .fc-bm-ctx-menu button {
   display: flex; align-items: center; gap: 0.45rem; width: 100%;

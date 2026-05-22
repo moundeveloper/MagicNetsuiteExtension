@@ -800,6 +800,7 @@ import CodeViewer from "./CodeViewer.vue";
 import FileCodeEditor from "./FileCodeEditor.vue";
 import DiffViewer from "./DiffViewer.vue";
 import DiffComparator from "./DiffComparator.vue";
+import { getViewportBoundedMenuPosition } from "../utils/viewportPosition";
 import {
   getVersionsForFile,
   saveVersion,
@@ -952,11 +953,13 @@ const moveTargets = ref<CabinetItem[]>([]);
 const moveDestFolder = ref<CabinetItem | null>(null);
 const moveSrcFolderId = ref<number | null>(null);
 
+type ContextMenuAction = { label: string; icon: string; handler: () => void; danger?: boolean };
+
 const contextMenu = ref({
   visible: false,
   x: 0,
   y: 0,
-  actions: [] as { label: string; icon: string; handler: () => void; danger?: boolean }[]
+  actions: [] as ContextMenuAction[]
 });
 const contextMenuRef = ref<HTMLElement | null>(null);
 
@@ -1485,10 +1488,23 @@ const handleItemDblClick = (item: CabinetItem) => {
   }
 };
 
+const showContextMenuAt = (event: MouseEvent, actions: ContextMenuAction[]) => {
+  const cursorX = event.clientX;
+  const cursorY = event.clientY;
+  contextMenu.value = { visible: true, x: cursorX, y: cursorY, actions };
+
+  void nextTick(() => {
+    if (!contextMenuRef.value || !contextMenu.value.visible) return;
+    const position = getViewportBoundedMenuPosition(cursorX, cursorY, contextMenuRef.value);
+    contextMenu.value.x = position.x;
+    contextMenu.value.y = position.y;
+  });
+};
+
 const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
   selectedItems.value = [item];
   detailItem.value = item;
-  const actions: typeof contextMenu.value.actions = [];
+  const actions: ContextMenuAction[] = [];
   if (item.type === "folder") {
     actions.push({ label: "Open Folder", icon: "pi pi-folder-open", handler: () => navigateToFolder(item.id) });
     actions.push({ label: "Open in NetSuite", icon: "pi pi-external-link", handler: () => window.open(getNetsuiteEditUrl(item), "_blank") });
@@ -1516,7 +1532,7 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
   if (item.id > 0) {
     actions.push({ label: "Delete", icon: "pi pi-trash text-red-500", handler: () => confirmDeleteItem(item), danger: true });
   }
-  contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, actions };
+  showContextMenuAt(event, actions);
 };
 
 const handleBodyContextMenu = (event: MouseEvent) => {
@@ -1524,14 +1540,14 @@ const handleBodyContextMenu = (event: MouseEvent) => {
   const target = event.target as HTMLElement;
   const isOnItem = target.closest(".fc-grid-item, .fc-table-row");
   if (isOnItem) return;
-  const actions: { label: string; icon: string; handler: () => void; danger?: boolean }[] = [
+  const actions: ContextMenuAction[] = [
     { label: "New Folder", icon: "pi pi-folder-plus", handler: () => openNewFolderDialog() },
     { label: "New File",   icon: "pi pi-file-edit",   handler: () => openNewFileDialog() },
   ];
   if (currentFolderId.value !== null) {
     actions.push({ label: "Copy Folder ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(currentFolderId.value)) });
   }
-  contextMenu.value = { visible: true, x: event.clientX, y: event.clientY, actions };
+  showContextMenuAt(event, actions);
 };
 
 const copyToClipboard = (text: string) => {
@@ -2505,6 +2521,8 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   z-index: 1000;
   min-width: 160px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 4px 0;
   border-radius: 6px;
   border: 1px solid var(--p-slate-200);

@@ -560,10 +560,63 @@ const isDateLikeField = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
   );
 };
 
+const isDateTimeLikeField = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
+  const type = fieldTypeForRef(context, ref).toLowerCase();
+  if (/\b(datetime|timestamp)\b/.test(type)) return true;
+  return /createddate|lastmodified|modifieddate|lastmodifieddate|datecreated|time/i.test(
+    ref.column
+  );
+};
+
 const regexIndex = (text: string, regex: RegExp) => {
   const match = regex.exec(text);
   if (!match) return null;
   return { start: match.index, end: match.index + match[0].length, text: match[0] };
+};
+
+const stringLiteralValue = (expr: unknown): string | null => {
+  if (!expr || typeof expr !== "object") return null;
+  const node = expr as Record<string, unknown>;
+  if (
+    node.type === "single_quote_string" ||
+    node.type === "string" ||
+    node.type === "double_quote_string"
+  ) {
+    return typeof node.value === "string" ? node.value : null;
+  }
+  return null;
+};
+
+const isDateOnlyText = (text: string) =>
+  /^(?:\d{8}|\d{6}|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}-[A-Za-z]{3,9}-\d{2,4}|[A-Za-z]{3,9}-\d{1,2}-\d{2,4})$/.test(
+    text.trim()
+  );
+
+const dateOnlyLiteralTextFromExpression = (expr: unknown): string | null => {
+  const literal = stringLiteralValue(expr);
+  if (literal && isDateOnlyText(literal)) return literal;
+
+  if (!expr || typeof expr !== "object") return null;
+  const node = expr as Record<string, unknown>;
+  if (node.type !== "function") return null;
+
+  const functionName = functionNameToString(node).toUpperCase();
+  if (!["TO_DATE", "TO_TIMESTAMP"].includes(functionName)) return null;
+
+  const args = (node.args as Record<string, unknown> | undefined)?.value;
+  if (!Array.isArray(args)) return null;
+
+  const firstLiteral = stringLiteralValue(args[0]);
+  return firstLiteral && isDateOnlyText(firstLiteral) ? firstLiteral : null;
+};
+
+const findLiteralStart = (sql: string, literal: string, fallbackExpr: unknown) => {
+  const escaped = escapeRegex(literal);
+  const quoted = regexIndex(sql, new RegExp(`'${escaped}'`, "i"));
+  if (quoted) return quoted.start + 1;
+
+  const bare = regexIndex(sql, new RegExp(`\\b${escaped}\\b`, "i"));
+  return bare?.start ?? findExpressionStart(sql, fallbackExpr);
 };
 
 const flattenNumberChain = (
@@ -581,16 +634,16 @@ const flattenNumberChain = (
   return [...left, ...right];
 };
 
-const nearestDateToken = (sql: string, expr: unknown) => {
+const nearestDateToken = (sql: string, maskedSql: string, expr: unknown) => {
   const anchor = findExpressionStart(sql, expr);
   const pattern =
     /\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}-[A-Za-z]{3,9}-\d{2,4}|[A-Za-z]{3,9}-\d{1,2}-\d{2,4})\b/g;
-  const matches = [...sql.matchAll(pattern)]
+  const matches = [...maskedSql.matchAll(pattern)]
     .filter((match) => match.index !== undefined)
     .map((match) => ({
       start: match.index as number,
       end: (match.index as number) + match[0].length,
-      text: match[0]
+      text: sql.slice(match.index as number, (match.index as number) + match[0].length)
     }));
   if (matches.length === 0) return null;
 
@@ -613,10 +666,14 @@ const inferDateFormatMask = (text: string) => {
   if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(text)) return "YYYY-MM-DD";
   if (/^\d{4}\/\d{1,2}\/\d{1,2}$/.test(text)) return "YYYY/MM/DD";
   if (/^\d{1,2}-[A-Za-z]{3,9}-\d{2,4}$/.test(text)) {
-    return text.split("-")[2]?.length === 2 ? "DD-MON-YY" : "DD-MON-YYYY";
+    const parts = text.split("-");
+    const month = (parts[1]?.length ?? 0) > 3 ? "MONTH" : "MON";
+    return parts[2]?.length === 2 ? `DD-${month}-YY` : `DD-${month}-YYYY`;
   }
   if (/^[A-Za-z]{3,9}-\d{1,2}-\d{2,4}$/.test(text)) {
-    return text.split("-")[2]?.length === 2 ? "MON-DD-YY" : "MON-DD-YYYY";
+    const parts = text.split("-");
+    const month = (parts[0]?.length ?? 0) > 3 ? "MONTH" : "MON";
+    return parts[2]?.length === 2 ? `${month}-DD-YY` : `${month}-DD-YYYY`;
   }
   if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(text)) {
     const parts = text.split("/");
@@ -626,7 +683,7 @@ const inferDateFormatMask = (text: string) => {
   return "<matching format mask>";
 };
 
-const dateLikeExpressionInfo = (sql: string, expr: unknown) => {
+const dateLikeExpressionInfo = (sql: string, maskedSql: string, expr: unknown) => {
   if (!expr || typeof expr !== "object") return null;
   const node = expr as Record<string, unknown>;
 
@@ -659,7 +716,7 @@ const dateLikeExpressionInfo = (sql: string, expr: unknown) => {
     }
   }
 
-  const nearest = nearestDateToken(sql, expr);
+  const nearest = nearestDateToken(sql, maskedSql, expr);
   if (nearest) return nearest;
 
   return null;
@@ -676,7 +733,7 @@ const collectUnquotedLiteralNames = (context: SuiteQLAnalysisContext) => {
       return;
     }
 
-    const dateInfo = dateLikeExpressionInfo(context.sql, value);
+    const dateInfo = dateLikeExpressionInfo(context.sql, context.maskedSql, value);
     const compactDate = dateInfo ? /^\d{6}(\d{2})?$/.test(dateInfo.text) : false;
     if (dateInfo && (!compactDate || isDateLikeField(context, field))) {
       collectNonAggregateColumnRefs(value)
@@ -1028,7 +1085,7 @@ const astRules: SuiteQLRule[] = [
       };
 
       const makeDateIssue = (field: ColumnRef, expr: unknown) => {
-        const info = dateLikeExpressionInfo(sql, expr);
+        const info = dateLikeExpressionInfo(sql, context.maskedSql, expr);
         if (!info) return;
 
         const compactDate = /^\d{6}(\d{2})?$/.test(info.text);
@@ -1079,6 +1136,46 @@ const astRules: SuiteQLRule[] = [
               values.forEach((value) => inspectValue(field, value));
             }
           }
+        });
+      }
+
+      return issues;
+    }
+  },
+  {
+    id: "DATETIME_DATE_EQUALITY",
+    check: (context) => {
+      const { sql } = context;
+      const issues: SuiteQLLintIssue[] = [];
+
+      const inspectEquality = (field: ColumnRef | null, expr: unknown) => {
+        if (!field || !isKnownFieldRef(context, field)) return;
+        if (!isDateTimeLikeField(context, field)) return;
+
+        const literal = dateOnlyLiteralTextFromExpression(expr);
+        if (!literal) return;
+
+        const fieldName = [field.table, field.column].filter(Boolean).join(".");
+        const mask = inferDateFormatMask(literal);
+        const start = findLiteralStart(sql, literal, expr);
+        issues.push(
+          makeIssue(
+            sql,
+            "warning",
+            "DATETIME_DATE_EQUALITY",
+            `${fieldName} looks like a datetime/timestamp field. Equality to date-only value '${literal}' only matches rows exactly at midnight. Prefer ${fieldName} >= TO_DATE('${literal}', '${mask}') and ${fieldName} < TO_DATE('<next day>', '${mask}'), or compare TRUNC(${fieldName}) to TO_DATE('${literal}', '${mask}').`,
+            start,
+            start + literal.length
+          )
+        );
+      };
+
+      for (const statement of context.ast) {
+        walkAst(statement, (node) => {
+          if (node.type !== "binary_expr" || node.operator !== "=") return;
+
+          inspectEquality(columnRefFromNode(node.left), node.right);
+          inspectEquality(columnRefFromNode(node.right), node.left);
         });
       }
 
