@@ -24,6 +24,24 @@ export interface HarnessThreadRecord {
   updatedAt: string;
 }
 
+export interface HarnessAgentRecord {
+  id: string;
+  name: string;
+  shortName: string;
+  icon: string;
+  color: string;
+  description: string;
+  defaultPermissionMode: HarnessPermissionMode;
+  toolsets: string[];
+  enabledToolNames?: string[];
+  maxSteps: number;
+  systemFocus: string;
+  builtIn?: boolean;
+  enabled?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface HarnessItemRecord {
   id: string;
   threadId: string;
@@ -49,12 +67,20 @@ export interface HarnessUiStateRecord {
 }
 
 const db = new Dexie("MagicNetsuiteAgentHarness") as Dexie & {
+  agents: EntityTable<HarnessAgentRecord, "id">;
   threads: EntityTable<HarnessThreadRecord, "threadId">;
   items: EntityTable<HarnessItemRecord, "id">;
   uiState: EntityTable<HarnessUiStateRecord, "key">;
 };
 
 db.version(1).stores({
+  threads: "&threadId, updatedAt, profileId, environment",
+  items: "&id, threadId, turnId, kind, status, toolName, createdAt",
+  uiState: "&key",
+});
+
+db.version(2).stores({
+  agents: "&id, name, updatedAt, enabled",
   threads: "&threadId, updatedAt, profileId, environment",
   items: "&id, threadId, turnId, kind, status, toolName, createdAt",
   uiState: "&key",
@@ -126,6 +152,31 @@ const toStorageValue = (value: unknown, seen = new WeakSet<object>()): unknown =
 };
 
 const toStorageRecord = <T>(value: T): T => toStorageValue(value) as T;
+
+export const getHarnessAgents = async (): Promise<HarnessAgentRecord[]> =>
+  db.agents.orderBy("updatedAt").reverse().toArray();
+
+export const getHarnessAgent = async (
+  id: string
+): Promise<HarnessAgentRecord | undefined> => db.agents.get(id);
+
+export const upsertHarnessAgent = async (
+  agent: HarnessAgentRecord
+): Promise<void> => {
+  await db.agents.put(toStorageRecord(agent));
+};
+
+export const bulkPutHarnessAgents = async (
+  agents: HarnessAgentRecord[]
+): Promise<void> => {
+  if (agents.length > 0) {
+    await db.agents.bulkPut(agents.map((agent) => toStorageRecord(agent)));
+  }
+};
+
+export const deleteHarnessAgent = async (id: string): Promise<void> => {
+  await db.agents.delete(id);
+};
 
 export const getHarnessThreads = async (): Promise<HarnessThreadRecord[]> =>
   db.threads.orderBy("updatedAt").reverse().toArray();

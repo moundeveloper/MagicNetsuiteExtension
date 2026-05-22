@@ -29,6 +29,7 @@ const allFeatures = computed(() => {
     (route) =>
       !blackList.includes(route.name.toLowerCase()) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
+      route.status !== RouteStatus.deprecated &&
       (privilegeLevel === Privilege.ADMIN ||
         route.status === RouteStatus.release)
   );
@@ -45,6 +46,7 @@ const nonPreferredFeatures = computed(() => {
 });
 
 const canAccess = (feature: (typeof allFeatures.value)[0]) => {
+  if (feature.status === RouteStatus.deprecated) return false;
   if (feature.status === RouteStatus.release) return true;
   return isAdmin.value;
 };

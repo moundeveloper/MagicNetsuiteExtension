@@ -28,6 +28,7 @@ const allLinks = computed(() => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
       !blackList.includes(link.name.toLowerCase()) &&
+      link.status !== RouteStatus.deprecated &&
       (mode === "development" || link.status === RouteStatus.release) &&
       (!link.adminOnly || isAdmin.value)
     );
@@ -47,6 +48,7 @@ const nonPreferredLinks = computed(() => {
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
 const canAccess = (link: RouteItem) => {
+  if (link.status === RouteStatus.deprecated) return false;
   if (link.status === RouteStatus.release) return true;
   return isAdmin.value;
 };

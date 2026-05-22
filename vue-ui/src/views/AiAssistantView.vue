@@ -1422,7 +1422,7 @@ const resolveViewPlaceholders = (content: string | null | undefined): string => 
   void cacheVersion.value; // reactivity dependency — re-evaluates when cache changes
   return content.replace(/\[VIEW:([^\]]+)\]/g, (_match, key: string) => {
     const entry = agentCache.get(key);
-    if (!entry) {
+    if (!entry || !entry.content) {
       return `\n\n> **[Cache miss: \`${key}\`]** — This content was removed from cache. Ask me to re-fetch it.\n\n`;
     }
     const lang = detectCacheLanguage(entry.content);

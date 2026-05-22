@@ -8,6 +8,7 @@ import MTableColumn from "../components/universal/table/MTableColumn.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import { MultiSelect } from "primevue";
+import type { ContextMenuItem } from "../composables/useMContextMenu";
 
 
 interface ScriptItem {
@@ -30,6 +31,39 @@ const items = ref<ScriptItem[]>([]);
 const scriptTypes = ref<{ id: string; label: string }[]>([]);
 const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
 const loading = ref(false);
+
+const copyToClipboard = async (text: string) => {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+};
+
+const scriptIdentityContextMenu: ContextMenuItem[] = [
+  {
+    label: "Copy Internal ID",
+    icon: "pi pi-hashtag",
+    action: (row: ScriptItem) => {
+      void copyToClipboard(String(row.internalid ?? row.id ?? ""));
+    },
+  },
+  {
+    label: "Copy Script ID",
+    icon: "pi pi-copy",
+    action: (row: ScriptItem) => {
+      void copyToClipboard(row.scriptid);
+    },
+  },
+];
 
 const filteredItems = computed(() => {
   let result = items.value || [];
@@ -274,6 +308,7 @@ onMounted(async () => {
           width="1fr"
           searchable
           filterable
+          :contextMenu="scriptIdentityContextMenu"
         >
           <template #default="{ value, row }">
             <div
@@ -289,6 +324,15 @@ onMounted(async () => {
             </div>
           </template>
         </MTableColumn>
+
+        <MTableColumn
+          label="Internal ID"
+          field="internalid"
+          width="110px"
+          searchable
+          filterable
+          :contextMenu="scriptIdentityContextMenu"
+        />
 
         <MTableColumn
           label="Script File"
@@ -312,6 +356,7 @@ onMounted(async () => {
           width="1fr"
           searchable
           filterable
+          :contextMenu="scriptIdentityContextMenu"
         />
 
         <MTableColumn

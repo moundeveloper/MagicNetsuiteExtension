@@ -30,13 +30,15 @@ export enum RouteStatus {
   development = "development",
   fix = "fix",
   draft = "draft",
-  release = "release"
+  release = "release",
+  deprecated = "deprecated"
 }
 
 export const RouteStatusColors = {
   [RouteStatus.development]: "#C3BEF7",
   [RouteStatus.fix]: "#EF8354",
-  [RouteStatus.draft]: "#73BA9B"
+  [RouteStatus.draft]: "#73BA9B",
+  [RouteStatus.deprecated]: "#dc2626"
 };
 
 export type RouteItem = {
@@ -217,8 +219,8 @@ export const routes: FullRoute[] = [
     name: "AI Assistant",
     icon: "pi pi-comments",
     component: AiAssistantView,
-    status: RouteStatus.release,
-    breadcrumb: "AI Assistant"
+    status: RouteStatus.deprecated,
+    breadcrumb: "AI Assistant (deprecated)"
   },
   {
     route: "/skills",

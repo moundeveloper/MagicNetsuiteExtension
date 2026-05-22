@@ -231,13 +231,11 @@ export const tools: ToolDefinition[] = [
       if (!Array.isArray(scripts)) return scripts;
       return scripts.map((s) => {
         const cacheKey = `deployed_script_${input.recordType}_${s.id}`;
-        if (s.scriptFile) {
-          agentCache.set(
-            cacheKey,
-            s.scriptFile,
-            `${s.scriptName} (${s.scriptType}, ${input.recordType}, ID ${s.id})`
-          );
-        }
+        agentCache.set(
+          cacheKey,
+          s.scriptFile ?? `// Script content not available for ${s.scriptName} (ID ${s.id})`,
+          `${s.scriptName} (${s.scriptType}, ${input.recordType}, ID ${s.id})`
+        );
         const { scriptFile: _, ...meta } = s;
         return { ...meta, cacheKey, sizeChars: s.scriptFile?.length ?? 0 };
       });
@@ -281,9 +279,11 @@ export const tools: ToolDefinition[] = [
       if (!Array.isArray(scripts)) return scripts;
       return scripts.map((s) => {
         const cacheKey = `script_${s.id}`;
-        if (s.scriptFile) {
-          agentCache.set(cacheKey, s.scriptFile, `${s.scriptName} (${s.scriptType}, ID ${s.id})`);
-        }
+        agentCache.set(
+          cacheKey,
+          s.scriptFile ?? `// Script content not available for ${s.scriptName} (ID ${s.id})`,
+          `${s.scriptName} (${s.scriptType}, ID ${s.id})`
+        );
         const { scriptFile: _, ...meta } = s;
         return { ...meta, cacheKey, sizeChars: s.scriptFile?.length ?? 0 };
       });

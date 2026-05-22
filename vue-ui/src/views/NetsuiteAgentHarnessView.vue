@@ -21,21 +21,38 @@
           <template #default>
             <div class="harness-sidebar">
               <div class="sidebar-section">
-                <div class="section-label">Mode</div>
-                <div class="profile-list">
-                  <button
-                    type="button"
-                    v-for="profile in harness.profiles"
-                    :key="profile.id"
-                    class="profile-option"
-                    :class="{ active: harness.activeProfileId.value === profile.id }"
-                    :title="profile.description"
-                    @click="harness.setActiveProfile(profile.id)"
-                  >
-                    <span class="profile-mark" :style="{ background: profile.color }" />
-                    <i :class="profile.icon" />
-                    <span>{{ profile.shortName }}</span>
+                <div class="section-heading">
+                  <span class="section-label">Agents</span>
+                  <button type="button" class="sidebar-action" title="Create agent" @click="openCreateAgentDialog">
+                    <i class="pi pi-sparkles" />
                   </button>
+                </div>
+                <div class="profile-list">
+                  <div
+                    v-for="agent in harness.agents.value"
+                    :key="agent.id"
+                    class="profile-row"
+                    :class="{ active: harness.activeAgentId.value === agent.id }"
+                  >
+                    <button
+                      type="button"
+                      class="profile-option"
+                      :title="`${agent.name}: ${agent.description}`"
+                      @click="harness.setActiveAgent(agent.id)"
+                    >
+                      <span class="profile-mark" :style="{ background: agent.color }" />
+                      <i :class="agent.icon" />
+                      <span>{{ agent.shortName }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="agent-row-action"
+                      title="Edit agent"
+                      @click.stop="openEditAgentDialog(agent)"
+                    >
+                      <i class="pi pi-cog" />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -97,11 +114,11 @@
           <header class="harness-toolbar">
             <div class="toolbar-left">
               <div class="toolbar-title">
-                <i :class="harness.activeProfile.value.icon" />
+                <i :class="harness.activeAgent.value.icon" />
                 <span>NetSuite Agent</span>
               </div>
-              <span class="profile-pill" :style="profilePillStyle" :title="harness.activeProfile.value.description">
-                {{ harness.activeProfile.value.shortName }}
+              <span class="profile-pill" :style="agentPillStyle" :title="harness.activeAgent.value.description">
+                {{ harness.activeAgent.value.shortName }}
               </span>
               <span class="status-pill" :class="connectionClass">
                 <span class="status-dot" />
@@ -214,7 +231,7 @@
                     <MessageContentRenderer
                       v-else-if="item.content"
                       class="message-renderer"
-                      :content="item.content"
+                      :content="resolveViewPlaceholders(item.content)"
                     />
                     <div v-if="item.attachments?.length" class="msg-attachments">
                       <span v-for="attachment in item.attachments" :key="attachment.name" class="attachment-chip">
@@ -317,14 +334,48 @@
                 </div>
                 <div class="toolset-list">
                   <div
-                    v-for="toolset in harness.activeToolsets.value"
-                    :key="toolset.id"
-                    class="toolset-row"
-                    :class="{ muted: !toolset.active }"
+                    v-for="group in harness.toolGroups.value"
+                    :key="group.id"
+                    class="toolset-group"
+                    :class="{ muted: !group.active }"
                   >
-                    <i :class="toolset.icon" />
-                    <span>{{ toolset.name }}</span>
-                    <strong>{{ toolset.count }}</strong>
+                    <div class="toolset-row">
+                      <button type="button" class="toolset-expand" :title="`${group.name} tools`" @click="toggleToolsetPanel(group.id)">
+                        <i :class="isToolsetPanelExpanded(group.id) ? 'pi pi-angle-down' : 'pi pi-angle-right'" />
+                      </button>
+                      <i :class="group.icon" />
+                      <div class="toolset-name">
+                        <span>{{ group.name }}</span>
+                        <small>{{ group.count }} / {{ group.total }}</small>
+                      </div>
+                      <button
+                        type="button"
+                        class="toolset-switch"
+                        :class="{ active: group.active }"
+                        :title="group.active ? 'Hide this category from the agent' : 'Expose this category to the agent'"
+                        @click="harness.toggleToolsetForActiveAgent(group.id)"
+                      >
+                        <span />
+                      </button>
+                    </div>
+                    <div v-if="isToolsetPanelExpanded(group.id)" class="tool-list">
+                      <label
+                        v-for="tool in group.tools"
+                        :key="`${group.id}-${tool.name}`"
+                        class="tool-toggle-row"
+                        :class="{ disabled: !group.active || tool.permission === 'deny' }"
+                        :title="tool.description"
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="tool.enabledByAgent"
+                          :disabled="!group.active || tool.permission === 'deny'"
+                          @change="harness.toggleToolForActiveAgent(tool.name, !tool.enabledByAgent)"
+                        />
+                        <span>{{ tool.name }}</span>
+                        <small :class="`risk-${tool.risk}`">{{ tool.risk }}</small>
+                      </label>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -362,24 +413,173 @@
       @approve="resolveApproval(true)"
       @reject="resolveApproval(false)"
     />
+
+    <Dialog
+      v-model:visible="agentDialogVisible"
+      modal
+      :header="editingAgentId ? 'Edit Agent' : 'Create Agent'"
+      :style="{ width: 'min(780px, 94vw)' }"
+      class="agent-dialog"
+    >
+      <div class="agent-editor">
+        <div class="agent-tabs">
+          <button type="button" :class="{ active: agentEditorMode === 'manual' }" @click="agentEditorMode = 'manual'">
+            Manual
+          </button>
+          <button type="button" :class="{ active: agentEditorMode === 'generate' }" @click="agentEditorMode = 'generate'">
+            Generate with AI
+          </button>
+        </div>
+
+        <section v-if="agentEditorMode === 'generate'" class="agent-generate-panel">
+          <Textarea
+            v-model="agentGeneratePrompt"
+            class="agent-textarea"
+            rows="4"
+            placeholder="Describe the NetSuite agent you want: scope, tools, permission level, and tone."
+          />
+          <div class="agent-generate-actions">
+            <span v-if="agentGenerateProgress" class="generate-progress">{{ agentGenerateProgress }}</span>
+            <span v-else-if="agentGenerateError" class="generate-error">{{ agentGenerateError }}</span>
+            <button type="button" class="agent-primary-btn" :disabled="agentGenerating" @click="generateAgentWithAi">
+              <i :class="agentGenerating ? 'pi pi-spin pi-spinner' : 'pi pi-sparkles'" />
+              <span>{{ agentGenerating ? "Generating" : "Generate" }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="agent-form">
+          <label>
+            <span>Name</span>
+            <InputText v-model="agentForm.name" class="agent-input" placeholder="SuiteScript Reviewer" />
+          </label>
+          <label>
+            <span>Short label</span>
+            <InputText v-model="agentForm.shortName" class="agent-input" placeholder="Review" />
+          </label>
+          <label>
+            <span>Icon class</span>
+            <InputText v-model="agentForm.icon" class="agent-input" placeholder="pi pi-shield" />
+          </label>
+          <label>
+            <span>Color</span>
+            <div class="agent-color-field">
+              <ColorPicker v-model="agentColorValue" format="hex" />
+              <InputText v-model="agentForm.color" class="agent-input" placeholder="#7c3aed" />
+            </div>
+          </label>
+          <label class="agent-form-wide">
+            <span>Description</span>
+            <InputText v-model="agentForm.description" class="agent-input" placeholder="What this agent is best at" />
+          </label>
+          <label>
+            <span>Default permission</span>
+            <Select
+              v-model="agentForm.defaultPermissionMode"
+              :options="permissionOptions"
+              option-label="label"
+              option-value="id"
+              class="agent-prime-field"
+            >
+              <template #option="{ option }">
+                <div class="agent-select-option">
+                  <i :class="option.icon" />
+                  <div>
+                    <strong>{{ option.label }}</strong>
+                    <small>{{ option.title }}</small>
+                  </div>
+                </div>
+              </template>
+            </Select>
+          </label>
+          <label>
+            <span>Step limit</span>
+            <InputNumber
+              v-model="agentForm.maxSteps"
+              class="agent-prime-field"
+              :min="1"
+              :max="20"
+              show-buttons
+            />
+          </label>
+          <label class="agent-form-wide">
+            <span>System prompt</span>
+            <Textarea v-model="agentForm.systemFocus" class="agent-textarea" rows="5" auto-resize />
+          </label>
+        </section>
+
+        <section class="agent-toolsets-editor">
+          <div class="agent-toolsets-heading">
+            <span>Tool categories visible to this agent</span>
+            <small>{{ agentForm.toolsets.length }} categories</small>
+          </div>
+          <div class="agent-toolset-grid">
+            <button
+              v-for="toolset in harness.toolsets"
+              :key="toolset.id"
+              type="button"
+              class="agent-toolset-chip"
+              :class="{ active: agentForm.toolsets.includes(toolset.id) }"
+              :title="toolset.description"
+              @click="toggleAgentFormToolset(toolset.id)"
+            >
+              <i :class="toolset.icon" />
+              <span>{{ toolset.name }}</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <template #footer>
+        <div class="agent-dialog-footer">
+          <button
+            v-if="editingAgentId && !agentForm.builtIn"
+            type="button"
+            class="agent-danger-btn"
+            @click="deleteEditingAgent"
+          >
+            Delete
+          </button>
+          <span class="agent-footer-spacer" />
+          <button type="button" class="agent-secondary-btn" @click="agentDialogVisible = false">Cancel</button>
+          <button type="button" class="agent-primary-btn" @click="saveAgentForm">
+            <i class="pi pi-check" />
+            <span>Save Agent</span>
+          </button>
+        </div>
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import Dialog from "primevue/dialog";
+import ColorPicker from "primevue/colorpicker";
+import InputNumber from "primevue/inputnumber";
+import InputText from "primevue/inputtext";
+import Select from "primevue/select";
+import Textarea from "primevue/textarea";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import {
   useNetsuiteAgentHarness,
+  type HarnessAgent,
+  type HarnessAgentDraft,
   type HarnessAttachment,
   type HarnessApprovalRequest,
+  type HarnessToolsetId,
 } from "../composables/useNetsuiteAgentHarness";
+import { useAiProvider } from "../composables/useAiProvider";
+import { useAgent } from "../composables/useAgent";
 import type {
   HarnessItemRecord,
   HarnessPermissionMode,
 } from "../utils/agentHarnessDb";
+import { agentCache, cacheVersion } from "../utils/agentCacheStore";
+import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 import { extractPdfText } from "../utils/pdfUtils";
 
 type HarnessItemView = Omit<Readonly<HarnessItemRecord>, "attachments"> & {
@@ -402,6 +602,7 @@ const harness = useNetsuiteAgentHarness(
       approvalResolver = resolve;
     })
 );
+const { chatCompletion } = useAiProvider();
 
 const prompt = ref("");
 const streamRef = ref<HTMLDivElement | null>(null);
@@ -410,7 +611,15 @@ const pendingAttachments = ref<HarnessAttachment[]>([]);
 const isProcessingFiles = ref(false);
 const isDragOver = ref(false);
 const expandedToolIds = ref(new Set<string>());
+const expandedToolsetIds = ref(new Set<HarnessToolsetId>());
 const editingItemId = ref<string | null>(null);
+const agentDialogVisible = ref(false);
+const agentEditorMode = ref<"manual" | "generate">("manual");
+const editingAgentId = ref<string | null>(null);
+const agentGenerating = ref(false);
+const agentGeneratePrompt = ref("");
+const agentGenerateProgress = ref("");
+const agentGenerateError = ref("");
 
 const ACCEPTED_TEXT_EXTENSIONS = new Set([
   "txt",
@@ -453,6 +662,24 @@ const modes: Array<{
   { id: "release", label: "Ship", icon: "pi pi-shield", title: "Release-sensitive approval mode" },
 ];
 
+const permissionOptions = modes;
+
+const createBlankAgentForm = (): HarnessAgentDraft => ({
+  name: "",
+  shortName: "",
+  icon: "pi pi-sparkles",
+  color: "#7c3aed",
+  description: "",
+  defaultPermissionMode: "read",
+  toolsets: ["context", "suiteql", "records", "docs"],
+  maxSteps: 8,
+  systemFocus:
+    "Work as a focused NetSuite agent. Use live NetSuite tools for evidence, respect permissions, and return concise operational answers.",
+  enabled: true,
+});
+
+const agentForm = ref<HarnessAgentDraft>(createBlankAgentForm());
+
 const quickPrompts = [
   "Find scripts related to invoices and summarize deployments",
   "Inspect installed bundles and flag locked script components",
@@ -469,10 +696,10 @@ const canSubmit = computed(
   () => prompt.value.trim().length > 0 || pendingAttachments.value.length > 0
 );
 
-const profilePillStyle = computed(() => ({
-  background: `${harness.activeProfile.value.color}18`,
-  borderColor: `${harness.activeProfile.value.color}55`,
-  color: harness.activeProfile.value.color,
+const agentPillStyle = computed(() => ({
+  background: `${harness.activeAgent.value.color}18`,
+  borderColor: `${harness.activeAgent.value.color}55`,
+  color: harness.activeAgent.value.color,
 }));
 
 const connectionClass = computed(() => ({
@@ -489,6 +716,219 @@ const connectionLabel = computed(() => {
   if (harness.environment.value !== "unknown") return harness.environment.value;
   return "Connect NetSuite";
 });
+
+const agentColorValue = computed({
+  get: () => agentForm.value.color.replace(/^#/, ""),
+  set: (value: string | null) => {
+    const normalized = String(value ?? "").replace(/^#/, "");
+    if (/^[0-9a-fA-F]{6}$/.test(normalized)) {
+      agentForm.value.color = `#${normalized}`;
+    }
+  },
+});
+
+const agentForItem = (item: HarnessItemView): HarnessAgent =>
+  harness.getAgentById(item.profileId);
+
+const detectCacheLanguage = (content: string): string => {
+  const text = content.trimStart();
+  if (text.startsWith("{") || text.startsWith("[")) return "json";
+  if (text.includes("@NApiVersion") || text.includes("define(") || /\bfunction\b/.test(text)) {
+    return "javascript";
+  }
+  if (text.startsWith("<")) return "xml";
+  if (/^SELECT\b/i.test(text)) return "sql";
+  return "text";
+};
+
+const resolveViewPlaceholders = (content: string | null | undefined): string => {
+  if (!content) return content ?? "";
+  void cacheVersion.value;
+  return content.replace(/\[VIEW:([^\]]+)\]/g, (_match, key: string) => {
+    const entry = agentCache.get(key);
+    if (!entry || !entry.content) {
+      return `\n\n> **[Cache miss: \`${key}\`]** - This cached content is not loaded. Ask me to re-fetch it.\n\n`;
+    }
+    const lang = detectCacheLanguage(entry.content);
+    return `\n\n\`\`\`${lang}\n${entry.content}\n\`\`\`\n\n`;
+  });
+};
+
+const openCreateAgentDialog = () => {
+  editingAgentId.value = null;
+  agentEditorMode.value = "manual";
+  agentGeneratePrompt.value = "";
+  agentGenerateError.value = "";
+  agentGenerateProgress.value = "";
+  agentForm.value = createBlankAgentForm();
+  agentDialogVisible.value = true;
+};
+
+const openEditAgentDialog = (agent: Readonly<HarnessAgent>) => {
+  editingAgentId.value = agent.id;
+  agentEditorMode.value = "manual";
+  agentGeneratePrompt.value = "";
+  agentGenerateError.value = "";
+  agentGenerateProgress.value = "";
+  agentForm.value = {
+    id: agent.id,
+    name: agent.name,
+    shortName: agent.shortName,
+    icon: agent.icon,
+    color: agent.color,
+    description: agent.description,
+    defaultPermissionMode: agent.defaultPermissionMode,
+    toolsets: [...agent.toolsets],
+    enabledToolNames: agent.enabledToolNames ? [...agent.enabledToolNames] : undefined,
+    maxSteps: agent.maxSteps,
+    systemFocus: agent.systemFocus,
+    enabled: agent.enabled !== false,
+    builtIn: agent.builtIn,
+  };
+  agentDialogVisible.value = true;
+};
+
+const toggleAgentFormToolset = (toolsetId: HarnessToolsetId) => {
+  const selected = new Set(agentForm.value.toolsets);
+  if (selected.has(toolsetId)) selected.delete(toolsetId);
+  else selected.add(toolsetId);
+  agentForm.value.toolsets = Array.from(selected);
+};
+
+const saveAgentForm = async () => {
+  if (!agentForm.value.name.trim()) return;
+  const saved = await harness.saveAgent({
+    ...agentForm.value,
+    shortName: agentForm.value.shortName.trim() || agentForm.value.name.trim().slice(0, 18),
+    systemFocus: agentForm.value.systemFocus.trim() || createBlankAgentForm().systemFocus,
+  });
+  await harness.setActiveAgent(saved.id);
+  agentDialogVisible.value = false;
+};
+
+const deleteEditingAgent = async () => {
+  if (!editingAgentId.value) return;
+  await harness.removeAgent(editingAgentId.value);
+  agentDialogVisible.value = false;
+};
+
+const generateAgentWithAi = async () => {
+  const request = agentGeneratePrompt.value.trim();
+  if (!request || agentGenerating.value) return;
+
+  agentGenerating.value = true;
+  agentGenerateError.value = "";
+  agentGenerateProgress.value = "";
+
+  try {
+    const toolList = harness.toolCatalog.value
+      .map((tool) => `${tool.name} [${tool.toolsetIds.join(", ")}; risk=${tool.risk}] - ${tool.description}`)
+      .join("\n");
+    const toolsetList = harness.toolsets
+      .map((toolset) => `${toolset.id}: ${toolset.name} - ${toolset.description}`)
+      .join("\n");
+
+    const systemPrompt = `You generate focused NetSuite agent configurations for the Magic NetSuite Agent Harness.
+Return one raw JSON object only. Do not wrap it in markdown.
+
+Before generating, use the NetSuite documentation tools when the requested agent depends on NetSuite product behavior.
+
+Available toolsets:
+${toolsetList}
+
+Available tool names:
+${toolList}
+
+JSON schema:
+{
+  "name": "2-5 word agent name",
+  "shortName": "1-2 word label",
+  "description": "One sentence",
+  "systemFocus": "Detailed agent system prompt for this specialty",
+  "defaultPermissionMode": "read" | "build" | "release",
+  "toolsets": ["context"],
+  "enabledToolNames": ["exact_tool_name"],
+  "maxSteps": 8,
+  "icon": "pi pi-compass",
+  "color": "#7c3aed"
+}
+
+Rules:
+- Only use toolset ids from the available toolsets.
+- Only use enabledToolNames from the available tool names.
+- Use read for auditors/explorers, build for preparation, release for deployment-sensitive agents.
+- Keep maxSteps between 4 and 14.
+- Use a light slate/lavender compatible color, not black or dark-mode colors.`;
+
+    const generator = useAgent({
+      chatCompletion,
+      systemPrompt,
+      tools: netsuiteDocsTools,
+      keepHistory: false,
+      onToolStart: (name, input) => {
+        const inputRecord = input as Record<string, unknown>;
+        if (name === "search_netsuite_docs") {
+          agentGenerateProgress.value = `Searching docs: ${String(inputRecord.query ?? "")}`;
+        } else if (name === "read_netsuite_doc_page") {
+          agentGenerateProgress.value = "Reading NetSuite docs";
+        } else {
+          agentGenerateProgress.value = `Using ${name}`;
+        }
+      },
+      onToolResult: () => {
+        agentGenerateProgress.value = "Shaping agent";
+      },
+    });
+
+    await generator.run(request);
+    const lastMessage = [...generator.history.value]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    const raw = (lastMessage?.content ?? "")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    const parsed = JSON.parse(raw) as Partial<HarnessAgentDraft>;
+    const validToolsets = new Set(harness.toolsets.map((toolset) => toolset.id));
+    const validTools = new Set(harness.toolCatalog.value.map((tool) => tool.name));
+    const validModes = new Set<HarnessPermissionMode>(["read", "build", "release"]);
+    const generatedToolsets = Array.isArray(parsed.toolsets)
+      ? parsed.toolsets.filter((id): id is HarnessToolsetId => validToolsets.has(id as HarnessToolsetId))
+      : createBlankAgentForm().toolsets;
+    const generatedTools = Array.isArray(parsed.enabledToolNames)
+      ? parsed.enabledToolNames.filter((name) => validTools.has(name))
+      : undefined;
+    const generatedColor =
+      typeof parsed.color === "string" && /^#[0-9a-fA-F]{6}$/.test(parsed.color)
+        ? parsed.color
+        : "#7c3aed";
+
+    agentForm.value = {
+      ...createBlankAgentForm(),
+      ...agentForm.value,
+      name: String(parsed.name || agentForm.value.name || "Generated Agent"),
+      shortName: String(parsed.shortName || parsed.name || "Agent").slice(0, 18),
+      description: String(parsed.description || "Generated NetSuite agent."),
+      systemFocus: String(parsed.systemFocus || createBlankAgentForm().systemFocus),
+      defaultPermissionMode: validModes.has(parsed.defaultPermissionMode as HarnessPermissionMode)
+        ? (parsed.defaultPermissionMode as HarnessPermissionMode)
+        : "read",
+      toolsets: generatedToolsets.length > 0 ? generatedToolsets : ["context"],
+      enabledToolNames: generatedTools,
+      maxSteps: Math.max(1, Math.min(20, Number(parsed.maxSteps || 8))),
+      icon: String(parsed.icon || "pi pi-sparkles"),
+      color: generatedColor,
+      builtIn: false,
+    };
+    agentEditorMode.value = "manual";
+  } catch (err) {
+    agentGenerateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    agentGenerating.value = false;
+    agentGenerateProgress.value = "";
+  }
+};
 
 const resolveApproval = (approved: boolean) => {
   approvalVisible.value = false;
@@ -562,7 +1002,7 @@ const itemIcon = (item: HarnessItemView): string => {
   if (item.kind === "approval") return "pi pi-lock";
   if (item.kind === "system") return "pi pi-info-circle";
   if (item.role === "user") return "pi pi-user";
-  return harness.activeProfile.value.icon;
+  return agentForItem(item).icon;
 };
 
 const itemIconClass = (item: HarnessItemView): string => {
@@ -578,7 +1018,7 @@ const itemTitle = (item: HarnessItemView): string => {
   if (item.kind === "tool") return item.toolName ?? "Tool";
   if (item.kind === "approval") return item.title ?? "Approval";
   if (item.kind === "system") return item.title ?? "System";
-  return item.title || harness.activeProfile.value.shortName;
+  return item.title || agentForItem(item).shortName;
 };
 
 const formatToolInput = (input: unknown): string => {
@@ -597,6 +1037,16 @@ const toggleTool = (itemId: string) => {
   if (next.has(itemId)) next.delete(itemId);
   else next.add(itemId);
   expandedToolIds.value = next;
+};
+
+const isToolsetPanelExpanded = (toolsetId: HarnessToolsetId): boolean =>
+  expandedToolsetIds.value.has(toolsetId);
+
+const toggleToolsetPanel = (toolsetId: HarnessToolsetId) => {
+  const next = new Set(expandedToolsetIds.value);
+  if (next.has(toolsetId)) next.delete(toolsetId);
+  else next.add(toolsetId);
+  expandedToolsetIds.value = next;
 };
 
 const toolPreview = (item: HarnessItemView): string => {
@@ -785,7 +1235,7 @@ onMounted(async () => {
   padding-right: 2px;
 }
 
-.profile-option,
+.profile-row,
 .thread-item {
   width: 100%;
   border: 1px solid transparent;
@@ -794,6 +1244,13 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.14s ease;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  overflow: hidden;
 }
 
 .profile-option {
@@ -805,6 +1262,10 @@ onMounted(async () => {
   text-align: left;
   font-size: 0.78rem;
   font-weight: 650;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .profile-mark {
@@ -813,18 +1274,43 @@ onMounted(async () => {
   border-radius: 50%;
 }
 
-.profile-option:hover,
+.profile-row:hover,
 .thread-item:hover {
   background: rgba(255, 255, 255, 0.72);
   border-color: var(--p-slate-200);
 }
 
-.profile-option.active,
+.profile-row.active,
 .thread-item.active {
   background: white;
   border-color: #c4b5fd;
   box-shadow: 0 1px 0 rgba(124, 58, 237, 0.08);
   color: var(--p-slate-800);
+}
+
+.agent-row-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.profile-row:hover .agent-row-action,
+.profile-row.active .agent-row-action {
+  opacity: 1;
+}
+
+.agent-row-action:hover {
+  background: #f5f3ff;
+  color: #6d28d9;
 }
 
 .thread-item {
@@ -1259,6 +1745,43 @@ onMounted(async () => {
   line-height: 1.65;
 }
 
+.message-renderer :deep(.md-table) {
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(124, 58, 237, 0.06);
+}
+
+.message-renderer :deep(.md-table th) {
+  background: #f5f3ff;
+  color: #5b21b6;
+}
+
+.message-renderer :deep(.md-table tr:hover td) {
+  background: #faf9ff;
+}
+
+.message-renderer :deep(.code-block-header) {
+  background: #f8fafc;
+  border-bottom-color: var(--p-slate-200);
+}
+
+.message-renderer :deep(.code-lang),
+.message-renderer :deep(.code-copy-btn) {
+  color: var(--p-slate-500);
+}
+
+.message-renderer :deep(.code-copy-btn),
+.message-renderer :deep(.code-action-btn) {
+  border-color: var(--p-slate-200);
+  background: white;
+}
+
+.message-renderer :deep(.code-copy-btn:hover),
+.message-renderer :deep(.code-action-btn:hover) {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-color: #c4b5fd;
+}
+
 .stream-item--message .item-content {
   padding: 4px 0;
 }
@@ -1558,7 +2081,6 @@ onMounted(async () => {
   font-size: 0.68rem;
 }
 
-.toolset-row,
 .tool-activity-row {
   display: grid;
   align-items: center;
@@ -1566,9 +2088,23 @@ onMounted(async () => {
   min-width: 0;
 }
 
+.toolset-group {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  margin-bottom: 5px;
+}
+
+.toolset-group.muted {
+  opacity: 0.62;
+}
+
 .toolset-row {
-  grid-template-columns: 18px 1fr auto;
-  padding: 6px 0;
+  display: grid;
+  grid-template-columns: 18px 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 4px;
   color: var(--p-slate-600);
   font-size: 0.75rem;
 }
@@ -1578,13 +2114,114 @@ onMounted(async () => {
   font-size: 0.75rem;
 }
 
-.toolset-row strong {
-  font-size: 0.68rem;
+.toolset-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+}
+
+.toolset-expand:hover {
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.toolset-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.toolset-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolset-name small {
+  font-size: 0.62rem;
   color: var(--p-slate-400);
 }
 
-.toolset-row.muted {
-  opacity: 0.42;
+.toolset-switch {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 99px;
+  background: var(--p-slate-100);
+  cursor: pointer;
+}
+
+.toolset-switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
+  transition: transform 0.14s ease;
+}
+
+.toolset-switch.active {
+  border-color: #c4b5fd;
+  background: #ede9fe;
+}
+
+.toolset-switch.active span {
+  transform: translateX(13px);
+  background: #7c3aed;
+}
+
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 4px 8px 28px;
+}
+
+.tool-toggle-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--p-slate-600);
+  font-size: 0.66rem;
+}
+
+.tool-toggle-row input {
+  width: 13px;
+  height: 13px;
+  accent-color: #7c3aed;
+}
+
+.tool-toggle-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.tool-toggle-row small {
+  border-radius: 99px;
+  padding: 1px 5px;
+  font-size: 0.55rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.tool-toggle-row.disabled {
+  color: var(--p-slate-400);
 }
 
 .rail-empty {
@@ -1630,6 +2267,269 @@ onMounted(async () => {
   background: #f59e0b;
 }
 
+.agent-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--p-slate-700);
+}
+
+.agent-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.agent-tabs button,
+.agent-primary-btn,
+.agent-secondary-btn,
+.agent-danger-btn,
+.agent-toolset-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.agent-tabs button {
+  border: none;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--p-slate-500);
+}
+
+.agent-tabs button.active {
+  background: white;
+  color: #6d28d9;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.agent-generate-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #ddd6fe;
+  border-radius: 8px;
+  background: #faf9ff;
+}
+
+.agent-generate-actions,
+.agent-dialog-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.generate-progress {
+  color: #6d28d9;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.generate-error {
+  color: var(--p-red-600);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.agent-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-form label,
+.agent-toolsets-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.agent-form label span,
+.agent-toolsets-heading {
+  color: var(--p-slate-500);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-form-wide {
+  grid-column: 1 / -1;
+}
+
+.agent-input,
+.agent-textarea {
+  width: 100%;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 7px;
+  background: white;
+  color: var(--p-slate-800);
+  font: inherit;
+  font-size: 0.82rem;
+  outline: none;
+}
+
+.agent-input {
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.agent-prime-field,
+.agent-prime-field :deep(.p-inputnumber-input) {
+  width: 100%;
+}
+
+.agent-prime-field :deep(.p-select-label),
+.agent-prime-field :deep(.p-inputnumber-input) {
+  font-size: 0.82rem;
+}
+
+.agent-color-field {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-color-field :deep(.p-colorpicker-preview) {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 7px;
+}
+
+.agent-textarea {
+  resize: vertical;
+  min-height: 78px;
+  padding: 8px 9px;
+  line-height: 1.45;
+}
+
+.agent-input:focus,
+.agent-textarea:focus {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.16);
+}
+
+.agent-select-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.agent-select-option i {
+  color: #7c3aed;
+  font-size: 0.78rem;
+}
+
+.agent-select-option div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agent-select-option strong {
+  color: var(--p-slate-700);
+  font-size: 0.78rem;
+}
+
+.agent-select-option small {
+  color: var(--p-slate-400);
+  font-size: 0.68rem;
+}
+
+.agent-toolsets-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.agent-toolsets-heading small {
+  color: var(--p-slate-400);
+  font-size: 0.68rem;
+  text-transform: none;
+}
+
+.agent-toolset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.agent-toolset-chip {
+  min-height: 34px;
+  border: 1px solid var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-600);
+}
+
+.agent-toolset-chip.active {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.agent-dialog-footer {
+  width: 100%;
+}
+
+.agent-footer-spacer {
+  flex: 1;
+}
+
+.agent-primary-btn,
+.agent-secondary-btn,
+.agent-danger-btn {
+  min-height: 34px;
+  border: 1px solid transparent;
+  padding: 7px 12px;
+}
+
+.agent-primary-btn {
+  background: var(--p-slate-800);
+  color: white;
+}
+
+.agent-primary-btn:hover:not(:disabled) {
+  background: #6d28d9;
+}
+
+.agent-primary-btn:disabled {
+  background: var(--p-slate-300);
+  cursor: not-allowed;
+}
+
+.agent-secondary-btn {
+  border-color: var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-600);
+}
+
+.agent-secondary-btn:hover {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.agent-danger-btn {
+  border-color: var(--p-red-200);
+  background: var(--p-red-50);
+  color: var(--p-red-600);
+}
+
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.38; }
@@ -1662,6 +2562,11 @@ onMounted(async () => {
   .profile-pill,
   .provider-chip {
     display: none;
+  }
+
+  .agent-form,
+  .agent-toolset-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
