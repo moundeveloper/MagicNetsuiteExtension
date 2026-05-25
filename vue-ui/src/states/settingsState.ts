@@ -36,6 +36,10 @@ export interface ShortcutsSettings {
   thinkingMode: boolean;
   /** Max thinking token budget — used for Claude extended thinking via Copilot */
   thinkingBudget: number;
+  /** Max LLM/tool iterations for the main agent loop */
+  agentMainStepLimit: number;
+  /** Max LLM/tool iterations for isolated sub-agent/delegated runs */
+  agentSubagentStepLimit: number;
 }
 
 const defaultSettings: ShortcutsSettings = {
@@ -59,7 +63,9 @@ const defaultSettings: ShortcutsSettings = {
   mcpEnabled: true,
   mcpDisabledTools: [],
   thinkingMode: false,
-  thinkingBudget: 8000
+  thinkingBudget: 8000,
+  agentMainStepLimit: 25,
+  agentSubagentStepLimit: 15
 };
 
 const settings = reactive<ShortcutsSettings>({ ...defaultSettings });
@@ -100,6 +106,8 @@ export function useSettings() {
           : [];
         settings.thinkingMode = stored.thinkingMode ?? defaultSettings.thinkingMode;
         settings.thinkingBudget = stored.thinkingBudget ?? defaultSettings.thinkingBudget;
+        settings.agentMainStepLimit = stored.agentMainStepLimit ?? defaultSettings.agentMainStepLimit;
+        settings.agentSubagentStepLimit = stored.agentSubagentStepLimit ?? defaultSettings.agentSubagentStepLimit;
       }
       isLoaded = true;
       isSettingsLoaded.value = true;

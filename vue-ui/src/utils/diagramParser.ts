@@ -410,7 +410,7 @@ export const parseDiagram = (source: string): ParsedDiagram => {
   const rest = lines.slice(1);
 
   // Sequence diagram
-  if (firstLine === "sequence") {
+  if (firstLine === "sequence" || firstLine === "sequencediagram") {
     return parseSequence(rest);
   }
 

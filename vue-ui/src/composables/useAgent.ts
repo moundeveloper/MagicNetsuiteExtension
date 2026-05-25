@@ -247,6 +247,10 @@ export interface AgentOptions {
    * injects an OpenRouter-compatible provider without chrome/settings coupling.
    */
   chatCompletion?: AgentChatCompletion;
+  /** Max LLM/tool iterations for normal runs. Can be a getter backed by UI settings. */
+  maxMainIterations?: number | (() => number);
+  /** Max LLM/tool iterations for isolateHistory sub-agent runs. */
+  maxSubAgentIterations?: number | (() => number);
 }
 
 // ─────────────────────────────────────────────
@@ -551,7 +555,7 @@ const ENTITY_ID_PATTERNS: Array<{ entity: string; regex: RegExp }> = [
 ];
 
 const FILE_RELATIONSHIP_PROMPT_PATTERN =
-  /\b(report|file|document|attachment|pdf)\b[\s\S]*\b(for|of|on|related\s+to|associated\s+with|attached\s+to)\b/i;
+  /\b(report|file|document|attachment|pdf)\b(?:[\s\S]*\b(for|of|on|with|has|related\s+to|associated\s+with|attached\s+to)\b)?/i;
 
 const EXPLICIT_FILE_ID_PATTERN =
   /\b(file|document|attachment|pdf)\s*(?:internal\s*)?id\s*#?\s*\d+\b/i;
@@ -566,6 +570,18 @@ function isDirectFileReadTool(toolName: string): boolean {
     toolName.endsWith("__netsuite_get_file_content") ||
     toolName.endsWith("__netsuite_read_file")
   );
+}
+
+function isFileIdLookupTool(toolName: string): boolean {
+  return (
+    isDirectFileReadTool(toolName) ||
+    toolName === "netsuite_find_file" ||
+    toolName.endsWith("__netsuite_find_file")
+  );
+}
+
+function isMcpFileCabinetTool(toolName: string): boolean {
+  return /__(netsuite_find_file|netsuite_read_file|netsuite_get_file_content|netsuite_list_folder|netsuite_find_folder|netsuite_get_root_folders)$/.test(toolName);
 }
 
 function isRelationshipFileLookupPrompt(prompt: string): boolean {
@@ -587,7 +603,7 @@ function hasRelationshipSqlLookup(history: AgentMessage[]): boolean {
       return false;
     }
     const content = m.content ?? "";
-    return /\b(file|mediaitem|attachment|document|note)\b/i.test(content);
+    return /\b(file|mediaitem|attachment|document|report|pdf|url|note)\b/i.test(content);
   });
 }
 
@@ -606,7 +622,7 @@ function validateDirectFileReadAgainstPrompt(
   args: Record<string, unknown>,
   prompt: string
 ): string | null {
-  if (!isDirectFileReadTool(toolName)) return null;
+  if (!isFileIdLookupTool(toolName)) return null;
   if (!FILE_RELATIONSHIP_PROMPT_PATTERN.test(prompt)) return null;
   if (EXPLICIT_FILE_ID_PATTERN.test(prompt)) return null;
 
@@ -620,7 +636,7 @@ function validateDirectFileReadAgainstPrompt(
     if (entityId !== requestedFileId) continue;
 
     return (
-      `Blocked unsafe direct file read: the user asked for a ${entity} ${entityId} related ` +
+      `Blocked unsafe File Cabinet ID lookup: the user asked for a ${entity} ${entityId} related ` +
       `report/file, so ${entityId} is the ${entity} ID, not a verified File Cabinet ID. ` +
       `Use SuiteQL relationship discovery first (sql_search_tables/sql_get_table_fields/` +
       `sql_get_table_joins/sql_execute_query), then call ${toolName} only with a file ID ` +
@@ -971,6 +987,8 @@ export const useAgent = (options: AgentOptions = {}) => {
     onChainStepMessage,
     enableToolRouterPolicy = true,
     chatCompletion: injectedChatCompletion,
+    maxMainIterations: rawMaxMainIterations = 25,
+    maxSubAgentIterations: rawMaxSubAgentIterations = 15,
   } = options;
 
   /** Cached tool router harness (built once, appended to every system prompt) */
@@ -979,6 +997,17 @@ export const useAgent = (options: AgentOptions = {}) => {
   /** Resolve threshold — supports both static number and getter for reactive settings */
   const getCompactionThreshold = (): number =>
     typeof rawThreshold === "function" ? rawThreshold() : rawThreshold;
+
+  const resolveIterationLimit = (
+    value: number | (() => number),
+    fallback: number
+  ): number => {
+    const raw = typeof value === "function" ? value() : value;
+    const numeric = Number(raw);
+    return Number.isFinite(numeric)
+      ? Math.max(1, Math.min(60, Math.floor(numeric)))
+      : fallback;
+  };
 
   if (!injectedChatCompletion) {
     throw new Error(
@@ -1658,6 +1687,7 @@ export const useAgent = (options: AgentOptions = {}) => {
     query: [
       "sql_search_tables", "sql_get_table_fields", "sql_get_table_joins",
       "sql_execute_query", "sql_discover_field_values", "sql_get_editor_query",
+      "netsuite_find_record_related_file",
     ],
     file: [
       "netsuite_get_file_content", "netsuite_find_file", "netsuite_list_folder",
@@ -1817,7 +1847,11 @@ export const useAgent = (options: AgentOptions = {}) => {
         if (tool.name === "delegate_to_agent") return false;
         if (
           !relationshipSqlLookupDone &&
-          (CATEGORY_OF_TOOL.get(tool.name) === "file" || isDirectFileReadTool(tool.name))
+          (
+            CATEGORY_OF_TOOL.get(tool.name) === "file" ||
+            isFileIdLookupTool(tool.name) ||
+            isMcpFileCabinetTool(tool.name)
+          )
         ) {
           return false;
         }
@@ -1951,16 +1985,45 @@ export const useAgent = (options: AgentOptions = {}) => {
       );
 
       let iterations = 0;
-      // Sub-agent (isolated) runs get tighter limits to prevent token explosions
-      // but still need enough room for a full debug cycle (read script + logs + analyze)
-      const MAX_ITERATIONS = isolateHistory ? 15 : 25;
+      // Sub-agent (isolated) runs get their own budget so delegation can
+      // explore without consuming the caller's main loop.
+      const MAX_ITERATIONS = isolateHistory
+        ? resolveIterationLimit(rawMaxSubAgentIterations, 15)
+        : resolveIterationLimit(rawMaxMainIterations, 25);
 
       while (true) {
         iterations++;
 
         // ── Guard against runaway loops (weak models doing excessive tool calls) ──
         if (iterations > MAX_ITERATIONS) {
-          const limitMsg = `[Agent stopped: reached ${MAX_ITERATIONS}-iteration safety limit. The model may be looping or unable to produce a final answer.]`;
+          const finalMessages = buildMessages(systemPrompt, prompt);
+          finalMessages.push({
+            role: "user",
+            content:
+              `You have reached the ${MAX_ITERATIONS}-iteration safety limit. ` +
+              "Do not call tools. Provide the best final answer now using only the information already in the conversation history.",
+          });
+          onIterationStart?.();
+          try {
+            const finalResponse = await chatCompletion(finalMessages, {
+              signal,
+              onChunk: onTextStream,
+            });
+            const finalText = (finalResponse.content ?? "").trim();
+            if (finalText) {
+              pushMessage({ role: "assistant", content: finalText });
+              currentResponse.value = finalText;
+              tagRecentMessages(history.value);
+              if (ephemeralTools.length > 0) {
+                pruneEphemeralTools(ephemeralTools);
+              }
+              console.warn(`[useAgent] MAX_ITERATIONS (${MAX_ITERATIONS}) reached — returned no-tools final synthesis`);
+              return finalText;
+            }
+          } catch (finalErr) {
+            console.warn("[useAgent] Final synthesis after iteration limit failed:", finalErr);
+          }
+          const limitMsg = `[Agent stopped: reached ${MAX_ITERATIONS}-iteration safety limit and final synthesis produced no answer.]`;
           pushMessage({ role: "assistant", content: limitMsg });
           currentResponse.value = limitMsg;
           console.warn(`[useAgent] MAX_ITERATIONS (${MAX_ITERATIONS}) exceeded — aborting run`);
@@ -2066,6 +2129,54 @@ export const useAgent = (options: AgentOptions = {}) => {
 
         // ── No tool calls → check for premature stop before accepting as final answer ──
         if (toolCalls.length === 0) {
+          if (!assistantText.trim()) {
+            cbNudgeCount++;
+            runMetrics.value.nudgeCount = cbNudgeCount;
+            runMetrics.value.lastNudgeReason = "empty-response";
+            if (cbNudgeCount > MAX_NUDGES) {
+              const finalMessages = buildMessages(systemPrompt, prompt);
+              finalMessages.push({
+                role: "user",
+                content:
+                  "The previous model pass returned an empty response with no tool calls. Do not call tools. Provide the best final answer now using only the evidence already gathered.",
+              });
+              try {
+                const finalResponse = await chatCompletion(finalMessages, {
+                  signal,
+                  onChunk: onTextStream,
+                });
+                const finalText = (finalResponse.content ?? "").trim();
+                if (finalText) {
+                  pushMessage({ role: "assistant", content: finalText });
+                  currentResponse.value = finalText;
+                  tagRecentMessages(history.value);
+                  if (ephemeralTools.length > 0) {
+                    pruneEphemeralTools(ephemeralTools);
+                  }
+                  return finalText;
+                }
+              } catch (finalErr) {
+                console.warn("[useAgent] Empty-response final synthesis failed:", finalErr);
+              }
+              const emptyMsg = "[Agent stopped: model returned empty responses and final synthesis produced no answer.]";
+              pushMessage({ role: "assistant", content: emptyMsg });
+              currentResponse.value = emptyMsg;
+              tagRecentMessages(history.value);
+              if (ephemeralTools.length > 0) {
+                pruneEphemeralTools(ephemeralTools);
+              }
+              return emptyMsg;
+            }
+
+            console.warn("[useAgent] Empty response with no tools — nudging model to continue.");
+            pushMessage({
+              role: "user",
+              content:
+                "You returned an empty response with no tool call. Continue this same request now: call the next required tool or provide the final answer from the evidence already present.",
+            });
+            continue;
+          }
+
           const prematureNudge = detectPrematureStop(history.value, assistantText);
           if (prematureNudge) {
             cbNudgeCount++;

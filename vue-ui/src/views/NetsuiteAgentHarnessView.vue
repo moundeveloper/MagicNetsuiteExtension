@@ -177,77 +177,243 @@
                   </div>
                 </div>
 
-                <article
-                  v-for="item in harness.items.value"
-                  :key="item.id"
-                  class="stream-item"
-                  :class="[`stream-item--${item.kind}`, `stream-item--${item.status}`]"
-                >
-                  <div class="item-rail">
-                    <span class="item-icon" :class="itemIconClass(item)">
-                      <i :class="itemIcon(item)" />
-                    </span>
-                  </div>
-
-                  <div class="item-content">
-                    <div class="item-header">
-                      <span class="item-title">{{ itemTitle(item) }}</span>
-                      <span class="item-meta">{{ formatTime(item.createdAt) }}</span>
-                      <span v-if="item.status === 'running'" class="live-badge">
-                        <span class="live-dot" />
-                        running
+                <template v-for="turn in displayTurns" :key="turn.turnId">
+                  <article
+                    v-if="turn.userItem"
+                    class="stream-item stream-item--message stream-item--user-turn"
+                    :class="[`stream-item--${turn.userItem.status}`]"
+                  >
+                    <div class="item-rail">
+                      <span class="item-icon" :class="itemIconClass(turn.userItem)">
+                        <i :class="itemIcon(turn.userItem)" />
                       </span>
-                      <span v-else-if="item.kind === 'tool'" class="risk-badge" :class="`risk-${item.risk || 'none'}`">
-                        {{ item.risk || "none" }}
-                      </span>
-                      <button
-                        v-if="item.role === 'user'"
-                        type="button"
-                        class="item-action"
-                        title="Edit and rerun from here"
-                        @click="startEdit(item)"
-                      >
-                        <i class="pi pi-pencil" />
-                      </button>
                     </div>
 
-                    <div v-if="item.kind === 'tool' || item.kind === 'approval'" class="tool-card">
-                      <button type="button" class="tool-card-head" @click="toggleTool(item.id)">
-                        <span class="tool-card-title">
-                          <i :class="isToolExpanded(item) ? 'pi pi-angle-down' : 'pi pi-angle-right'" />
-                          <code>{{ item.toolName }}</code>
+                    <div class="item-content">
+                      <div class="item-header">
+                        <span class="item-title">You</span>
+                        <span class="item-meta">{{ formatTime(turn.userItem.createdAt) }}</span>
+                        <button
+                          v-if="!harness.loading.value"
+                          type="button"
+                          class="item-action"
+                          title="Edit and rerun from here"
+                          @click="startEdit(turn.userItem)"
+                        >
+                          <i class="pi pi-pencil" />
+                        </button>
+                      </div>
+
+                      <div v-if="editingItemId === turn.userItem.id" class="harness-msg-edit-area">
+                        <textarea v-model="editText" class="harness-msg-edit-textarea" />
+                        <div class="harness-msg-edit-actions">
+                          <button type="button" class="harness-msg-edit-cancel" @click="cancelEdit">
+                            Cancel
+                          </button>
+                          <button type="button" class="harness-msg-edit-save" @click="saveEdit(turn.userItem)">
+                            Save & Resubmit
+                          </button>
+                        </div>
+                      </div>
+
+                      <template v-else>
+                        <MessageContentRenderer
+                          v-if="turn.userItem.content"
+                          class="message-renderer"
+                          :content="resolveViewPlaceholders(turn.userItem.content)"
+                        />
+                        <div v-if="turn.userItem.attachments?.length" class="msg-attachments">
+                          <span
+                            v-for="attachment in turn.userItem.attachments"
+                            :key="attachment.name"
+                            class="attachment-chip"
+                          >
+                            <i :class="attachment.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" />
+                            <span>{{ attachment.name }}</span>
+                            <small>{{ formatFileSize(attachment.size) }}</small>
+                          </span>
+                        </div>
+                      </template>
+                    </div>
+                  </article>
+
+                  <article
+                    v-if="turn.actionItems.length || turn.finalItem || turn.terminalItem || turn.isRunning"
+                    class="stream-item stream-item--message stream-item--assistant-turn"
+                    :class="{ 'stream-item--running': turn.isRunning, 'stream-item--error': turn.hasError }"
+                  >
+                    <div class="item-rail">
+                      <span class="item-icon" :class="turnIconClass(turn)">
+                        <i :class="turnIcon(turn)" />
+                      </span>
+                    </div>
+
+                    <div class="item-content assistant-turn-content">
+                      <div class="item-header">
+                        <span class="item-title">{{ assistantTurnTitle(turn) }}</span>
+                        <span class="item-meta">{{ formatTime(assistantTurnTime(turn)) }}</span>
+                        <span v-if="turn.isRunning" class="live-badge">
+                          <span class="live-dot" />
+                          running
                         </span>
-                        <span v-if="item.latencyMs !== undefined">{{ item.latencyMs }}ms</span>
-                      </button>
-                      <div v-if="isToolExpanded(item)" class="tool-card-body">
-                        <pre v-if="item.toolInput" class="tool-input">{{ formatToolInput(item.toolInput) }}</pre>
-                        <pre class="tool-output">{{ item.content }}</pre>
                       </div>
-                      <div v-else class="tool-preview">
-                        {{ toolPreview(item) }}
+
+                      <section
+                        v-if="turn.actionItems.length"
+                        class="action-group"
+                        :class="{ 'action-group--running': turn.isRunning }"
+                      >
+                        <button type="button" class="action-summary" @click="toggleActionGroup(turn.turnId)">
+                          <span class="action-summary-left">
+                            <i :class="isActionGroupExpanded(turn) ? 'pi pi-angle-down' : 'pi pi-angle-right'" />
+                            <span>{{ actionSummaryLabel(turn) }}</span>
+                          </span>
+                          <span class="action-summary-icons" aria-hidden="true">
+                            <span
+                              v-for="action in turn.actionItems.slice(0, 6)"
+                              :key="action.id"
+                              class="action-mini-icon"
+                              :class="itemIconClass(action)"
+                            >
+                              <i :class="itemIcon(action)" />
+                            </span>
+                          </span>
+                        </button>
+
+                        <div v-if="isActionGroupExpanded(turn)" class="action-list">
+                          <div
+                            v-for="action in turn.actionItems"
+                            :key="action.id"
+                            class="action-row"
+                            :class="[`action-row--${action.status}`]"
+                          >
+                            <button type="button" class="action-row-main" @click="toggleTool(action.id)">
+                              <span class="action-row-icon" :class="itemIconClass(action)">
+                                <i :class="itemIcon(action)" />
+                              </span>
+                              <span class="action-row-text">
+                                <span class="action-row-title">{{ itemTitle(action) }}</span>
+                                <span class="action-row-preview">{{ toolPreview(action) }}</span>
+                              </span>
+                              <span v-if="action.latencyMs !== undefined" class="action-row-latency">
+                                {{ action.latencyMs }}ms
+                              </span>
+                              <i
+                                class="action-row-chevron"
+                                :class="isToolExpanded(action) ? 'pi pi-angle-up' : 'pi pi-angle-down'"
+                              />
+                            </button>
+
+                            <div v-if="isToolExpanded(action)" class="action-row-details">
+                              <pre v-if="action.toolInput" class="tool-input">{{ formatToolInput(action.toolInput) }}</pre>
+                              <MessageContentRenderer
+                                v-if="action.kind === 'message'"
+                                class="message-renderer action-message-renderer"
+                                :content="resolveViewPlaceholders(action.content)"
+                              />
+                              <pre v-else class="tool-output">{{ action.content }}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <div v-if="turn.artifacts.length" class="artifact-list">
+                        <section
+                          v-for="artifact in turn.artifacts"
+                          :key="artifact.id"
+                          class="artifact-card"
+                          :class="`artifact-card--${artifact.kind}`"
+                        >
+                          <div class="artifact-header">
+                            <span class="artifact-title">
+                              <i :class="artifactIcon(artifact)" />
+                              <span>{{ artifact.title }}</span>
+                            </span>
+                            <span class="artifact-meta">
+                              {{ artifact.filename }}
+                              <template v-if="artifact.bytes"> · {{ formatFileSize(artifact.bytes) }}</template>
+                              <template v-if="artifact.cacheKey"> · {{ artifact.cacheKey }}</template>
+                            </span>
+                            <div class="artifact-actions">
+                              <a
+                                :href="artifact.url"
+                                target="_blank"
+                                rel="noreferrer"
+                                class="artifact-action"
+                                title="Open"
+                              >
+                                <i class="pi pi-external-link" />
+                              </a>
+                              <button
+                                v-if="artifact.kind === 'generated-pdf'"
+                                type="button"
+                                class="artifact-action"
+                                title="Download PDF"
+                                @click="downloadArtifact(artifact)"
+                              >
+                                <i class="pi pi-download" />
+                              </button>
+                              <a
+                                v-else
+                                :href="artifact.url"
+                                :download="artifact.filename"
+                                class="artifact-action"
+                                title="Download"
+                              >
+                                <i class="pi pi-download" />
+                              </a>
+                            </div>
+                          </div>
+                          <img
+                            v-if="artifact.kind === 'image'"
+                            class="artifact-image"
+                            :src="artifact.url"
+                            :alt="artifact.title"
+                          />
+                          <iframe
+                            v-else
+                            class="artifact-frame"
+                            :src="artifact.url"
+                            :title="artifact.title"
+                          />
+                        </section>
+                      </div>
+
+                      <div v-if="turn.finalItem" class="final-response">
+                        <MessageContentRenderer
+                          v-if="turn.finalItem.content"
+                          class="message-renderer"
+                          :content="resolveViewPlaceholders(turn.finalItem.content)"
+                        />
+                        <div
+                          v-else-if="turn.finalItem.status === 'running' || turn.finalItem.status === 'pending'"
+                          class="typing-line"
+                        >
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                        <div v-else class="final-empty">No final response was generated.</div>
+                      </div>
+                      <div v-else-if="turn.terminalItem" class="final-response final-response--system">
+                        <MessageContentRenderer
+                          class="message-renderer"
+                          :content="resolveViewPlaceholders(turn.terminalItem.content)"
+                        />
+                      </div>
+                      <div v-else-if="turn.isRunning" class="final-response final-response--pending">
+                        <div class="typing-line">
+                          <span />
+                          <span />
+                          <span />
+                        </div>
+                      </div>
+                      <div v-else-if="turn.hasError" class="final-response final-response--system final-response--error">
+                        Run stopped before a final response was generated.
                       </div>
                     </div>
-
-                    <MessageContentRenderer
-                      v-else-if="item.content"
-                      class="message-renderer"
-                      :content="resolveViewPlaceholders(item.content)"
-                    />
-                    <div v-if="item.attachments?.length" class="msg-attachments">
-                      <span v-for="attachment in item.attachments" :key="attachment.name" class="attachment-chip">
-                        <i :class="attachment.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" />
-                        <span>{{ attachment.name }}</span>
-                        <small>{{ formatFileSize(attachment.size) }}</small>
-                      </span>
-                    </div>
-
-                    <div v-else-if="!item.content" class="typing-line">
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                  </div>
-                </article>
+                  </article>
+                </template>
               </div>
 
               <form class="composer" @submit.prevent="sendPrompt">
@@ -259,13 +425,6 @@
                   hidden
                   @change="onFileInputChange"
                 />
-                <div v-if="editingItemId" class="edit-strip">
-                  <i class="pi pi-pencil" />
-                  <span>Editing previous message</span>
-                  <button type="button" @click="cancelEdit">
-                    <i class="pi pi-times" />
-                  </button>
-                </div>
                 <div v-if="pendingAttachments.length > 0" class="pending-attachments">
                   <span
                     v-for="(attachment, index) in pendingAttachments"
@@ -553,7 +712,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Dialog from "primevue/dialog";
 import ColorPicker from "primevue/colorpicker";
 import InputNumber from "primevue/inputnumber";
@@ -580,11 +739,38 @@ import type {
 } from "../utils/agentHarnessDb";
 import { agentCache, cacheVersion } from "../utils/agentCacheStore";
 import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
-import { extractPdfText } from "../utils/pdfUtils";
+import { downloadDocumentAsPdf, extractPdfText } from "../utils/pdfUtils";
 
 type HarnessItemView = Omit<Readonly<HarnessItemRecord>, "attachments"> & {
   readonly attachments?: readonly HarnessAttachment[];
 };
+
+type HarnessArtifactKind = "generated-pdf" | "pdf" | "image";
+
+interface HarnessArtifactView {
+  id: string;
+  kind: HarnessArtifactKind;
+  title: string;
+  filename: string;
+  url: string;
+  bytes?: number;
+  contentType?: string;
+  cacheKey?: string;
+  markdown?: string;
+  htmlContent?: string;
+}
+
+interface HarnessTurnView {
+  turnId: string;
+  userItem: HarnessItemView | null;
+  finalItem: HarnessItemView | null;
+  terminalItem: HarnessItemView | null;
+  actionItems: HarnessItemView[];
+  artifacts: HarnessArtifactView[];
+  createdAt: string;
+  isRunning: boolean;
+  hasError: boolean;
+}
 
 withDefaults(defineProps<{ vhOffset?: number }>(), {
   vhOffset: 100,
@@ -612,7 +798,10 @@ const isProcessingFiles = ref(false);
 const isDragOver = ref(false);
 const expandedToolIds = ref(new Set<string>());
 const expandedToolsetIds = ref(new Set<HarnessToolsetId>());
+const expandedActionTurnIds = ref(new Set<string>());
+const collapsedActionTurnIds = ref(new Set<string>());
 const editingItemId = ref<string | null>(null);
+const editText = ref("");
 const agentDialogVisible = ref(false);
 const agentEditorMode = ref<"manual" | "generate">("manual");
 const editingAgentId = ref<string | null>(null);
@@ -696,6 +885,198 @@ const canSubmit = computed(
   () => prompt.value.trim().length > 0 || pendingAttachments.value.length > 0
 );
 
+const isAssistantMessage = (item: HarnessItemView): boolean =>
+  item.kind === "message" && item.role === "assistant";
+
+const isCallingAssistantMessage = (item: HarnessItemView): boolean =>
+  isAssistantMessage(item) &&
+  /^Calling\s+\d+\s+tool/i.test(item.content.trim());
+
+const artifactPreviewUrls = new Map<string, string>();
+
+const parseToolJson = (content: string): Record<string, unknown> | null => {
+  try {
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const dataUrlContentType = (url: string): string | null => {
+  const match = /^data:([^;,]+)(?:;[^,]*)?,/i.exec(url);
+  return match?.[1]?.toLowerCase() ?? null;
+};
+
+const cacheDescriptionContentType = (description: string | undefined): string | null => {
+  const match = /\(([^)]+)\)\s*$/.exec(description ?? "");
+  return match?.[1]?.toLowerCase() ?? null;
+};
+
+const isPdfContentType = (contentType: string | null | undefined): boolean =>
+  Boolean(contentType && contentType.toLowerCase().includes("application/pdf"));
+
+const isImageContentType = (contentType: string | null | undefined): boolean =>
+  Boolean(contentType && contentType.toLowerCase().startsWith("image/"));
+
+const generatedPreviewUrl = (
+  artifactId: string,
+  htmlContent: string,
+  fallbackUrl: string
+): string => {
+  if (!htmlContent) return fallbackUrl;
+  const existing = artifactPreviewUrls.get(artifactId);
+  if (existing) return existing;
+  const url = URL.createObjectURL(
+    new Blob([htmlContent], { type: "text/html;charset=utf-8" })
+  );
+  artifactPreviewUrls.set(artifactId, url);
+  return url;
+};
+
+const cacheArtifact = (
+  key: string,
+  fallbackBytes?: number,
+  fallbackContentType?: string
+): HarnessArtifactView | null => {
+  const entry = agentCache.get(key);
+  const url = entry?.content ?? "";
+  if (!url.startsWith("data:")) return null;
+
+  const contentType =
+    dataUrlContentType(url) ??
+    fallbackContentType?.toLowerCase() ??
+    cacheDescriptionContentType(entry?.description);
+  const kind = isPdfContentType(contentType)
+    ? "pdf"
+    : isImageContentType(contentType)
+      ? "image"
+      : null;
+  if (!kind) return null;
+
+  const title = entry?.description || key;
+  const extension = kind === "pdf" ? "pdf" : (contentType?.split("/")[1] || "image");
+  return {
+    id: `cache:${key}`,
+    kind,
+    title,
+    filename: `${key}.${extension.replace(/[^a-z0-9]+/gi, "").slice(0, 12) || extension}`,
+    url,
+    bytes: fallbackBytes ?? entry?.sizeChars,
+    contentType: contentType ?? undefined,
+    cacheKey: key,
+  };
+};
+
+const artifactFromAction = (item: HarnessItemView): HarnessArtifactView | null => {
+  if (item.kind !== "tool") return null;
+  const result = parseToolJson(item.content);
+  if (!result) return null;
+
+  if (item.toolName === "generate_pdf" && result.__pdf_result__) {
+    const filename = String(result.filename ?? "document.pdf");
+    const htmlContent = String(result.htmlContent ?? "");
+    const fallbackUrl = String(result.url ?? "");
+    if (!htmlContent && !fallbackUrl) return null;
+    return {
+      id: `${item.id}:generated-pdf`,
+      kind: "generated-pdf",
+      title: String(result.title ?? filename),
+      filename,
+      url: generatedPreviewUrl(item.id, htmlContent, fallbackUrl),
+      bytes: Number(result.bytes ?? 0),
+      markdown: String(result.markdown ?? ""),
+      htmlContent,
+      contentType: "text/html",
+    };
+  }
+
+  const cacheKey = typeof result.cacheKey === "string"
+    ? result.cacheKey
+    : typeof result.key === "string"
+      ? result.key
+      : "";
+  if (!cacheKey) return null;
+
+  const contentType =
+    typeof result.contentType === "string" ? result.contentType : undefined;
+  const bytes = typeof result.sizeChars === "number" ? result.sizeChars : undefined;
+  return cacheArtifact(cacheKey, bytes, contentType);
+};
+
+const buildArtifactsForItems = (items: HarnessItemView[]): HarnessArtifactView[] => {
+  void cacheVersion.value;
+  const seen = new Set<string>();
+  const artifacts: HarnessArtifactView[] = [];
+  for (const item of items) {
+    const artifact = artifactFromAction(item);
+    if (!artifact || seen.has(artifact.id)) continue;
+    seen.add(artifact.id);
+    artifacts.push(artifact);
+  }
+  return artifacts;
+};
+
+const findFinalAssistantIndex = (items: HarnessItemView[]): number => {
+  for (let index = items.length - 1; index >= 0; index--) {
+    const item = items[index]!;
+    if (!isAssistantMessage(item) || isCallingAssistantMessage(item)) continue;
+    const trimmedContent = item.content.trim();
+    if (!trimmedContent) continue;
+    if (item.status === "error" && /^\[no response\]$/i.test(trimmedContent)) continue;
+    const hasLaterAction = items
+      .slice(index + 1)
+      .some((later) => later.kind === "tool" || later.kind === "approval");
+    if (!hasLaterAction) return index;
+  }
+  return -1;
+};
+
+const displayTurns = computed<HarnessTurnView[]>(() => {
+  const grouped = new Map<string, HarnessItemView[]>();
+  for (const item of harness.items.value as HarnessItemView[]) {
+    const group = grouped.get(item.turnId) ?? [];
+    group.push(item);
+    grouped.set(item.turnId, group);
+  }
+
+  return Array.from(grouped.entries()).map(([turnId, turnItems]) => {
+    const userItem =
+      turnItems.find((item) => item.kind === "message" && item.role === "user") ?? null;
+    const finalIndex = findFinalAssistantIndex(turnItems);
+    const finalItem = finalIndex >= 0 ? turnItems[finalIndex]! : null;
+    const terminalItem =
+      finalItem === null
+        ? [...turnItems].reverse().find((item) => item.kind === "system") ?? null
+        : null;
+    const actionItems = turnItems.filter(
+      (item) =>
+        item.id !== userItem?.id &&
+        item.id !== finalItem?.id &&
+        item.id !== terminalItem?.id
+    );
+    const artifacts = buildArtifactsForItems(actionItems);
+    const isRunning = turnItems.some(
+      (item) => item.status === "running" || item.status === "pending"
+    );
+    const hasError = turnItems.some((item) => item.status === "error");
+
+    return {
+      turnId,
+      userItem,
+      finalItem,
+      terminalItem,
+      actionItems,
+      artifacts,
+      createdAt: turnItems[0]?.createdAt ?? new Date().toISOString(),
+      isRunning,
+      hasError,
+    };
+  });
+});
+
 const agentPillStyle = computed(() => ({
   background: `${harness.activeAgent.value.color}18`,
   borderColor: `${harness.activeAgent.value.color}55`,
@@ -748,6 +1129,10 @@ const resolveViewPlaceholders = (content: string | null | undefined): string => 
     const entry = agentCache.get(key);
     if (!entry || !entry.content) {
       return `\n\n> **[Cache miss: \`${key}\`]** - This cached content is not loaded. Ask me to re-fetch it.\n\n`;
+    }
+    const contentType = dataUrlContentType(entry.content);
+    if (isPdfContentType(contentType) || isImageContentType(contentType)) {
+      return `\n\n> **Displayed cached ${isPdfContentType(contentType) ? "PDF" : "image"}:** \`${key}\`\n\n`;
     }
     const lang = detectCacheLanguage(entry.content);
     return `\n\n\`\`\`${lang}\n${entry.content}\n\`\`\`\n\n`;
@@ -942,15 +1327,11 @@ const sendPrompt = async () => {
   const attachments =
     pendingAttachments.value.length > 0 ? [...pendingAttachments.value] : undefined;
   if (!text && (!attachments || attachments.length === 0)) return;
-  const editingId = editingItemId.value;
   prompt.value = "";
   pendingAttachments.value = [];
   editingItemId.value = null;
-  if (editingId) {
-    await harness.rerunFromItem(editingId, text, { attachments });
-  } else {
-    await harness.runTurn(text, { attachments });
-  }
+  editText.value = "";
+  await harness.runTurn(text, { attachments });
   await scrollToBottom();
 };
 
@@ -964,16 +1345,25 @@ const onComposerKeydown = (event: KeyboardEvent) => {
 const startEdit = (item: HarnessItemView) => {
   if (item.role !== "user" || harness.loading.value) return;
   editingItemId.value = item.id;
-  prompt.value = item.content;
-  pendingAttachments.value = item.attachments
-    ? item.attachments.map((attachment) => ({ ...attachment }))
-    : [];
+  editText.value = item.content;
 };
 
 const cancelEdit = () => {
   editingItemId.value = null;
-  prompt.value = "";
-  pendingAttachments.value = [];
+  editText.value = "";
+};
+
+const saveEdit = async (item: HarnessItemView) => {
+  if (item.role !== "user" || harness.loading.value) return;
+  const text = editText.value.trim();
+  const attachments = item.attachments
+    ? item.attachments.map((attachment) => ({ ...attachment }))
+    : undefined;
+  if (!text && (!attachments || attachments.length === 0)) return;
+  editingItemId.value = null;
+  editText.value = "";
+  await harness.rerunFromItem(item.id, text, { attachments });
+  await scrollToBottom();
 };
 
 const scrollToBottom = async () => {
@@ -996,6 +1386,69 @@ const formatTime = (iso: string) =>
     hour: "2-digit",
     minute: "2-digit",
   });
+
+const firstActionItem = (turn: HarnessTurnView): HarnessItemView | null =>
+  turn.finalItem ?? turn.terminalItem ?? turn.actionItems[0] ?? turn.userItem;
+
+const turnIcon = (turn: HarnessTurnView): string => {
+  const item = firstActionItem(turn);
+  return item ? itemIcon(item) : harness.activeAgent.value.icon;
+};
+
+const turnIconClass = (turn: HarnessTurnView): string => {
+  const item = firstActionItem(turn);
+  if (!item) return "item-icon--done";
+  if (turn.isRunning) return "item-icon--running";
+  if (turn.hasError) return "item-icon--error";
+  return itemIconClass(item);
+};
+
+const assistantTurnTitle = (turn: HarnessTurnView): string => {
+  if (turn.finalItem?.title === "Final synthesis") return "Final response";
+  if (turn.finalItem) return itemTitle(turn.finalItem);
+  if (turn.terminalItem) return itemTitle(turn.terminalItem);
+  return turn.isRunning ? "Working" : "Agent work";
+};
+
+const assistantTurnTime = (turn: HarnessTurnView): string =>
+  (turn.finalItem ?? turn.terminalItem ?? turn.actionItems[0])?.createdAt ?? turn.createdAt;
+
+const actionSummaryLabel = (turn: HarnessTurnView): string => {
+  const count = turn.actionItems.length;
+  const toolCount = turn.actionItems.filter(
+    (item) => item.kind === "tool" || item.kind === "approval"
+  ).length;
+  const passCount = count - toolCount;
+  const pieces = [
+    `${count} action${count === 1 ? "" : "s"}`,
+    toolCount > 0 ? `${toolCount} tool${toolCount === 1 ? "" : "s"}` : "",
+    passCount > 0 ? `${passCount} pass${passCount === 1 ? "" : "es"}` : "",
+  ].filter(Boolean);
+  return `${turn.isRunning ? "Working" : "Actions"} · ${pieces.join(" · ")}`;
+};
+
+const isActionGroupExpanded = (turn: HarnessTurnView): boolean => {
+  if (collapsedActionTurnIds.value.has(turn.turnId)) return false;
+  return turn.isRunning || expandedActionTurnIds.value.has(turn.turnId);
+};
+
+const toggleActionGroup = (turnId: string) => {
+  const expanded = new Set(expandedActionTurnIds.value);
+  const collapsed = new Set(collapsedActionTurnIds.value);
+  const turn = displayTurns.value.find((candidate) => candidate.turnId === turnId);
+  const currentlyExpanded = turn ? isActionGroupExpanded(turn) : expanded.has(turnId);
+
+  if (currentlyExpanded) {
+    expanded.delete(turnId);
+    collapsed.add(turnId);
+  } else {
+    collapsed.delete(turnId);
+    expanded.add(turnId);
+  }
+
+  expandedActionTurnIds.value = expanded;
+  collapsedActionTurnIds.value = collapsed;
+};
 
 const itemIcon = (item: HarnessItemView): string => {
   if (item.kind === "tool") return "pi pi-bolt";
@@ -1059,6 +1512,20 @@ const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const artifactIcon = (artifact: HarnessArtifactView): string => {
+  if (artifact.kind === "image") return "pi pi-image";
+  return "pi pi-file-pdf";
+};
+
+const downloadArtifact = async (artifact: HarnessArtifactView) => {
+  if (artifact.kind !== "generated-pdf") return;
+  await downloadDocumentAsPdf(
+    artifact.markdown ?? "",
+    artifact.title || artifact.filename,
+    artifact.filename
+  );
 };
 
 const getFileExtension = (name: string): string =>
@@ -1141,10 +1608,25 @@ onMounted(async () => {
   await harness.initialize();
   await scrollToBottom();
 });
+
+onBeforeUnmount(() => {
+  for (const url of artifactPreviewUrls.values()) {
+    URL.revokeObjectURL(url);
+  }
+  artifactPreviewUrls.clear();
+});
 </script>
 
 <style scoped>
 .harness-view {
+  --harness-accent: #7c3aed;
+  --harness-accent-strong: #6d28d9;
+  --harness-accent-soft: #f5f3ff;
+  --harness-accent-softer: #faf9ff;
+  --harness-accent-mid: #ede9fe;
+  --harness-accent-border: #ddd6fe;
+  --harness-indigo-soft: #eef2ff;
+  --harness-indigo-border: #c7d2fe;
   width: 100%;
   min-height: 0;
   flex: 1;
@@ -1162,7 +1644,8 @@ onMounted(async () => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: linear-gradient(180deg, #f8fafc 0%, #f5f3ff 100%);
+  background:
+    linear-gradient(180deg, #f8fafc 0%, var(--harness-accent-soft) 56%, #eef2f7 100%);
 }
 
 .section-heading {
@@ -1194,9 +1677,9 @@ onMounted(async () => {
 .sidebar-action:hover,
 .icon-btn:hover,
 .mini-btn:hover {
-  background: #f5f3ff;
+  background: var(--harness-accent-soft);
   border-color: #c4b5fd;
-  color: #6d28d9;
+  color: var(--harness-accent-strong);
 }
 
 .sidebar-section {
@@ -1284,7 +1767,7 @@ onMounted(async () => {
 .thread-item.active {
   background: white;
   border-color: #c4b5fd;
-  box-shadow: 0 1px 0 rgba(124, 58, 237, 0.08);
+  box-shadow: 0 1px 0 rgba(124, 58, 237, 0.08), 0 8px 20px rgba(100, 116, 139, 0.08);
   color: var(--p-slate-800);
 }
 
@@ -1309,8 +1792,8 @@ onMounted(async () => {
 }
 
 .agent-row-action:hover {
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .thread-item {
@@ -1392,8 +1875,8 @@ onMounted(async () => {
 }
 
 .mode-btn.active {
-  background: #ede9fe;
-  color: #6d28d9;
+  background: var(--harness-accent-mid);
+  color: var(--harness-accent-strong);
 }
 
 .mode-btn i {
@@ -1521,7 +2004,7 @@ onMounted(async () => {
   justify-content: center;
   gap: 10px;
   background: rgba(255, 255, 255, 0.88);
-  color: #6d28d9;
+  color: var(--harness-accent-strong);
   pointer-events: none;
   font-size: 0.85rem;
   font-weight: 700;
@@ -1537,7 +2020,8 @@ onMounted(async () => {
   overflow-y: auto;
   padding: 16px 18px;
   background:
-    linear-gradient(180deg, rgba(245, 243, 255, 0.36), transparent 180px),
+    linear-gradient(180deg, rgba(245, 243, 255, 0.42), transparent 180px),
+    linear-gradient(90deg, rgba(248, 250, 252, 0.72), transparent 320px),
     #ffffff;
   contain: layout paint;
 }
@@ -1558,9 +2042,9 @@ onMounted(async () => {
   width: 46px;
   height: 46px;
   border-radius: 8px;
-  background: #ede9fe;
-  color: #7c3aed;
-  border: 1px solid #ddd6fe;
+  background: var(--harness-accent-mid);
+  color: var(--harness-accent);
+  border: 1px solid var(--harness-accent-border);
 }
 
 .quick-actions {
@@ -1584,8 +2068,8 @@ onMounted(async () => {
 
 .quick-btn:hover {
   border-color: #c4b5fd;
-  color: #6d28d9;
-  background: #faf9ff;
+  color: var(--harness-accent-strong);
+  background: var(--harness-accent-softer);
 }
 
 .stream-item {
@@ -1623,15 +2107,15 @@ onMounted(async () => {
 }
 
 .item-icon--done {
-  background: #f5f3ff;
-  color: #7c3aed;
-  border-color: #ddd6fe;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent);
+  border-color: var(--harness-accent-border);
 }
 
 .item-icon--running {
-  background: #eef2ff;
+  background: var(--harness-indigo-soft);
   color: #4f46e5;
-  border-color: #c7d2fe;
+  border-color: var(--harness-indigo-border);
 }
 
 .item-icon--error {
@@ -1678,9 +2162,9 @@ onMounted(async () => {
 }
 
 .item-action:hover {
-  border-color: #ddd6fe;
-  background: #f5f3ff;
-  color: #6d28d9;
+  border-color: var(--harness-accent-border);
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .item-title {
@@ -1707,7 +2191,7 @@ onMounted(async () => {
 }
 
 .live-badge {
-  background: #eef2ff;
+  background: var(--harness-indigo-soft);
   color: #4f46e5;
 }
 
@@ -1751,12 +2235,12 @@ onMounted(async () => {
 }
 
 .message-renderer :deep(.md-table th) {
-  background: #f5f3ff;
+  background: var(--harness-accent-soft);
   color: #5b21b6;
 }
 
 .message-renderer :deep(.md-table tr:hover td) {
-  background: #faf9ff;
+  background: var(--harness-accent-softer);
 }
 
 .message-renderer :deep(.code-block-header) {
@@ -1777,8 +2261,8 @@ onMounted(async () => {
 
 .message-renderer :deep(.code-copy-btn:hover),
 .message-renderer :deep(.code-action-btn:hover) {
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
   border-color: #c4b5fd;
 }
 
@@ -1788,6 +2272,349 @@ onMounted(async () => {
 
 .stream-item--message.stream-item--done .item-content {
   color: var(--p-slate-700);
+}
+
+.stream-item--assistant-turn {
+  margin-bottom: 18px;
+}
+
+.assistant-turn-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.harness-msg-edit-area {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+}
+
+.harness-msg-edit-textarea {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: #ffffff;
+  color: var(--p-slate-800);
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  outline: none;
+}
+
+.harness-msg-edit-textarea:focus {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
+}
+
+.harness-msg-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.harness-msg-edit-cancel,
+.harness-msg-edit-save {
+  min-height: 28px;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 0.7rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.harness-msg-edit-cancel {
+  border: 1px solid var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-500);
+}
+
+.harness-msg-edit-save {
+  border: 1px solid #7c3aed;
+  background: #7c3aed;
+  color: white;
+}
+
+.action-group {
+  overflow: hidden;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.action-group--running {
+  border-color: var(--harness-indigo-border);
+  background: #f8faff;
+}
+
+.action-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 32px;
+  border: none;
+  padding: 5px 8px;
+  background: linear-gradient(90deg, #f8fafc 0%, var(--harness-accent-softer) 100%);
+  color: var(--p-slate-600);
+  cursor: pointer;
+  font: inherit;
+}
+
+.action-summary-left {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.action-summary-left i {
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+}
+
+.action-summary-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.action-mini-icon,
+.action-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-slate-200);
+  background: white;
+}
+
+.action-mini-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  font-size: 0.52rem;
+}
+
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border-top: 1px solid var(--p-slate-200);
+}
+
+.action-row {
+  min-width: 0;
+  border-top: 1px solid color-mix(in srgb, var(--p-slate-200) 70%, transparent);
+}
+
+.action-row:first-child {
+  border-top: none;
+}
+
+.action-row-main {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border: none;
+  padding: 6px 8px;
+  background: white;
+  color: var(--p-slate-600);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.action-row-main:hover {
+  background: var(--harness-accent-softer);
+}
+
+.action-row-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 0.56rem;
+}
+
+.action-row-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.action-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--p-slate-700);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.action-row-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+}
+
+.action-row-latency {
+  color: var(--p-slate-400);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.action-row-chevron {
+  color: var(--p-slate-300);
+  font-size: 0.62rem;
+}
+
+.action-row-details {
+  border-top: 1px solid var(--p-slate-200);
+  background: #ffffff;
+}
+
+.action-message-renderer {
+  padding: 8px 10px;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifact-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--harness-accent-border) 60%, var(--p-slate-200));
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 30px rgba(124, 58, 237, 0.06);
+}
+
+.artifact-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: linear-gradient(90deg, var(--harness-accent-soft) 0%, #f8fafc 100%);
+}
+
+.artifact-title {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 7px;
+  color: var(--p-slate-800);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.artifact-title i {
+  color: var(--harness-accent);
+  font-size: 0.72rem;
+}
+
+.artifact-title span,
+.artifact-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-meta {
+  max-width: 360px;
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+  font-weight: 650;
+}
+
+.artifact-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.artifact-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.artifact-action:hover {
+  border-color: #c4b5fd;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent);
+}
+
+.artifact-frame {
+  display: block;
+  width: 100%;
+  height: min(56vh, 620px);
+  min-height: 360px;
+  border: none;
+  background: white;
+}
+
+.artifact-image {
+  display: block;
+  width: 100%;
+  max-height: min(62vh, 720px);
+  object-fit: contain;
+  background:
+    linear-gradient(45deg, var(--p-slate-50) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--p-slate-50) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--p-slate-50) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--p-slate-50) 75%);
+  background-color: #ffffff;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.final-response {
+  min-width: 0;
+}
+
+.final-response--pending {
+  min-height: 30px;
+}
+
+.final-response--system {
+  padding: 8px 10px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.final-response--error,
+.final-empty {
+  color: var(--p-slate-500);
+  font-size: 0.78rem;
 }
 
 .tool-card {
@@ -1854,8 +2681,8 @@ onMounted(async () => {
 .tool-input {
   max-height: 120px;
   overflow: auto;
-  background: #faf9ff;
-  border-bottom: 1px solid #ede9fe;
+  background: var(--harness-accent-softer);
+  border-bottom: 1px solid var(--harness-accent-mid);
 }
 
 .tool-output {
@@ -1963,8 +2790,8 @@ onMounted(async () => {
 
 .attach-btn:hover:not(:disabled) {
   border-color: #c4b5fd;
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .attach-btn:disabled {
@@ -2034,9 +2861,9 @@ onMounted(async () => {
   max-width: 260px;
   min-height: 24px;
   padding: 3px 7px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--harness-accent-border);
   border-radius: 6px;
-  background: #faf9ff;
+  background: var(--harness-accent-softer);
   color: var(--p-slate-600);
   font-size: 0.7rem;
   font-weight: 650;
@@ -2128,8 +2955,8 @@ onMounted(async () => {
 }
 
 .toolset-expand:hover {
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .toolset-name {
@@ -2174,7 +3001,7 @@ onMounted(async () => {
 
 .toolset-switch.active {
   border-color: #c4b5fd;
-  background: #ede9fe;
+  background: var(--harness-accent-mid);
 }
 
 .toolset-switch.active span {
@@ -2319,9 +3146,9 @@ onMounted(async () => {
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border: 1px solid #ddd6fe;
+  border: 1px solid var(--harness-accent-border);
   border-radius: 8px;
-  background: #faf9ff;
+  background: var(--harness-accent-softer);
 }
 
 .agent-generate-actions,
@@ -2478,8 +3305,8 @@ onMounted(async () => {
 
 .agent-toolset-chip.active {
   border-color: #c4b5fd;
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .agent-dialog-footer {
@@ -2520,8 +3347,8 @@ onMounted(async () => {
 
 .agent-secondary-btn:hover {
   border-color: #c4b5fd;
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
 }
 
 .agent-danger-btn {

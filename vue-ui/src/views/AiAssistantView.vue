@@ -1462,6 +1462,8 @@ const agent = useAgent({
   chainedTools,
   ephemeralTools: ["search_skills", "load_skill"],
   compactionThreshold: () => settings.compactionThreshold,
+  maxMainIterations: () => settings.agentMainStepLimit,
+  maxSubAgentIterations: () => settings.agentSubagentStepLimit,
   onToolApprovalRequest: requestToolApproval,
   onCompactionRequest(tokenEstimate, threshold) {
     // Only intercept when mode is "ask"; "auto" proceeds without prompting

@@ -2,6 +2,7 @@
 import { useSettings } from "../states/settingsState";
 import { ref, watch } from "vue";
 import InputText from "primevue/inputtext";
+import InputNumber from "primevue/inputnumber";
 import Checkbox from "primevue/checkbox";
 import Select from "primevue/select";
 import Button from "primevue/button";
@@ -377,7 +378,7 @@ const modelLabel = (m: OllamaModel) => {
     <h2>Shortcuts</h2>
     <div class="shortcut-item">
       <label for="extension-toggle">Toggle Extension:</label>
-      <span>{{ settings.extensionToggle }}</span>
+      <span class="shortcut-value">{{ settings.extensionToggle }}</span>
       <small>(Fixed, change in Chrome extensions settings)</small>
     </div>
     <div class="shortcut-item">
@@ -451,6 +452,36 @@ const modelLabel = (m: OllamaModel) => {
         placeholder="e.g., 80000"
         class="threshold-input"
       />
+    </div>
+
+    <div class="shortcut-item shortcut-item--stacked">
+      <label for="agent-main-step-limit">Main Agent Step Limit:</label>
+      <div class="shortcut-control">
+        <InputNumber
+          input-id="agent-main-step-limit"
+          v-model="settings.agentMainStepLimit"
+          :min="1"
+          :max="60"
+          :use-grouping="false"
+          class="step-limit-input"
+        />
+        <small>Maximum model/tool passes before final synthesis.</small>
+      </div>
+    </div>
+
+    <div class="shortcut-item shortcut-item--stacked">
+      <label for="agent-subagent-step-limit">Sub-Agent Step Limit:</label>
+      <div class="shortcut-control">
+        <InputNumber
+          input-id="agent-subagent-step-limit"
+          v-model="settings.agentSubagentStepLimit"
+          :min="1"
+          :max="60"
+          :use-grouping="false"
+          class="step-limit-input"
+        />
+        <small>Budget for delegated discovery runs.</small>
+      </div>
     </div>
 
     <!-- GitHub Copilot options -->
@@ -706,8 +737,9 @@ const modelLabel = (m: OllamaModel) => {
         <strong>openrouter/free</strong> randomly picks a free model that
         supports your request (tool calling, etc.) — no credit needed. For a
         specific model append <code>:free</code> (e.g.
-        <code>meta-llama/llama-3.3-70b-instruct:free</code>). An API key is
-        required for paid models — create one at
+        <code>meta-llama/llama-3.3-70b-instruct:free</code>). Temporary 429s
+        from free upstream providers are retried with other free models when
+        possible. An API key is required for paid models — create one at
         <code>openrouter.ai/settings/keys</code>.
       </p>
     </template>
@@ -806,7 +838,7 @@ const modelLabel = (m: OllamaModel) => {
   font-weight: 500;
 }
 
-.shortcut-item span {
+.shortcut-value {
   font-family: monospace;
   background: var(--surface-section);
   padding: 0.5rem;
@@ -815,6 +847,22 @@ const modelLabel = (m: OllamaModel) => {
 
 .shortcut-item small {
   font-size: 0.875rem;
+  color: var(--p-slate-500);
+}
+
+.shortcut-item--stacked {
+  align-items: flex-start;
+}
+
+.shortcut-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.shortcut-control small {
+  line-height: 1.35;
 }
 
 .provider-select {
@@ -828,6 +876,15 @@ const modelLabel = (m: OllamaModel) => {
 
 .threshold-input {
   max-width: 140px;
+}
+
+.step-limit-input {
+  width: 6rem;
+}
+
+.step-limit-input :deep(.p-inputnumber-input) {
+  width: 6rem;
+  font-family: inherit;
 }
 
 .model-select {

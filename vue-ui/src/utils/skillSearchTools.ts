@@ -3,8 +3,55 @@ import type { ToolDefinition } from "../composables/useAgent";
 import {
   searchSkills,
   getSkillContent,
-  getSkillCount
+  getSkillCount,
+  type SkillSearchResult
 } from "./skillsDb";
+import { DIAGRAM_DOCS } from "./diagramDocs";
+
+const BUILTIN_DIAGRAM_SKILL_ID = -1001;
+
+const builtinSkills: Array<SkillSearchResult & { content: string }> = [
+  {
+    id: BUILTIN_DIAGRAM_SKILL_ID,
+    name: "Diagram DSL",
+    description:
+      "Instructions for rendering flowcharts and sequence diagrams in chat with ```diagram fences.",
+    tags:
+      "diagram diagrams flowchart flowcharts sequence visual workflow process architecture chart",
+    content: DIAGRAM_DOCS
+  }
+];
+
+const stripSkillContent = ({
+  id,
+  name,
+  description,
+  tags
+}: SkillSearchResult & { content?: string }): SkillSearchResult => ({
+  id,
+  name,
+  description,
+  tags
+});
+
+const searchBuiltinSkills = (query: string): SkillSearchResult[] => {
+  const term = query.toLowerCase().trim();
+  if (!term) return builtinSkills.map(stripSkillContent);
+
+  const terms = term.split(/\s+/).filter(Boolean);
+  return builtinSkills
+    .map((skill) => {
+      const haystack = `${skill.name} ${skill.description} ${skill.tags}`.toLowerCase();
+      const score = terms.reduce(
+        (sum, t) => sum + (haystack.includes(t) ? 2 : 0),
+        0
+      );
+      return { skill, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ skill }) => stripSkillContent(skill));
+};
 
 /**
  * Two-step skill retrieval for the AI agent:
@@ -21,7 +68,7 @@ export const skillTools: ToolDefinition[] = [
   {
     name: "search_skills",
     description:
-      "Search through available skills (knowledge, instructions, code patterns, documentation) stored in the local skill library. Returns an array of matching skills with id, name, description, and tags — but NOT the full content. Use 'load_skill' with the skill's id to retrieve its full content. Uses OR-based matching ranked by relevance. Returns an empty array if no skills match the query. Only use this tool when you need to generate, write, or modify code — NOT for viewing, reading, or exploring existing code.",
+      "Search through available skills (knowledge, instructions, code patterns, documentation, visual diagram guidance) stored in the local skill library. Returns matching skills with id, name, description, and tags, but NOT full content. Use 'load_skill' with the skill's id to retrieve instructions only when needed. Uses OR-based matching ranked by relevance.",
     parameters: {
       type: "object",
       properties: {
@@ -34,18 +81,19 @@ export const skillTools: ToolDefinition[] = [
       required: []
     },
     execute: async (input) => {
-      const count = await getSkillCount();
-      if (count === 0) {
-        return {
-          results: [],
-          message: "No skills are available in the skill library. The user can add skills via the Skills management view."
-        };
-      }
-
       const query = String(input.query ?? "").trim();
-      const results = await searchSkills(query);
+      const count = await getSkillCount();
+      const builtins = searchBuiltinSkills(query);
+      const storedResults = await searchSkills(query);
+      const results = [
+        ...builtins,
+        ...storedResults.filter(
+          (result) => !builtins.some((builtin) => builtin.id === result.id)
+        )
+      ];
+
       return {
-        total: count,
+        total: count + builtinSkills.length,
         matched: results.length,
         results
       };
@@ -71,6 +119,14 @@ export const skillTools: ToolDefinition[] = [
       const id = Number(input.skillId);
       if (isNaN(id)) {
         return { error: "Invalid skill ID — must be a number." };
+      }
+
+      const builtin = builtinSkills.find((skill) => skill.id === id);
+      if (builtin) {
+        return {
+          name: builtin.name,
+          content: builtin.content
+        };
       }
 
       const result = await getSkillContent(id);

@@ -358,6 +358,19 @@ Custom records:
   contact             Contact records
   customrecord_*      Custom record types — discover with suiteql_search_tables
 
+## RECORD-RELATED FILES AND REPORTS
+When the user asks for a report/file/document/PDF "for", "with", or "related to" a lead/customer/entity/transaction ID:
+  - Treat the number as the record ID unless the user explicitly says "file ID".
+  - Do NOT call netsuite_find_file(id: recordId) or netsuite_read_file(fileId: recordId).
+  - Use SuiteQL discovery to find the relationship table/field first.
+  - Loading the record can confirm identity, but it does not locate related files.
+
+Example: "find the report file with lead id 181"
+  1. suiteql_search_tables("lead") and/or suiteql_search_tables("report")
+  2. suiteql_get_table_fields / suiteql_get_table_joins on likely customer/customrecord tables
+  3. suiteql_execute_query against the related table where the lead/customer field = 181
+  4. Use netsuite_read_file only with a file ID returned by that query
+
 ## FULL WORKFLOW EXAMPLE
 Goal: Find open invoices for customer ID 123
 
@@ -792,15 +805,16 @@ async function handleMcp(req) {
           {
             name: "netsuite_find_file",
             description:
-              "Search the ENTIRE NetSuite File Cabinet for files matching a name or ID. Searches globally across all folders. " +
+              "Search the ENTIRE NetSuite File Cabinet for files matching a file name or internal FILE ID. Searches globally across all folders. " +
               "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url. " +
+              "Do NOT pass a lead/customer/entity/transaction ID as `id`. If the user asks for a report/file related to a record ID (for example 'lead id 181'), use SuiteQL relationship discovery first and only use this tool with a verified File Cabinet file ID or distinctive file name. " +
               "To read the actual content of a file after finding it, call netsuite_read_file with the file id.",
             inputSchema: {
               type: "object",
               properties: {
                 id: {
                   type: "string",
-                  description: "Exact internal ID of the file (e.g. '12345'). Use for direct lookup."
+                  description: "Exact internal File Cabinet file ID (e.g. '12345'). Do not use a lead/customer/entity/transaction ID here."
                 },
                 name: {
                   type: "string",
@@ -814,6 +828,7 @@ async function handleMcp(req) {
             description:
               "Read the actual content of a NetSuite File Cabinet file by its internal ID. " +
               "ALWAYS use this tool when you have a file ID (e.g. from a SuiteQL query result or from netsuite_find_file) and the user wants to see or display the file contents. " +
+              "Do NOT use a lead/customer/entity/transaction record ID as fileId. Resolve related files with SuiteQL first. " +
               "Returns the file name, content type, and full text content (or base64 for binary files). " +
               "Works with any text-based file: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
             inputSchema: {
@@ -821,7 +836,7 @@ async function handleMcp(req) {
               properties: {
                 fileId: {
                   type: "string",
-                  description: "The internal numeric ID of the file to read (e.g. '21301'). Obtain this from a SuiteQL query or from netsuite_find_file."
+                  description: "The internal numeric File Cabinet file ID to read (e.g. '21301'). Obtain this from a SuiteQL relationship query or from netsuite_find_file, never from a lead/customer/entity ID."
                 }
               },
               required: ["fileId"]

@@ -8,6 +8,7 @@ import {
   NETSUITE_DOCS_SYSTEM_PROMPT,
 } from "../utils/netsuiteDocsTools";
 import { bundleTools, BUNDLE_TOOLS_SYSTEM_PROMPT } from "../utils/bundleTools";
+import { skillTools } from "../utils/skillSearchTools";
 import { callApi, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { agentCache } from "../utils/agentCacheStore";
@@ -184,7 +185,7 @@ const DEFAULT_HARNESS_AGENT_SEEDS = [
     toolsets: ["context", "suiteql", "records", "scripts", "filecabinet", "docs", "bundles"],
     maxSteps: 8,
     systemFocus:
-      "Explore the account safely. Find the smallest reliable NetSuite source of truth, cite IDs and tool evidence, and avoid write actions.",
+      "Explore the account safely. Resolve record-to-file/report relationships through SuiteQL before using File Cabinet IDs, cite IDs and tool evidence, and avoid write actions.",
     builtIn: true,
     enabled: true,
   },
@@ -257,6 +258,13 @@ const uid = (prefix: string): string => {
 };
 
 const nowIso = (): string => new Date().toISOString();
+
+const clampStepLimit = (value: unknown, fallback: number): number => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric)
+    ? Math.max(1, Math.min(60, Math.floor(numeric)))
+    : fallback;
+};
 
 const HARNESS_TOOLSET_IDS = new Set(HARNESS_TOOLSETS.map((toolset) => toolset.id));
 
@@ -343,6 +351,240 @@ const parseToolArgs = (call: ToolCall): Record<string, unknown> => {
   }
 };
 
+const RELATED_FILE_WORD_PATTERN = /\b(report|file|document|attachment|pdf)\b/i;
+const EXPLICIT_FILE_ID_PATTERN =
+  /\b(file|document|attachment|pdf)\s*(?:internal\s*)?id\s*#?\s*\d+\b/i;
+const RECORD_ENTITY_PATTERNS: Array<{ entity: string; regex: RegExp }> = [
+  { entity: "lead", regex: /\blead\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "customer", regex: /\bcustomer\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "prospect", regex: /\bprospect\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "contact", regex: /\bcontact\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "entity", regex: /\bentity\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "vendor", regex: /\bvendor\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "employee", regex: /\bemployee\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "transaction", regex: /\btransaction\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "invoice", regex: /\binvoice\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "sales order", regex: /\bsales\s*order\s*(?:id\s*)?#?\s*(\d+)\b/i },
+  { entity: "opportunity", regex: /\bopportunity\s*(?:id\s*)?#?\s*(\d+)\b/i },
+];
+
+const extractRecordEntityMention = (
+  prompt: string
+): { entity: string; id: number } | null => {
+  for (const { entity, regex } of RECORD_ENTITY_PATTERNS) {
+    const match = prompt.match(regex);
+    if (!match) continue;
+    const id = Number(match[1]);
+    if (Number.isInteger(id)) return { entity, id };
+  }
+  return null;
+};
+
+const isRecordRelatedFilePrompt = (prompt: string): boolean =>
+  RELATED_FILE_WORD_PATTERN.test(prompt) &&
+  extractRecordEntityMention(prompt) !== null &&
+  !EXPLICIT_FILE_ID_PATTERN.test(prompt);
+
+const numericArg = (
+  args: Record<string, unknown>,
+  keys: string[]
+): number | null => {
+  for (const key of keys) {
+    const value = args[key];
+    if (value === undefined || value === null || value === "") continue;
+    const parsed = Number(value);
+    if (Number.isInteger(parsed)) return parsed;
+  }
+  return null;
+};
+
+const isFileIdTool = (toolName: string): boolean =>
+  toolName === "netsuite_find_file" ||
+  toolName === "netsuite_get_file_content" ||
+  toolName === "netsuite_read_file" ||
+  toolName.endsWith("__netsuite_find_file") ||
+  toolName.endsWith("__netsuite_get_file_content") ||
+  toolName.endsWith("__netsuite_read_file");
+
+const validateRecordRelatedFileToolCall = (
+  toolName: string,
+  args: Record<string, unknown>,
+  prompt: string
+): string | null => {
+  if (!isFileIdTool(toolName)) return null;
+  if (!isRecordRelatedFilePrompt(prompt)) return null;
+
+  const mention = extractRecordEntityMention(prompt);
+  const requestedId = numericArg(args, ["fileId", "id"]);
+  if (!mention || requestedId !== mention.id) return null;
+
+  return (
+    `Blocked unsafe File Cabinet ID lookup: the user asked for a report/file related ` +
+    `to ${mention.entity} ${mention.id}. That number is the ${mention.entity} record ID, ` +
+    `not a verified file ID. Use SuiteQL relationship discovery first: search tables/joins, ` +
+    `query the related record or attachment table, then read/search only the file ID returned by that lookup.`
+  );
+};
+
+const parseJsonResult = (content: string): unknown => {
+  try {
+    return JSON.parse(content);
+  } catch {
+    return null;
+  }
+};
+
+const resultCount = (value: unknown): number | null => {
+  if (Array.isArray(value)) return value.length;
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.count === "number") return obj.count;
+  if (typeof obj.rowCount === "number") return obj.rowCount;
+  if (typeof obj.totalCount === "number") return obj.totalCount;
+  for (const key of ["files", "folders", "results", "recordTypes"]) {
+    const nested = obj[key];
+    if (Array.isArray(nested)) return nested.length;
+    if (nested && typeof nested === "object") {
+      const nestedObj = nested as Record<string, unknown>;
+      if (typeof nestedObj.totalCount === "number") return nestedObj.totalCount;
+      if (Array.isArray(nestedObj.results)) return nestedObj.results.length;
+    }
+  }
+  return null;
+};
+
+const buildRecordRelatedFileNudges = (
+  prompt: string,
+  calls: ToolCall[],
+  outputs: ChatMessage[]
+): string[] => {
+  if (!isRecordRelatedFilePrompt(prompt)) return [];
+  const mention = extractRecordEntityMention(prompt);
+  if (!mention) return [];
+
+  const nudges = new Set<string>();
+
+  calls.forEach((call, index) => {
+    const toolName = call.function.name;
+    const output = outputs[index];
+    const parsed = parseJsonResult(output?.content ?? "");
+    const count = resultCount(parsed);
+
+    if (toolName === "netsuite_load_record" || toolName.endsWith("__netsuite_load_record")) {
+      nudges.add(
+        `Record load identified ${mention.entity} ${mention.id}, but it does not locate related files. ` +
+        `Next use SuiteQL schema discovery, not File Cabinet browsing: inspect Customer/lead joins, ` +
+        `look for report/file/AI enrichment tables, and query the relationship by ${mention.entity} ID.`
+      );
+    }
+
+    if (toolName === "netsuite_get_record_fields" || toolName.endsWith("__netsuite_get_record_fields")) {
+      nudges.add(
+        `A ${mention.entity} field dump does not prove the linked report file. Use netsuite_find_record_related_file if available, ` +
+        `or query the custom relationship table that contains both a ${mention.entity} reference and a report/file field.`
+      );
+    }
+
+    if (toolName === "sql_search_tables" || toolName.endsWith("__sql_search_tables")) {
+      const tables = parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>).tables
+        : null;
+      const likely = Array.isArray(tables)
+        ? tables.find((table) => {
+            const row = table as Record<string, unknown>;
+            const haystack = `${row.id ?? ""} ${row.label ?? ""}`.toLowerCase();
+            return haystack.includes(mention.entity) && haystack.includes("report");
+          }) as Record<string, unknown> | undefined
+        : undefined;
+      if (likely?.id) {
+        nudges.add(
+          `Likely relationship table found: ${String(likely.id)}. Next inspect its fields, then query the ${mention.entity} reference field and report/file field for ${mention.entity} ${mention.id}.`
+        );
+      }
+    }
+
+    if (toolName === "sql_get_table_fields" || toolName.endsWith("__sql_get_table_fields")) {
+      const obj = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+      const table = String(obj.table ?? "");
+      const fields = Array.isArray(obj.fields) ? obj.fields as Array<Record<string, unknown>> : [];
+      const fieldText = fields
+        .map((field) => `${field.id ?? ""} ${field.label ?? ""}`)
+        .join(" ")
+        .toLowerCase();
+      const tableText = table.toLowerCase();
+      const looksLikeRecordReportTable =
+        (tableText.includes(mention.entity) || fieldText.includes(mention.entity)) &&
+        (tableText.includes("report") || fieldText.includes("report")) &&
+        /\b(file|pdf|document|attachment)\b|_file\b/i.test(fieldText);
+
+      if (looksLikeRecordReportTable) {
+        const linkField = fields.find((field) => {
+          const haystack = `${field.id ?? ""} ${field.label ?? ""}`.toLowerCase();
+          return haystack.includes(mention.entity) && !/(file|report|pdf|document|attachment)/i.test(haystack);
+        }) ?? fields.find((field) => {
+          const haystack = `${field.id ?? ""} ${field.label ?? ""}`.toLowerCase();
+          return haystack.includes("entity") || haystack.includes("customer");
+        });
+        const fileField = fields.find((field) => {
+          const haystack = `${field.id ?? ""} ${field.label ?? ""}`.toLowerCase();
+          return /(file|pdf|document|attachment)/i.test(haystack);
+        }) ?? fields.find((field) => `${field.id ?? ""} ${field.label ?? ""}`.toLowerCase().includes("report"));
+        const linkId = String(linkField?.id ?? "").trim();
+        const fileId = String(fileField?.id ?? "").trim();
+        if (table && linkId && fileId) {
+          nudges.add(
+            `This appears to be the linking table. Next run: SELECT id, name, ${linkId}, ${fileId} FROM ${table} ` +
+            `WHERE ${linkId} = ${mention.id} AND ${fileId} IS NOT NULL AND ROWNUM <= 5. Then read the returned file ID.`
+          );
+        }
+      } else if (tableText === "file") {
+        nudges.add(
+          `The File table describes files but does not link them to ${mention.entity} ${mention.id}. Search/inspect the custom report relationship table instead.`
+        );
+      }
+    }
+
+    if (toolName === "netsuite_find_file" || toolName.endsWith("__netsuite_find_file")) {
+      if (count === 0 || count === null) {
+        nudges.add(
+          `File Cabinet search did not prove the record relationship. Do not retry generic report/file searches. ` +
+          `Use SuiteQL: search tables for "lead", "report", and "file"; inspect joins/fields; then query for records tied to ${mention.entity} ${mention.id}.`
+        );
+      } else {
+        nudges.add(
+          `A file-name search can return unrelated files. Only finish if the file result is linked to ${mention.entity} ${mention.id}; ` +
+          `otherwise verify the relationship with SuiteQL before answering.`
+        );
+      }
+    }
+
+    if (
+      toolName === "netsuite_get_root_folders" ||
+      toolName === "netsuite_list_folder" ||
+      toolName === "netsuite_find_folder" ||
+      toolName.endsWith("__netsuite_list_folder") ||
+      toolName.endsWith("__netsuite_find_folder")
+    ) {
+      nudges.add(
+        `Folder browsing can find where files live, but it cannot prove which report belongs to ${mention.entity} ${mention.id}. ` +
+        `Switch to SuiteQL relationship discovery and query the linking record/table.`
+      );
+    }
+
+    if (
+      (toolName === "sql_execute_query" || toolName.endsWith("__suiteql_execute_query")) &&
+      count === 0
+    ) {
+      nudges.add(
+        `The SuiteQL query returned no rows. Change the relationship strategy: inspect table fields/joins, ` +
+        `sample values where needed, and avoid broad File Cabinet name searches.`
+      );
+    }
+  });
+
+  return Array.from(nudges);
+};
+
 const toExternalTool = (tool: HarnessTool) => ({
   type: "function" as const,
   function: {
@@ -381,6 +623,8 @@ const toolsetIdsFor = (name: string): HarnessToolsetId[] => {
       "cache_display",
       "cache_list",
       "cache_delete",
+      "search_skills",
+      "load_skill",
       "netsuite_context_snapshot",
       "netsuite_get_current_user",
       "netsuite_get_current_record",
@@ -388,6 +632,7 @@ const toolsetIdsFor = (name: string): HarnessToolsetId[] => {
   ) {
     ids.add("context");
   }
+  if (name === "netsuite_find_record_related_file") ids.add("suiteql");
   if (name.startsWith("sql_")) ids.add("suiteql");
   if (
     name.includes("record") ||
@@ -509,6 +754,7 @@ const buildToolCatalog = (
 
   [
     ...baseTools,
+    ...skillTools,
     ...createSqlAiTools().filter((tool) => tool.name !== "sql_get_editor_query"),
     ...netsuiteDocsTools,
     ...bundleTools,
@@ -564,16 +810,26 @@ NETSUITE ROUTING RULES
 - For "my", "me", current user, owner, role, department, location, or subsidiary scope, call netsuite_get_current_user before broad account searches.
 - For "my scripts", call netsuite_get_current_user first, then call netsuite_get_scripts with the owner filter. Do not call netsuite_get_scripts with empty arguments for that request.
 - For SuiteScript source, find the script record first, then fetch script files, then cache/retrieve/display as needed.
-- For record IDs, never assume a file ID equals a record/entity ID. Resolve relationships first.
+- For record-related files/reports, never assume a file ID equals a record/entity ID. "lead id 181" means lead/customer record 181, not file 181.
+- For "report/file/document/attachment for lead/customer/entity/transaction ID", use SuiteQL relationship discovery before File Cabinet tools: search tables, inspect fields/joins, query the relationship, then read the returned file ID.
+- Loading the lead/customer record is only an identity check; it does not prove which report file is linked. After loading, continue with SuiteQL joins/custom-record fields instead of browsing root folders or searching generic "report" file names.
+- For record-related report/file requests, prefer netsuite_find_record_related_file when available. It runs the relationship lookup deterministically and returns the linked file ID/evidence in one tool call.
+- If a generic file search returns empty or unrelated results, switch to SuiteQL relationship discovery immediately.
 - For docs, use official NetSuite documentation tools. Do not answer NetSuite product rules from stale model memory.
 - For bundles, list bundles before inspecting components unless a bundle ID is already known.
 - For uploads, generated scripts, and report files, store and verify cache content before writing to NetSuite.
+
+ROUTING EXAMPLES
+- User: "find the report file with lead id 181" -> do not call netsuite_find_file(fileId/id: 181). Prefer netsuite_find_record_related_file({ recordType: "lead", recordId: "181", purpose: "report" }); otherwise use SuiteQL tables/fields/joins to find the report relationship and returned file ID.
+- User: "read file id 181" -> use File Cabinet read/search tools because the user explicitly said file ID.
+- User: "find files named invoice" -> use netsuite_find_file(name: "invoice") because this is a file-name search, not a record relationship.
 
 RESPONSE PRESENTATION
 - Use markdown tables for lists of scripts, files, records, bundles, deployments, search results, and comparisons.
 - Use short headings only when they improve scanning.
 - Use callouts for warnings, approval needs, or missing evidence.
 - Use checklists for next actions and collapse long evidence sections when the answer would otherwise get noisy.
+- For requested diagrams, flowcharts, sequence diagrams, or visual workflow explanations, load the diagram skill on demand: call search_skills with a diagram-related query, then load_skill, then emit a \`\`\`diagram fenced block that follows the loaded instructions.
 
 ACTIVE TOOLSETS
 ${toolsetText}
@@ -861,6 +1117,29 @@ export const useNetsuiteAgentHarness = (
     return record;
   };
 
+  const settleActiveTurnItems = async (
+    turnId: string,
+    status: Extract<HarnessItemStatus, "error" | "rejected">,
+    fallbackContent: string
+  ) => {
+    const activeItems = items.value.filter(
+      (item) =>
+        item.turnId === turnId &&
+        (item.status === "running" || item.status === "pending")
+    );
+    await Promise.all(
+      activeItems.map((item) =>
+        updateItem(item.id, {
+          status,
+          content:
+            item.content.trim() && !/^(running|waiting)/i.test(item.content.trim())
+              ? item.content
+              : fallbackContent,
+        })
+      )
+    );
+  };
+
   const touchActiveThread = async (patch: Partial<HarnessThreadRecord> = {}) => {
     if (!activeThread.value) return;
     const updated = {
@@ -1044,10 +1323,12 @@ export const useNetsuiteAgentHarness = (
 
   const executeToolCall = async (
     call: ToolCall,
-    turnId: string
+    turnId: string,
+    prompt: string,
+    toolPool: HarnessTool[] = selectedTools.value
   ): Promise<ChatMessage> => {
     const toolName = call.function.name;
-    const tool = selectedTools.value.find((candidate) => candidate.name === toolName);
+    const tool = toolPool.find((candidate) => candidate.name === toolName);
     const args = parseToolArgs(call);
     const start = performance.now();
 
@@ -1071,7 +1352,10 @@ export const useNetsuiteAgentHarness = (
       risk: HarnessRisk = tool?.risk ?? "medium"
     ): Promise<ChatMessage> => {
       const latencyMs = Math.max(0, Math.round(performance.now() - start));
-      const content = stringifyResult(result);
+      const content = stringifyResult(
+        result,
+        toolName === "generate_pdf" ? 250_000 : 6000
+      );
       await updateItem(item.id, {
         status,
         content,
@@ -1104,6 +1388,15 @@ export const useNetsuiteAgentHarness = (
     const validationError = validateRequired(tool, args);
     if (validationError) {
       return finish("error", { error: validationError }, tool.risk);
+    }
+
+    const relationshipGuardError = validateRecordRelatedFileToolCall(
+      toolName,
+      args,
+      prompt
+    );
+    if (relationshipGuardError) {
+      return finish("error", { error: relationshipGuardError }, tool.risk);
     }
 
     const permission = permissionFor(tool, permissionMode.value);
@@ -1149,10 +1442,12 @@ export const useNetsuiteAgentHarness = (
 
   const executeToolCalls = async (
     calls: ToolCall[],
-    turnId: string
+    turnId: string,
+    prompt: string,
+    toolPool: HarnessTool[] = selectedTools.value
   ): Promise<ChatMessage[]> => {
     const allReadOnly = calls.every((call) => {
-      const tool = selectedTools.value.find((candidate) => candidate.name === call.function.name);
+      const tool = toolPool.find((candidate) => candidate.name === call.function.name);
       return tool?.readOnly && permissionFor(tool, permissionMode.value) === "allow";
     });
 
@@ -1160,7 +1455,7 @@ export const useNetsuiteAgentHarness = (
       const indexed = await Promise.all(
         calls.map(async (call, index) => ({
           index,
-          message: await executeToolCall(call, turnId),
+          message: await executeToolCall(call, turnId, prompt, toolPool),
         }))
       );
       return indexed.sort((a, b) => a.index - b.index).map((entry) => entry.message);
@@ -1168,9 +1463,84 @@ export const useNetsuiteAgentHarness = (
 
     const outputs: ChatMessage[] = [];
     for (const call of calls) {
-      outputs.push(await executeToolCall(call, turnId));
+      outputs.push(await executeToolCall(call, turnId, prompt, toolPool));
     }
     return outputs;
+  };
+
+  const synthesizeFromMessages = async (
+    messages: ChatMessage[],
+    turnId: string,
+    instruction: string,
+    visibleTitle?: string
+  ): Promise<string> => {
+    const synthesisMessages: ChatMessage[] = [
+      ...messages,
+      {
+        role: "user",
+        content: instruction,
+      },
+    ];
+
+    let item: HarnessItemRecord | null = null;
+    let streamed = "";
+    let streamFlushTimer: number | null = null;
+
+    if (visibleTitle) {
+      item = await appendItem({
+        threadId: activeThreadId.value!,
+        turnId,
+        kind: "message",
+        role: "assistant",
+        title: visibleTitle,
+        content: "",
+        status: "running",
+        profileId: activeProfileId.value,
+      });
+    }
+
+    let response: Awaited<ReturnType<typeof chatCompletion>> | null = null;
+    try {
+      response = await chatCompletion(synthesisMessages, {
+        signal: activeController.value?.signal,
+        onChunk: visibleTitle
+          ? (chunk) => {
+              streamed += chunk;
+              if (streamFlushTimer !== null || !item) return;
+              streamFlushTimer = window.setTimeout(() => {
+                streamFlushTimer = null;
+                if (!item) return;
+                void updateItem(
+                  item.id,
+                  {
+                    content: streamed,
+                    status: "running",
+                  },
+                  false
+                );
+              }, 80);
+            }
+          : undefined,
+      });
+    } finally {
+      if (streamFlushTimer !== null) {
+        window.clearTimeout(streamFlushTimer);
+        streamFlushTimer = null;
+      }
+    }
+
+    if (!response) {
+      throw new Error("The model did not return a synthesis response.");
+    }
+
+    const text = (response.content ?? streamed).trim();
+    if (item) {
+      await updateItem(item.id, {
+        content: text || "[no response]",
+        status: text ? "done" : "error",
+      });
+    }
+    return text;
   };
 
   const rerunFromItem = async (
@@ -1243,8 +1613,13 @@ export const useNetsuiteAgentHarness = (
         { role: "user", content: formatMessageContent(cleanPrompt, attachments) },
       ];
       const externalTools = selectedTools.value.map(toExternalTool);
+      const mainStepLimit = Math.max(
+        activeProfile.value.maxSteps,
+        clampStepLimit(settings.agentMainStepLimit, activeProfile.value.maxSteps)
+      );
+      let blankNoToolResponses = 0;
 
-      for (let step = 0; step < activeProfile.value.maxSteps; step++) {
+      for (let step = 0; step < mainStepLimit; step++) {
         let streamed = "";
         let streamFlushTimer: number | null = null;
         const assistantItem = await appendItem({
@@ -1258,46 +1633,88 @@ export const useNetsuiteAgentHarness = (
           profileId: activeProfileId.value,
         });
 
-        const response = await chatCompletion(runtimeMessages, {
-          tools: externalTools,
-          signal: controller.signal,
-          onChunk: (chunk) => {
-            streamed += chunk;
-            if (streamFlushTimer !== null) return;
-            streamFlushTimer = window.setTimeout(() => {
-              streamFlushTimer = null;
-              void updateItem(
-                assistantItem.id,
-                {
-                  content: streamed,
-                  status: "running",
-                },
-                false
-              );
-            }, 80);
-          },
-        });
+        let response: Awaited<ReturnType<typeof chatCompletion>> | null = null;
+        try {
+          response = await chatCompletion(runtimeMessages, {
+            tools: externalTools.length > 0 ? externalTools : undefined,
+            signal: controller.signal,
+            onChunk: (chunk) => {
+              streamed += chunk;
+              if (streamFlushTimer !== null) return;
+              streamFlushTimer = window.setTimeout(() => {
+                streamFlushTimer = null;
+                void updateItem(
+                  assistantItem.id,
+                  {
+                    content: streamed,
+                    status: "running",
+                  },
+                  false
+                );
+              }, 80);
+            },
+          });
+        } finally {
+          if (streamFlushTimer !== null) {
+            window.clearTimeout(streamFlushTimer);
+            streamFlushTimer = null;
+          }
+        }
 
-        if (streamFlushTimer !== null) {
-          window.clearTimeout(streamFlushTimer);
-          streamFlushTimer = null;
+        if (!response) {
+          throw new Error("The model did not return a response.");
         }
 
         const assistantText = response.content ?? streamed;
         const toolCalls = response.tool_calls ?? [];
 
         if (toolCalls.length === 0) {
+          const trimmedText = assistantText.trim();
+          if (!trimmedText) {
+            blankNoToolResponses += 1;
+            await updateItem(assistantItem.id, {
+              content:
+                "The model returned an empty response with no tool call, so the harness is continuing from the evidence already gathered.",
+              status: "done",
+            });
+
+            const shouldForceFinal =
+              blankNoToolResponses >= 2 || step >= mainStepLimit - 1;
+            if (shouldForceFinal) {
+              const finalText = await synthesizeFromMessages(
+                runtimeMessages,
+                turnId,
+                "The previous model pass returned an empty response with no tool calls. Do not call tools. Using only the tool results and evidence already present, produce the final user-facing answer now. If the requested file/report was found, include the record ID, linking table/field evidence, file ID, and file metadata/cache key when available. If more work is required, say the single next missing step.",
+                "Final synthesis"
+              );
+              if (finalText) {
+                runtimeMessages.push({ role: "assistant", content: finalText });
+                await touchActiveThread();
+                return;
+              }
+            }
+
+            runtimeMessages.push({
+              role: "user",
+              content:
+                "You returned an empty response with no tool call. Continue this same user request now: either call the next required tool or provide the final answer from the evidence already present. Do not repeat schema searches that already succeeded.",
+            });
+            continue;
+          }
+
           await updateItem(assistantItem.id, {
-            content: assistantText || "[no response]",
+            content: trimmedText,
             status: "done",
           });
           runtimeMessages.push({
             role: "assistant",
-            content: assistantText || "[no response]",
+            content: trimmedText,
           });
           await touchActiveThread();
           return;
         }
+
+        blankNoToolResponses = 0;
 
         await updateItem(assistantItem.id, {
           content:
@@ -1311,8 +1728,34 @@ export const useNetsuiteAgentHarness = (
           tool_calls: toolCalls,
         });
 
-        const toolOutputs = await executeToolCalls(toolCalls, turnId);
+        const toolOutputs = await executeToolCalls(toolCalls, turnId, cleanPrompt);
         runtimeMessages.push(...toolOutputs);
+
+        const nudges = buildRecordRelatedFileNudges(
+          cleanPrompt,
+          toolCalls,
+          toolOutputs
+        );
+        if (nudges.length > 0) {
+          runtimeMessages.push({
+            role: "user",
+            content: `Tool-result guidance for this same user request:\n${nudges
+              .map((nudge) => `- ${nudge}`)
+              .join("\n")}`,
+          });
+        }
+      }
+
+      const finalText = await synthesizeFromMessages(
+        runtimeMessages,
+        turnId,
+        "The main agent step budget has been used. Do not call tools. Using only the tool results and evidence already present, produce the final user-facing answer now. If the requested file/report was found or cached, include the linked record/table evidence, file ID, name/type when available, and cache key/display status. If it was not found, say exactly what is still missing.",
+        "Final synthesis"
+      );
+      if (finalText) {
+        runtimeMessages.push({ role: "assistant", content: finalText });
+        await touchActiveThread();
+        return;
       }
 
       await appendItem({
@@ -1322,12 +1765,17 @@ export const useNetsuiteAgentHarness = (
         role: "system",
         title: "Step limit reached",
         content:
-          "The harness reached the agent step limit before producing a final answer. Try narrowing the request, raising the agent step limit, or switching to a more capable model.",
+          "The harness reached the agent step limit and the final synthesis pass did not produce an answer. Try raising the main or sub-agent step limit in Settings.",
         status: "error",
         profileId: activeProfileId.value,
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
+        await settleActiveTurnItems(
+          turnId,
+          "rejected",
+          "Run stopped by user before this step completed."
+        );
         await appendItem({
           threadId: activeThreadId.value!,
           turnId,
@@ -1340,13 +1788,19 @@ export const useNetsuiteAgentHarness = (
         });
       } else {
         error.value = err;
+        const message = err instanceof Error ? err.message : String(err);
+        await settleActiveTurnItems(
+          turnId,
+          "error",
+          `Run stopped because the provider or tool failed: ${message}`
+        );
         await appendItem({
           threadId: activeThreadId.value!,
           turnId,
           kind: "system",
           role: "system",
           title: "Harness error",
-          content: String(err),
+          content: message,
           status: "error",
           profileId: activeProfileId.value,
         });

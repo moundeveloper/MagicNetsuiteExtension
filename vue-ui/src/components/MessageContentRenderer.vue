@@ -95,6 +95,24 @@ const parseDiffBlock = (raw: string, lang: string): ContentBlock => {
 const looksLikeDiff = (body: string): boolean =>
   DIFF_FIRST_RE.test(body) && DIFF_SECOND_RE.test(body);
 
+/**
+ * We prefer the explicit ```diagram fence, but weaker models sometimes emit
+ * the same DSL as ```javascript or an unlabeled fence. Detect only strong
+ * diagram signatures so ordinary code blocks do not get reinterpreted.
+ */
+const looksLikeDiagram = (body: string): boolean => {
+  const lines = body
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const first = lines[0]?.toLowerCase() ?? "";
+  if (/^(?:flowchart|graph)\s*(?:td|tb|lr|rl|bt)?$/.test(first)) return true;
+  if (first === "sequence" || first === "sequencediagram") return true;
+  return lines.some((line) =>
+    /^[a-zA-Z_]\w*(?:\[[^\]]+\]|\([^)]*\)|\{[^}]+\})?\s*(?:-->|-\.+->|==>)\s*[a-zA-Z_]\w*/.test(line)
+  );
+};
+
 const parseQuestionBlock = (raw: string): ContentBlock => {
   const lines = raw.split("\n");
   const sepIdx = lines.findIndex((l) => l.trim() === "---");
@@ -132,7 +150,7 @@ const parseContent = (text: string): ContentBlock[] => {
       blocks.push(parseDiffBlock(body, "javascript"));
     } else if (lang === "question") {
       blocks.push(parseQuestionBlock(body));
-    } else if (lang === "diagram") {
+    } else if (lang === "diagram" || looksLikeDiagram(body)) {
       blocks.push({ type: "diagram", content: body });
     } else if (looksLikeDiff(body)) {
       // Auto-detect diff markers inside any code block

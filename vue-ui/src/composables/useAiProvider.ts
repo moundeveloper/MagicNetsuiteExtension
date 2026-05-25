@@ -566,13 +566,266 @@ const opencodeChat = async (
 // OpenRouter adapter (OpenAI-compatible)
 // ─────────────────────────────────────────────
 
-/**
- * OpenRouter is a unified OpenAI-compatible API gateway.
- * Endpoint: https://openrouter.ai/api/v1/chat/completions
- * Default model: "openrouter/free" — randomly selects a free model that
- * supports the requested features (tool calling, etc.).
- */
-const openrouterChat = async (
+const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+const OPENROUTER_FREE_MODEL = "openrouter/free";
+const OPENROUTER_MAX_RECOVERY_ATTEMPTS = 6;
+
+const STATIC_OPENROUTER_FREE_FALLBACKS = [
+  OPENROUTER_FREE_MODEL,
+  "deepseek/deepseek-chat-v3-0324:free",
+  "deepseek/deepseek-r1-0528:free",
+  "qwen/qwen3-235b-a22b:free",
+  "qwen/qwen3-30b-a3b:free",
+  "mistralai/mistral-small-3.2-24b-instruct:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "google/gemma-3-27b-it:free"
+];
+
+interface OpenRouterErrorPayload {
+  error?: {
+    message?: string;
+    code?: number | string;
+    metadata?: {
+      raw?: string;
+      provider_name?: string;
+      retry_after_seconds?: number;
+      retry_after_seconds_raw?: number;
+      is_byok?: boolean;
+    };
+  };
+}
+
+interface OpenRouterModelInfo {
+  id?: string;
+  pricing?: {
+    prompt?: string | number;
+    completion?: string | number;
+  };
+  supported_parameters?: string[];
+}
+
+class OpenRouterChatError extends Error {
+  status: number;
+  bodyText: string;
+  model: string;
+  retryAfterSeconds?: number;
+  recoverable: boolean;
+
+  constructor(params: {
+    status: number;
+    bodyText: string;
+    model: string;
+    retryAfterSeconds?: number;
+    recoverable: boolean;
+  }) {
+    super(`OpenRouter chat failed (${params.status}) for ${params.model}: ${params.bodyText}`);
+    this.name = "OpenRouterChatError";
+    this.status = params.status;
+    this.bodyText = params.bodyText;
+    this.model = params.model;
+    this.retryAfterSeconds = params.retryAfterSeconds;
+    this.recoverable = params.recoverable;
+  }
+}
+
+let openRouterFreeModelsCache: Partial<
+  Record<"all" | "tools", { fetchedAt: number; models: string[] }>
+> = {};
+
+const isAbortError = (err: unknown): boolean =>
+  err instanceof DOMException && err.name === "AbortError";
+
+const isOpenRouterFreeModel = (model: string): boolean =>
+  model === OPENROUTER_FREE_MODEL || model.endsWith(":free");
+
+const openRouterHeaders = (apiKey: string): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://magic-netsuite-extension",
+    "X-OpenRouter-Title": "MagicNetsuiteExtension"
+  };
+
+  if (apiKey.trim()) {
+    headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+  }
+
+  return headers;
+};
+
+const parseOpenRouterError = (
+  status: number,
+  bodyText: string
+): {
+  retryAfterSeconds?: number;
+  recoverable: boolean;
+} => {
+  let payload: OpenRouterErrorPayload | null = null;
+  try {
+    payload = JSON.parse(bodyText) as OpenRouterErrorPayload;
+  } catch {
+    payload = null;
+  }
+
+  const metadata = payload?.error?.metadata;
+  const retryAfterSeconds =
+    typeof metadata?.retry_after_seconds === "number"
+      ? metadata.retry_after_seconds
+      : typeof metadata?.retry_after_seconds_raw === "number"
+        ? metadata.retry_after_seconds_raw
+        : undefined;
+
+  const errorText = [
+    payload?.error?.message,
+    payload?.error?.code,
+    metadata?.raw,
+    bodyText
+  ]
+    .filter((part) => part !== undefined && part !== null)
+    .join(" ");
+
+  const recoverable =
+    status === 429 ||
+    status === 408 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    /temporar|rate.?limit|too many requests|provider returned error|upstream/i.test(
+      errorText
+    );
+
+  return { retryAfterSeconds, recoverable };
+};
+
+const signalAwareSleep = async (
+  ms: number,
+  signal?: AbortSignal
+): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+
+    let timeout = 0;
+
+    const onAbort = () => {
+      window.clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    timeout = window.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+const numericPriceIsZero = (value: string | number | undefined): boolean => {
+  if (value === undefined) return true;
+  const asNumber = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(asNumber) && asNumber === 0;
+};
+
+const supportsOpenRouterTools = (
+  model: OpenRouterModelInfo,
+  needsTools: boolean
+): boolean => {
+  if (!needsTools) return true;
+  if (!Array.isArray(model.supported_parameters)) return true;
+  return (
+    model.supported_parameters.includes("tools") ||
+    model.supported_parameters.includes("tool_choice")
+  );
+};
+
+const fetchOpenRouterFreeFallbackModels = async (
+  apiKey: string,
+  needsTools: boolean,
+  signal?: AbortSignal
+): Promise<string[]> => {
+  const cacheKey = needsTools ? "tools" : "all";
+  const cached = openRouterFreeModelsCache[cacheKey];
+  if (
+    cached &&
+    Date.now() - cached.fetchedAt < 10 * 60 * 1000
+  ) {
+    return cached.models;
+  }
+
+  const res = await fetch(OPENROUTER_MODELS_URL, {
+    headers: openRouterHeaders(apiKey),
+    signal
+  });
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as { data?: OpenRouterModelInfo[] };
+  const models = (data.data ?? [])
+    .filter((modelInfo) => {
+      const id = modelInfo.id ?? "";
+      const isFreeById = id.endsWith(":free");
+      const isFreeByPrice =
+        numericPriceIsZero(modelInfo.pricing?.prompt) &&
+        numericPriceIsZero(modelInfo.pricing?.completion);
+      return (
+        id &&
+        (isFreeById || isFreeByPrice) &&
+        supportsOpenRouterTools(modelInfo, needsTools)
+      );
+    })
+    .map((modelInfo) => modelInfo.id!)
+    .filter(Boolean);
+
+  const offset = models.length
+    ? Math.floor(Date.now() / 60000) % models.length
+    : 0;
+  const rotated = models.slice(offset).concat(models.slice(0, offset));
+
+  openRouterFreeModelsCache[cacheKey] = {
+    fetchedAt: Date.now(),
+    models: rotated
+  };
+  return rotated;
+};
+
+const uniqueModels = (models: string[]): string[] =>
+  Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+
+const buildOpenRouterRecoveryModels = async (
+  preferredModel: string,
+  apiKey: string,
+  needsTools: boolean,
+  signal?: AbortSignal
+): Promise<string[]> => {
+  const model = preferredModel || OPENROUTER_FREE_MODEL;
+  const canUseFreeFallbacks = isOpenRouterFreeModel(model) || !apiKey.trim();
+
+  if (!canUseFreeFallbacks) return [model];
+
+  let dynamicFallbacks: string[] = [];
+  try {
+    dynamicFallbacks = await fetchOpenRouterFreeFallbackModels(
+      apiKey,
+      needsTools,
+      signal
+    );
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+  }
+
+  return uniqueModels([
+    model,
+    model === OPENROUTER_FREE_MODEL ? "" : OPENROUTER_FREE_MODEL,
+    ...dynamicFallbacks,
+    ...(needsTools
+      ? [OPENROUTER_FREE_MODEL]
+      : STATIC_OPENROUTER_FREE_FALLBACKS)
+  ]).slice(0, OPENROUTER_MAX_RECOVERY_ATTEMPTS);
+};
+
+const openrouterChatOnce = async (
   messages: ChatMessage[],
   options: ChatCompletionOptions,
   apiKey: string,
@@ -580,7 +833,7 @@ const openrouterChat = async (
   thinkingMode = false
 ): Promise<NormalisedResponse> => {
   const body: Record<string, unknown> = {
-    model: model || "openrouter/free",
+    model: model || OPENROUTER_FREE_MODEL,
     messages,
     stream: !!options.onChunk
   };
@@ -596,26 +849,23 @@ const openrouterChat = async (
     body.reasoning = { effort: "high" };
   }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://magic-netsuite-extension",
-    "X-OpenRouter-Title": "MagicNetsuiteExtension"
-  };
-
-  if (apiKey.trim()) {
-    headers["Authorization"] = `Bearer ${apiKey.trim()}`;
-  }
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const res = await fetch(OPENROUTER_CHAT_URL, {
     method: "POST",
-    headers,
+    headers: openRouterHeaders(apiKey),
     body: JSON.stringify(body),
     signal: options.signal
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenRouter chat failed (${res.status}): ${err}`);
+    const bodyText = await res.text();
+    const parsed = parseOpenRouterError(res.status, bodyText);
+    throw new OpenRouterChatError({
+      status: res.status,
+      bodyText,
+      model,
+      retryAfterSeconds: parsed.retryAfterSeconds,
+      recoverable: parsed.recoverable
+    });
   }
 
   // ── Streaming path ──────────────────────────────────────────────────────
@@ -652,6 +902,111 @@ const openrouterChat = async (
       })) ?? [],
     thinking
   };
+};
+
+/**
+ * OpenRouter is a unified OpenAI-compatible API gateway.
+ * Endpoint: https://openrouter.ai/api/v1/chat/completions
+ * Default model: "openrouter/free" — randomly selects a free model that
+ * supports the requested features (tool calling, etc.).
+ */
+const openrouterChat = async (
+  messages: ChatMessage[],
+  options: ChatCompletionOptions,
+  apiKey: string,
+  model: string,
+  thinkingMode = false
+): Promise<NormalisedResponse> => {
+  const selectedModel = model || OPENROUTER_FREE_MODEL;
+  const needsTools = Boolean(options.tools?.length);
+  let lastError: unknown = null;
+  let attemptsUsed = 0;
+
+  const runCandidate = async (candidate: string) => {
+    attemptsUsed++;
+    return openrouterChatOnce(
+      messages,
+      options,
+      apiKey,
+      candidate,
+      thinkingMode
+    );
+  };
+
+  const handleRecoverableError = async (
+    candidate: string,
+    err: OpenRouterChatError
+  ) => {
+    console.warn(
+      `[OpenRouter] Recoverable error from ${candidate}; retrying or trying another free model if available.`,
+      err.message
+    );
+
+    const delayMs = err.retryAfterSeconds
+      ? Math.min(Math.max(err.retryAfterSeconds * 1000, 500), 2500)
+      : 500;
+    await signalAwareSleep(delayMs, options.signal);
+  };
+
+  try {
+    return await runCandidate(selectedModel);
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    lastError = err;
+
+    if (!(err instanceof OpenRouterChatError) || !err.recoverable) {
+      throw err;
+    }
+
+    if (attemptsUsed >= OPENROUTER_MAX_RECOVERY_ATTEMPTS) {
+      throw err;
+    }
+
+    await handleRecoverableError(selectedModel, err);
+  }
+
+  const candidateModels = await buildOpenRouterRecoveryModels(
+    selectedModel,
+    apiKey,
+    needsTools,
+    options.signal
+  );
+
+  for (const candidate of candidateModels) {
+    const candidateAttempts = candidate === OPENROUTER_FREE_MODEL ? 3 : 1;
+    for (
+      let candidateAttempt = candidate === selectedModel ? 1 : 0;
+      candidateAttempt < candidateAttempts &&
+      attemptsUsed < OPENROUTER_MAX_RECOVERY_ATTEMPTS;
+      candidateAttempt++
+    ) {
+      try {
+        return await runCandidate(candidate);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        lastError = err;
+
+        if (!(err instanceof OpenRouterChatError) || !err.recoverable) {
+          throw err;
+        }
+
+        if (attemptsUsed >= OPENROUTER_MAX_RECOVERY_ATTEMPTS) break;
+        await handleRecoverableError(candidate, err);
+      }
+    }
+  }
+
+  if (lastError instanceof OpenRouterChatError) {
+    throw new Error(
+      `OpenRouter chat failed after ${attemptsUsed} recovery attempt(s) across ` +
+        `${candidateModels.length} model(s): ` +
+        `${candidateModels.join(", ")}. Last error: ${lastError.bodyText}`
+    );
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("OpenRouter chat failed after retrying free model fallbacks.");
 };
 
 // ─────────────────────────────────────────────

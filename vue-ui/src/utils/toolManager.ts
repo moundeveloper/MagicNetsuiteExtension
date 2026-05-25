@@ -8,6 +8,283 @@ import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 import { generateDocument } from "./pdfUtils";
 import { agentCache } from "./agentCacheStore";
 
+type SuiteqlTableRef = {
+  id: string;
+  label?: string;
+  type?: string;
+};
+
+type SuiteqlFieldRef = {
+  id: string;
+  label?: string;
+  dataType?: string;
+  isColumn?: boolean;
+};
+
+type SuiteqlRow = Record<string, unknown>;
+
+const normalizeSuiteqlTables = (message: unknown): SuiteqlTableRef[] => {
+  const payload = (message as { data?: unknown; tables?: unknown })?.data ?? message;
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { tables?: unknown })?.tables)
+      ? (payload as { tables: unknown[] }).tables
+      : [];
+  const tables: SuiteqlTableRef[] = [];
+  for (const row of rows) {
+    const obj = row as Record<string, unknown>;
+    const id = String(obj.id ?? "").trim();
+    if (!id) continue;
+    tables.push({
+      id,
+      label: obj.label ? String(obj.label) : undefined,
+      type: obj.type ? String(obj.type) : undefined
+    });
+  }
+  return tables;
+};
+
+const normalizeSuiteqlFields = (message: unknown): SuiteqlFieldRef[] => {
+  const payload = (message as { data?: unknown })?.data ?? message;
+  const raw = (payload as { fields?: unknown })?.fields;
+  const rows = Array.isArray(raw) ? raw : [];
+  return rows
+    .filter((row) => (row as { isColumn?: boolean }).isColumn !== false)
+    .map((row) => {
+      const obj = row as Record<string, unknown>;
+      return {
+        id: String(obj.id ?? "").trim(),
+        label: obj.label ? String(obj.label) : undefined,
+        dataType: obj.dataType ? String(obj.dataType) : undefined,
+        isColumn: obj.isColumn === undefined ? true : Boolean(obj.isColumn)
+      };
+    })
+    .filter((field) => field.id.length > 0);
+};
+
+const normalizeSuiteqlRows = (
+  message: unknown
+): { rows: SuiteqlRow[]; totalCount: number } => {
+  const payload = (message as { data?: unknown })?.data ?? message;
+  const rows = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { results?: unknown })?.results)
+      ? (payload as { results: unknown[] }).results
+      : [];
+  const totalCount = Array.isArray(payload)
+    ? rows.length
+    : Number((payload as { totalCount?: unknown })?.totalCount ?? rows.length);
+  return {
+    rows: rows.filter((row) => row && typeof row === "object") as SuiteqlRow[],
+    totalCount: Number.isFinite(totalCount) ? totalCount : rows.length
+  };
+};
+
+const normalizeFileResults = (message: unknown): SuiteqlRow[] => {
+  const files = (message as { files?: unknown })?.files ?? message;
+  const rows = Array.isArray(files)
+    ? files
+    : Array.isArray((files as { results?: unknown })?.results)
+      ? (files as { results: unknown[] }).results
+      : [];
+  return rows.filter((row) => row && typeof row === "object") as SuiteqlRow[];
+};
+
+const isSuiteqlIdentifier = (value: string): boolean =>
+  /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
+
+const toPositiveInteger = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const wordsForRecordType = (recordType: string): string[] => {
+  const normalized = recordType.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const terms = new Set<string>([
+    normalized,
+    recordType.toLowerCase(),
+    "entity"
+  ]);
+
+  if (["lead", "prospect", "customer"].includes(normalized)) {
+    terms.add("lead");
+    terms.add("customer");
+    terms.add("prospect");
+    terms.add("entity");
+    terms.add("enriched");
+  }
+  if (["salesorder", "estimate", "invoice", "transaction"].includes(normalized)) {
+    terms.add("transaction");
+    terms.add("tran");
+  }
+  if (normalized === "vendor") {
+    terms.add("vendor");
+    terms.add("entity");
+  }
+
+  return Array.from(terms).filter(Boolean);
+};
+
+const scoreText = (text: string, terms: string[], weight: number): number =>
+  terms.reduce((score, term) => score + (term && text.includes(term) ? weight : 0), 0);
+
+const rankRelatedFileTables = (
+  tables: SuiteqlTableRef[],
+  recordType: string,
+  purpose: string
+): SuiteqlTableRef[] => {
+  const recordTerms = wordsForRecordType(recordType);
+  const purposeTerms = [
+    purpose.toLowerCase(),
+    "report",
+    "document",
+    "attachment",
+    "pdf",
+    "file"
+  ].filter(Boolean);
+
+  return tables
+    .map((table) => {
+      const haystack = `${table.id} ${table.label ?? ""}`.toLowerCase();
+      let score = 0;
+      score += scoreText(haystack, recordTerms, 6);
+      score += scoreText(haystack, purposeTerms, 4);
+      if (haystack.includes("customrecord")) score += 2;
+      if (haystack.includes("lead") && haystack.includes("report")) score += 10;
+      if (haystack.includes("report") && haystack.includes("file")) score += 5;
+      return { table, score };
+    })
+    .filter(({ score }) => score >= 8)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 16)
+    .map(({ table }) => table);
+};
+
+const rankLinkFields = (
+  fields: SuiteqlFieldRef[],
+  recordType: string
+): SuiteqlFieldRef[] => {
+  const recordTerms = wordsForRecordType(recordType);
+  return fields
+    .map((field) => {
+      const haystack = `${field.id} ${field.label ?? ""}`.toLowerCase();
+      let score = scoreText(haystack, recordTerms, 8);
+      if (haystack.includes("entity") || haystack.includes("customer")) score += 3;
+      if (haystack.includes("parent")) score += 1;
+      if (/(file|report|pdf|document|attachment|format)/i.test(haystack)) score -= 20;
+      if (/^(id|name|owner|created|lastmodified|isinactive)$/i.test(field.id)) score -= 20;
+      return { field, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map(({ field }) => field);
+};
+
+const rankFileFields = (
+  fields: SuiteqlFieldRef[],
+  purpose: string
+): SuiteqlFieldRef[] => {
+  const purposeTerms = [
+    purpose.toLowerCase(),
+    "report",
+    "file",
+    "pdf",
+    "document",
+    "attachment"
+  ].filter(Boolean);
+  return fields
+    .map((field) => {
+      const haystack = `${field.id} ${field.label ?? ""}`.toLowerCase();
+      let score = scoreText(haystack, purposeTerms, 6);
+      if (/\bfile\b|_file\b|file$/i.test(haystack)) score += 10;
+      if (haystack.includes("url")) score += 2;
+      if (/format|type|template|status/i.test(haystack)) score -= 4;
+      if (/^(id|name|owner|created|lastmodified|isinactive)$/i.test(field.id)) score -= 20;
+      return { field, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4)
+    .map(({ field }) => field);
+};
+
+const findAliasedValue = (
+  row: SuiteqlRow,
+  alias: string,
+  fallbackFieldId: string
+): unknown => {
+  const direct = row[alias];
+  if (direct !== undefined) return direct;
+  const lowerAlias = alias.toLowerCase();
+  const lowerField = fallbackFieldId.toLowerCase();
+  const entry = Object.entries(row).find(([key]) => {
+    const lower = key.toLowerCase();
+    return lower === lowerAlias || lower === lowerField;
+  });
+  return entry?.[1];
+};
+
+const findFileCabinetFile = async (
+  fileId: number
+): Promise<{ message: unknown; file: SuiteqlRow | null }> => {
+  const response = await callApi(RequestRoutes.FIND_FILE, {
+    id: String(fileId)
+  });
+  const rows = normalizeFileResults(response.message);
+  return { message: response.message, file: rows[0] ?? null };
+};
+
+const fetchAndCacheFileContent = async (
+  fileId: number,
+  preferredUrl?: string
+): Promise<{
+  cacheKey: string;
+  fileId: number;
+  contentType: string;
+  sizeChars: number;
+  binary: boolean;
+}> => {
+  let fileUrl = preferredUrl || `/core/media/media.nl?id=${fileId}`;
+  if (!preferredUrl) {
+    try {
+      const { file } = await findFileCabinetFile(fileId);
+      const foundUrl = file?.url;
+      if (foundUrl) fileUrl = String(foundUrl);
+    } catch {
+      // FIND_FILE unavailable - proceed with the bare URL fallback.
+    }
+  }
+
+  const contentResponse = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
+    fileUrl
+  });
+  const result = contentResponse.message as {
+    content: string;
+    contentType: string;
+    binary: boolean;
+  };
+
+  if (!result) {
+    throw new Error("Failed to fetch file content.");
+  }
+
+  const content = result.binary
+    ? result.content
+    : result.content?.slice(0, 500_000) ?? "";
+  const cacheKey = `file_${fileId}`;
+  agentCache.set(cacheKey, content, `File ID ${fileId} (${result.contentType})`);
+
+  return {
+    cacheKey,
+    fileId,
+    contentType: result.contentType,
+    sizeChars: content.length,
+    binary: result.binary
+  };
+};
+
 export const tools: ToolDefinition[] = [
   {
     name: "calculate",
@@ -946,17 +1223,222 @@ export const tools: ToolDefinition[] = [
   },
 
   {
+    name: "netsuite_find_record_related_file",
+    description:
+      "Find a NetSuite File Cabinet report/file/document linked to a record ID, such as 'the report file with lead id 181'. " +
+      "Use this FIRST when the user mentions a lead/customer/entity/transaction ID and asks for a report, file, PDF, document, or attachment. " +
+      "It treats the number as the record ID, discovers likely SuiteQL relationship tables/fields, queries them, and returns the verified linked File Cabinet file ID and evidence. " +
+      "Do not use netsuite_find_file(fileId) for these requests until this tool or a SuiteQL relationship query returns the actual file ID.",
+    parameters: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description:
+            "Record type from the user request, e.g. 'lead', 'customer', 'entity', 'transaction', 'invoice', or 'salesorder'."
+        },
+        recordId: {
+          type: "string",
+          description:
+            "Internal ID of the record/entity from the user request. Example: for 'lead id 181', pass '181'."
+        },
+        purpose: {
+          type: "string",
+          description:
+            "Optional file purpose keyword, e.g. 'report', 'pdf', 'attachment', or 'document'. Defaults to 'report'."
+        },
+        readContent: {
+          type: "boolean",
+          description:
+            "Optional. When true, also fetches and caches the linked file content. Leave false when the user only asked to find the file."
+        }
+      },
+      required: ["recordType", "recordId"]
+    },
+    execute: async (input) => {
+      const recordType = String(input.recordType ?? "").trim().toLowerCase();
+      const recordId = toPositiveInteger(input.recordId);
+      const purpose = String(input.purpose ?? "report").trim() || "report";
+      const readContent = input.readContent === true;
+
+      if (!recordType || !recordId) {
+        return {
+          success: false,
+          error:
+            "recordType and a positive numeric recordId are required. Example: { recordType: 'lead', recordId: '181' }"
+        };
+      }
+
+      const tableResponse = await callApi(RequestRoutes.FETCH_SUITEQL_TABLES);
+      const tables = normalizeSuiteqlTables(tableResponse.message);
+      const candidates = rankRelatedFileTables(tables, recordType, purpose);
+      const attempts: Array<Record<string, unknown>> = [];
+
+      for (const table of candidates) {
+        if (!isSuiteqlIdentifier(table.id)) {
+          attempts.push({
+            table: table.id,
+            skipped: "Unsafe SuiteQL identifier from schema metadata."
+          });
+          continue;
+        }
+
+        const detailResponse = await callApi(RequestRoutes.FETCH_SUITEQL_TABLE_DETAIL, {
+          tableName: table.id
+        });
+        const fields = normalizeSuiteqlFields(detailResponse.message);
+        const linkFields = rankLinkFields(fields, recordType);
+        const fileFields = rankFileFields(fields, purpose);
+
+        if (linkFields.length === 0 || fileFields.length === 0) {
+          attempts.push({
+            table: table.id,
+            label: table.label,
+            fieldCount: fields.length,
+            skipped:
+              "Could not identify both a record reference field and a file/report field."
+          });
+          continue;
+        }
+
+        const hasName = fields.some((field) => field.id.toLowerCase() === "name");
+
+        for (const linkField of linkFields) {
+          if (!isSuiteqlIdentifier(linkField.id)) continue;
+          for (const fileField of fileFields) {
+            if (!isSuiteqlIdentifier(fileField.id)) continue;
+
+            const selectColumns = [
+              "id",
+              ...(hasName ? ["name"] : []),
+              `${linkField.id} AS linked_record_id`,
+              `${fileField.id} AS linked_file_id`
+            ];
+            const sql =
+              `SELECT ${selectColumns.join(", ")} FROM ${table.id} ` +
+              `WHERE ${linkField.id} = ${recordId} ` +
+              `AND ${fileField.id} IS NOT NULL AND ROWNUM <= 5`;
+            const queryResponse = await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
+              sql,
+              limit: 5
+            });
+
+            if (queryResponse.status === "error") {
+              attempts.push({
+                table: table.id,
+                linkField: linkField.id,
+                fileField: fileField.id,
+                sql,
+                error: queryResponse.message || "Query execution failed."
+              });
+              continue;
+            }
+
+            const { rows, totalCount } = normalizeSuiteqlRows(queryResponse.message);
+            attempts.push({
+              table: table.id,
+              label: table.label,
+              linkField: linkField.id,
+              fileField: fileField.id,
+              rowCount: rows.length,
+              totalCount,
+              sql
+            });
+
+            for (const row of rows) {
+              const linkedRecordId = findAliasedValue(
+                row,
+                "linked_record_id",
+                linkField.id
+              );
+              const fileId = toPositiveInteger(
+                findAliasedValue(row, "linked_file_id", fileField.id)
+              );
+              if (!fileId) continue;
+
+              let fileMessage: unknown = null;
+              let file: SuiteqlRow | null = null;
+              try {
+                const found = await findFileCabinetFile(fileId);
+                fileMessage = found.message;
+                file = found.file;
+              } catch (err) {
+                fileMessage = { error: String(err) };
+              }
+
+              let cachedContent: unknown = undefined;
+              if (readContent) {
+                try {
+                  cachedContent = await fetchAndCacheFileContent(
+                    fileId,
+                    file?.url ? String(file.url) : undefined
+                  );
+                } catch (err) {
+                  cachedContent = { error: String(err) };
+                }
+              }
+
+              return {
+                success: true,
+                recordType,
+                recordId,
+                purpose,
+                fileId,
+                file,
+                fileLookup: fileMessage,
+                relationship: {
+                  table: table.id,
+                  tableLabel: table.label,
+                  linkField: linkField.id,
+                  linkFieldLabel: linkField.label,
+                  fileField: fileField.id,
+                  fileFieldLabel: fileField.label,
+                  linkedRecordId,
+                  row,
+                  sql
+                },
+                cachedContent,
+                attempts,
+                next:
+                  readContent
+                    ? "The linked file content was fetched and cached when possible. Use cache_display(cacheKey) to display it if a cacheKey is present."
+                    : "Use netsuite_get_file_content with this fileId if the user needs the file contents displayed or analyzed."
+              };
+            }
+          }
+        }
+      }
+
+      return {
+        success: false,
+        recordType,
+        recordId,
+        purpose,
+        candidateTables: candidates.map((table) => ({
+          id: table.id,
+          label: table.label,
+          type: table.type
+        })),
+        attempts,
+        next:
+          "No linked file was found through the best relationship candidates. Search more specific custom record tables or inspect joins for attachment/media relationships."
+      };
+    }
+  },
+
+  {
     name: "netsuite_find_file",
     description:
-      "Search the ENTIRE NetSuite File Cabinet for files matching a name or internal ID. Searches globally across all folders. " +
-      "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url.",
+      "Search the ENTIRE NetSuite File Cabinet for files matching a file name or internal FILE ID. Searches globally across all folders. " +
+      "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url. " +
+      "Do NOT pass a lead/customer/entity/transaction ID as fileId. If the user asks for a report/file related to a record ID (for example 'lead id 181'), use SuiteQL relationship discovery first and only use this tool with a verified File Cabinet file ID or distinctive file name.",
     parameters: {
       type: "object",
       properties: {
         fileId: {
           type: "string",
           description:
-            "Internal FILE ID (e.g. '12345'). Use for direct file lookup."
+            "Internal FILE ID only (e.g. '12345'). Do not use a lead/customer/entity/transaction ID here."
         },
         name: {
           type: "string",
@@ -971,7 +1453,27 @@ export const tools: ToolDefinition[] = [
         id: input.fileId ?? input.id,
         name: input.name
       });
-      return response.message;
+      const message = response.message as Record<string, unknown>;
+      const files = message?.files as
+        | { results?: unknown[]; totalCount?: number }
+        | unknown[]
+        | undefined;
+      let totalCount: number | null = null;
+      if (Array.isArray(files)) {
+        totalCount = files.length;
+      } else if (files && typeof files === "object") {
+        totalCount = files.totalCount ?? files.results?.length ?? null;
+      }
+
+      if ((input.fileId ?? input.id) && !input.name && totalCount === 0) {
+        return {
+          ...message,
+          hint:
+            "No File Cabinet file has that internal ID. If the number came from a lead/customer/entity/transaction request, it is probably a record ID; use SuiteQL relationship discovery to find the linked file ID."
+        };
+      }
+
+      return message;
     }
   },
 
@@ -998,51 +1500,14 @@ export const tools: ToolDefinition[] = [
       required: ["fileId"]
     },
     execute: async (input) => {
-      // FIND_FILE returns the full signed URL including the auth-hash params
-      // (&c=...&h=...&_xt=...) that NetSuite requires.  The bare
-      // /core/media/media.nl?id=N URL is rejected with a 404 by the server.
-      // We attempt FIND_FILE first and fall back to the bare URL only if it
-      // is unavailable (e.g. permission issue or the call itself fails).
-      let fileUrl = `/core/media/media.nl?id=${input.fileId}`;
+      const fileId = toPositiveInteger(input.fileId);
+      if (!fileId) return { error: "fileId must be a positive numeric File Cabinet ID." };
+
       try {
-        const findResponse = await callApi(RequestRoutes.FIND_FILE, {
-          id: String(input.fileId)
-        });
-        const foundUrl =
-          findResponse.message?.files?.results?.[0]?.url as string | undefined;
-        if (foundUrl) {
-          fileUrl = foundUrl;
-        }
-      } catch {
-        // FIND_FILE unavailable — proceed with bare URL as fallback
+        return await fetchAndCacheFileContent(fileId);
+      } catch (err) {
+        return { error: String(err) };
       }
-
-      const contentResponse = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
-        fileUrl
-      });
-      const result = contentResponse.message as {
-        content: string;
-        contentType: string;
-        binary: boolean;
-      };
-
-      if (!result) return { error: "Failed to fetch file content." };
-
-      // Auto-cache the full content — it never enters the LLM context window.
-      // The LLM receives only metadata and uses cache_display or cache_retrieve as needed.
-      const content = result.binary
-        ? result.content
-        : result.content?.slice(0, 500_000) ?? "";
-      const cacheKey = `file_${input.fileId}`;
-      agentCache.set(cacheKey, content, `File ID ${input.fileId} (${result.contentType})`);
-
-      return {
-        cacheKey,
-        fileId: input.fileId,
-        contentType: result.contentType,
-        sizeChars: content.length,
-        binary: result.binary
-      };
     }
   },
 

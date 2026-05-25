@@ -246,6 +246,24 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     reversible: true,
     failureModes: ["no files match the search pattern"],
     preferWhen: "user asks to find a file by name",
+    avoidWhen:
+      "the user asks for a file/report related to a record/entity ID — use SuiteQL relationship discovery first because record IDs are not file IDs",
+  },
+  netsuite_find_record_related_file: {
+    purpose: "Resolve a record/entity ID to a linked File Cabinet report, file, document, or attachment",
+    costTier: "moderate",
+    expectedLatencyMs: 2500,
+    riskLevel: "low",
+    reversible: true,
+    failureModes: [
+      "no relationship table matches the record and file purpose",
+      "relationship rows exist but do not contain a populated file field",
+      "file ID is not accessible in the File Cabinet",
+    ],
+    preferWhen:
+      "the user asks for a report/file/PDF/document/attachment associated with a lead/customer/entity/transaction ID",
+    avoidWhen:
+      "the user explicitly supplied a File Cabinet file ID or only wants a generic file-name search",
   },
   netsuite_list_folder: {
     purpose: "List files inside a specific File Cabinet folder",
@@ -564,9 +582,9 @@ export const ROUTING_RULES: RoutingRule[] = [
   },
   {
     id: "R5",
-    description: "Never use netsuite_get_file_content with a record/entity ID",
+    description: "Never use File Cabinet ID tools with a record/entity ID",
     rationale:
-      "File Cabinet IDs differ from record IDs. Run a SuiteQL relationship query first when the user mentions 'file for customer 1234' — 1234 is the customer ID, not a file ID.",
+      "File Cabinet IDs differ from record IDs. Run a SuiteQL relationship query first when the user mentions 'file/report for customer or lead 1234' — 1234 is the record ID, not a file ID.",
   },
   {
     id: "R6",
@@ -638,9 +656,19 @@ ROUTING EXAMPLES (study these before each decision):
   → relationship lookup needed → run sql_execute_query to find file IDs linked to customer 4521
   → then call netsuite_get_file_content with the FILE ID returned by the query
 
+✓ GOOD — user asks "find the report file with lead id 181"
+  → 181 is the lead/customer record ID, not a File Cabinet ID
+  → call netsuite_find_record_related_file({ recordType: "lead", recordId: "181", purpose: "report" }) when available
+  → otherwise use sql_search_tables/sql_get_table_fields/sql_get_table_joins to find the lead/report relationship
+  → query the related table by lead ID, then read/search only the returned file ID
+
 ✗ BAD — user asks "find files for customer 4521"
   → calling netsuite_get_file_content(fileId: 4521)
   → WRONG: 4521 is the customer ID, not a file ID
+
+✗ BAD — user asks "find the report file with lead id 181"
+  → calling netsuite_find_file(fileId: 181) or netsuite_find_file(name: "report") first
+  → WRONG: this searches File Cabinet identity/name, not the lead-to-report relationship
 
 ✗ BAD — user asks "what is the N/record module?"
   → calling sql_execute_query to look up record types

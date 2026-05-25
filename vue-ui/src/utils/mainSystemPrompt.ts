@@ -13,6 +13,7 @@ export const buildMainSystemPrompt = (agentDelegationSection?: string): string =
 - **Loading a specific record** → \`netsuite_load_record\`
 - **Reading a file** → \`netsuite_get_file_content\`
 - **Searching files** → \`netsuite_find_file\` or SuiteQL
+- **Finding a report/file for a record/entity ID** → use \`netsuite_find_record_related_file\` first when available; otherwise use SuiteQL relationship discovery; never pass the record ID as a File Cabinet ID
 - **Listing folder contents** → \`netsuite_list_folder\`
 - **Looking up API signatures** → \`netsuite_search_module_docs\`
 - **Script debugging** → delegate to \`debug-expert\` agent when available; otherwise use \`netsuite_get_scripts\` + \`netsuite_get_logs\` directly
@@ -39,6 +40,15 @@ Script files live under \`SuiteScripts\` folder. When the user specifies "folder
 
 ## Entity IDs
 Numbers repeat across entity types. "Lead 181" means an entity (lead) with ID 181, not directly a file ID. Use SuiteQL JOINs to resolve relationships.
+
+## Record-Related Files And Reports
+When the user asks for a report, file, PDF, document, or attachment "for", "with", "on", or "related to" a lead/customer/entity/transaction ID:
+- Treat the number as a record ID unless the user explicitly says "file ID".
+- Do NOT call \`netsuite_find_file\` or \`netsuite_get_file_content\` with that number.
+- If \`netsuite_find_record_related_file\` is available, call it first with the record type and record ID.
+- Use SuiteQL discovery: search relevant tables, inspect fields/joins, query the relationship, then read only the returned file ID.
+- Loading the record can confirm its identity, but it does not find the related file. Continue with SuiteQL relationships after loading.
+- If a generic file-name search returns empty or unrelated files, stop browsing folders and switch to SuiteQL.
 
 ${DIAGRAM_DOCS}
 
