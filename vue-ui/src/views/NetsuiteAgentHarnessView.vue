@@ -452,21 +452,18 @@
                   >
                     <i :class="attachmentIcon(attachment)" />
                     <span>{{ attachment.name }}</span>
-                    <small>{{ formatFileSize(attachment.size) }}</small>
+                    <small v-if="attachment.deferred" class="attachment-pending">loads on send</small>
+                    <small v-else>{{ formatFileSize(attachment.size) }}</small>
                     <button type="button" title="Remove" @click="removeAttachment(index)">
                       <i class="pi pi-times" />
                     </button>
                   </span>
                 </div>
-                <div v-if="attachingContextIds.size > 0" class="context-loading-bar">
-                  <i class="pi pi-spin pi-spinner" />
-                  <span>Loading {{ attachingContextIds.size }} context item{{ attachingContextIds.size > 1 ? 's' : '' }}…</span>
-                </div>
                 <div class="composer-row">
                   <button
                     type="button"
                     class="attach-btn"
-                    :disabled="harness.loading.value || isProcessingFiles || attachingContextIds.size > 0"
+                    :disabled="harness.loading.value || isProcessingFiles"
                     title="Add NetSuite record or File Cabinet context"
                     @click="openContextPicker('records')"
                   >
@@ -475,7 +472,7 @@
                   <button
                     type="button"
                     class="attach-btn"
-                    :disabled="harness.loading.value || isProcessingFiles || attachingContextIds.size > 0"
+                    :disabled="harness.loading.value || isProcessingFiles"
                     title="Attach PDF, text, or code"
                     @click="triggerFileInput"
                   >
@@ -763,18 +760,27 @@
       @reject="resolveApproval(false)"
     />
 
-    <Dialog
-      v-model:visible="contextPickerVisible"
-      modal
-      :closable="true"
-      :dismissable-mask="true"
-      header="Add NetSuite Context"
-      :style="{ width: 'min(920px, 96vw)', height: 'min(75vh, 680px)' }"
-      class="context-dialog"
-      append-to="self"
-      @hide="clearContextPicker"
-    >
-      <div class="context-picker">
+    <Teleport to="body">
+      <div
+        v-if="contextPickerVisible"
+        class="context-modal-overlay"
+        @click.self="closeContextPicker"
+      >
+        <div
+          class="context-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="context-modal-title"
+          @click.stop
+        >
+          <header class="context-modal-header">
+            <h2 id="context-modal-title">Add NetSuite Context</h2>
+            <button type="button" class="context-modal-close" title="Close" @click="closeContextPicker">
+              <i class="pi pi-times" />
+            </button>
+          </header>
+
+          <div class="context-modal-body">
         <div class="context-tabs">
           <button
             type="button"
@@ -797,13 +803,17 @@
         <section v-if="contextPickerTab === 'records'" class="context-panel context-panel--records">
           <div class="context-toolbar">
             <Select
-              v-model="selectedRecordType"
+              v-model="selectedRecordTypeId"
               :options="recordTypes"
               option-label="name"
+              option-value="id"
+              data-key="id"
               placeholder="Record type"
               filter
+              append-to="body"
               class="context-select"
               :loading="recordTypesLoading"
+              :disabled="recordTypesLoading && recordTypes.length === 0"
               @change="selectRecordType"
             />
             <InputText
@@ -818,7 +828,13 @@
             </button>
           </div>
           <div v-if="recordListError" class="context-error">{{ recordListError }}</div>
-          <div class="context-table-wrapper">
+          <div
+            v-else-if="!recordTypesLoading && recordTypes.length === 0"
+            class="context-error context-error--hint"
+          >
+            No record types loaded. Check your NetSuite connection and try again.
+          </div>
+          <div class="context-table-host">
             <DataTable
               :value="filteredRecordRows"
               data-key="id"
@@ -854,9 +870,9 @@
                     type="button"
                     class="context-add-btn"
                     :class="{ attached: isRecordAttached(data) }"
-                    :disabled="isRecordAttachBusy(data) || isRecordAttached(data)"
-                    :title="isRecordAttached(data) ? 'Added to context' : 'Add record context'"
-                    @click.stop="void attachRecordContext(data)"
+                    :disabled="isRecordAttached(data)"
+                    :title="isRecordAttached(data) ? 'Queued for send' : 'Queue record for send'"
+                    @click.stop="attachRecordContext(data)"
                   >
                     <i :class="recordActionIcon(data)" />
                   </button>
@@ -870,17 +886,20 @@
         </section>
 
         <section v-else class="context-panel context-panel--fc">
-          <FileCabinetPane
-            :bookmarkedIds="bookmarkedIds"
-            :currentEnvironment="harness.environment.value"
-            :contextPicker="true"
-            :attachedFileIds="cabinetAttachedFileIds"
-            :attachingFileIds="cabinetAttachingFileIds"
-            @add-to-context="handleCabinetPaneAdd"
-          />
+          <div class="context-fc-host">
+            <FileCabinetPane
+              :bookmarkedIds="bookmarkedIds"
+              :currentEnvironment="harness.environment.value"
+              :contextPicker="true"
+              :attachedFileIds="cabinetAttachedFileIds"
+              @add-to-context="handleCabinetPaneAdd"
+            />
+          </div>
         </section>
+          </div>
+        </div>
       </div>
-    </Dialog>
+    </Teleport>
 
     <Dialog
       v-model:visible="skillDialogVisible"
@@ -1261,14 +1280,16 @@ const contextPickerVisible = ref(false);
 const contextPickerTab = ref<ContextPickerTab>("records");
 const recordTypes = ref<RecordTypeOption[]>([]);
 const recordTypesLoading = ref(false);
-const selectedRecordType = ref<RecordTypeOption | null>(null);
+const selectedRecordTypeId = ref<string | null>(null);
+const selectedRecordType = computed(() =>
+  recordTypes.value.find((type) => type.id === selectedRecordTypeId.value) ?? null
+);
 const recordSearch = ref("");
 const recordRows = ref<RecordListRow[]>([]);
 const recordPageSize = 10;
 const recordFetchLimit = 500;
 const recordsLoading = ref(false);
 const recordListError = ref("");
-const attachingContextIds = ref<Set<string>>(new Set());
 const bookmarkedIds = ref<Set<number>>(new Set());
 const cabinetAttachedFileIds = computed<Set<number>>(() =>
   new Set(
@@ -1278,35 +1299,6 @@ const cabinetAttachedFileIds = computed<Set<number>>(() =>
       .filter((id) => !Number.isNaN(id))
   )
 );
-
-const cabinetAttachingFileIds = computed<Set<number>>(() => {
-  const ids = new Set<number>();
-  for (const key of attachingContextIds.value) {
-    if (!key.startsWith("file:")) continue;
-    const id = Number(key.slice(5));
-    if (!Number.isNaN(id)) ids.add(id);
-  }
-  return ids;
-});
-
-const MAX_CONTEXT_ATTACHMENT_CHARS = 300_000;
-
-const serializeContextPayload = (payload: unknown): string => {
-  let json = "";
-  try {
-    json = JSON.stringify(payload ?? {}, null, 2);
-  } catch {
-    json = String(payload ?? "");
-  }
-  if (json.length <= MAX_CONTEXT_ATTACHMENT_CHARS) return json;
-  const trimmed = json.slice(0, MAX_CONTEXT_ATTACHMENT_CHARS);
-  return `${trimmed}\n\n... [truncated ${json.length - MAX_CONTEXT_ATTACHMENT_CHARS} characters]`;
-};
-
-const yieldToMain = (): Promise<void> =>
-  new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
-  });
 
 const cabinetFolderId = ref<number | null>(null);
 const cabinetBreadcrumbs = ref<CabinetFolderRow[]>([]);
@@ -1953,17 +1945,33 @@ const formatSkillSize = (chars: number): string =>
 const clearContextPicker = () => {
   recordRows.value = [];
   recordListError.value = "";
-  selectedRecordType.value = null;
+  selectedRecordTypeId.value = null;
   recordSearch.value = "";
-  attachingContextIds.value = new Set();
+};
+
+const closeContextPicker = () => {
+  contextPickerVisible.value = false;
+  clearContextPicker();
+};
+
+const isContextSelectOpen = (): boolean =>
+  Boolean(
+    document.querySelector(
+      ".context-select.p-select-open, .context-select [aria-expanded='true']"
+    )
+  );
+
+const onContextPickerKeydown = (event: KeyboardEvent) => {
+  if (event.key !== "Escape") return;
+  if (isContextSelectOpen()) return;
+  event.preventDefault();
+  closeContextPicker();
 };
 
 const openContextPicker = (tab: ContextPickerTab = "records") => {
   contextPickerTab.value = tab;
   contextPickerVisible.value = true;
-  if (tab === "records" && recordTypes.value.length === 0) {
-    void loadRecordTypes();
-  }
+  if (tab === "records") void loadRecordTypes();
 };
 
 const escapeSuiteQLString = (value: string): string =>
@@ -2003,20 +2011,42 @@ const runSuiteQLRows = async (
   return normalizeApiRows(response);
 };
 
+const SCRIPT_RECORD_TYPE: RecordTypeOption = { id: "script", name: "Script" };
+
+const normalizeRecordTypeRow = (row: Record<string, unknown>): RecordTypeOption | null => {
+  const rawId = String(row.id ?? row.ID ?? row.scriptId ?? "").trim();
+  const rawName = String(row.name ?? row.Name ?? rawId).trim();
+  if (!rawId || !rawName) return null;
+  return {
+    id: rawId.toLowerCase(),
+    name: rawName,
+  };
+};
+
+const mergeRecordTypes = (rows: RecordTypeOption[]): RecordTypeOption[] => {
+  const byId = new Map<string, RecordTypeOption>();
+  for (const row of rows) {
+    if (row.id && row.name) byId.set(row.id, row);
+  }
+  if (!byId.has(SCRIPT_RECORD_TYPE.id)) {
+    byId.set(SCRIPT_RECORD_TYPE.id, SCRIPT_RECORD_TYPE);
+  }
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
 const loadRecordTypes = async () => {
   recordTypesLoading.value = true;
+  recordListError.value = "";
   try {
     const response = await callApi(RequestRoutes.GET_ALL_RECORD_TYPES);
     const rows = Array.isArray(response.message) ? response.message : [];
-    recordTypes.value = rows
-      .map((row: any) => ({
-        id: String(row.id ?? "").toLowerCase(),
-        name: String(row.name ?? row.id ?? ""),
-      }))
-      .filter((row) => row.id && row.name)
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const normalized = rows
+      .map((row) => normalizeRecordTypeRow(row as Record<string, unknown>))
+      .filter((row): row is RecordTypeOption => row !== null);
+    recordTypes.value = mergeRecordTypes(normalized);
   } catch (err) {
     recordListError.value = err instanceof Error ? err.message : String(err);
+    recordTypes.value = mergeRecordTypes([]);
   } finally {
     recordTypesLoading.value = false;
   }
@@ -2108,57 +2138,22 @@ const isRecordAttached = (row: RecordListRow): boolean => {
   );
 };
 
-const isRecordAttachBusy = (row: RecordListRow): boolean => {
-  const typeId = selectedRecordType.value?.id;
-  if (!typeId) return false;
-  return attachingContextIds.value.has(`record:${typeId}:${row.id}`);
-};
+const recordActionIcon = (row: RecordListRow): string =>
+  isRecordAttached(row) ? "pi pi-check" : "pi pi-plus";
 
-const recordActionIcon = (row: RecordListRow): string => {
-  if (isRecordAttachBusy(row)) return "pi pi-spin pi-spinner";
-  if (isRecordAttached(row)) return "pi pi-check";
-  return "pi pi-plus";
-};
-
-const attachRecordContext = async (row: RecordListRow) => {
-  if (!selectedRecordType.value || isRecordAttached(row) || isRecordAttachBusy(row)) return;
+const attachRecordContext = (row: RecordListRow) => {
+  if (!selectedRecordType.value || isRecordAttached(row)) return;
   const recordType = selectedRecordType.value;
-  const ctxKey = `record:${recordType.id}:${row.id}`;
-  attachingContextIds.value = new Set(attachingContextIds.value).add(ctxKey);
-  recordListError.value = "";
-  await yieldToMain();
-  try {
-    const response = await callApi(RequestRoutes.LOAD_RECORD, {
-      type: recordType.id,
-      id: row.id,
-    });
-    await yieldToMain();
-    const serialized = serializeContextPayload(response.message ?? row.raw);
-    const content = [
-      "NetSuite record context",
-      `recordType: ${recordType.id}`,
-      `recordTypeName: ${recordType.name}`,
-      `internalId: ${row.id}`,
-      `label: ${row.label}`,
-      "",
-      serialized,
-    ].join("\n");
-    pendingAttachments.value.push({
-      name: `${recordType.name}: ${row.label} (#${row.id})`,
-      type: "text",
-      content,
-      size: content.length,
-      source: "record",
-      sourceId: row.id,
-      sourceType: recordType.id,
-    });
-  } catch (err) {
-    recordListError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    const next = new Set(attachingContextIds.value);
-    next.delete(ctxKey);
-    attachingContextIds.value = next;
-  }
+  pendingAttachments.value.push({
+    name: `${recordType.name}: ${row.label} (#${row.id})`,
+    type: "text",
+    content: "",
+    size: 0,
+    deferred: true,
+    source: "record",
+    sourceId: row.id,
+    sourceType: recordType.id,
+  });
 };
 
 const isSupportedCabinetFile = (file: CabinetFileRow): boolean =>
@@ -2299,86 +2294,18 @@ const isCabinetFileAttached = (file: CabinetFileRow): boolean =>
       attachment.sourceId === String(file.id)
   );
 
-const isCabinetFileAttachBusy = (file: CabinetFileRow): boolean =>
-  attachingContextIds.value.has(`file:${file.id}`);
-
-const cabinetActionIcon = (file: CabinetFileRow): string => {
-  if (isCabinetFileAttachBusy(file)) return "pi pi-spin pi-spinner";
-  if (isCabinetFileAttached(file)) return "pi pi-check";
-  return "pi pi-plus";
-};
-
-const attachCabinetFileContext = async (file: CabinetFileRow) => {
-  if (
-    !file.url ||
-    !isSupportedCabinetFile(file) ||
-    isCabinetFileAttached(file) ||
-    isCabinetFileAttachBusy(file)
-  ) {
-    return;
-  }
-  const ctxKey = `file:${file.id}`;
-  attachingContextIds.value = new Set(attachingContextIds.value).add(ctxKey);
-  cabinetError.value = "";
-  await yieldToMain();
-  try {
-    const response = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
-      fileUrl: file.url,
-    });
-    const result = response.message ?? {};
-    const isPdf = file.filetype === "PDF" || String(result.contentType ?? "").includes("application/pdf");
-    let content = "";
-    if (isPdf) {
-      const pdfFile = dataUrlToFile(String(result.content ?? ""), file.name);
-      const extracted = await extractPdfText(pdfFile);
-      content = extracted.pages
-        .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
-        .join("\n\n");
-    } else {
-      await yieldToMain();
-      content = String(result.content ?? "");
-    }
-    if (content.length > MAX_CONTEXT_ATTACHMENT_CHARS) {
-      content = `${content.slice(0, MAX_CONTEXT_ATTACHMENT_CHARS)}\n\n... [truncated ${content.length - MAX_CONTEXT_ATTACHMENT_CHARS} characters]`;
-    }
-    const context = [
-      "NetSuite File Cabinet context",
-      `fileId: ${file.id}`,
-      `name: ${file.name}`,
-      `fileType: ${file.filetype}`,
-      file.folder !== undefined ? `folderId: ${file.folder}` : "",
-      file.url ? `url: ${file.url}` : "",
-      "",
-      content,
-    ].filter((line) => line !== "").join("\n");
-    pendingAttachments.value.push({
-      name: `${file.name} (#${file.id})`,
-      type: isPdf ? "pdf" : "text",
-      content: context,
-      size: context.length,
-      source: "filecabinet",
-      sourceId: String(file.id),
-      sourceType: file.filetype,
-    });
-  } catch (err) {
-    cabinetError.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    const next = new Set(attachingContextIds.value);
-    next.delete(ctxKey);
-    attachingContextIds.value = next;
-  }
-};
-
-const handleCabinetPaneAdd = (item: CabinetFileRow) => {
-  const row: CabinetFileRow = {
-    id: item.id,
-    name: item.name,
-    filetype: item.filetype,
-    filesize: item.filesize,
-    folder: item.folder,
-    url: item.url,
-  };
-  void attachCabinetFileContext(row);
+const handleCabinetPaneAdd = (item: { id: number; name: string; filetype: string }) => {
+  if (isCabinetFileAttached({ id: item.id } as CabinetFileRow)) return;
+  pendingAttachments.value.push({
+    name: `${item.name} (#${item.id})`,
+    type: "text",
+    content: "",
+    size: 0,
+    deferred: true,
+    source: "filecabinet",
+    sourceId: String(item.id),
+    sourceType: item.filetype,
+  });
 };
 
 const openCreateAgentDialog = () => {
@@ -2670,10 +2597,9 @@ const sendPrompt = async () => {
   pendingAttachments.value = [];
   editingItemId.value = null;
   editText.value = "";
+  shouldStickToBottom.value = true;
+  await scrollToBottom();
   await harness.runTurn(text, { attachments });
-  if (shouldStickToBottom.value) {
-    await scrollToBottom();
-  }
 };
 
 const onComposerKeydown = (event: KeyboardEvent) => {
@@ -2703,10 +2629,9 @@ const saveEdit = async (item: HarnessItemView) => {
   if (!text && (!attachments || attachments.length === 0)) return;
   editingItemId.value = null;
   editText.value = "";
+  shouldStickToBottom.value = true;
+  await scrollToBottom();
   await harness.rerunFromItem(item.id, text, { attachments });
-  if (shouldStickToBottom.value) {
-    await scrollToBottom();
-  }
 };
 
 const isStreamNearBottom = (threshold = 120): boolean => {
@@ -3009,6 +2934,17 @@ watch(
   }
 );
 
+watch(contextPickerVisible, (visible) => {
+  if (visible) {
+    document.addEventListener("keydown", onContextPickerKeydown);
+    document.body.style.overflow = "hidden";
+    if (contextPickerTab.value === "records") void loadRecordTypes();
+  } else {
+    document.removeEventListener("keydown", onContextPickerKeydown);
+    document.body.style.overflow = "";
+  }
+});
+
 watch(
   () => harness.activeThread.value?.threadId,
   () => {
@@ -3026,6 +2962,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onContextPickerKeydown);
+  document.body.style.overflow = "";
   for (const url of artifactPreviewUrls.values()) {
     URL.revokeObjectURL(url);
   }
@@ -4355,17 +4293,9 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-.context-loading-bar {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border: 1px solid var(--harness-accent-border);
-  border-radius: 6px;
-  background: var(--harness-accent-soft);
+.attachment-pending {
   color: var(--harness-accent-strong);
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-style: italic;
 }
 
 .composer-row {
@@ -4729,7 +4659,77 @@ onBeforeUnmount(() => {
   background: #f59e0b;
 }
 
-.context-picker,
+.context-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.context-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(920px, 96vw);
+  height: 75vh;
+  max-height: 75vh;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.22);
+}
+
+.context-modal-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: #f8fafc;
+}
+
+.context-modal-header h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: var(--p-slate-800);
+}
+
+.context-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.context-modal-close:hover {
+  border-color: #c4b5fd;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
+}
+
+.context-modal-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  overflow: hidden;
+}
+
 .context-panel,
 .skill-editor,
 .skill-editor-form {
@@ -4742,19 +4742,11 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.context-picker {
-  gap: 12px;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
 .context-tabs {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-self: flex-start;
+  flex-shrink: 0;
   gap: 4px;
   padding: 3px;
   border: 1px solid var(--p-slate-200);
@@ -4792,26 +4784,35 @@ onBeforeUnmount(() => {
 
 .context-panel {
   gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .context-panel--fc {
-  flex: 1;
   min-height: 0;
-  overflow: hidden;
 }
 
 .context-panel--records {
-  flex: 1;
   min-height: 0;
-  overflow: hidden;
 }
 
-.context-table-wrapper {
+.context-fc-host {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-table-host {
   flex: 1;
   min-height: 0;
   position: relative;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .context-table-overlay {
@@ -4825,27 +4826,7 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.context-dialog :deep(.p-dialog) {
-  display: flex;
-  flex-direction: column;
-  height: min(75vh, 680px);
-  max-height: min(75vh, 680px);
-}
-
-.context-dialog :deep(.p-dialog-content) {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  padding-bottom: 0.75rem;
-}
-
-.context-dialog :deep(.p-dialog-close-button) {
-  pointer-events: auto;
-}
-
-.context-panel--fc :deep(.fc-pane-wrapper) {
+.context-fc-host :deep(.fc-pane-wrapper) {
   flex: 1;
   min-height: 0;
   height: 100%;
@@ -4853,6 +4834,7 @@ onBeforeUnmount(() => {
 
 .context-toolbar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -4863,12 +4845,17 @@ onBeforeUnmount(() => {
   min-width: 260px;
 }
 
+.context-select :deep(.p-select-label) {
+  pointer-events: auto;
+}
+
 .context-search {
   flex: 1;
   min-width: 180px;
 }
 
 .context-error {
+  flex-shrink: 0;
   border: 1px solid var(--p-red-200);
   border-radius: 7px;
   background: var(--p-red-50);
@@ -4877,21 +4864,47 @@ onBeforeUnmount(() => {
   font-size: 0.78rem;
 }
 
+.context-error--hint {
+  border-color: var(--p-amber-200);
+  background: var(--p-amber-50);
+  color: var(--p-amber-800);
+}
+
 .context-data-table {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 0;
   overflow: hidden;
   border: 1px solid var(--p-slate-200);
   border-radius: 8px;
   background: var(--p-slate-50);
-  flex: 1;
+}
+
+.context-data-table :deep(.p-datatable) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   height: 100%;
 }
 
 .context-data-table :deep(.p-datatable-table-container) {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: auto;
+}
+
+.context-data-table :deep(.p-datatable-empty-message) {
+  height: 100%;
+}
+
+.context-data-table :deep(.p-datatable-empty-message td) {
+  height: 100%;
+  padding: 0;
+  border: none;
+  vertical-align: middle;
 }
 
 .context-data-table :deep(.p-datatable-thead > tr > th),
@@ -4999,8 +5012,12 @@ onBeforeUnmount(() => {
 }
 
 .context-empty--table {
-  flex: 1;
-  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 160px;
 }
 
 .skill-editor-form {
@@ -5342,5 +5359,14 @@ onBeforeUnmount(() => {
   .agent-toolset-grid {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<style>
+/* PrimeVue Select overlay must sit above the context modal (z-index 10000). */
+.p-select-overlay,
+.p-select-list-container,
+.p-connected-overlay {
+  z-index: 10001 !important;
 }
 </style>

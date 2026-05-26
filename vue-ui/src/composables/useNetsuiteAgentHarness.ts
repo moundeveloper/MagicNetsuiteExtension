@@ -12,6 +12,7 @@ import { skillTools } from "../utils/skillSearchTools";
 import { callApi, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { agentCache } from "../utils/agentCacheStore";
+import { extractPdfText } from "../utils/pdfUtils";
 import {
   bulkPutHarnessAgents,
   bulkPutHarnessItems,
@@ -320,12 +321,196 @@ const stringifyResult = (value: unknown, max = 6000): string => {
   }
 };
 
+const MAX_ATTACHMENT_CHARS = 300_000;
+
+const isSendableAttachment = (attachment: HarnessAttachment): boolean =>
+  Boolean(attachment.deferred) || attachment.content.trim().length > 0;
+
+const prefetchCallId = (attachment: HarnessAttachment): string => {
+  if (attachment.source === "record" && attachment.sourceId && attachment.sourceType) {
+    return `prefetch_record_${attachment.sourceType}_${attachment.sourceId}`;
+  }
+  if (attachment.source === "filecabinet" && attachment.sourceId) {
+    return `prefetch_file_${attachment.sourceId}`;
+  }
+  return `prefetch_${attachment.name}`;
+};
+
+const buildPrefetchToolCalls = (attachments: HarnessAttachment[]): ToolCall[] => {
+  const calls: ToolCall[] = [];
+  for (const attachment of attachments) {
+    if (!attachment.deferred) continue;
+    if (attachment.source === "record" && attachment.sourceId && attachment.sourceType) {
+      calls.push({
+        id: prefetchCallId(attachment),
+        type: "function",
+        function: {
+          name: "netsuite_load_record",
+          arguments: JSON.stringify({
+            recordType: attachment.sourceType,
+            id: attachment.sourceId,
+          }),
+        },
+      });
+      continue;
+    }
+    if (attachment.source === "filecabinet" && attachment.sourceId) {
+      calls.push({
+        id: prefetchCallId(attachment),
+        type: "function",
+        function: {
+          name: "netsuite_get_file_content",
+          arguments: JSON.stringify({
+            fileId: Number(attachment.sourceId),
+          }),
+        },
+      });
+    }
+  }
+  return calls;
+};
+
+const dataUrlToFile = (dataUrl: string, name: string): File => {
+  const [header = "", body = ""] = dataUrl.split(",", 2);
+  const contentType = /^data:([^;]+);/i.exec(header)?.[1] || "application/octet-stream";
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], name, { type: contentType });
+};
+
+const resolveDeferredAttachment = async (
+  attachment: HarnessAttachment,
+  toolOutput: string
+): Promise<HarnessAttachment> => {
+  if (attachment.source === "record") {
+    let parsed: unknown = toolOutput;
+    try {
+      parsed = JSON.parse(toolOutput);
+    } catch {
+      // keep raw tool output
+    }
+    const serialized = stringifyResult(parsed, MAX_ATTACHMENT_CHARS);
+    const content = [
+      "NetSuite record context",
+      `recordType: ${attachment.sourceType}`,
+      `internalId: ${attachment.sourceId}`,
+      "",
+      serialized,
+    ].join("\n");
+    return {
+      ...attachment,
+      deferred: false,
+      type: "text",
+      content,
+      size: content.length,
+    };
+  }
+
+  if (attachment.source === "filecabinet") {
+    let cacheKey = `file_${attachment.sourceId}`;
+    try {
+      const parsed = JSON.parse(toolOutput) as { cacheKey?: string };
+      if (parsed?.cacheKey) cacheKey = parsed.cacheKey;
+    } catch {
+      // use default cache key
+    }
+
+    const entry = agentCache.get(cacheKey);
+    let body = entry?.content ?? "";
+    let attachmentType: HarnessAttachment["type"] = "text";
+
+    if (body.startsWith("data:") && /application\/pdf/i.test(body)) {
+      attachmentType = "pdf";
+      try {
+        const pdfFile = dataUrlToFile(body, attachment.name);
+        const extracted = await extractPdfText(pdfFile);
+        body = extracted.pages
+          .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
+          .join("\n\n");
+      } catch {
+        body = "[PDF content could not be extracted as text]";
+      }
+    }
+
+    if (body.length > MAX_ATTACHMENT_CHARS) {
+      body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n\n... [truncated ${body.length - MAX_ATTACHMENT_CHARS} characters]`;
+    }
+
+    const content = [
+      "NetSuite File Cabinet context",
+      `fileId: ${attachment.sourceId}`,
+      `name: ${attachment.name}`,
+      attachment.sourceType ? `fileType: ${attachment.sourceType}` : "",
+      cacheKey ? `cacheKey: ${cacheKey}` : "",
+      "",
+      body,
+    ]
+      .filter((line) => line !== "")
+      .join("\n");
+
+    return {
+      ...attachment,
+      deferred: false,
+      type: attachmentType,
+      content,
+      size: content.length,
+    };
+  }
+
+  return { ...attachment, deferred: false };
+};
+
+const resolveAttachmentsForTurn = async (
+  attachments: HarnessAttachment[] | undefined,
+  runPrefetchTools: (calls: ToolCall[]) => Promise<ChatMessage[]>
+): Promise<{
+  attachments: HarnessAttachment[];
+  prefetchCalls: ToolCall[];
+  prefetchMessages: ChatMessage[];
+}> => {
+  const sendable = (attachments ?? []).filter(isSendableAttachment);
+  if (sendable.length === 0) {
+    return { attachments: [], prefetchCalls: [], prefetchMessages: [] };
+  }
+
+  const deferred = sendable.filter((attachment) => attachment.deferred);
+  const immediate = sendable.filter((attachment) => !attachment.deferred);
+  const prefetchCalls = buildPrefetchToolCalls(deferred);
+  const prefetchMessages =
+    prefetchCalls.length > 0 ? await runPrefetchTools(prefetchCalls) : [];
+
+  const outputByCallId = new Map<string, string>();
+  prefetchCalls.forEach((call, index) => {
+    outputByCallId.set(call.id, prefetchMessages[index]?.content ?? "");
+  });
+
+  const resolvedDeferred: HarnessAttachment[] = [];
+  for (const attachment of deferred) {
+    resolvedDeferred.push(
+      await resolveDeferredAttachment(
+        attachment,
+        outputByCallId.get(prefetchCallId(attachment)) ?? ""
+      )
+    );
+  }
+
+  return {
+    attachments: [...immediate, ...resolvedDeferred],
+    prefetchCalls,
+    prefetchMessages,
+  };
+};
+
 const formatMessageContent = (
   content: string,
   attachments?: HarnessAttachment[]
 ): string => {
-  if (!attachments || attachments.length === 0) return content;
-  const attachmentContext = attachments
+  const resolved = attachments?.filter(
+    (attachment) => !attachment.deferred && attachment.content.trim()
+  );
+  if (!resolved || resolved.length === 0) return content;
+  const attachmentContext = resolved
     .map((attachment) => {
       const sourceLabel =
         attachment.source === "record"
@@ -1579,8 +1764,8 @@ export const useNetsuiteAgentHarness = (
     options: HarnessRunOptions = {}
   ): Promise<void> => {
     const cleanPrompt = prompt.trim();
-    const attachments = options.attachments?.filter((attachment) => attachment.content.trim());
-    if ((!cleanPrompt && (!attachments || attachments.length === 0)) || loading.value) return;
+    const rawAttachments = options.attachments?.filter(isSendableAttachment);
+    if ((!cleanPrompt && (!rawAttachments || rawAttachments.length === 0)) || loading.value) return;
     if (!activeThread.value) await createThread(activeProfileId.value);
 
     loading.value = true;
@@ -1590,6 +1775,11 @@ export const useNetsuiteAgentHarness = (
     activeController.value = controller;
 
     try {
+      const { attachments, prefetchCalls, prefetchMessages } = await resolveAttachmentsForTurn(
+        rawAttachments,
+        (calls) => executeToolCalls(calls, turnId, cleanPrompt)
+      );
+
       const userItem = await appendItem({
         threadId: activeThreadId.value!,
         turnId,
@@ -1619,8 +1809,21 @@ export const useNetsuiteAgentHarness = (
       const runtimeMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         ...buildPriorMessages(userItem.id),
-        { role: "user", content: formatMessageContent(cleanPrompt, attachments) },
       ];
+
+      if (prefetchCalls.length > 0) {
+        runtimeMessages.push({
+          role: "assistant",
+          content: "",
+          tool_calls: prefetchCalls,
+        });
+        runtimeMessages.push(...prefetchMessages);
+      }
+
+      runtimeMessages.push({
+        role: "user",
+        content: formatMessageContent(cleanPrompt, attachments),
+      });
       const externalTools = selectedTools.value.map(toExternalTool);
       const mainStepLimit = Math.max(
         activeProfile.value.maxSteps,

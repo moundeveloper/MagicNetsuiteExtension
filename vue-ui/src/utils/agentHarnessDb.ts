@@ -15,6 +15,8 @@ export interface HarnessAttachment {
   source?: "upload" | "record" | "filecabinet";
   sourceId?: string;
   sourceType?: string;
+  /** When true, full content is fetched via harness prefetch tools when the message is sent. */
+  deferred?: boolean;
 }
 
 export interface HarnessThreadRecord {
