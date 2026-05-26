@@ -2969,6 +2969,7 @@ const onDrop = async (event: DragEvent) => {
 watch(
   () => harness.items.value.map((item) => `${item.id}:${item.content.length}:${item.status}`).join("|"),
   () => {
+    if (harness.contextResolving.value) return;
     void syncStreamScrollAfterRender();
   }
 );

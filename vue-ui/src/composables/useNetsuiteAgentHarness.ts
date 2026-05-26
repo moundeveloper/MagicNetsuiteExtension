@@ -9,7 +9,12 @@ import {
 } from "../utils/netsuiteDocsTools";
 import { bundleTools, BUNDLE_TOOLS_SYSTEM_PROMPT } from "../utils/bundleTools";
 import { skillTools } from "../utils/skillSearchTools";
-import { callApi, getNetsuiteEnvironment } from "../utils/api";
+import {
+  beginHarnessWorkerTab,
+  callApi,
+  endHarnessWorkerTab,
+  getNetsuiteEnvironment,
+} from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { agentCache } from "../utils/agentCacheStore";
 import { extractPdfText } from "../utils/pdfUtils";
@@ -326,49 +331,12 @@ const MAX_ATTACHMENT_CHARS = 300_000;
 const isSendableAttachment = (attachment: HarnessAttachment): boolean =>
   Boolean(attachment.deferred) || attachment.content.trim().length > 0;
 
-const prefetchCallId = (attachment: HarnessAttachment): string => {
-  if (attachment.source === "record" && attachment.sourceId && attachment.sourceType) {
-    return `prefetch_record_${attachment.sourceType}_${attachment.sourceId}`;
-  }
-  if (attachment.source === "filecabinet" && attachment.sourceId) {
-    return `prefetch_file_${attachment.sourceId}`;
-  }
-  return `prefetch_${attachment.name}`;
-};
+const yieldToMain = (): Promise<void> =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
 
-const buildPrefetchToolCalls = (attachments: HarnessAttachment[]): ToolCall[] => {
-  const calls: ToolCall[] = [];
-  for (const attachment of attachments) {
-    if (!attachment.deferred) continue;
-    if (attachment.source === "record" && attachment.sourceId && attachment.sourceType) {
-      calls.push({
-        id: prefetchCallId(attachment),
-        type: "function",
-        function: {
-          name: "netsuite_load_record",
-          arguments: JSON.stringify({
-            recordType: attachment.sourceType,
-            id: attachment.sourceId,
-          }),
-        },
-      });
-      continue;
-    }
-    if (attachment.source === "filecabinet" && attachment.sourceId) {
-      calls.push({
-        id: prefetchCallId(attachment),
-        type: "function",
-        function: {
-          name: "netsuite_get_file_content",
-          arguments: JSON.stringify({
-            fileId: Number(attachment.sourceId),
-          }),
-        },
-      });
-    }
-  }
-  return calls;
-};
+const getFileContentTool = baseTools.find((tool) => tool.name === "netsuite_get_file_content");
 
 const dataUrlToFile = (dataUrl: string, name: string): File => {
   const [header = "", body = ""] = dataUrl.split(",", 2);
@@ -379,25 +347,92 @@ const dataUrlToFile = (dataUrl: string, name: string): File => {
   return new File([bytes], name, { type: contentType });
 };
 
-const resolveDeferredAttachment = async (
-  attachment: HarnessAttachment,
-  toolOutput: string
-): Promise<HarnessAttachment> => {
-  if (attachment.source === "record") {
-    let parsed: unknown = toolOutput;
-    try {
-      parsed = JSON.parse(toolOutput);
-    } catch {
-      // keep raw tool output
+const appendRecordFieldLines = async (
+  lines: string[],
+  fields: Record<string, { value?: unknown; text?: unknown }>,
+  lineBudget: { count: number }
+): Promise<void> => {
+  const entries = Object.entries(fields);
+  for (let i = 0; i < entries.length; i++) {
+    const [fieldId, field] = entries[i]!;
+    const display = field?.text ?? field?.value;
+    if (display !== null && display !== undefined && String(display) !== "") {
+      lines.push(`${fieldId}: ${display}`);
+      lineBudget.count += 1;
     }
-    const serialized = stringifyResult(parsed, MAX_ATTACHMENT_CHARS);
-    const content = [
-      "NetSuite record context",
-      `recordType: ${attachment.sourceType}`,
-      `internalId: ${attachment.sourceId}`,
-      "",
-      serialized,
-    ].join("\n");
+    if (i > 0 && i % 40 === 0) await yieldToMain();
+  }
+};
+
+const serializeRecordPayload = async (payload: unknown): Promise<string> => {
+  if (!payload || typeof payload !== "object") {
+    return String(payload ?? "");
+  }
+  const record = payload as {
+    body?: Record<string, { value?: unknown; text?: unknown }>;
+    sublists?: Record<string, Array<Record<string, { value?: unknown; text?: unknown }>>>;
+  };
+
+  if (!record.body && !record.sublists) {
+    return stringifyResult(payload, MAX_ATTACHMENT_CHARS);
+  }
+
+  const lines: string[] = [];
+  const lineBudget = { count: 0 };
+
+  if (record.body && typeof record.body === "object") {
+    await appendRecordFieldLines(lines, record.body, lineBudget);
+  }
+
+  if (record.sublists && typeof record.sublists === "object") {
+    for (const [sublistId, rows] of Object.entries(record.sublists)) {
+      if (!Array.isArray(rows) || rows.length === 0) continue;
+      lines.push("", `## Sublist: ${sublistId}`);
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+        const row = rows[rowIndex];
+        if (!row || typeof row !== "object") continue;
+        lines.push(`### Line ${rowIndex + 1}`);
+        await appendRecordFieldLines(lines, row, lineBudget);
+        if (lineBudget.count > 0 && lineBudget.count % 80 === 0) await yieldToMain();
+      }
+    }
+  }
+
+  let text = lines.join("\n").trim();
+  if (!text) return stringifyResult(payload, MAX_ATTACHMENT_CHARS);
+  if (text.length > MAX_ATTACHMENT_CHARS) {
+    text = `${text.slice(0, MAX_ATTACHMENT_CHARS)}\n\n... [truncated ${text.length - MAX_ATTACHMENT_CHARS} characters]`;
+  }
+  return text;
+};
+
+const resolveDeferredRecordAttachment = async (
+  attachment: HarnessAttachment,
+  payload: unknown
+): Promise<HarnessAttachment> => {
+  const serialized = await serializeRecordPayload(payload);
+  const content = [
+    "NetSuite record context",
+    `recordType: ${attachment.sourceType}`,
+    `internalId: ${attachment.sourceId}`,
+    "",
+    serialized,
+  ].join("\n");
+  return {
+    ...attachment,
+    deferred: false,
+    type: "text",
+    content,
+    size: content.length,
+  };
+};
+
+const resolveDeferredFileAttachment = async (
+  attachment: HarnessAttachment,
+  fileMeta: { cacheKey?: string; error?: string }
+): Promise<HarnessAttachment> => {
+  if (fileMeta.error) {
+    const content = `Failed to load file: ${fileMeta.error}`;
     return {
       ...attachment,
       deferred: false,
@@ -407,99 +442,118 @@ const resolveDeferredAttachment = async (
     };
   }
 
-  if (attachment.source === "filecabinet") {
-    let cacheKey = `file_${attachment.sourceId}`;
+  const cacheKey = fileMeta.cacheKey ?? `file_${attachment.sourceId}`;
+  const entry = agentCache.get(cacheKey);
+  let body = entry?.content ?? "";
+  let attachmentType: HarnessAttachment["type"] = "text";
+
+  if (body.startsWith("data:") && /application\/pdf/i.test(body)) {
+    attachmentType = "pdf";
+    await yieldToMain();
     try {
-      const parsed = JSON.parse(toolOutput) as { cacheKey?: string };
-      if (parsed?.cacheKey) cacheKey = parsed.cacheKey;
+      const pdfFile = dataUrlToFile(body, attachment.name);
+      const extracted = await extractPdfText(pdfFile);
+      await yieldToMain();
+      body = extracted.pages
+        .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
+        .join("\n\n");
     } catch {
-      // use default cache key
+      body = "[PDF content could not be extracted as text]";
     }
+  }
 
-    const entry = agentCache.get(cacheKey);
-    let body = entry?.content ?? "";
-    let attachmentType: HarnessAttachment["type"] = "text";
+  if (body.length > MAX_ATTACHMENT_CHARS) {
+    body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n\n... [truncated ${body.length - MAX_ATTACHMENT_CHARS} characters]`;
+  }
 
-    if (body.startsWith("data:") && /application\/pdf/i.test(body)) {
-      attachmentType = "pdf";
-      try {
-        const pdfFile = dataUrlToFile(body, attachment.name);
-        const extracted = await extractPdfText(pdfFile);
-        body = extracted.pages
-          .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
-          .join("\n\n");
-      } catch {
-        body = "[PDF content could not be extracted as text]";
-      }
+  const content = [
+    "NetSuite File Cabinet context",
+    `fileId: ${attachment.sourceId}`,
+    `name: ${attachment.name}`,
+    attachment.sourceType ? `fileType: ${attachment.sourceType}` : "",
+    cacheKey ? `cacheKey: ${cacheKey}` : "",
+    "",
+    body,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+
+  return {
+    ...attachment,
+    deferred: false,
+    type: attachmentType,
+    content,
+    size: content.length,
+  };
+};
+
+const prefetchAttachment = async (
+  attachment: HarnessAttachment
+): Promise<HarnessAttachment> => {
+  if (attachment.source === "record" && attachment.sourceType && attachment.sourceId) {
+    await yieldToMain();
+    const response = await callApi(RequestRoutes.LOAD_RECORD_JSON, {
+      type: attachment.sourceType,
+      id: attachment.sourceId,
+      includeSublists: true,
+    });
+    if (response.status === "error") {
+      throw new Error(
+        typeof response.message === "string"
+          ? response.message
+          : JSON.stringify(response.message)
+      );
     }
+    await yieldToMain();
+    return resolveDeferredRecordAttachment(attachment, response.message);
+  }
 
-    if (body.length > MAX_ATTACHMENT_CHARS) {
-      body = `${body.slice(0, MAX_ATTACHMENT_CHARS)}\n\n... [truncated ${body.length - MAX_ATTACHMENT_CHARS} characters]`;
+  if (attachment.source === "filecabinet" && attachment.sourceId) {
+    if (!getFileContentTool?.execute) {
+      throw new Error("netsuite_get_file_content is not available.");
     }
-
-    const content = [
-      "NetSuite File Cabinet context",
-      `fileId: ${attachment.sourceId}`,
-      `name: ${attachment.name}`,
-      attachment.sourceType ? `fileType: ${attachment.sourceType}` : "",
-      cacheKey ? `cacheKey: ${cacheKey}` : "",
-      "",
-      body,
-    ]
-      .filter((line) => line !== "")
-      .join("\n");
-
-    return {
-      ...attachment,
-      deferred: false,
-      type: attachmentType,
-      content,
-      size: content.length,
+    await yieldToMain();
+    const fileId = Number(attachment.sourceId);
+    const meta = (await getFileContentTool.execute({ fileId })) as {
+      cacheKey?: string;
+      error?: string;
     };
+    await yieldToMain();
+    return resolveDeferredFileAttachment(attachment, meta);
   }
 
   return { ...attachment, deferred: false };
 };
 
 const resolveAttachmentsForTurn = async (
-  attachments: HarnessAttachment[] | undefined,
-  runPrefetchTools: (calls: ToolCall[]) => Promise<ChatMessage[]>
-): Promise<{
-  attachments: HarnessAttachment[];
-  prefetchCalls: ToolCall[];
-  prefetchMessages: ChatMessage[];
-}> => {
+  attachments: HarnessAttachment[] | undefined
+): Promise<{ attachments: HarnessAttachment[] }> => {
   const sendable = (attachments ?? []).filter(isSendableAttachment);
   if (sendable.length === 0) {
-    return { attachments: [], prefetchCalls: [], prefetchMessages: [] };
+    return { attachments: [] };
   }
 
   const deferred = sendable.filter((attachment) => attachment.deferred);
   const immediate = sendable.filter((attachment) => !attachment.deferred);
-  const prefetchCalls = buildPrefetchToolCalls(deferred);
-  const prefetchMessages =
-    prefetchCalls.length > 0 ? await runPrefetchTools(prefetchCalls) : [];
-
-  const outputByCallId = new Map<string, string>();
-  prefetchCalls.forEach((call, index) => {
-    outputByCallId.set(call.id, prefetchMessages[index]?.content ?? "");
-  });
-
   const resolvedDeferred: HarnessAttachment[] = [];
+
   for (const attachment of deferred) {
-    resolvedDeferred.push(
-      await resolveDeferredAttachment(
-        attachment,
-        outputByCallId.get(prefetchCallId(attachment)) ?? ""
-      )
-    );
+    try {
+      resolvedDeferred.push(await prefetchAttachment(attachment));
+    } catch (err) {
+      const content = `Failed to load context: ${String(err)}`;
+      resolvedDeferred.push({
+        ...attachment,
+        deferred: false,
+        type: "text",
+        content,
+        size: content.length,
+      });
+    }
+    await yieldToMain();
   }
 
-  return {
-    attachments: [...immediate, ...resolvedDeferred],
-    prefetchCalls,
-    prefetchMessages,
-  };
+  return { attachments: [...immediate, ...resolvedDeferred] };
 };
 
 const formatMessageContent = (
@@ -1050,6 +1104,7 @@ export const useNetsuiteAgentHarness = (
   const environment = ref("unknown");
   const connectionStatus = ref<"unknown" | "checking" | "connected" | "disconnected" | "error">("unknown");
   const loading = ref(false);
+  const contextResolving = ref(false);
   const error = ref<unknown>(null);
   const telemetry = ref<HarnessTelemetryEntry[]>([]);
   const activeController = ref<AbortController | null>(null);
@@ -1779,22 +1834,59 @@ export const useNetsuiteAgentHarness = (
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
 
+    let workerTabReferenceUrl: string | undefined;
     try {
-      const { attachments, prefetchCalls, prefetchMessages } = await resolveAttachmentsForTurn(
-        rawAttachments,
-        (calls) => executeToolCalls(calls, turnId, cleanPrompt)
-      );
+      const env = await getNetsuiteEnvironment();
+      if (env !== "unknown") {
+        workerTabReferenceUrl = `https://${env}/app/setup/mainsetup.nl`;
+      }
+    } catch {
+      workerTabReferenceUrl = undefined;
+    }
 
-      const userItem = await appendItem({
-        threadId: activeThreadId.value!,
-        turnId,
-        kind: "message",
-        role: "user",
-        content: cleanPrompt,
-        attachments,
-        status: "done",
-        profileId: activeProfileId.value,
-      });
+    try {
+      await beginHarnessWorkerTab(turnId, workerTabReferenceUrl);
+    } catch (err) {
+      console.warn("[harness] Could not open worker tab; heavy calls may run in-page", err);
+    }
+
+    try {
+      const hasDeferred = rawAttachments?.some((attachment) => attachment.deferred) ?? false;
+      let attachments: HarnessAttachment[];
+      let userItem: HarnessItemRecord;
+
+      if (hasDeferred && rawAttachments?.length) {
+        userItem = await appendItem({
+          threadId: activeThreadId.value!,
+          turnId,
+          kind: "message",
+          role: "user",
+          content: cleanPrompt,
+          attachments: rawAttachments,
+          status: "done",
+          profileId: activeProfileId.value,
+        });
+
+        contextResolving.value = true;
+        try {
+          ({ attachments } = await resolveAttachmentsForTurn(rawAttachments));
+          await updateItem(userItem.id, { attachments });
+        } finally {
+          contextResolving.value = false;
+        }
+      } else {
+        ({ attachments } = await resolveAttachmentsForTurn(rawAttachments));
+        userItem = await appendItem({
+          threadId: activeThreadId.value!,
+          turnId,
+          kind: "message",
+          role: "user",
+          content: cleanPrompt,
+          attachments,
+          status: "done",
+          profileId: activeProfileId.value,
+        });
+      }
 
       if (activeThread.value?.title === "Untitled harness run") {
         await touchActiveThread({
@@ -1814,21 +1906,11 @@ export const useNetsuiteAgentHarness = (
       const runtimeMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
         ...buildPriorMessages(userItem.id),
+        {
+          role: "user",
+          content: formatMessageContent(cleanPrompt, attachments),
+        },
       ];
-
-      if (prefetchCalls.length > 0) {
-        runtimeMessages.push({
-          role: "assistant",
-          content: "",
-          tool_calls: prefetchCalls,
-        });
-        runtimeMessages.push(...prefetchMessages);
-      }
-
-      runtimeMessages.push({
-        role: "user",
-        content: formatMessageContent(cleanPrompt, attachments),
-      });
       const externalTools = selectedTools.value.map(toExternalTool);
       const mainStepLimit = Math.max(
         activeProfile.value.maxSteps,
@@ -2023,6 +2105,7 @@ export const useNetsuiteAgentHarness = (
         });
       }
     } finally {
+      await endHarnessWorkerTab(turnId);
       loading.value = false;
       activeController.value = null;
       await touchActiveThread();
@@ -2031,6 +2114,7 @@ export const useNetsuiteAgentHarness = (
 
   const stop = () => {
     activeController.value?.abort();
+    void endHarnessWorkerTab();
   };
 
   const clearThread = async () => {
@@ -2110,6 +2194,7 @@ export const useNetsuiteAgentHarness = (
     lastEvidence,
     telemetry: readonly(telemetry),
     loading: readonly(loading),
+    contextResolving: readonly(contextResolving),
     error: readonly(error),
     environment: readonly(environment),
     connectionStatus: readonly(connectionStatus),
