@@ -458,11 +458,15 @@
                     </button>
                   </span>
                 </div>
+                <div v-if="attachingContextIds.size > 0" class="context-loading-bar">
+                  <i class="pi pi-spin pi-spinner" />
+                  <span>Loading {{ attachingContextIds.size }} context item{{ attachingContextIds.size > 1 ? 's' : '' }}…</span>
+                </div>
                 <div class="composer-row">
                   <button
                     type="button"
                     class="attach-btn"
-                    :disabled="harness.loading.value || isProcessingFiles"
+                    :disabled="harness.loading.value || isProcessingFiles || attachingContextIds.size > 0"
                     title="Add NetSuite record or File Cabinet context"
                     @click="openContextPicker('records')"
                   >
@@ -471,7 +475,7 @@
                   <button
                     type="button"
                     class="attach-btn"
-                    :disabled="harness.loading.value || isProcessingFiles"
+                    :disabled="harness.loading.value || isProcessingFiles || attachingContextIds.size > 0"
                     title="Attach PDF, text, or code"
                     @click="triggerFileInput"
                   >
@@ -762,9 +766,13 @@
     <Dialog
       v-model:visible="contextPickerVisible"
       modal
+      :closable="true"
+      :dismissable-mask="true"
       header="Add NetSuite Context"
-      :style="{ width: 'min(920px, 96vw)' }"
+      :style="{ width: 'min(920px, 96vw)', height: 'min(75vh, 680px)' }"
       class="context-dialog"
+      append-to="self"
+      @hide="clearContextPicker"
     >
       <div class="context-picker">
         <div class="context-tabs">
@@ -779,14 +787,14 @@
           <button
             type="button"
             :class="{ active: contextPickerTab === 'files' }"
-            @click="contextPickerTab = 'files'; loadCabinetFolder(cabinetFolderId)"
+            @click="contextPickerTab = 'files'"
           >
             <i class="pi pi-folder" />
             <span>File Cabinet</span>
           </button>
         </div>
 
-        <section v-if="contextPickerTab === 'records'" class="context-panel">
+        <section v-if="contextPickerTab === 'records'" class="context-panel context-panel--records">
           <div class="context-toolbar">
             <Select
               v-model="selectedRecordType"
@@ -810,145 +818,66 @@
             </button>
           </div>
           <div v-if="recordListError" class="context-error">{{ recordListError }}</div>
-          <DataTable
-            :value="filteredRecordRows"
-            data-key="id"
-            class="context-data-table"
-            size="small"
-            paginator
-            :rows="recordPageSize"
-            :rows-per-page-options="[10, 20, 50]"
-            :loading="recordsLoading"
-            scrollable
-            scroll-height="min(46vh, 420px)"
-          >
-            <template #empty>
-              <div class="context-empty context-empty--table">
-                {{ selectedRecordType ? "No records match this search." : "Select a record type to browse records." }}
-              </div>
-            </template>
-            <Column field="label" header="Record" sortable>
-              <template #body="{ data }">
-                <div class="context-primary-cell">
-                  <strong>{{ data.label }}</strong>
-                  <small>#{{ data.id }}</small>
+          <div class="context-table-wrapper">
+            <DataTable
+              :value="filteredRecordRows"
+              data-key="id"
+              class="context-data-table"
+              size="small"
+              paginator
+              :rows="recordPageSize"
+              :rows-per-page-options="[10, 20, 50]"
+              scrollable
+              scroll-height="flex"
+            >
+              <template #empty>
+                <div class="context-empty context-empty--table">
+                  {{ selectedRecordType ? "No records match this search." : "Select a record type to browse records." }}
                 </div>
               </template>
-            </Column>
-            <Column field="meta" header="Details">
-              <template #body="{ data }">
-                <span class="context-muted-cell">{{ data.meta || selectedRecordType?.id }}</span>
-              </template>
-            </Column>
-            <Column header="" class="context-action-column">
-              <template #body="{ data }">
-                <button
-                  type="button"
-                  class="context-add-btn"
-                  :class="{ attached: isRecordAttached(data) }"
-                  :disabled="isRecordAttachBusy(data) || isRecordAttached(data)"
-                  :title="isRecordAttached(data) ? 'Added to context' : 'Add record context'"
-                  @click.stop="attachRecordContext(data)"
-                >
-                  <i :class="recordActionIcon(data)" />
-                  <span>{{ isRecordAttached(data) ? "Added" : "Add" }}</span>
-                </button>
-              </template>
-            </Column>
-          </DataTable>
+              <Column field="label" header="Record" sortable>
+                <template #body="{ data }">
+                  <div class="context-primary-cell">
+                    <strong>{{ data.label }}</strong>
+                    <small>#{{ data.id }}</small>
+                  </div>
+                </template>
+              </Column>
+              <Column field="meta" header="Details">
+                <template #body="{ data }">
+                  <span class="context-muted-cell">{{ data.meta || selectedRecordType?.id }}</span>
+                </template>
+              </Column>
+              <Column header="" class="context-action-column">
+                <template #body="{ data }">
+                  <button
+                    type="button"
+                    class="context-add-btn"
+                    :class="{ attached: isRecordAttached(data) }"
+                    :disabled="isRecordAttachBusy(data) || isRecordAttached(data)"
+                    :title="isRecordAttached(data) ? 'Added to context' : 'Add record context'"
+                    @click.stop="void attachRecordContext(data)"
+                  >
+                    <i :class="recordActionIcon(data)" />
+                  </button>
+                </template>
+              </Column>
+            </DataTable>
+            <div v-if="recordsLoading" class="context-table-overlay">
+              <MLoader />
+            </div>
+          </div>
         </section>
 
-        <section v-else class="context-panel">
-          <div class="context-toolbar">
-            <button type="button" class="agent-secondary-btn" @click="loadCabinetFolder(null)">
-              <i class="pi pi-home" />
-            </button>
-            <div class="context-breadcrumbs">
-              <button
-                v-for="crumb in cabinetBreadcrumbs"
-                :key="crumb.id"
-                type="button"
-                @click="loadCabinetFolder(crumb.id)"
-              >
-                {{ crumb.name }}
-              </button>
-            </div>
-            <InputText
-              v-model="cabinetSearch"
-              placeholder="Search files..."
-              class="context-search"
-              @keydown.enter.prevent="searchCabinetFiles"
-            />
-            <button type="button" class="agent-secondary-btn" :disabled="cabinetLoading" @click="searchCabinetFiles">
-              <i :class="cabinetLoading ? 'pi pi-spin pi-spinner' : 'pi pi-search'" />
-              <span>Search</span>
-            </button>
-          </div>
-          <div v-if="cabinetError" class="context-error">{{ cabinetError }}</div>
-          <DataTable
-            :value="filteredCabinetRows"
-            data-key="key"
-            class="context-data-table"
-            size="small"
-            paginator
-            :rows="12"
-            :rows-per-page-options="[12, 24, 50]"
-            :loading="cabinetLoading"
-            scrollable
-            scroll-height="min(46vh, 420px)"
-          >
-            <template #empty>
-              <div class="context-empty context-empty--table">
-                No supported files or folders match this view.
-              </div>
-            </template>
-            <Column field="name" header="Name" sortable>
-              <template #body="{ data }">
-                <button
-                  v-if="data.kind === 'folder'"
-                  type="button"
-                  class="context-folder-link"
-                  @click="loadCabinetFolder(data.id)"
-                >
-                  <i class="pi pi-folder text-amber-500" />
-                  <span>{{ data.name }}</span>
-                </button>
-                <div v-else class="context-primary-cell">
-                  <span>
-                    <i :class="data.filetype === 'PDF' ? 'pi pi-file-pdf text-red-500' : 'pi pi-file text-blue-500'" />
-                    {{ data.name }}
-                  </span>
-                  <small>#{{ data.id }}</small>
-                </div>
-              </template>
-            </Column>
-            <Column field="filetype" header="Type" sortable>
-              <template #body="{ data }">
-                <span class="context-muted-cell">{{ data.kind === 'folder' ? 'Folder' : data.filetype }}</span>
-              </template>
-            </Column>
-            <Column field="filesize" header="Size" sortable>
-              <template #body="{ data }">
-                <span class="context-muted-cell">{{ data.kind === 'folder' ? '-' : formatFileSize(data.filesize) }}</span>
-              </template>
-            </Column>
-            <Column header="" class="context-action-column">
-              <template #body="{ data }">
-                <button
-                  v-if="data.kind === 'file'"
-                  type="button"
-                  class="context-add-btn"
-                  :class="{ attached: isCabinetFileAttached(data) }"
-                  :disabled="isCabinetFileAttachBusy(data) || isCabinetFileAttached(data) || !data.url"
-                  :title="isCabinetFileAttached(data) ? 'Added to context' : 'Add file context'"
-                  @click.stop="attachCabinetFileContext(data)"
-                >
-                  <i :class="cabinetActionIcon(data)" />
-                  <span>{{ isCabinetFileAttached(data) ? "Added" : "Add" }}</span>
-                </button>
-              </template>
-            </Column>
-          </DataTable>
+        <section v-else class="context-panel context-panel--fc">
+          <FileCabinetPane
+            :bookmarkedIds="bookmarkedIds"
+            :currentEnvironment="harness.environment.value"
+            :contextPicker="true"
+            :attachedFileIds="cabinetAttachedFileIds"
+            :attachingFileIds="cabinetAttachingFileIds"
+            @add-to-context="handleCabinetPaneAdd"
+          />
         </section>
       </div>
     </Dialog>
@@ -1189,6 +1118,8 @@ import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
+import FileCabinetPane from "../components/FileCabinetPane.vue";
+import MLoader from "../components/universal/patterns/MLoader.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import {
@@ -1337,7 +1268,46 @@ const recordPageSize = 10;
 const recordFetchLimit = 500;
 const recordsLoading = ref(false);
 const recordListError = ref("");
-const attachingContextId = ref<string | null>(null);
+const attachingContextIds = ref<Set<string>>(new Set());
+const bookmarkedIds = ref<Set<number>>(new Set());
+const cabinetAttachedFileIds = computed<Set<number>>(() =>
+  new Set(
+    pendingAttachments.value
+      .filter((a) => a.source === "filecabinet")
+      .map((a) => Number(a.sourceId))
+      .filter((id) => !Number.isNaN(id))
+  )
+);
+
+const cabinetAttachingFileIds = computed<Set<number>>(() => {
+  const ids = new Set<number>();
+  for (const key of attachingContextIds.value) {
+    if (!key.startsWith("file:")) continue;
+    const id = Number(key.slice(5));
+    if (!Number.isNaN(id)) ids.add(id);
+  }
+  return ids;
+});
+
+const MAX_CONTEXT_ATTACHMENT_CHARS = 300_000;
+
+const serializeContextPayload = (payload: unknown): string => {
+  let json = "";
+  try {
+    json = JSON.stringify(payload ?? {}, null, 2);
+  } catch {
+    json = String(payload ?? "");
+  }
+  if (json.length <= MAX_CONTEXT_ATTACHMENT_CHARS) return json;
+  const trimmed = json.slice(0, MAX_CONTEXT_ATTACHMENT_CHARS);
+  return `${trimmed}\n\n... [truncated ${json.length - MAX_CONTEXT_ATTACHMENT_CHARS} characters]`;
+};
+
+const yieldToMain = (): Promise<void> =>
+  new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+
 const cabinetFolderId = ref<number | null>(null);
 const cabinetBreadcrumbs = ref<CabinetFolderRow[]>([]);
 const cabinetFolders = ref<CabinetFolderRow[]>([]);
@@ -1980,14 +1950,19 @@ const formatSkillDate = (dateStr: string): string => {
 const formatSkillSize = (chars: number): string =>
   chars < 1000 ? `${chars} chars` : `${(chars / 1000).toFixed(1)}K chars`;
 
+const clearContextPicker = () => {
+  recordRows.value = [];
+  recordListError.value = "";
+  selectedRecordType.value = null;
+  recordSearch.value = "";
+  attachingContextIds.value = new Set();
+};
+
 const openContextPicker = (tab: ContextPickerTab = "records") => {
   contextPickerTab.value = tab;
   contextPickerVisible.value = true;
   if (tab === "records" && recordTypes.value.length === 0) {
     void loadRecordTypes();
-  }
-  if (tab === "files" && cabinetFolders.value.length === 0 && cabinetFiles.value.length === 0) {
-    void loadCabinetFolder(null);
   }
 };
 
@@ -2122,16 +2097,22 @@ const selectRecordType = async () => {
   if (selectedRecordType.value) await loadRecordPage(1);
 };
 
-const isRecordAttached = (row: RecordListRow): boolean =>
-  pendingAttachments.value.some(
+const isRecordAttached = (row: RecordListRow): boolean => {
+  const typeId = selectedRecordType.value?.id;
+  if (!typeId) return false;
+  return pendingAttachments.value.some(
     (attachment) =>
       attachment.source === "record" &&
       attachment.sourceId === row.id &&
-      attachment.sourceType === selectedRecordType.value?.id
+      attachment.sourceType === typeId
   );
+};
 
-const isRecordAttachBusy = (row: RecordListRow): boolean =>
-  attachingContextId.value === `record:${selectedRecordType.value?.id}:${row.id}`;
+const isRecordAttachBusy = (row: RecordListRow): boolean => {
+  const typeId = selectedRecordType.value?.id;
+  if (!typeId) return false;
+  return attachingContextIds.value.has(`record:${typeId}:${row.id}`);
+};
 
 const recordActionIcon = (row: RecordListRow): string => {
   if (isRecordAttachBusy(row)) return "pi pi-spin pi-spinner";
@@ -2141,35 +2122,42 @@ const recordActionIcon = (row: RecordListRow): string => {
 
 const attachRecordContext = async (row: RecordListRow) => {
   if (!selectedRecordType.value || isRecordAttached(row) || isRecordAttachBusy(row)) return;
-  attachingContextId.value = `record:${selectedRecordType.value.id}:${row.id}`;
+  const recordType = selectedRecordType.value;
+  const ctxKey = `record:${recordType.id}:${row.id}`;
+  attachingContextIds.value = new Set(attachingContextIds.value).add(ctxKey);
   recordListError.value = "";
+  await yieldToMain();
   try {
     const response = await callApi(RequestRoutes.LOAD_RECORD, {
-      type: selectedRecordType.value.id,
+      type: recordType.id,
       id: row.id,
     });
+    await yieldToMain();
+    const serialized = serializeContextPayload(response.message ?? row.raw);
     const content = [
       "NetSuite record context",
-      `recordType: ${selectedRecordType.value.id}`,
-      `recordTypeName: ${selectedRecordType.value.name}`,
+      `recordType: ${recordType.id}`,
+      `recordTypeName: ${recordType.name}`,
       `internalId: ${row.id}`,
       `label: ${row.label}`,
       "",
-      JSON.stringify(response.message ?? row.raw, null, 2),
+      serialized,
     ].join("\n");
     pendingAttachments.value.push({
-      name: `${selectedRecordType.value.name}: ${row.label} (#${row.id})`,
+      name: `${recordType.name}: ${row.label} (#${row.id})`,
       type: "text",
       content,
       size: content.length,
       source: "record",
       sourceId: row.id,
-      sourceType: selectedRecordType.value.id,
+      sourceType: recordType.id,
     });
   } catch (err) {
     recordListError.value = err instanceof Error ? err.message : String(err);
   } finally {
-    attachingContextId.value = null;
+    const next = new Set(attachingContextIds.value);
+    next.delete(ctxKey);
+    attachingContextIds.value = next;
   }
 };
 
@@ -2312,7 +2300,7 @@ const isCabinetFileAttached = (file: CabinetFileRow): boolean =>
   );
 
 const isCabinetFileAttachBusy = (file: CabinetFileRow): boolean =>
-  attachingContextId.value === `file:${file.id}`;
+  attachingContextIds.value.has(`file:${file.id}`);
 
 const cabinetActionIcon = (file: CabinetFileRow): string => {
   if (isCabinetFileAttachBusy(file)) return "pi pi-spin pi-spinner";
@@ -2329,8 +2317,10 @@ const attachCabinetFileContext = async (file: CabinetFileRow) => {
   ) {
     return;
   }
-  attachingContextId.value = `file:${file.id}`;
+  const ctxKey = `file:${file.id}`;
+  attachingContextIds.value = new Set(attachingContextIds.value).add(ctxKey);
   cabinetError.value = "";
+  await yieldToMain();
   try {
     const response = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
       fileUrl: file.url,
@@ -2345,7 +2335,11 @@ const attachCabinetFileContext = async (file: CabinetFileRow) => {
         .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
         .join("\n\n");
     } else {
+      await yieldToMain();
       content = String(result.content ?? "");
+    }
+    if (content.length > MAX_CONTEXT_ATTACHMENT_CHARS) {
+      content = `${content.slice(0, MAX_CONTEXT_ATTACHMENT_CHARS)}\n\n... [truncated ${content.length - MAX_CONTEXT_ATTACHMENT_CHARS} characters]`;
     }
     const context = [
       "NetSuite File Cabinet context",
@@ -2369,8 +2363,22 @@ const attachCabinetFileContext = async (file: CabinetFileRow) => {
   } catch (err) {
     cabinetError.value = err instanceof Error ? err.message : String(err);
   } finally {
-    attachingContextId.value = null;
+    const next = new Set(attachingContextIds.value);
+    next.delete(ctxKey);
+    attachingContextIds.value = next;
   }
+};
+
+const handleCabinetPaneAdd = (item: CabinetFileRow) => {
+  const row: CabinetFileRow = {
+    id: item.id,
+    name: item.name,
+    filetype: item.filetype,
+    filesize: item.filesize,
+    folder: item.folder,
+    url: item.url,
+  };
+  void attachCabinetFileContext(row);
 };
 
 const openCreateAgentDialog = () => {
@@ -2663,7 +2671,9 @@ const sendPrompt = async () => {
   editingItemId.value = null;
   editText.value = "";
   await harness.runTurn(text, { attachments });
-  await scrollToBottom();
+  if (shouldStickToBottom.value) {
+    await scrollToBottom();
+  }
 };
 
 const onComposerKeydown = (event: KeyboardEvent) => {
@@ -2694,7 +2704,9 @@ const saveEdit = async (item: HarnessItemView) => {
   editingItemId.value = null;
   editText.value = "";
   await harness.rerunFromItem(item.id, text, { attachments });
-  await scrollToBottom();
+  if (shouldStickToBottom.value) {
+    await scrollToBottom();
+  }
 };
 
 const isStreamNearBottom = (threshold = 120): boolean => {
@@ -2717,38 +2729,46 @@ const scrollToBottom = async () => {
   }
 };
 
-const isDynamicTargetInOrAboveViewport = (target: EventTarget | null | undefined): boolean => {
-  const el = streamRef.value;
-  if (!el || !(target instanceof Element)) return true;
-  const targetRect = target.getBoundingClientRect();
-  const streamRect = el.getBoundingClientRect();
-  return targetRect.top <= streamRect.bottom;
-};
-
 const syncStreamScrollAfterRender = async (
   options: { target?: EventTarget | null } = {}
 ) => {
   const el = streamRef.value;
   if (!el) return;
-  const wasNearBottom = isStreamNearBottom(80);
+  if (!shouldStickToBottom.value && !options.target) return;
+
   const previousHeight = lastStreamScrollHeight || el.scrollHeight;
   const previousTop = el.scrollTop;
-  const shouldPreservePosition = !options.target || isDynamicTargetInOrAboveViewport(options.target);
   await nextTick();
   if (!streamRef.value) return;
-  if (wasNearBottom) {
-    await scrollToBottom();
+
+  if (shouldStickToBottom.value) {
+    if (isStreamNearBottom(200)) {
+      streamRef.value.scrollTop = streamRef.value.scrollHeight;
+    }
+    lastStreamScrollHeight = streamRef.value.scrollHeight;
     return;
   }
+
+  if (!(options.target instanceof Element)) {
+    lastStreamScrollHeight = streamRef.value.scrollHeight;
+    return;
+  }
+
+  const streamRect = streamRef.value.getBoundingClientRect();
+  const targetRect = options.target.getBoundingClientRect();
   const heightDelta = streamRef.value.scrollHeight - previousHeight;
-  if (heightDelta > 0 && shouldPreservePosition) {
+  if (heightDelta > 0 && targetRect.bottom < streamRect.top) {
     streamRef.value.scrollTop = previousTop + heightDelta;
   }
   lastStreamScrollHeight = streamRef.value.scrollHeight;
 };
 
 const handleDynamicContentLoad = (event: Event) => {
-  void syncStreamScrollAfterRender({ target: event.target });
+  if (!shouldStickToBottom.value) {
+    void syncStreamScrollAfterRender({ target: event.target });
+    return;
+  }
+  void syncStreamScrollAfterRender();
 };
 
 const formatDate = (iso: string) =>
@@ -2989,6 +3009,16 @@ watch(
   }
 );
 
+watch(
+  () => harness.activeThread.value?.threadId,
+  () => {
+    for (const url of artifactPreviewUrls.values()) {
+      URL.revokeObjectURL(url);
+    }
+    artifactPreviewUrls.clear();
+  }
+);
+
 onMounted(async () => {
   await harness.initialize();
   await refreshSkills();
@@ -3048,7 +3078,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--p-slate-200);
-  background: white;
+  background: var(--p-slate-100);
   color: var(--p-slate-600);
   cursor: pointer;
   transition: all 0.14s ease;
@@ -3273,13 +3303,12 @@ onBeforeUnmount(() => {
 
 .mode-segment {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
-  margin-top: 8px;
-  padding: 3px;
+  padding: 4px;
   border: 1px solid var(--p-slate-200);
   border-radius: 7px;
-  background: white;
+  background: var(--p-slate-100);
 }
 
 .mode-btn {
@@ -3650,7 +3679,7 @@ onBeforeUnmount(() => {
   min-height: 38px;
   border: 1px solid var(--p-slate-200);
   border-radius: 7px;
-  background: white;
+  background: var(--p-slate-100);
   color: var(--p-slate-600);
   font-size: 0.76rem;
   font-weight: 600;
@@ -4322,8 +4351,21 @@ onBeforeUnmount(() => {
   gap: 7px;
   padding: 10px 12px;
   border-top: 1px solid var(--p-slate-200);
-  background: #f8fafc;
+  background: var(--p-slate-100);
   flex-shrink: 0;
+}
+
+.context-loading-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--harness-accent-border);
+  border-radius: 6px;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .composer-row {
@@ -4341,7 +4383,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--p-slate-300);
   border-radius: 8px;
   padding: 9px 10px;
-  background: white;
+  background: var(--p-slate-50);
   color: var(--p-slate-800);
   font: inherit;
   font-size: 0.84rem;
@@ -4376,7 +4418,7 @@ onBeforeUnmount(() => {
   height: 36px;
   border: 1px solid var(--p-slate-200);
   border-radius: 8px;
-  background: white;
+  background: var(--p-slate-100);
   color: var(--p-slate-600);
   cursor: pointer;
 }
@@ -4702,6 +4744,11 @@ onBeforeUnmount(() => {
 
 .context-picker {
   gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .context-tabs {
@@ -4747,6 +4794,63 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.context-panel--fc {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.context-panel--records {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.context-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.context-table-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 250, 252, 0.75);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.context-dialog :deep(.p-dialog) {
+  display: flex;
+  flex-direction: column;
+  height: min(75vh, 680px);
+  max-height: min(75vh, 680px);
+}
+
+.context-dialog :deep(.p-dialog-content) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0.75rem;
+}
+
+.context-dialog :deep(.p-dialog-close-button) {
+  pointer-events: auto;
+}
+
+.context-panel--fc :deep(.fc-pane-wrapper) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
 .context-toolbar {
   display: flex;
   align-items: center;
@@ -4774,10 +4878,20 @@ onBeforeUnmount(() => {
 }
 
 .context-data-table {
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--p-slate-200);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--p-slate-50);
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.context-data-table :deep(.p-datatable-table-container) {
+  flex: 1;
+  min-height: 0;
 }
 
 .context-data-table :deep(.p-datatable-thead > tr > th),
@@ -4833,71 +4947,44 @@ onBeforeUnmount(() => {
 }
 
 .context-primary-cell small,
+.context-file-cell small,
 .context-muted-cell {
   color: var(--p-slate-400);
   font-size: 0.68rem;
 }
 
-.context-folder-link {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  background: transparent;
-  color: var(--p-slate-700);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 700;
-  text-align: left;
-}
 
-.context-folder-link span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-folder-link:hover {
-  color: var(--harness-accent-strong);
-}
 
 .context-add-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-width: 74px;
-  min-height: 28px;
-  border: 1px solid var(--harness-accent-border);
-  border-radius: 7px;
-  background: white;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: var(--p-slate-100);
   color: var(--harness-accent-strong);
   cursor: pointer;
-  font: inherit;
-  font-size: 0.72rem;
-  font-weight: 800;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 
-.context-add-btn i {
-  display: inline-flex;
-  width: 14px;
-  height: 14px;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transform-origin: center center;
+.context-add-btn:hover:not(:disabled) {
+  background: var(--harness-accent-soft);
+  border-color: #c4b5fd;
+  color: var(--harness-accent-strong);
 }
 
-.context-add-btn.attached {
+.context-add-btn.attached,
+.context-add-btn:disabled {
   border-color: var(--p-emerald-200);
   background: var(--p-emerald-50);
   color: var(--p-emerald-700);
+  cursor: default;
 }
 
-.context-add-btn:disabled {
-  cursor: default;
-  opacity: 0.78;
+.context-add-btn i {
+  font-size: 0.72rem;
 }
 
 .context-loading,
@@ -4912,30 +4999,8 @@ onBeforeUnmount(() => {
 }
 
 .context-empty--table {
-  min-height: 88px;
-}
-
-.context-breadcrumbs {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 4px;
   flex: 1;
-}
-
-.context-breadcrumbs button {
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  border: 1px solid var(--p-slate-200);
-  border-radius: 6px;
-  background: #f8fafc;
-  color: var(--p-slate-600);
-  cursor: pointer;
-  padding: 5px 8px;
-  font-size: 0.7rem;
-  font-weight: 700;
+  min-height: 120px;
 }
 
 .skill-editor-form {
@@ -5018,7 +5083,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-tabs button.active {
-  background: white;
+  background: var(--p-slate-100);
   color: #6d28d9;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
@@ -5181,7 +5246,7 @@ onBeforeUnmount(() => {
 .agent-toolset-chip {
   min-height: 34px;
   border: 1px solid var(--p-slate-200);
-  background: white;
+  background: var(--p-slate-100);
   color: var(--p-slate-600);
 }
 
@@ -5223,7 +5288,7 @@ onBeforeUnmount(() => {
 
 .agent-secondary-btn {
   border-color: var(--p-slate-200);
-  background: white;
+  background: var(--p-slate-100);
   color: var(--p-slate-600);
 }
 

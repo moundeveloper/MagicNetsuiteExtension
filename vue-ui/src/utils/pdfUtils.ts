@@ -886,17 +886,21 @@ const resetPdfTextSpacing = (doc: JDoc): void => {
   if (typeof doc.setCharSpace === "function") {
     doc.setCharSpace(0);
   }
+  if (typeof doc.setWordSpacing === "function") {
+    doc.setWordSpacing(0);
+  }
 };
 
 const pdfText = (doc: JDoc, text: string, x: number, y: number): void => {
   resetPdfTextSpacing(doc);
-  doc.text(normalizePdfText(text), x, y);
+  doc.text(normalizePdfText(text), x, y, { charSpace: 0, wordSpacing: 0 });
   resetPdfTextSpacing(doc);
 };
 
 /** Apply the correct font/size to `doc` for a segment (side-effect). */
 const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
   resetPdfTextSpacing(doc);
+  if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
   if (seg.code) {
     doc.setFont('courier', 'normal');
     doc.setFontSize(baseSz - 1);
@@ -915,6 +919,7 @@ const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
 const pdfSegW = (doc: JDoc, seg: PdfSeg, baseSz: number): number => {
   pdfApplySegFont(doc, seg, baseSz);
   resetPdfTextSpacing(doc);
+  if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
   return doc.getTextWidth(normalizePdfText(seg.text)) as number;
 };
 
@@ -1008,10 +1013,12 @@ const pdfDrawLine = (
   let x = x0;
   for (const seg of segs) {
     pdfApplySegFont(doc, seg, baseSz);
+    resetPdfTextSpacing(doc);
+    if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
     const color = seg.code ? '#4338ca' : seg.strike ? '#9ca3af' : defColor;
     doc.setTextColor(color);
-    pdfText(doc, seg.text, x, y);
     const w = doc.getTextWidth(normalizePdfText(seg.text)) as number;
+    doc.text(normalizePdfText(seg.text), x, y, { charSpace: 0, wordSpacing: 0 });
     if (seg.strike) {
       doc.setDrawColor(color);
       doc.setLineWidth(0.4);

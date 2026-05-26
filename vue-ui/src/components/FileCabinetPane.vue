@@ -1,5 +1,5 @@
 <template>
-  <div class="fc-pane-wrapper">
+  <div class="fc-pane-wrapper" :class="{ 'fc-pane--context-picker': props.contextPicker }">
     <!-- ── Main content area ─────────────────────────────────────────────── -->
     <div class="fc-pane-main">
       <!-- Breadcrumb bar -->
@@ -33,7 +33,7 @@
           </template>
           <template v-else>
             <button
-              v-if="currentFolderInfo"
+              v-if="currentFolderInfo && !props.contextPicker"
               class="fc-view-toggle"
               :class="{ active: props.bookmarkedIds.has(currentFolderInfo.id) }"
               :title="props.bookmarkedIds.has(currentFolderInfo.id) ? 'Remove Bookmark' : 'Bookmark this folder'"
@@ -56,10 +56,10 @@
             >
               <i :class="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" class="text-xs"></i>
             </button>
-            <button class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
+            <button v-if="!props.contextPicker" class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
               <i class="pi pi-folder-plus text-xs"></i>
             </button>
-            <button class="fc-view-toggle" title="New Text File" @click="openNewFileDialog">
+            <button v-if="!props.contextPicker" class="fc-view-toggle" title="New Text File" @click="openNewFileDialog">
               <i class="pi pi-file-edit text-xs"></i>
             </button>
             <div class="fc-view-seg">
@@ -380,6 +380,26 @@
                 <template v-if="item.type === 'folder'">{{ item.numfolderfiles ?? 0 }} files</template>
                 <template v-else>{{ formatFileSize(item.filesize) }}</template>
               </div>
+              <div v-if="props.contextPicker && item.type === 'file'" class="fc-grid-add">
+                <button
+                  type="button"
+                  class="fc-add-btn"
+                  :class="{ attached: props.attachedFileIds?.has(item.id) }"
+                  :disabled="props.attachedFileIds?.has(item.id) || props.attachingFileIds?.has(item.id)"
+                  :title="props.attachedFileIds?.has(item.id) ? 'Added to context' : 'Add to context'"
+                  @click.stop="emit('add-to-context', item)"
+                >
+                  <i
+                    :class="
+                      props.attachingFileIds?.has(item.id)
+                        ? 'pi pi-spin pi-spinner'
+                        : props.attachedFileIds?.has(item.id)
+                          ? 'pi pi-check'
+                          : 'pi pi-plus'
+                    "
+                  />
+                </button>
+              </div>
             </div>
           </div>
           <!-- List view -->
@@ -404,6 +424,7 @@
                     <i v-if="sortField === 'lastmodifieddate'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
                   </th>
                   <th class="fc-th-id">ID</th>
+                  <th v-if="props.contextPicker" class="fc-th-action"></th>
                 </tr>
               </thead>
               <tbody>
@@ -443,6 +464,27 @@
                   </td>
                   <td class="fc-td-date">{{ item.lastmodifieddate || '—' }}</td>
                   <td class="fc-td-id">{{ item.id }}</td>
+                  <td v-if="props.contextPicker" class="fc-td-action">
+                    <button
+                      v-if="item.type === 'file'"
+                      type="button"
+                      class="fc-add-btn"
+                      :class="{ attached: props.attachedFileIds?.has(item.id) }"
+                      :disabled="props.attachedFileIds?.has(item.id) || props.attachingFileIds?.has(item.id)"
+                      :title="props.attachedFileIds?.has(item.id) ? 'Added to context' : 'Add to context'"
+                      @click.stop="emit('add-to-context', item)"
+                    >
+                      <i
+                        :class="
+                          props.attachingFileIds?.has(item.id)
+                            ? 'pi pi-spin pi-spinner'
+                            : props.attachedFileIds?.has(item.id)
+                              ? 'pi pi-check'
+                              : 'pi pi-plus'
+                        "
+                      />
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -469,7 +511,7 @@
 
     <!-- ── Detail / Preview panel ─────────────────────────────────────────── -->
     <div
-      v-if="detailItem && !openedFile"
+      v-if="detailItem && !openedFile && !props.contextPicker"
       class="fc-detail-panel"
       :style="{ width: detailPanelWidth + 'px' }"
     >
@@ -894,6 +936,12 @@ const props = defineProps<{
     lastmodifieddate: string | null;
     url?: string;
   } | null;
+  /** When true, shows an "Add" button on each file for context-picker usage. */
+  contextPicker?: boolean;
+  /** File IDs already attached to the harness context. */
+  attachedFileIds?: Set<number>;
+  /** File IDs currently being fetched for context attachment. */
+  attachingFileIds?: Set<number>;
 }>();
 
 const emit = defineEmits<{
@@ -905,6 +953,7 @@ const emit = defineEmits<{
   (e: "expand-folder", folderId: number): void;
   (e: "item-moved", dstFolderId: number): void;
   (e: "open-in-newtab", item: CabinetItem): void;
+  (e: "add-to-context", item: FileItem): void;
 }>();
 
 const toast = useToast();
@@ -1472,14 +1521,14 @@ const handleItemClick = (item: CabinetItem, event: MouseEvent) => {
   } else {
     selectedItems.value = [item];
   }
-  detailItem.value = item;
+  if (!props.contextPicker) detailItem.value = item;
 };
 
 const handleItemDblClick = (item: CabinetItem) => {
   if (item.type === "folder") {
     navigateToFolder(item.id);
     emit("expand-folder", item.id);
-  } else {
+  } else if (!props.contextPicker) {
     openFile(item as FileItem);
   }
 };
@@ -2248,6 +2297,7 @@ watch(currentFolderInfo, (info) => {
 
 onMounted(async () => {
   document.addEventListener("click", handleDocClick);
+  if (props.contextPicker) viewMode.value = "list";
   await navigateToFolder(props.initialFolderId ?? null);
   if (props.initialFile) {
     await openFile(props.initialFile as FileItem);
@@ -2406,6 +2456,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 }
 
 .fc-grid-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2680,6 +2731,70 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 
 /* ── Inline rename ───────────────────────────────────────────────────────── */
 .fc-rename-input { width: 100%; max-width: 100%; border: 1px solid var(--p-indigo-400); border-radius: 3px; padding: 1px 4px; font-size: inherit; background: var(--p-surface-0, #fff); color: inherit; outline: none; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+
+/* ── Context picker mode ─────────────────────────────────────────────────── */
+.fc-pane--context-picker .fc-pane-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.fc-pane--context-picker .fc-drop-zone {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.fc-pane--context-picker .fc-grid-view,
+.fc-pane--context-picker .fc-list-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.fc-th-action {
+  width: 44px;
+}
+
+.fc-td-action {
+  width: 44px;
+  text-align: center;
+}
+
+.fc-grid-add {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+}
+
+.fc-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  cursor: pointer;
+  font-size: 0.72rem;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.fc-add-btn:hover:not(:disabled) {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+
+.fc-add-btn.attached,
+.fc-add-btn:disabled {
+  border-color: var(--p-emerald-200);
+  background: var(--p-emerald-50);
+  color: var(--p-emerald-700);
+  cursor: default;
+}
 
 /* ── PrimeVue overrides ──────────────────────────────────────────────────── */
 :deep(.p-inputtext) { font-size: 0.75rem; }
