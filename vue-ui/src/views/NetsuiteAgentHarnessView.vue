@@ -2598,7 +2598,7 @@ const sendPrompt = async () => {
   editingItemId.value = null;
   editText.value = "";
   shouldStickToBottom.value = true;
-  await scrollToBottom();
+  await scrollToBottomAndSettle();
   await harness.runTurn(text, { attachments });
 };
 
@@ -2630,7 +2630,7 @@ const saveEdit = async (item: HarnessItemView) => {
   editingItemId.value = null;
   editText.value = "";
   shouldStickToBottom.value = true;
-  await scrollToBottom();
+  await scrollToBottomAndSettle();
   await harness.rerunFromItem(item.id, text, { attachments });
 };
 
@@ -2653,6 +2653,45 @@ const scrollToBottom = async () => {
     lastStreamScrollHeight = streamRef.value.scrollHeight;
   }
 };
+
+/** Scroll to bottom and wait until the browser has applied it (before heavy work). */
+const scrollToBottomAndSettle = (): Promise<void> =>
+  new Promise((resolve) => {
+    shouldStickToBottom.value = true;
+    void nextTick().then(() => {
+      const el = streamRef.value;
+      if (!el) {
+        resolve();
+        return;
+      }
+
+      const applyScroll = () => {
+        el.scrollTop = el.scrollHeight;
+        lastStreamScrollHeight = el.scrollHeight;
+      };
+
+      applyScroll();
+      requestAnimationFrame(() => {
+        applyScroll();
+        requestAnimationFrame(() => {
+          applyScroll();
+          let frames = 0;
+          const waitForSettle = () => {
+            applyScroll();
+            const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+            const atBottom = Math.abs(el.scrollTop - maxScroll) <= 3;
+            frames += 1;
+            if (atBottom || frames >= 10) {
+              resolve();
+              return;
+            }
+            requestAnimationFrame(waitForSettle);
+          };
+          requestAnimationFrame(waitForSettle);
+        });
+      });
+    });
+  });
 
 const syncStreamScrollAfterRender = async (
   options: { target?: EventTarget | null } = {}

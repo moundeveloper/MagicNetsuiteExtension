@@ -1774,6 +1774,11 @@ export const useNetsuiteAgentHarness = (
     const controller = new AbortController();
     activeController.value = controller;
 
+    // Allow the UI scroll (triggered by the view before runTurn) to paint first.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+
     try {
       const { attachments, prefetchCalls, prefetchMessages } = await resolveAttachmentsForTurn(
         rawAttachments,

@@ -112,6 +112,18 @@
             <span class="fc-search-result-name">{{ result.name }}</span>
             <span class="fc-search-result-path">{{ result.path }}</span>
             <button
+              v-if="props.contextPicker && result.type === 'file'"
+              type="button"
+              class="fc-add-btn fc-search-add-btn"
+              :class="{ attached: props.attachedFileIds?.has(result.id) }"
+              :disabled="props.attachedFileIds?.has(result.id)"
+              title="Add to context"
+              @click.stop="addSearchResultToContext(result)"
+            >
+              <i :class="props.attachedFileIds?.has(result.id) ? 'pi pi-check' : 'pi pi-plus'" />
+            </button>
+            <button
+              v-else-if="!props.contextPicker"
               class="fc-search-result-bookmark"
               :title="props.bookmarkedIds.has(result.id) ? 'Remove Bookmark' : 'Add Bookmark'"
               @click.stop="toggleBookmarkFromSearchResult(result)"
@@ -298,7 +310,7 @@
       <template v-else>
           <div
             class="fc-drop-zone"
-            :class="{ 'fc-drag-over': isDragOver }"
+            :class="{ 'fc-drag-over': !props.contextPicker && isDragOver }"
             @dragover="handleDragOver"
             @dragleave="handleDragLeave"
             @drop="handleDrop"
@@ -319,7 +331,7 @@
               <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
               <span class="text-sm text-gray-600 mt-2">Moving...</span>
             </div>
-          <div v-if="isDragOver" class="fc-drop-overlay">
+          <div v-if="!props.contextPicker && isDragOver" class="fc-drop-overlay">
             <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
             <p>Drop files to upload to this folder</p>
           </div>
@@ -496,7 +508,7 @@
           <span>{{ folderCount }} folder{{ folderCount !== 1 ? 's' : '' }}, {{ fileCount }} file{{ fileCount !== 1 ? 's' : '' }}</span>
           <span v-if="selectedItems.length > 0" class="ml-4">{{ selectedItems.length }} selected</span>
           <Button
-            v-if="selectedItems.length > 1"
+            v-if="!props.contextPicker && selectedItems.length > 1"
             size="small"
             severity="danger"
             class="ml-auto fc-bulk-delete-btn"
@@ -1301,7 +1313,31 @@ const fetchFileContent = async (file: FileItem) => {
   return result;
 };
 
+const searchResultToFileItem = (
+  result: (typeof globalSearchResults.value)[0]
+): FileItem => ({
+  type: "file",
+  id: result.id,
+  name: result.name,
+  filetype: result.filetype || "",
+  filesize: result.filesize || 0,
+  folder: result.folder || 0,
+  lastmodifieddate: null,
+  url: result.url,
+});
+
+const addSearchResultToContext = (result: (typeof globalSearchResults.value)[0]) => {
+  if (result.type !== "file") return;
+  emit("add-to-context", searchResultToFileItem(result));
+  globalSearchQuery.value = "";
+  globalSearchResults.value = [];
+};
+
 const openFile = async (file: FileItem) => {
+  if (props.contextPicker) {
+    emit("add-to-context", file);
+    return;
+  }
   if (!file.url) {
     toast.add({ severity: "warn", summary: "No URL", detail: "This file has no accessible URL", life: 3000 });
     return;
@@ -1548,7 +1584,30 @@ const showContextMenuAt = (event: MouseEvent, actions: ContextMenuAction[]) => {
 
 const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
   selectedItems.value = [item];
-  detailItem.value = item;
+  if (!props.contextPicker) detailItem.value = item;
+
+  if (props.contextPicker) {
+    const actions: ContextMenuAction[] = [];
+    if (item.type === "folder") {
+      actions.push({
+        label: "Open Folder",
+        icon: "pi pi-folder-open",
+        handler: () => navigateToFolder(item.id),
+      });
+    } else {
+      const attached = props.attachedFileIds?.has(item.id);
+      actions.push({
+        label: attached ? "Queued for send" : "Add to context",
+        icon: attached ? "pi pi-check" : "pi pi-plus",
+        handler: () => {
+          if (!attached) emit("add-to-context", item as FileItem);
+        },
+      });
+    }
+    showContextMenuAt(event, actions);
+    return;
+  }
+
   const actions: ContextMenuAction[] = [];
   if (item.type === "folder") {
     actions.push({ label: "Open Folder", icon: "pi pi-folder-open", handler: () => navigateToFolder(item.id) });
@@ -1581,6 +1640,7 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
 };
 
 const handleBodyContextMenu = (event: MouseEvent) => {
+  if (props.contextPicker) return;
   // Only show when right-clicking on the empty background (not on an item)
   const target = event.target as HTMLElement;
   const isOnItem = target.closest(".fc-grid-item, .fc-table-row");
@@ -1800,6 +1860,7 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
 };
 
 const handleDragOver = (event: DragEvent) => {
+  if (props.contextPicker) return;
   event.preventDefault();
   if (event.dataTransfer?.types.includes("Files")) {
     isDragOver.value = true;
@@ -1809,12 +1870,14 @@ const handleDragOver = (event: DragEvent) => {
 };
 
 const handleDragLeave = (event: DragEvent) => {
+  if (props.contextPicker) return;
   const related = event.relatedTarget as Node | null;
   const target = event.currentTarget as HTMLElement;
   if (!related || !target.contains(related)) isDragOver.value = false;
 };
 
 const handleDrop = async (event: DragEvent) => {
+  if (props.contextPicker) return;
   event.preventDefault();
   isDragOver.value = false;
 
@@ -2019,13 +2082,17 @@ const executeGlobalSearch = async (query: string) => {
 };
 
 const handleSearchResultClick = async (result: typeof globalSearchResults.value[0]) => {
+  if (props.contextPicker && result.type === "file") {
+    addSearchResultToContext(result);
+    return;
+  }
   globalSearchQuery.value = "";
   globalSearchResults.value = [];
   if (result.type === "folder") {
     navigateToFolder(result.id);
   } else {
     if (result.folder) await navigateToFolder(result.folder);
-    openFile({ type: "file", id: result.id, name: result.name, filetype: result.filetype || "", filesize: result.filesize || 0, folder: result.folder || 0, lastmodifieddate: null, url: result.url } as FileItem);
+    openFile(searchResultToFileItem(result));
   }
 };
 
@@ -2700,6 +2767,11 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 .fc-search-result-bookmark { background: none; border: none; padding: 0.2rem; cursor: pointer; border-radius: 3px; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
 .fc-search-result-item:hover .fc-search-result-bookmark { opacity: 1; }
 .fc-search-result-bookmark:hover { background: var(--p-slate-200); }
+
+.fc-search-add-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+}
 .fc-search-empty { padding: 0.75rem; text-align: center; font-size: 0.75rem; color: var(--p-slate-400); border-top: 1px solid var(--p-slate-200); }
 
 /* ── Confirm dialogs ─────────────────────────────────────────────────────── */
