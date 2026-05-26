@@ -176,7 +176,13 @@
                 <i class="pi pi-cloud-upload" />
                 <span>Drop files to attach</span>
               </div>
-              <div ref="streamRef" class="stream-list" @scroll.passive="onStreamScroll">
+              <div
+                ref="streamRef"
+                class="stream-list"
+                :class="{ 'stream-list--ready': streamScrollReady }"
+                @scroll.passive="onStreamScroll"
+              >
+                <div ref="streamContentRef" class="stream-inner">
                 <div v-if="harness.items.value.length === 0" class="empty-state">
                   <div class="empty-mark">
                     <i class="pi pi-bolt" />
@@ -433,6 +439,7 @@
                     </div>
                   </article>
                 </template>
+                </div>
               </div>
 
               <form class="composer" @submit.prevent="sendPrompt">
@@ -1255,12 +1262,17 @@ const router = useRouter();
 
 const prompt = ref("");
 const streamRef = ref<HTMLDivElement | null>(null);
+const streamContentRef = ref<HTMLDivElement | null>(null);
+const streamScrollReady = ref(false);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const pendingAttachments = ref<HarnessAttachment[]>([]);
 const isProcessingFiles = ref(false);
 const isDragOver = ref(false);
 const shouldStickToBottom = ref(true);
 let lastStreamScrollHeight = 0;
+let streamScrollRafId: number | null = null;
+let streamScrollPriming = false;
+let streamResizeObserver: ResizeObserver | null = null;
 const expandedToolIds = ref(new Set<string>());
 const expandedToolsetIds = ref(new Set<HarnessToolsetId>());
 const expandedActionTurnIds = ref(new Set<string>());
@@ -2645,81 +2657,72 @@ const onStreamScroll = () => {
   lastStreamScrollHeight = streamRef.value?.scrollHeight ?? 0;
 };
 
-const scrollToBottom = async () => {
-  await nextTick();
-  if (streamRef.value) {
-    streamRef.value.scrollTop = streamRef.value.scrollHeight;
-    shouldStickToBottom.value = true;
-    lastStreamScrollHeight = streamRef.value.scrollHeight;
-  }
-};
-
-/** Scroll to bottom and wait until the browser has applied it (before heavy work). */
-const scrollToBottomAndSettle = (): Promise<void> =>
-  new Promise((resolve) => {
-    shouldStickToBottom.value = true;
-    void nextTick().then(() => {
-      const el = streamRef.value;
-      if (!el) {
-        resolve();
-        return;
-      }
-
-      const applyScroll = () => {
-        el.scrollTop = el.scrollHeight;
-        lastStreamScrollHeight = el.scrollHeight;
-      };
-
-      applyScroll();
-      requestAnimationFrame(() => {
-        applyScroll();
-        requestAnimationFrame(() => {
-          applyScroll();
-          let frames = 0;
-          const waitForSettle = () => {
-            applyScroll();
-            const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
-            const atBottom = Math.abs(el.scrollTop - maxScroll) <= 3;
-            frames += 1;
-            if (atBottom || frames >= 10) {
-              resolve();
-              return;
-            }
-            requestAnimationFrame(waitForSettle);
-          };
-          requestAnimationFrame(waitForSettle);
-        });
-      });
-    });
-  });
-
-const syncStreamScrollAfterRender = async (
-  options: { target?: EventTarget | null } = {}
-) => {
+const applyScrollToBottom = () => {
   const el = streamRef.value;
   if (!el) return;
-  if (!shouldStickToBottom.value && !options.target) return;
+  el.scrollTop = el.scrollHeight;
+  lastStreamScrollHeight = el.scrollHeight;
+};
+
+const scheduleScrollToBottom = () => {
+  if (!shouldStickToBottom.value || streamScrollPriming) return;
+  if (streamScrollRafId !== null) return;
+  streamScrollRafId = requestAnimationFrame(() => {
+    streamScrollRafId = null;
+    applyScrollToBottom();
+  });
+};
+
+/** Position at bottom before showing the stream (avoids visible scroll-on-load). */
+const primeStreamScrollAtBottom = async (
+  options: { keepVisible?: boolean } = {}
+): Promise<void> => {
+  streamScrollPriming = true;
+  shouldStickToBottom.value = true;
+  if (!options.keepVisible) {
+    streamScrollReady.value = false;
+  }
+
+  await nextTick();
+  applyScrollToBottom();
+
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      applyScrollToBottom();
+      streamScrollPriming = false;
+      streamScrollReady.value = true;
+      resolve();
+    });
+  });
+};
+
+const scrollToBottom = async () => {
+  shouldStickToBottom.value = true;
+  await primeStreamScrollAtBottom({ keepVisible: true });
+};
+
+/** Scroll to bottom once layout has caught up (before heavy work on send). */
+const scrollToBottomAndSettle = (): Promise<void> =>
+  primeStreamScrollAtBottom({ keepVisible: true });
+
+const preserveScrollOnContentGrowth = async (
+  target?: EventTarget | null
+) => {
+  const el = streamRef.value;
+  if (!el || shouldStickToBottom.value) return;
 
   const previousHeight = lastStreamScrollHeight || el.scrollHeight;
   const previousTop = el.scrollTop;
   await nextTick();
   if (!streamRef.value) return;
 
-  if (shouldStickToBottom.value) {
-    if (isStreamNearBottom(200)) {
-      streamRef.value.scrollTop = streamRef.value.scrollHeight;
-    }
-    lastStreamScrollHeight = streamRef.value.scrollHeight;
-    return;
-  }
-
-  if (!(options.target instanceof Element)) {
+  if (!(target instanceof Element)) {
     lastStreamScrollHeight = streamRef.value.scrollHeight;
     return;
   }
 
   const streamRect = streamRef.value.getBoundingClientRect();
-  const targetRect = options.target.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
   const heightDelta = streamRef.value.scrollHeight - previousHeight;
   if (heightDelta > 0 && targetRect.bottom < streamRect.top) {
     streamRef.value.scrollTop = previousTop + heightDelta;
@@ -2728,11 +2731,22 @@ const syncStreamScrollAfterRender = async (
 };
 
 const handleDynamicContentLoad = (event: Event) => {
-  if (!shouldStickToBottom.value) {
-    void syncStreamScrollAfterRender({ target: event.target });
+  if (shouldStickToBottom.value) {
+    scheduleScrollToBottom();
     return;
   }
-  void syncStreamScrollAfterRender();
+  void preserveScrollOnContentGrowth(event.target);
+};
+
+const setupStreamResizeObserver = () => {
+  streamResizeObserver?.disconnect();
+  const content = streamContentRef.value;
+  if (!content) return;
+
+  streamResizeObserver = new ResizeObserver(() => {
+    scheduleScrollToBottom();
+  });
+  streamResizeObserver.observe(content);
 };
 
 const formatDate = (iso: string) =>
@@ -2969,8 +2983,8 @@ const onDrop = async (event: DragEvent) => {
 watch(
   () => harness.items.value.map((item) => `${item.id}:${item.content.length}:${item.status}`).join("|"),
   () => {
-    if (harness.contextResolving.value) return;
-    void syncStreamScrollAfterRender();
+    if (harness.contextResolving.value || shouldStickToBottom.value) return;
+    void preserveScrollOnContentGrowth();
   }
 );
 
@@ -2987,21 +3001,29 @@ watch(contextPickerVisible, (visible) => {
 
 watch(
   () => harness.activeThread.value?.threadId,
-  () => {
+  async () => {
     for (const url of artifactPreviewUrls.values()) {
       URL.revokeObjectURL(url);
     }
     artifactPreviewUrls.clear();
+    await primeStreamScrollAtBottom();
   }
 );
 
 onMounted(async () => {
   await harness.initialize();
   await refreshSkills();
-  await scrollToBottom();
+  await nextTick();
+  setupStreamResizeObserver();
 });
 
 onBeforeUnmount(() => {
+  streamResizeObserver?.disconnect();
+  streamResizeObserver = null;
+  if (streamScrollRafId !== null) {
+    cancelAnimationFrame(streamScrollRafId);
+    streamScrollRafId = null;
+  }
   document.removeEventListener("keydown", onContextPickerKeydown);
   document.body.style.overflow = "";
   for (const url of artifactPreviewUrls.values()) {
@@ -3618,12 +3640,22 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-anchor: none;
+  scroll-behavior: auto;
   padding: 16px 18px;
   background:
     linear-gradient(180deg, rgba(245, 243, 255, 0.42), transparent 180px),
     linear-gradient(90deg, rgba(248, 250, 252, 0.72), transparent 320px),
     #ffffff;
   contain: layout paint;
+}
+
+.stream-list:not(.stream-list--ready) {
+  visibility: hidden;
+}
+
+.stream-inner {
+  min-height: min-content;
 }
 
 .empty-state {
