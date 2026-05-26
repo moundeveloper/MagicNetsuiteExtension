@@ -90,10 +90,16 @@ export const extractPdfText = async (file: File): Promise<PdfTextResult> => {
     const textContent = await page.getTextContent();
 
     const rawItems = textContent.items.filter(
-      (item): item is typeof item & { str: string; transform: number[]; height: number } =>
+      (
+        item
+      ): item is typeof item & {
+        str: string;
+        transform: number[];
+        height: number;
+      } =>
         "str" in item &&
         typeof (item as { str?: unknown }).str === "string" &&
-        ((item as { str: string }).str).trim().length > 0
+        (item as { str: string }).str.trim().length > 0
     );
 
     if (rawItems.length === 0) {
@@ -119,7 +125,11 @@ export const extractPdfText = async (file: File): Promise<PdfTextResult> => {
     const lineObjects: LineObject[] = [];
     for (const y of sortedYs) {
       const lineItems = lineMap.get(y)!.sort((a, b) => a.x - b.x);
-      const text = lineItems.map((it) => it.str).join(" ").replace(/\s{2,}/g, " ").trim();
+      const text = lineItems
+        .map((it) => it.str)
+        .join(" ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
       const height = Math.max(...lineItems.map((it) => it.height));
       if (text) lineObjects.push({ text, height, y });
     }
@@ -130,7 +140,8 @@ export const extractPdfText = async (file: File): Promise<PdfTextResult> => {
     }
 
     const avgHeight =
-      lineObjects.reduce((sum, l) => sum + l.height, 0) / lineObjects.length || 12;
+      lineObjects.reduce((sum, l) => sum + l.height, 0) / lineObjects.length ||
+      12;
     const paragraphThreshold = avgHeight * 1.5;
 
     const textLines: string[] = [];
@@ -183,7 +194,10 @@ const inlineMarkdown = (raw: string): string => {
 /** Parse a GFM table from an array of `| ... |` lines */
 const parseMarkdownTable = (tableLines: string[]): string => {
   const parseRow = (line: string): string[] =>
-    line.split("|").slice(1, -1).map((cell) => cell.trim());
+    line
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
 
   const isSeparator = (line: string): boolean =>
     /^\s*\|[\s\-:|]+\|\s*$/.test(line);
@@ -192,11 +206,16 @@ const parseMarkdownTable = (tableLines: string[]): string => {
   const headerRows = sepIdx > 0 ? tableLines.slice(0, sepIdx) : [];
   const bodyRows = sepIdx >= 0 ? tableLines.slice(sepIdx + 1) : tableLines;
 
-  let html = '<table>';
+  let html = "<table>";
   if (headerRows.length > 0) {
     html += "<thead>";
     for (const row of headerRows) {
-      html += "<tr>" + parseRow(row).map((c) => `<th>${inlineMarkdown(c)}</th>`).join("") + "</tr>";
+      html +=
+        "<tr>" +
+        parseRow(row)
+          .map((c) => `<th>${inlineMarkdown(c)}</th>`)
+          .join("") +
+        "</tr>";
     }
     html += "</thead>";
   }
@@ -204,7 +223,12 @@ const parseMarkdownTable = (tableLines: string[]): string => {
   if (dataRows.length > 0) {
     html += "<tbody>";
     for (const row of dataRows) {
-      html += "<tr>" + parseRow(row).map((c) => `<td>${inlineMarkdown(c)}</td>`).join("") + "</tr>";
+      html +=
+        "<tr>" +
+        parseRow(row)
+          .map((c) => `<td>${inlineMarkdown(c)}</td>`)
+          .join("") +
+        "</tr>";
     }
     html += "</tbody>";
   }
@@ -212,14 +236,17 @@ const parseMarkdownTable = (tableLines: string[]): string => {
 };
 
 /** Detect and return a callout type from a blockquote's first line, or null */
-const CALLOUT_TYPES: Record<string, { label: string; icon: string; cls: string }> = {
-  NOTE:      { label: "Note",      icon: "ℹ",  cls: "callout-note"      },
-  INFO:      { label: "Info",      icon: "ℹ",  cls: "callout-note"      },
-  TIP:       { label: "Tip",       icon: "💡", cls: "callout-tip"       },
-  IMPORTANT: { label: "Important", icon: "★",  cls: "callout-important" },
-  WARNING:   { label: "Warning",   icon: "⚠",  cls: "callout-warning"   },
-  CAUTION:   { label: "Caution",   icon: "⚠",  cls: "callout-warning"   },
-  DANGER:    { label: "Danger",    icon: "✖",  cls: "callout-danger"    },
+const CALLOUT_TYPES: Record<
+  string,
+  { label: string; icon: string; cls: string }
+> = {
+  NOTE: { label: "Note", icon: "ℹ", cls: "callout-note" },
+  INFO: { label: "Info", icon: "ℹ", cls: "callout-note" },
+  TIP: { label: "Tip", icon: "💡", cls: "callout-tip" },
+  IMPORTANT: { label: "Important", icon: "★", cls: "callout-important" },
+  WARNING: { label: "Warning", icon: "⚠", cls: "callout-warning" },
+  CAUTION: { label: "Caution", icon: "⚠", cls: "callout-warning" },
+  DANGER: { label: "Danger", icon: "✖", cls: "callout-danger" }
 };
 
 type ListType = "ul" | "ol" | null;
@@ -259,7 +286,10 @@ export const markdownToHtml = (markdown: string): string => {
   // ── helpers ──────────────────────────────────────────────────
 
   const closeListsToLevel = (targetIndent: number) => {
-    while (listStack.length > 0 && listStack[listStack.length - 1]!.indent >= targetIndent) {
+    while (
+      listStack.length > 0 &&
+      listStack[listStack.length - 1]!.indent >= targetIndent
+    ) {
       const frame = listStack.pop()!;
       parts.push(`</${frame.type}>`);
     }
@@ -280,7 +310,11 @@ export const markdownToHtml = (markdown: string): string => {
     const calloutMatch = firstLine.match(/^\[!([\w]+)\]\s*(.*)?$/);
     if (calloutMatch) {
       const key = calloutMatch[1]!.toUpperCase();
-      const meta = CALLOUT_TYPES[key] ?? { label: key, icon: "ℹ", cls: "callout-note" };
+      const meta = CALLOUT_TYPES[key] ?? {
+        label: key,
+        icon: "ℹ",
+        cls: "callout-note"
+      };
       const titleExtra = calloutMatch[2]?.trim() ?? "";
       const bodyLines = qlines.slice(1);
       const bodyHtml = bodyLines.length
@@ -290,7 +324,7 @@ export const markdownToHtml = (markdown: string): string => {
         `<div class="callout ${meta.cls}">` +
           `<div class="callout-title">${meta.icon} ${escHtml(titleExtra || meta.label)}</div>` +
           (bodyHtml ? `<div class="callout-body">${bodyHtml}</div>` : "") +
-        `</div>`
+          `</div>`
       );
     } else {
       const inner = qlines.map((l) => `<p>${inlineMarkdown(l)}</p>`).join("");
@@ -337,7 +371,10 @@ export const markdownToHtml = (markdown: string): string => {
       }
       continue;
     }
-    if (inCode) { codeLines.push(raw); continue; }
+    if (inCode) {
+      codeLines.push(raw);
+      continue;
+    }
 
     // ── GFM table row ──────────────────────────────────────────
     if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
@@ -380,8 +417,11 @@ export const markdownToHtml = (markdown: string): string => {
       const checked = /\[[xX]\]/.test(line);
       const text = line.replace(/^(\s*)[-*] \[[ xX]\] /, "").trim();
       closeListsToLevel(indent);
-      if (!listStack.length || listStack[listStack.length - 1]!.indent < indent) {
-        parts.push("<ul class=\"task-list\">");
+      if (
+        !listStack.length ||
+        listStack[listStack.length - 1]!.indent < indent
+      ) {
+        parts.push('<ul class="task-list">');
         listStack.push({ type: "ul", indent });
       }
       const chk = checked ? "checked" : "";
@@ -765,7 +805,9 @@ const DOCUMENT_CSS = `
  * Generate a styled HTML document from markdown content.
  * Returns a blob URL (text/html) that can be set as an iframe src.
  */
-export const generateDocument = (options: PdfGenerateOptions): PdfGenerateResult => {
+export const generateDocument = (
+  options: PdfGenerateOptions
+): PdfGenerateResult => {
   const bodyHtml = markdownToHtml(options.content);
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", {
@@ -830,18 +872,18 @@ export const revokePdfUrl = (url: string) => {
 // A4 page constants (points)
 const PDF_A4_W = 595.28;
 const PDF_A4_H = 841.89;
-const PDF_ML   = 50;    // left margin
-const PDF_MT   = 60;    // top margin
-const PDF_MB   = 55;    // bottom margin
-const PDF_CW   = PDF_A4_W - PDF_ML - 50; // 495.28 (50 pt right margin)
+const PDF_ML = 50; // left margin
+const PDF_MT = 60; // top margin
+const PDF_MB = 55; // bottom margin
+const PDF_CW = PDF_A4_W - PDF_ML - 50; // 495.28 (50 pt right margin)
 
 // ── Inline segment ────────────────────────────────────────────────────────────
 
 interface PdfSeg {
-  text:   string;
-  bold:   boolean;
+  text: string;
+  bold: boolean;
   italic: boolean;
-  code:   boolean;
+  code: boolean;
   strike: boolean;
 }
 
@@ -852,17 +894,24 @@ const parsePdfSegs = (raw: string): PdfSeg[] => {
     /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*([^*\n]+?)\*|_([^_\n]+?)_|~~(.+?)~~|`([^`]+?)`|\[([^\]]+?)\]\([^)]+?\)/g;
   let last = 0;
   let m: RegExpExecArray | null;
-  const push = (text: string, b: boolean, it: boolean, c: boolean, s: boolean) => {
+  const push = (
+    text: string,
+    b: boolean,
+    it: boolean,
+    c: boolean,
+    s: boolean
+  ) => {
     if (text) result.push({ text, bold: b, italic: it, code: c, strike: s });
   };
   while ((m = re.exec(raw)) !== null) {
-    if (m.index > last) push(raw.slice(last, m.index), false, false, false, false);
-    if      (m[1] != null) push(m[1], true,  true,  false, false);
-    else if (m[2] != null) push(m[2], true,  false, false, false);
-    else if (m[3] != null) push(m[3], false, true,  false, false);
-    else if (m[4] != null) push(m[4], false, true,  false, false);
+    if (m.index > last)
+      push(raw.slice(last, m.index), false, false, false, false);
+    if (m[1] != null) push(m[1], true, true, false, false);
+    else if (m[2] != null) push(m[2], true, false, false, false);
+    else if (m[3] != null) push(m[3], false, true, false, false);
+    else if (m[4] != null) push(m[4], false, true, false, false);
     else if (m[5] != null) push(m[5], false, false, false, true);
-    else if (m[6] != null) push(m[6], false, false, true,  false);
+    else if (m[6] != null) push(m[6], false, false, true, false);
     else if (m[7] != null) push(m[7], false, false, false, false); // link → plain text
     last = m.index + m[0]!.length;
   }
@@ -878,9 +927,11 @@ type JDoc = any; // jsPDF instance — typed as any to avoid a static import of 
 const normalizePdfText = (text: string): string =>
   text
     .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\s*\x10\s*/g, "-")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x0F\x11-\x1F\x7F]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, "")
     .replace(/\u00A0/g, " ")
-    .replace(/\b(?:[A-Z]\s+){2,}[A-Z]\b/g, (match) => match.replace(/\s+/g, ""));
+    .replace(/[ \t]+/g, " ");
 
 const resetPdfTextSpacing = (doc: JDoc): void => {
   if (typeof doc.setCharSpace === "function") {
@@ -892,8 +943,12 @@ const resetPdfTextSpacing = (doc: JDoc): void => {
 };
 
 const pdfText = (doc: JDoc, text: string, x: number, y: number): void => {
+  const clean = normalizePdfText(text);
+  if (!clean) return;
+
   resetPdfTextSpacing(doc);
-  doc.text(normalizePdfText(text), x, y, { charSpace: 0, wordSpacing: 0 });
+  if (typeof doc.setR2L === "function") doc.setR2L(false);
+  doc.text(clean, x, y);
   resetPdfTextSpacing(doc);
 };
 
@@ -902,15 +957,18 @@ const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
   resetPdfTextSpacing(doc);
   if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
   if (seg.code) {
-    doc.setFont('courier', 'normal');
+    doc.setFont("courier", "normal");
     doc.setFontSize(baseSz - 1);
   } else {
     const style =
-      seg.bold && seg.italic ? 'bolditalic'
-      : seg.bold             ? 'bold'
-      : seg.italic           ? 'italic'
-      : 'normal';
-    doc.setFont('helvetica', style);
+      seg.bold && seg.italic
+        ? "bolditalic"
+        : seg.bold
+          ? "bold"
+          : seg.italic
+            ? "italic"
+            : "normal";
+    doc.setFont("helvetica", style);
     doc.setFontSize(baseSz);
   }
 };
@@ -918,8 +976,6 @@ const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
 /** Return the rendered width (pt) of a segment. Sets font as a side-effect. */
 const pdfSegW = (doc: JDoc, seg: PdfSeg, baseSz: number): number => {
   pdfApplySegFont(doc, seg, baseSz);
-  resetPdfTextSpacing(doc);
-  if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
   return doc.getTextWidth(normalizePdfText(seg.text)) as number;
 };
 
@@ -928,10 +984,10 @@ const pdfSegW = (doc: JDoc, seg: PdfSeg, baseSz: number): number => {
  * Returns an array of lines; each line is an array of PdfSeg.
  */
 const pdfWrapSegs = (
-  doc:    JDoc,
-  segs:   PdfSeg[],
-  maxW:   number,
-  baseSz: number,
+  doc: JDoc,
+  segs: PdfSeg[],
+  maxW: number,
+  baseSz: number
 ): PdfSeg[][] => {
   const lines: PdfSeg[][] = [];
   let line: PdfSeg[] = [];
@@ -939,7 +995,7 @@ const pdfWrapSegs = (
 
   const newLine = (): void => {
     lines.push(line);
-    line  = [];
+    line = [];
     lineW = 0;
   };
 
@@ -967,11 +1023,14 @@ const pdfWrapSegs = (
   for (const seg of segs) {
     // Tokenise into words + spaces
     const tokens: Array<{ t: string; isSp: boolean }> = [];
-    let buf = '';
+    let buf = "";
     for (const ch of seg.text) {
-      if (ch === ' ' || ch === '\n') {
-        if (buf) { tokens.push({ t: buf, isSp: false }); buf = ''; }
-        tokens.push({ t: ch === '\n' ? '\n' : ' ', isSp: true });
+      if (ch === " " || ch === "\n") {
+        if (buf) {
+          tokens.push({ t: buf, isSp: false });
+          buf = "";
+        }
+        tokens.push({ t: ch === "\n" ? "\n" : " ", isSp: true });
       } else {
         buf += ch;
       }
@@ -979,12 +1038,18 @@ const pdfWrapSegs = (
     if (buf) tokens.push({ t: buf, isSp: false });
 
     for (const { t, isSp } of tokens) {
-      if (t === '\n') { newLine(); continue; }
+      if (t === "\n") {
+        newLine();
+        continue;
+      }
       const tSeg: PdfSeg = { ...seg, text: t };
       const w = pdfSegW(doc, tSeg, baseSz);
       if (isSp) {
-        if (line.length === 0) continue;           // skip leading space on new line
-        if (lineW + w <= maxW) { line.push(tSeg); lineW += w; }
+        if (line.length === 0) continue; // skip leading space on new line
+        if (lineW + w <= maxW) {
+          line.push(tSeg);
+          lineW += w;
+        }
         // space that would overflow: discard (natural line-break boundary)
       } else {
         const pieces = splitLongToken(tSeg);
@@ -1003,34 +1068,47 @@ const pdfWrapSegs = (
 
 /** Draw one pre-wrapped line of segments at baseline `y`. */
 const pdfDrawLine = (
-  doc:      JDoc,
-  segs:     PdfSeg[],
-  x0:       number,
-  y:        number,
-  baseSz:   number,
-  defColor: string,
+  doc: JDoc,
+  segs: PdfSeg[],
+  x0: number,
+  y: number,
+  baseSz: number,
+  defColor: string
 ): void => {
   let x = x0;
+
   for (const seg of segs) {
+    const clean = normalizePdfText(seg.text);
+    if (!clean) continue;
+
     pdfApplySegFont(doc, seg, baseSz);
     resetPdfTextSpacing(doc);
-    if (typeof doc.setWordSpacing === "function") doc.setWordSpacing(0);
-    const color = seg.code ? '#4338ca' : seg.strike ? '#9ca3af' : defColor;
+
+    const color = seg.code ? "#4338ca" : seg.strike ? "#9ca3af" : defColor;
     doc.setTextColor(color);
-    const w = doc.getTextWidth(normalizePdfText(seg.text)) as number;
-    doc.text(normalizePdfText(seg.text), x, y, { charSpace: 0, wordSpacing: 0 });
+
+    doc.text(clean, x, y);
+
+    const w = doc.getTextWidth(clean) as number;
+
     if (seg.strike) {
       doc.setDrawColor(color);
       doc.setLineWidth(0.4);
       doc.line(x, y - baseSz * 0.3, x + w, y - baseSz * 0.3);
     }
+
     x += w;
   }
+
+  resetPdfTextSpacing(doc);
 };
 
 // ── Render context ────────────────────────────────────────────────────────────
 
-interface PdfCtx { doc: JDoc; y: number; }
+interface PdfCtx {
+  doc: JDoc;
+  y: number;
+}
 
 /** Add a new page and reset y to the top margin. */
 const pdfNewPage = (ctx: PdfCtx): void => {
@@ -1040,7 +1118,11 @@ const pdfNewPage = (ctx: PdfCtx): void => {
 
 /** If fewer than `needed` points remain on the page, start a new page. */
 const pdfRoom = (ctx: PdfCtx, needed: number): void => {
-  if (ctx.y + needed > PDF_A4_H - PDF_MB) pdfNewPage(ctx);
+  const available = PDF_A4_H - PDF_MB - ctx.y;
+
+  if (needed > available && ctx.y > PDF_MT) {
+    pdfNewPage(ctx);
+  }
 };
 
 // ── Block renderers ───────────────────────────────────────────────────────────
@@ -1050,16 +1132,16 @@ const pdfRoom = (ctx: PdfCtx, needed: number): void => {
  * Advances ctx.y; returns the new ctx.y value.
  */
 const pdfParagraph = (
-  ctx:   PdfCtx,
-  raw:   string,
-  sz:    number,
+  ctx: PdfCtx,
+  raw: string,
+  sz: number,
   lineH: number,
   color: string,
-  lx:    number = PDF_ML,
-  maxW:  number = PDF_CW,
+  lx: number = PDF_ML,
+  maxW: number = PDF_CW
 ): number => {
   if (!raw.trim()) return ctx.y;
-  const segs  = parsePdfSegs(raw);
+  const segs = parsePdfSegs(raw);
   const lines = pdfWrapSegs(ctx.doc, segs, maxW, sz);
   for (const ln of lines) {
     pdfRoom(ctx, lineH);
@@ -1071,16 +1153,16 @@ const pdfParagraph = (
 
 const pdfHeading = (ctx: PdfCtx, text: string, level: 1 | 2 | 3): void => {
   const H = {
-    1: { sz: 16, color: '#1e1b4b', top: 22, bot: 8,  rule: true  },
-    2: { sz: 13, color: '#312e81', top: 16, bot: 6,  rule: false },
-    3: { sz: 11, color: '#4338ca', top: 12, bot: 4,  rule: false },
+    1: { sz: 16, color: "#1e1b4b", top: 22, bot: 8, rule: true },
+    2: { sz: 13, color: "#312e81", top: 16, bot: 6, rule: false },
+    3: { sz: 11, color: "#4338ca", top: 12, bot: 4, rule: false }
   }[level];
   const lineH = H.sz * 1.3;
   pdfRoom(ctx, H.top + lineH + H.bot);
   ctx.y += H.top;
   pdfParagraph(ctx, text, H.sz, lineH, H.color);
   if (H.rule) {
-    ctx.doc.setDrawColor('#e5e7eb');
+    ctx.doc.setDrawColor("#e5e7eb");
     ctx.doc.setLineWidth(1);
     ctx.doc.line(PDF_ML, ctx.y, PDF_ML + PDF_CW, ctx.y);
     ctx.y += 4;
@@ -1091,41 +1173,43 @@ const pdfHeading = (ctx: PdfCtx, text: string, level: 1 | 2 | 3): void => {
 const pdfHR = (ctx: PdfCtx): void => {
   pdfRoom(ctx, 22);
   ctx.y += 10;
-  ctx.doc.setDrawColor('#d1d5db');
+  ctx.doc.setDrawColor("#d1d5db");
   ctx.doc.setLineWidth(0.5);
   ctx.doc.line(PDF_ML, ctx.y, PDF_ML + PDF_CW, ctx.y);
   ctx.y += 12;
 };
 
 const pdfCodeBlock = (ctx: PdfCtx, codeLines: string[], lang: string): void => {
-  const fs  = 8.5;
-  const lh  = fs * 1.5;   // ≈ 12.75 pt per line
+  const fs = 8.5;
+  const lh = fs * 1.5; // ≈ 12.75 pt per line
 
   ctx.y += 4;
 
   if (lang) {
     pdfRoom(ctx, 18);
-    ctx.doc.setFont('helvetica', 'bold');
+    ctx.doc.setFont("helvetica", "bold");
     ctx.doc.setFontSize(7.5);
-    ctx.doc.setFillColor('#6366f1');
-    const labelW = (ctx.doc.getTextWidth(normalizePdfText(lang.toUpperCase())) as number) + 12;
-    ctx.doc.rect(PDF_ML, ctx.y - 9, labelW, 12, 'F');
-    ctx.doc.setTextColor('#ffffff');
+    ctx.doc.setFillColor("#6366f1");
+    const labelW =
+      (ctx.doc.getTextWidth(normalizePdfText(lang.toUpperCase())) as number) +
+      12;
+    ctx.doc.rect(PDF_ML, ctx.y - 9, labelW, 12, "F");
+    ctx.doc.setTextColor("#ffffff");
     pdfText(ctx.doc, lang.toUpperCase(), PDF_ML + 6, ctx.y);
     ctx.y += 16;
   }
 
-  ctx.doc.setFont('courier', 'normal');
+  ctx.doc.setFont("courier", "normal");
   ctx.doc.setFontSize(fs);
 
   for (const cl of codeLines) {
     pdfRoom(ctx, lh + 2);
     const lineTop = ctx.y - lh + 3;
-    ctx.doc.setFillColor('#f8f7ff');
-    ctx.doc.rect(PDF_ML, lineTop, PDF_CW, lh, 'F');
-    ctx.doc.setFillColor('#6366f1');
-    ctx.doc.rect(PDF_ML, lineTop, 3, lh, 'F');
-    ctx.doc.setTextColor('#1e1b4b');
+    ctx.doc.setFillColor("#f8f7ff");
+    ctx.doc.rect(PDF_ML, lineTop, PDF_CW, lh, "F");
+    ctx.doc.setFillColor("#6366f1");
+    ctx.doc.rect(PDF_ML, lineTop, 3, lh, "F");
+    ctx.doc.setTextColor("#1e1b4b");
     pdfText(ctx.doc, cl, PDF_ML + 10, ctx.y);
     ctx.y += lh;
   }
@@ -1134,45 +1218,48 @@ const pdfCodeBlock = (ctx: PdfCtx, codeLines: string[], lang: string): void => {
 };
 
 interface PdfListItem {
-  raw:     string;
-  type:    'ul' | 'ol';
-  indent:  number;
-  isTask:  boolean;
+  raw: string;
+  type: "ul" | "ol";
+  indent: number;
+  isTask: boolean;
   checked: boolean;
-  num:     number;
+  num: number;
 }
 
 const pdfListItems = (ctx: PdfCtx, items: PdfListItem[]): void => {
-  const fs   = 10;
-  const lh   = fs * 1.5;
+  const fs = 10;
+  const lh = fs * 1.5;
   const iPad = 14; // pts per indent level
 
   for (const item of items) {
     const bulletX = PDF_ML + item.indent * iPad;
-    const textX   = bulletX + 16;
-    const maxW    = PDF_CW - item.indent * iPad - 16;
+    const textX = bulletX + 16;
+    const maxW = PDF_CW - item.indent * iPad - 16;
 
     // Pre-wrap to know total height
-    const segs   = parsePdfSegs(item.raw);
+    const segs = parsePdfSegs(item.raw);
     const wlines = pdfWrapSegs(ctx.doc, segs, maxW, fs);
 
     pdfRoom(ctx, lh); // ensure at least one line
 
     // Marker
-    const marker =
-      item.isTask       ? (item.checked ? '[X]' : '[ ]')
-      : item.type === 'ol' ? `${item.num}.`
-      : '\u2022'; // bullet •
+    const marker = item.isTask
+      ? item.checked
+        ? "[X]"
+        : "[ ]"
+      : item.type === "ol"
+        ? `${item.num}.`
+        : "\u2022"; // bullet •
 
-    ctx.doc.setFont('helvetica', 'normal');
+    ctx.doc.setFont("helvetica", "normal");
     ctx.doc.setFontSize(fs);
-    ctx.doc.setTextColor('#374151');
+    ctx.doc.setTextColor("#374151");
     pdfText(ctx.doc, marker, bulletX, ctx.y);
 
     // Text lines
     for (let li = 0; li < wlines.length; li++) {
       if (li > 0) pdfRoom(ctx, lh);
-      pdfDrawLine(ctx.doc, wlines[li]!, textX, ctx.y, fs, '#374151');
+      pdfDrawLine(ctx.doc, wlines[li]!, textX, ctx.y, fs, "#374151");
       ctx.y += lh;
     }
   }
@@ -1180,27 +1267,38 @@ const pdfListItems = (ctx: PdfCtx, items: PdfListItem[]): void => {
 
 const pdfTable = (ctx: PdfCtx, tableLines: string[]): void => {
   const parseRow = (line: string): string[] =>
-    line.split('|').slice(1, -1).map((c) => c.trim());
+    line
+      .split("|")
+      .slice(1, -1)
+      .map((c) => c.trim());
   const isSep = (line: string): boolean => /^\|[\s\-:|]+\|$/.test(line);
 
   const sepIdx = tableLines.findIndex(isSep);
   if (sepIdx < 0) return;
 
   const headerLines = tableLines.slice(0, sepIdx);
-  const bodyLines   = tableLines.slice(sepIdx + 1).filter((l) => !isSep(l));
+  const bodyLines = tableLines.slice(sepIdx + 1).filter((l) => !isSep(l));
   if (headerLines.length === 0 && bodyLines.length === 0) return;
 
   const allRows = [
-    ...headerLines.map((l) => ({ cells: parseRow(l), header: true,  even: false })),
-    ...bodyLines.map((l, ri) => ({ cells: parseRow(l), header: false, even: ri % 2 === 1 })),
+    ...headerLines.map((l) => ({
+      cells: parseRow(l),
+      header: true,
+      even: false
+    })),
+    ...bodyLines.map((l, ri) => ({
+      cells: parseRow(l),
+      header: false,
+      even: ri % 2 === 1
+    }))
   ];
 
   const numCols = Math.max(...allRows.map((r) => r.cells.length), 1);
-  const colW    = PDF_CW / numCols;
+  const colW = PDF_CW / numCols;
   const cellPad = 5;
-  const cellTW  = colW - cellPad * 2;
-  const cellFs  = 9.5;
-  const cellLH  = cellFs * 1.4;
+  const cellTW = colW - cellPad * 2;
+  const cellFs = 9.5;
+  const cellLH = cellFs * 1.4;
 
   ctx.y += 8;
 
@@ -1208,7 +1306,12 @@ const pdfTable = (ctx: PdfCtx, tableLines: string[]): void => {
     // Measure row height (tallest cell wins)
     let rowH = cellPad * 2 + cellLH;
     for (let ci = 0; ci < numCols; ci++) {
-      const wlines = pdfWrapSegs(ctx.doc, parsePdfSegs(row.cells[ci] ?? ''), cellTW, cellFs);
+      const wlines = pdfWrapSegs(
+        ctx.doc,
+        parsePdfSegs(row.cells[ci] ?? ""),
+        cellTW,
+        cellFs
+      );
       const h = wlines.length * cellLH + cellPad * 2;
       if (h > rowH) rowH = h;
     }
@@ -1217,19 +1320,33 @@ const pdfTable = (ctx: PdfCtx, tableLines: string[]): void => {
 
     for (let ci = 0; ci < numCols; ci++) {
       const cx = PDF_ML + ci * colW;
-      const bg = row.header ? '#eef2ff' : row.even ? '#fafafa' : '#ffffff';
+      const bg = row.header ? "#eef2ff" : row.even ? "#fafafa" : "#ffffff";
       ctx.doc.setFillColor(bg);
-      ctx.doc.rect(cx, ctx.y, colW, rowH, 'F');
-      ctx.doc.setDrawColor('#e5e7eb');
+      ctx.doc.rect(cx, ctx.y, colW, rowH, "F");
+      ctx.doc.setDrawColor("#e5e7eb");
       ctx.doc.setLineWidth(0.5);
-      ctx.doc.rect(cx, ctx.y, colW, rowH, 'S');
+      ctx.doc.rect(cx, ctx.y, colW, rowH, "S");
 
-      const textColor = row.header ? '#1e1b4b' : '#374151';
-      const wlines    = pdfWrapSegs(ctx.doc, parsePdfSegs(row.cells[ci] ?? ''), cellTW, cellFs);
+      const textColor = row.header ? "#1e1b4b" : "#374151";
+      const wlines = pdfWrapSegs(
+        ctx.doc,
+        parsePdfSegs(row.cells[ci] ?? ""),
+        cellTW,
+        cellFs
+      );
       let textY = ctx.y + cellPad + cellFs * 0.85;
       for (const wl of wlines) {
-        const renderSegs = row.header ? wl.map((s) => ({ ...s, bold: true })) : wl;
-        pdfDrawLine(ctx.doc, renderSegs, cx + cellPad, textY, cellFs, textColor);
+        const renderSegs = row.header
+          ? wl.map((s) => ({ ...s, bold: true }))
+          : wl;
+        pdfDrawLine(
+          ctx.doc,
+          renderSegs,
+          cx + cellPad,
+          textY,
+          cellFs,
+          textColor
+        );
         textY += cellLH;
       }
     }
@@ -1244,40 +1361,63 @@ const CALLOUT_PDF_STYLES: Record<
   string,
   { border: string; bg: string; color: string; label: string }
 > = {
-  NOTE:      { border: '#60a5fa', bg: '#eff6ff', color: '#1e40af', label: 'Note'      },
-  INFO:      { border: '#60a5fa', bg: '#eff6ff', color: '#1e40af', label: 'Info'      },
-  TIP:       { border: '#34d399', bg: '#f0fdf4', color: '#166534', label: 'Tip'       },
-  IMPORTANT: { border: '#a78bfa', bg: '#f5f3ff', color: '#5b21b6', label: 'Important' },
-  WARNING:   { border: '#fbbf24', bg: '#fffbeb', color: '#92400e', label: 'Warning'   },
-  CAUTION:   { border: '#fbbf24', bg: '#fffbeb', color: '#92400e', label: 'Caution'   },
-  DANGER:    { border: '#f87171', bg: '#fff1f2', color: '#991b1b', label: 'Danger'    },
+  NOTE: { border: "#60a5fa", bg: "#eff6ff", color: "#1e40af", label: "Note" },
+  INFO: { border: "#60a5fa", bg: "#eff6ff", color: "#1e40af", label: "Info" },
+  TIP: { border: "#34d399", bg: "#f0fdf4", color: "#166534", label: "Tip" },
+  IMPORTANT: {
+    border: "#a78bfa",
+    bg: "#f5f3ff",
+    color: "#5b21b6",
+    label: "Important"
+  },
+  WARNING: {
+    border: "#fbbf24",
+    bg: "#fffbeb",
+    color: "#92400e",
+    label: "Warning"
+  },
+  CAUTION: {
+    border: "#fbbf24",
+    bg: "#fffbeb",
+    color: "#92400e",
+    label: "Caution"
+  },
+  DANGER: {
+    border: "#f87171",
+    bg: "#fff1f2",
+    color: "#991b1b",
+    label: "Danger"
+  }
 };
 
 const pdfQuoteOrCallout = (ctx: PdfCtx, qlines: string[]): void => {
-  const first = qlines[0]?.trim() ?? '';
+  const first = qlines[0]?.trim() ?? "";
   const calloutMatch = first.match(/^\[!([\w]+)\]\s*(.*)?$/);
-  const fs  = 10;
-  const lh  = fs * 1.5;
+  const fs = 10;
+  const lh = fs * 1.5;
   const pad = 10;
 
   if (calloutMatch) {
-    const key       = calloutMatch[1]!.toUpperCase();
-    const style     = CALLOUT_PDF_STYLES[key] ?? CALLOUT_PDF_STYLES['NOTE']!;
+    const key = calloutMatch[1]!.toUpperCase();
+    const style = CALLOUT_PDF_STYLES[key] ?? CALLOUT_PDF_STYLES["NOTE"]!;
     const titleText = calloutMatch[2]?.trim() || style.label;
-    const bodyText  = qlines.slice(1).join(' ').trim();
-    const bodySegs  = bodyText ? parsePdfSegs(bodyText) : [];
-    const bodyLines = bodyText ? pdfWrapSegs(ctx.doc, bodySegs, PDF_CW - 28, fs) : [];
-    const totalH    = pad + lh + (bodyLines.length ? bodyLines.length * lh + 6 : 0) + pad;
+    const bodyText = qlines.slice(1).join(" ").trim();
+    const bodySegs = bodyText ? parsePdfSegs(bodyText) : [];
+    const bodyLines = bodyText
+      ? pdfWrapSegs(ctx.doc, bodySegs, PDF_CW - 28, fs)
+      : [];
+    const totalH =
+      pad + lh + (bodyLines.length ? bodyLines.length * lh + 6 : 0) + pad;
 
     pdfRoom(ctx, totalH);
 
     ctx.doc.setFillColor(style.bg);
-    ctx.doc.rect(PDF_ML, ctx.y, PDF_CW, totalH, 'F');
+    ctx.doc.rect(PDF_ML, ctx.y, PDF_CW, totalH, "F");
     ctx.doc.setFillColor(style.border);
-    ctx.doc.rect(PDF_ML, ctx.y, 4, totalH, 'F');
+    ctx.doc.rect(PDF_ML, ctx.y, 4, totalH, "F");
 
     let ty = ctx.y + pad + fs * 0.85;
-    ctx.doc.setFont('helvetica', 'bold');
+    ctx.doc.setFont("helvetica", "bold");
     ctx.doc.setFontSize(fs);
     ctx.doc.setTextColor(style.color);
     pdfText(ctx.doc, titleText, PDF_ML + 12, ty);
@@ -1294,21 +1434,21 @@ const pdfQuoteOrCallout = (ctx: PdfCtx, qlines: string[]): void => {
     ctx.y += totalH + 10;
   } else {
     // Plain blockquote
-    const segs   = parsePdfSegs(qlines.join(' '));
+    const segs = parsePdfSegs(qlines.join(" "));
     const wlines = pdfWrapSegs(ctx.doc, segs, PDF_CW - 20, fs);
     const totalH = pad + wlines.length * lh + pad;
 
     pdfRoom(ctx, totalH);
 
-    ctx.doc.setFillColor('#f5f3ff');
-    ctx.doc.rect(PDF_ML, ctx.y, PDF_CW, totalH, 'F');
-    ctx.doc.setFillColor('#c7d2fe');
-    ctx.doc.rect(PDF_ML, ctx.y, 4, totalH, 'F');
+    ctx.doc.setFillColor("#f5f3ff");
+    ctx.doc.rect(PDF_ML, ctx.y, PDF_CW, totalH, "F");
+    ctx.doc.setFillColor("#c7d2fe");
+    ctx.doc.rect(PDF_ML, ctx.y, 4, totalH, "F");
 
     let ty = ctx.y + pad + fs * 0.85;
     for (const wl of wlines) {
-      ctx.doc.setFont('helvetica', 'italic');
-      pdfDrawLine(ctx.doc, wl, PDF_ML + 12, ty, fs, '#4b5563');
+      ctx.doc.setFont("helvetica", "italic");
+      pdfDrawLine(ctx.doc, wl, PDF_ML + 12, ty, fs, "#4b5563");
       ty += lh;
     }
 
@@ -1326,15 +1466,15 @@ const pdfQuoteOrCallout = (ctx: PdfCtx, qlines: string[]): void => {
  */
 export const downloadDocumentAsPdf = async (
   markdown: string | null | undefined,
-  title:    string | null | undefined,
-  filename: string,
+  title: string | null | undefined,
+  filename: string
 ): Promise<void> => {
-  const safeMarkdown = markdown ?? '';
-  const safeTitle    = title || filename.replace(/\.pdf$/i, '') || 'Document';
-  const safeFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+  const safeMarkdown = markdown ?? "";
+  const safeTitle = title || filename.replace(/\.pdf$/i, "") || "Document";
+  const safeFilename = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
 
-  const { jsPDF } = await import('jspdf');
-  const doc  = new jsPDF({ unit: 'pt', format: 'a4' });
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
   resetPdfTextSpacing(doc);
   const ctx: PdfCtx = { doc, y: PDF_MT };
 
@@ -1343,41 +1483,50 @@ export const downloadDocumentAsPdf = async (
   const titleLineH = 20 * 1.25;
   pdfRoom(ctx, 80);
 
-  doc.setFont('helvetica', 'bold');
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
-  doc.setTextColor('#1e1b4b');
-  const titleWrapped = doc.splitTextToSize(normalizePdfText(safeTitle), PDF_CW) as string[];
+  doc.setTextColor("#1e1b4b");
+  const titleWrapped = doc.splitTextToSize(
+    normalizePdfText(safeTitle),
+    PDF_CW
+  ) as string[];
   for (const tl of titleWrapped) {
     pdfText(doc, tl, PDF_ML, ctx.y);
     ctx.y += titleLineH;
   }
   ctx.y += 4;
 
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    year: 'numeric', month: 'long', day: 'numeric',
+  const dateStr = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric"
   });
-  doc.setFont('helvetica', 'normal');
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor('#6b7280');
+  doc.setTextColor("#6b7280");
   pdfText(doc, dateStr, PDF_ML, ctx.y);
   ctx.y += 9 * 1.4 + 10;
 
-  doc.setDrawColor('#4f46e5');
+  doc.setDrawColor("#4f46e5");
   doc.setLineWidth(2);
   doc.line(PDF_ML, ctx.y, PDF_ML + PDF_CW, ctx.y);
   ctx.y += 22;
 
   // ── Parse + render markdown ──────────────────────────────────────────────────
 
-  const mdLines = safeMarkdown.split('\n');
+  const mdLines = safeMarkdown.split("\n");
   let i = 0;
 
-  let tableBuf: string[]  = [];
-  let quoteBuf: string[]  = [];
+  let tableBuf: string[] = [];
+  let quoteBuf: string[] = [];
 
   type ListItem = {
-    raw: string; type: 'ul' | 'ol'; indent: number;
-    isTask: boolean; checked: boolean; num: number;
+    raw: string;
+    type: "ul" | "ol";
+    indent: number;
+    isTask: boolean;
+    checked: boolean;
+    num: number;
   };
   let listBuf: ListItem[] = [];
   const listCounters: Record<number, number> = {};
@@ -1399,20 +1548,24 @@ export const downloadDocumentAsPdf = async (
     pdfQuoteOrCallout(ctx, quoteBuf);
     quoteBuf = [];
   };
-  const flushAll = (): void => { flushList(); flushTable(); flushQuote(); };
+  const flushAll = (): void => {
+    flushList();
+    flushTable();
+    flushQuote();
+  };
 
   while (i < mdLines.length) {
-    const raw     = mdLines[i]!;
-    const line    = raw.trimEnd();
+    const raw = mdLines[i]!;
+    const line = raw.trimEnd();
     const trimmed = line.trim();
 
     // ── Fenced code block ──────────────────────────────────────────────────────
-    if (trimmed.startsWith('```')) {
+    if (trimmed.startsWith("```")) {
       flushAll();
       const lang = trimmed.slice(3).trim();
       i++;
       const codeLines: string[] = [];
-      while (i < mdLines.length && !mdLines[i]!.trim().startsWith('```')) {
+      while (i < mdLines.length && !mdLines[i]!.trim().startsWith("```")) {
         codeLines.push(mdLines[i]!);
         i++;
       }
@@ -1422,8 +1575,9 @@ export const downloadDocumentAsPdf = async (
     }
 
     // ── GFM table ─────────────────────────────────────────────────────────────
-    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-      flushList(); flushQuote();
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      flushList();
+      flushQuote();
       tableBuf.push(trimmed);
       i++;
       continue;
@@ -1432,9 +1586,10 @@ export const downloadDocumentAsPdf = async (
     }
 
     // ── Blockquote / callout ──────────────────────────────────────────────────
-    if (trimmed.startsWith('> ') || trimmed === '>') {
-      flushList(); flushTable();
-      quoteBuf.push(trimmed.replace(/^>\s?/, ''));
+    if (trimmed.startsWith("> ") || trimmed === ">") {
+      flushList();
+      flushTable();
+      quoteBuf.push(trimmed.replace(/^>\s?/, ""));
       i++;
       continue;
     } else {
@@ -1442,38 +1597,69 @@ export const downloadDocumentAsPdf = async (
     }
 
     // ── Headings ──────────────────────────────────────────────────────────────
-    if      (trimmed.startsWith('### ')) { flushAll(); pdfHeading(ctx, trimmed.slice(4).trim(), 3); }
-    else if (trimmed.startsWith('## '))  { flushAll(); pdfHeading(ctx, trimmed.slice(3).trim(), 2); }
-    else if (trimmed.startsWith('# '))   { flushAll(); pdfHeading(ctx, trimmed.slice(2).trim(), 1); }
+    if (trimmed.startsWith("### ")) {
+      flushAll();
+      pdfHeading(ctx, trimmed.slice(4).trim(), 3);
+    } else if (trimmed.startsWith("## ")) {
+      flushAll();
+      pdfHeading(ctx, trimmed.slice(3).trim(), 2);
+    } else if (trimmed.startsWith("# ")) {
+      flushAll();
+      pdfHeading(ctx, trimmed.slice(2).trim(), 1);
+    }
 
     // ── Task list ─────────────────────────────────────────────────────────────
     else if (/^(\s*)[-*] \[[ xX]\] /.test(line)) {
-      flushTable(); flushQuote();
-      const indent  = Math.floor((line.match(/^(\s*)/)?.[1]?.length ?? 0) / 2);
+      flushTable();
+      flushQuote();
+      const indent = Math.floor((line.match(/^(\s*)/)?.[1]?.length ?? 0) / 2);
       const checked = /\[[xX]\]/.test(line);
-      const text    = line.replace(/^\s*[-*] \[[ xX]\] /, '').trim();
-      listBuf.push({ raw: text, type: 'ul', indent, isTask: true, checked, num: 0 });
+      const text = line.replace(/^\s*[-*] \[[ xX]\] /, "").trim();
+      listBuf.push({
+        raw: text,
+        type: "ul",
+        indent,
+        isTask: true,
+        checked,
+        num: 0
+      });
     }
 
     // ── Bullet list ───────────────────────────────────────────────────────────
     else if (/^(\s*)[-*] /.test(line)) {
-      flushTable(); flushQuote();
+      flushTable();
+      flushQuote();
       const indent = Math.floor((line.match(/^(\s*)/)?.[1]?.length ?? 0) / 2);
-      const text   = line.replace(/^\s*[-*] /, '').trim();
-      listBuf.push({ raw: text, type: 'ul', indent, isTask: false, checked: false, num: 0 });
+      const text = line.replace(/^\s*[-*] /, "").trim();
+      listBuf.push({
+        raw: text,
+        type: "ul",
+        indent,
+        isTask: false,
+        checked: false,
+        num: 0
+      });
     }
 
     // ── Ordered list ──────────────────────────────────────────────────────────
     else if (/^(\s*)\d+\. /.test(line)) {
-      flushTable(); flushQuote();
+      flushTable();
+      flushQuote();
       const indent = Math.floor((line.match(/^(\s*)/)?.[1]?.length ?? 0) / 2);
-      const text   = line.replace(/^\s*\d+\. /, '').trim();
+      const text = line.replace(/^\s*\d+\. /, "").trim();
       // Reset counters for deeper indents when we come back up
       for (const k of Object.keys(listCounters)) {
         if (Number(k) > indent) delete listCounters[Number(k)];
       }
       listCounters[indent] = (listCounters[indent] ?? 0) + 1;
-      listBuf.push({ raw: text, type: 'ol', indent, isTask: false, checked: false, num: listCounters[indent]! });
+      listBuf.push({
+        raw: text,
+        type: "ol",
+        indent,
+        isTask: false,
+        checked: false,
+        num: listCounters[indent]!
+      });
     }
 
     // ── Horizontal rule ───────────────────────────────────────────────────────
@@ -1483,17 +1669,17 @@ export const downloadDocumentAsPdf = async (
     }
 
     // ── Blank line ────────────────────────────────────────────────────────────
-    else if (trimmed === '') {
+    else if (trimmed === "") {
       flushList();
       ctx.y += 4; // paragraph gap
     }
 
     // ── Paragraph ─────────────────────────────────────────────────────────────
     else {
-      flushList(); flushQuote();
+      flushList();
+      flushQuote();
       const lh = 10 * 1.6;
-      pdfParagraph(ctx, trimmed, 10, lh, '#374151');
-      ctx.y += 2;
+      pdfParagraph(ctx, trimmed, 10, lh, "#374151");
     }
 
     i++;
