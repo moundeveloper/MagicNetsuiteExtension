@@ -327,10 +327,19 @@ const formatMessageContent = (
   if (!attachments || attachments.length === 0) return content;
   const attachmentContext = attachments
     .map((attachment) => {
-      const label =
-        attachment.type === "pdf"
-          ? `[PDF file: ${attachment.name}]`
-          : `[File: ${attachment.name}]`;
+      const sourceLabel =
+        attachment.source === "record"
+          ? "NetSuite record"
+          : attachment.source === "filecabinet"
+            ? "File Cabinet file"
+            : attachment.type === "pdf"
+              ? "PDF file"
+              : "File";
+      const sourceMeta = [
+        attachment.sourceType ? `type=${attachment.sourceType}` : "",
+        attachment.sourceId ? `id=${attachment.sourceId}` : "",
+      ].filter(Boolean).join(", ");
+      const label = `[${sourceLabel}: ${attachment.name}${sourceMeta ? ` (${sourceMeta})` : ""}]`;
       return `${label}\n${attachment.content}\n[/end of ${attachment.name}]`;
     })
     .join("\n\n");

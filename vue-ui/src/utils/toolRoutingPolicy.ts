@@ -774,7 +774,7 @@ export const buildPostResultEvaluation = (toolNames: string[]): string => {
 /**
  * In-memory telemetry log.
  * Capped at 500 entries to prevent unbounded growth.
- * Consumer code (AiAssistantView, debug panels) can read and export this.
+ * Consumer code (harness/debug panels) can read and export this.
  */
 const MAX_TELEMETRY_ENTRIES = 500;
 

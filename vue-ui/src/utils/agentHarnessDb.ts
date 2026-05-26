@@ -12,6 +12,9 @@ export interface HarnessAttachment {
   type: "text" | "pdf";
   content: string;
   size: number;
+  source?: "upload" | "record" | "filecabinet";
+  sourceId?: string;
+  sourceType?: string;
 }
 
 export interface HarnessThreadRecord {

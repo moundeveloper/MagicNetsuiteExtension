@@ -1,6 +1,7 @@
 import CustomRecordsView from "../views/CustomRecordsView.vue";
 import HomeView from "../views/HomeView.vue";
 import ScriptsView from "../views/ScriptsView.vue";
+import ScriptDetailView from "../views/ScriptDetailView.vue";
 import RequestScript from "../views/RequestScriptView.vue";
 import RunQuickScriptView from "../views/RunQuickScriptView.vue";
 import ExportRecordView from "../views/ExportRecordView.vue";
@@ -15,12 +16,9 @@ import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
 import ProcessingView from "../views/ProcessingView.vue";
 import TemplatesView from "../views/TemplatesView.vue";
 import TemplateDetailView from "../views/TemplateDetailView.vue";
-import AiAssistantView from "../views/AiAssistantView.vue";
-import SkillsView from "../views/SkillsView.vue";
 import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
 import SuiteQLView from "../views/SuiteQLView.vue";
 import McpServerView from "../views/McpServerView.vue";
-import AgentsView from "../views/AgentsView.vue";
 import ApiTesterView from "../views/ApiTesterView.vue";
 import MultiAgentView from "../views/MultiAgentView.vue";
 import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
@@ -154,7 +152,16 @@ export const routes: FullRoute[] = [
     icon: "pi pi-code",
     component: ScriptsView,
     status: RouteStatus.release,
-    breadcrumb: "Scripts"
+    breadcrumb: "Scripts",
+    children: [
+      {
+        route: "/scripts/:scriptId",
+        name: "ScriptDetail",
+        component: ScriptDetailView,
+        breadcrumb: "Script Detail",
+        breadcrumbParents: [{ label: "Scripts", route: "/scripts" }]
+      }
+    ]
   },
   {
     route: "/playground",
@@ -215,22 +222,6 @@ export const routes: FullRoute[] = [
     breadcrumb: "Processing"
   },
   {
-    route: "/ai-assistant",
-    name: "AI Assistant",
-    icon: "pi pi-comments",
-    component: AiAssistantView,
-    status: RouteStatus.deprecated,
-    breadcrumb: "AI Assistant (deprecated)"
-  },
-  {
-    route: "/skills",
-    name: "Skills",
-    icon: "pi pi-book",
-    component: SkillsView,
-    status: RouteStatus.release,
-    breadcrumb: "Skills"
-  },
-  {
     route: "/suitescript-modules",
     name: "SuiteScript Modules",
     icon: "pi pi-database",
@@ -245,14 +236,6 @@ export const routes: FullRoute[] = [
     component: SuiteQLView,
     status: RouteStatus.release,
     breadcrumb: "SuiteQL Editor"
-  },
-  {
-    route: "/agents",
-    name: "Agents",
-    icon: "pi pi-users",
-    component: AgentsView,
-    status: RouteStatus.release,
-    breadcrumb: "Agents"
   },
   {
     route: "/mcp-server",
@@ -284,7 +267,23 @@ export const routes: FullRoute[] = [
     icon: "pi pi-compass",
     component: NetsuiteAgentHarnessView,
     status: RouteStatus.release,
-    breadcrumb: "NetSuite Agent Harness"
+    breadcrumb: "NetSuite Agent Harness",
+    children: [
+      {
+        route: "/netsuite-agent-harness/agents",
+        name: "HarnessAgents",
+        component: NetsuiteAgentHarnessView,
+        breadcrumb: "Agents",
+        breadcrumbParents: [{ label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }]
+      },
+      {
+        route: "/netsuite-agent-harness/skills",
+        name: "HarnessSkills",
+        component: NetsuiteAgentHarnessView,
+        breadcrumb: "Skills",
+        breadcrumbParents: [{ label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }]
+      }
+    ]
   },
   {
     route: "/netsuite-api-tester",

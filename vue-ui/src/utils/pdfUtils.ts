@@ -451,7 +451,15 @@ export const markdownToHtml = (markdown: string): string => {
 // ─────────────────────────────────────────────
 
 const DOCUMENT_CSS = `
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    letter-spacing: normal;
+    word-spacing: normal;
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+  }
 
   html {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -487,7 +495,7 @@ const DOCUMENT_CSS = `
     font-weight: 800;
     color: #1e1b4b;
     line-height: 1.15;
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     margin-bottom: 8px;
   }
 
@@ -510,7 +518,7 @@ const DOCUMENT_CSS = `
     margin: 2.5rem 0 0.8rem;
     padding-bottom: 8px;
     border-bottom: 2px solid #e5e7eb;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
   }
 
   .doc-body h2 {
@@ -518,7 +526,7 @@ const DOCUMENT_CSS = `
     font-weight: 700;
     color: #312e81;
     margin: 2rem 0 0.5rem;
-    letter-spacing: -0.005em;
+    letter-spacing: 0;
   }
 
   .doc-body h3 {
@@ -579,7 +587,7 @@ const DOCUMENT_CSS = `
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 0 4px 0 4px;
-    letter-spacing: 0.05em;
+    letter-spacing: 0;
     text-transform: uppercase;
   }
 
@@ -592,6 +600,8 @@ const DOCUMENT_CSS = `
     overflow-x: auto;
     font-size: 0.82rem;
     line-height: 1.6;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .doc-body code {
@@ -638,7 +648,7 @@ const DOCUMENT_CSS = `
     font-weight: 700;
     font-size: 0.85rem;
     padding: 8px 14px;
-    letter-spacing: 0.02em;
+    letter-spacing: 0;
   }
 
   .doc-body .callout-body {
@@ -677,6 +687,7 @@ const DOCUMENT_CSS = `
   .doc-body table {
     width: 100%;
     border-collapse: collapse;
+    table-layout: fixed;
     margin: 1.25rem 0;
     font-size: 0.88rem;
   }
@@ -688,7 +699,8 @@ const DOCUMENT_CSS = `
     text-align: left;
     padding: 9px 14px;
     border: 1px solid #c7d2fe;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
 
   .doc-body td {
@@ -696,6 +708,9 @@ const DOCUMENT_CSS = `
     border: 1px solid #e5e7eb;
     color: #374151;
     vertical-align: top;
+    overflow-wrap: anywhere;
+    word-break: normal;
+    hyphens: auto;
   }
 
   .doc-body tr:nth-child(even) td { background: #fafafa; }
@@ -705,8 +720,17 @@ const DOCUMENT_CSS = `
   @media print {
     body { background: #fff; }
     .page { padding: 0; max-width: 100%; min-height: unset; }
-    .doc-body pre  { break-inside: avoid; }
-    .doc-body table { break-inside: avoid; }
+    .doc-body, .doc-body * {
+      letter-spacing: normal !important;
+      word-spacing: normal !important;
+      font-kerning: normal !important;
+      text-rendering: optimizeLegibility;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .doc-body pre  { break-inside: auto; page-break-inside: auto; }
+    .doc-body table { break-inside: auto; page-break-inside: auto; }
+    .doc-body tr { break-inside: avoid; page-break-inside: avoid; }
     .doc-body .callout { break-inside: avoid; }
     h1, h2, h3 { break-after: avoid; }
     .no-print { display: none !important; }
@@ -851,8 +875,28 @@ const parsePdfSegs = (raw: string): PdfSeg[] => {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JDoc = any; // jsPDF instance — typed as any to avoid a static import of the class
 
+const normalizePdfText = (text: string): string =>
+  text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\b(?:[A-Z]\s+){2,}[A-Z]\b/g, (match) => match.replace(/\s+/g, ""));
+
+const resetPdfTextSpacing = (doc: JDoc): void => {
+  if (typeof doc.setCharSpace === "function") {
+    doc.setCharSpace(0);
+  }
+};
+
+const pdfText = (doc: JDoc, text: string, x: number, y: number): void => {
+  resetPdfTextSpacing(doc);
+  doc.text(normalizePdfText(text), x, y);
+  resetPdfTextSpacing(doc);
+};
+
 /** Apply the correct font/size to `doc` for a segment (side-effect). */
 const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
+  resetPdfTextSpacing(doc);
   if (seg.code) {
     doc.setFont('courier', 'normal');
     doc.setFontSize(baseSz - 1);
@@ -870,7 +914,8 @@ const pdfApplySegFont = (doc: JDoc, seg: PdfSeg, baseSz: number): void => {
 /** Return the rendered width (pt) of a segment. Sets font as a side-effect. */
 const pdfSegW = (doc: JDoc, seg: PdfSeg, baseSz: number): number => {
   pdfApplySegFont(doc, seg, baseSz);
-  return doc.getTextWidth(seg.text) as number;
+  resetPdfTextSpacing(doc);
+  return doc.getTextWidth(normalizePdfText(seg.text)) as number;
 };
 
 /**
@@ -891,6 +936,27 @@ const pdfWrapSegs = (
     lines.push(line);
     line  = [];
     lineW = 0;
+  };
+
+  const splitLongToken = (tokenSeg: PdfSeg): PdfSeg[] => {
+    if (pdfSegW(doc, tokenSeg, baseSz) <= maxW) return [tokenSeg];
+    const chunks: PdfSeg[] = [];
+    let chunk = "";
+    let chunkW = 0;
+    for (const ch of tokenSeg.text) {
+      const chSeg: PdfSeg = { ...tokenSeg, text: ch };
+      const chW = pdfSegW(doc, chSeg, baseSz);
+      if (chunk && chunkW + chW > maxW) {
+        chunks.push({ ...tokenSeg, text: chunk });
+        chunk = ch;
+        chunkW = chW;
+      } else {
+        chunk += ch;
+        chunkW += chW;
+      }
+    }
+    if (chunk) chunks.push({ ...tokenSeg, text: chunk });
+    return chunks;
   };
 
   for (const seg of segs) {
@@ -916,9 +982,13 @@ const pdfWrapSegs = (
         if (lineW + w <= maxW) { line.push(tSeg); lineW += w; }
         // space that would overflow: discard (natural line-break boundary)
       } else {
-        if (lineW + w > maxW && line.length > 0) newLine();
-        line.push(tSeg);
-        lineW += w;
+        const pieces = splitLongToken(tSeg);
+        for (const piece of pieces) {
+          const pieceW = pdfSegW(doc, piece, baseSz);
+          if (lineW + pieceW > maxW && line.length > 0) newLine();
+          line.push(piece);
+          lineW += pieceW;
+        }
       }
     }
   }
@@ -940,8 +1010,8 @@ const pdfDrawLine = (
     pdfApplySegFont(doc, seg, baseSz);
     const color = seg.code ? '#4338ca' : seg.strike ? '#9ca3af' : defColor;
     doc.setTextColor(color);
-    doc.text(seg.text, x, y);
-    const w = doc.getTextWidth(seg.text) as number;
+    pdfText(doc, seg.text, x, y);
+    const w = doc.getTextWidth(normalizePdfText(seg.text)) as number;
     if (seg.strike) {
       doc.setDrawColor(color);
       doc.setLineWidth(0.4);
@@ -1031,10 +1101,10 @@ const pdfCodeBlock = (ctx: PdfCtx, codeLines: string[], lang: string): void => {
     ctx.doc.setFont('helvetica', 'bold');
     ctx.doc.setFontSize(7.5);
     ctx.doc.setFillColor('#6366f1');
-    const labelW = (ctx.doc.getTextWidth(lang.toUpperCase()) as number) + 12;
+    const labelW = (ctx.doc.getTextWidth(normalizePdfText(lang.toUpperCase())) as number) + 12;
     ctx.doc.rect(PDF_ML, ctx.y - 9, labelW, 12, 'F');
     ctx.doc.setTextColor('#ffffff');
-    ctx.doc.text(lang.toUpperCase(), PDF_ML + 6, ctx.y);
+    pdfText(ctx.doc, lang.toUpperCase(), PDF_ML + 6, ctx.y);
     ctx.y += 16;
   }
 
@@ -1049,7 +1119,7 @@ const pdfCodeBlock = (ctx: PdfCtx, codeLines: string[], lang: string): void => {
     ctx.doc.setFillColor('#6366f1');
     ctx.doc.rect(PDF_ML, lineTop, 3, lh, 'F');
     ctx.doc.setTextColor('#1e1b4b');
-    ctx.doc.text(cl, PDF_ML + 10, ctx.y);
+    pdfText(ctx.doc, cl, PDF_ML + 10, ctx.y);
     ctx.y += lh;
   }
 
@@ -1090,7 +1160,7 @@ const pdfListItems = (ctx: PdfCtx, items: PdfListItem[]): void => {
     ctx.doc.setFont('helvetica', 'normal');
     ctx.doc.setFontSize(fs);
     ctx.doc.setTextColor('#374151');
-    ctx.doc.text(marker, bulletX, ctx.y);
+    pdfText(ctx.doc, marker, bulletX, ctx.y);
 
     // Text lines
     for (let li = 0; li < wlines.length; li++) {
@@ -1203,7 +1273,7 @@ const pdfQuoteOrCallout = (ctx: PdfCtx, qlines: string[]): void => {
     ctx.doc.setFont('helvetica', 'bold');
     ctx.doc.setFontSize(fs);
     ctx.doc.setTextColor(style.color);
-    ctx.doc.text(titleText, PDF_ML + 12, ty);
+    pdfText(ctx.doc, titleText, PDF_ML + 12, ty);
     ty += lh;
 
     if (bodyLines.length) {
@@ -1258,6 +1328,7 @@ export const downloadDocumentAsPdf = async (
 
   const { jsPDF } = await import('jspdf');
   const doc  = new jsPDF({ unit: 'pt', format: 'a4' });
+  resetPdfTextSpacing(doc);
   const ctx: PdfCtx = { doc, y: PDF_MT };
 
   // ── Document header ─────────────────────────────────────────────────────────
@@ -1268,9 +1339,9 @@ export const downloadDocumentAsPdf = async (
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.setTextColor('#1e1b4b');
-  const titleWrapped = doc.splitTextToSize(safeTitle, PDF_CW) as string[];
+  const titleWrapped = doc.splitTextToSize(normalizePdfText(safeTitle), PDF_CW) as string[];
   for (const tl of titleWrapped) {
-    doc.text(tl, PDF_ML, ctx.y);
+    pdfText(doc, tl, PDF_ML, ctx.y);
     ctx.y += titleLineH;
   }
   ctx.y += 4;
@@ -1281,7 +1352,7 @@ export const downloadDocumentAsPdf = async (
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor('#6b7280');
-  doc.text(dateStr, PDF_ML, ctx.y);
+  pdfText(doc, dateStr, PDF_ML, ctx.y);
   ctx.y += 9 * 1.4 + 10;
 
   doc.setDrawColor('#4f46e5');
@@ -1425,4 +1496,3 @@ export const downloadDocumentAsPdf = async (
 
   doc.save(safeFilename);
 };
-

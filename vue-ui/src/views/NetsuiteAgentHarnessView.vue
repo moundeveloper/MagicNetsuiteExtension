@@ -21,6 +21,23 @@
           <template #default>
             <div class="harness-sidebar">
               <div class="sidebar-section">
+                <div class="section-label">Workspace</div>
+                <div class="harness-section-nav">
+                  <button
+                    v-for="item in harnessNavItems"
+                    :key="item.id"
+                    type="button"
+                    class="harness-section-btn"
+                    :class="{ active: activeHarnessSection === item.id }"
+                    @click="setHarnessSection(item.id)"
+                  >
+                    <i :class="item.icon" />
+                    <span>{{ item.label }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="activeHarnessSection === 'chat'" class="sidebar-section">
                 <div class="section-heading">
                   <span class="section-label">Agents</span>
                   <button type="button" class="sidebar-action" title="Create agent" @click="openCreateAgentDialog">
@@ -56,7 +73,7 @@
                 </div>
               </div>
 
-              <div class="sidebar-section sidebar-section--grow">
+              <div v-if="activeHarnessSection === 'chat'" class="sidebar-section sidebar-section--grow">
                 <div class="section-heading">
                   <span class="section-label">Threads</span>
                   <button type="button" class="sidebar-action" title="New thread" @click="harness.createThread()">
@@ -89,7 +106,7 @@
                 </div>
               </div>
 
-              <div class="sidebar-section">
+              <div v-if="activeHarnessSection === 'chat'" class="sidebar-section">
                 <div class="section-label">Permissions</div>
                 <div class="mode-segment">
                   <button
@@ -110,7 +127,7 @@
           </template>
         </ExpandableSidebar>
 
-        <main class="harness-main">
+        <main v-if="activeHarnessSection === 'chat'" class="harness-main">
           <header class="harness-toolbar">
             <div class="toolbar-left">
               <div class="toolbar-title">
@@ -159,7 +176,7 @@
                 <i class="pi pi-cloud-upload" />
                 <span>Drop files to attach</span>
               </div>
-              <div ref="streamRef" class="stream-list">
+              <div ref="streamRef" class="stream-list" @scroll.passive="onStreamScroll">
                 <div v-if="harness.items.value.length === 0" class="empty-state">
                   <div class="empty-mark">
                     <i class="pi pi-bolt" />
@@ -228,7 +245,7 @@
                             :key="attachment.name"
                             class="attachment-chip"
                           >
-                            <i :class="attachment.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" />
+                            <i :class="attachmentIcon(attachment)" />
                             <span>{{ attachment.name }}</span>
                             <small>{{ formatFileSize(attachment.size) }}</small>
                           </span>
@@ -369,12 +386,14 @@
                             class="artifact-image"
                             :src="artifact.url"
                             :alt="artifact.title"
+                            @load="handleDynamicContentLoad"
                           />
                           <iframe
                             v-else
                             class="artifact-frame"
                             :src="artifact.url"
                             :title="artifact.title"
+                            @load="handleDynamicContentLoad"
                           />
                         </section>
                       </div>
@@ -431,7 +450,7 @@
                     :key="`${attachment.name}-${index}`"
                     class="attachment-chip"
                   >
-                    <i :class="attachment.type === 'pdf' ? 'pi pi-file-pdf' : 'pi pi-file'" />
+                    <i :class="attachmentIcon(attachment)" />
                     <span>{{ attachment.name }}</span>
                     <small>{{ formatFileSize(attachment.size) }}</small>
                     <button type="button" title="Remove" @click="removeAttachment(index)">
@@ -440,6 +459,15 @@
                   </span>
                 </div>
                 <div class="composer-row">
+                  <button
+                    type="button"
+                    class="attach-btn"
+                    :disabled="harness.loading.value || isProcessingFiles"
+                    title="Add NetSuite record or File Cabinet context"
+                    @click="openContextPicker('records')"
+                  >
+                    <i class="pi pi-database" />
+                  </button>
                   <button
                     type="button"
                     class="attach-btn"
@@ -560,6 +588,164 @@
             </aside>
           </div>
         </main>
+
+        <main v-else-if="activeHarnessSection === 'agents'" class="harness-main harness-dashboard-main">
+          <header class="dashboard-toolbar">
+            <div>
+              <div class="toolbar-title">
+                <i class="pi pi-users" />
+                <span>Agents</span>
+              </div>
+              <p>Configure the harness specialists, their permissions, and the tool categories they can see.</p>
+            </div>
+            <div class="dashboard-actions">
+              <InputText v-model="agentManagerSearch" placeholder="Search agents..." class="dashboard-search" />
+              <button type="button" class="agent-primary-btn" @click="openCreateAgentDialog">
+                <i class="pi pi-plus" />
+                <span>New Agent</span>
+              </button>
+            </div>
+          </header>
+
+          <section class="dashboard-grid">
+            <article
+              v-for="agent in filteredHarnessAgents"
+              :key="agent.id"
+              class="manager-card"
+              :class="{ muted: agent.enabled === false }"
+            >
+              <div class="manager-card-header">
+                <span class="manager-agent-mark" :style="{ background: agent.color }">
+                  <i :class="agent.icon" />
+                </span>
+                <div class="manager-card-title">
+                  <strong>{{ agent.name }}</strong>
+                  <span>{{ agent.description }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="toolset-switch"
+                  :class="{ active: agent.enabled !== false }"
+                  :title="agent.enabled === false ? 'Enable agent' : 'Disable agent'"
+                  @click="toggleHarnessAgentEnabled(agent)"
+                >
+                  <span />
+                </button>
+              </div>
+              <div class="manager-card-meta">
+                <span><i class="pi pi-shield" />{{ agent.defaultPermissionMode }}</span>
+                <span><i class="pi pi-forward" />{{ agent.maxSteps }} steps</span>
+                <span><i class="pi pi-wrench" />{{ agent.toolsets.length }} toolsets</span>
+              </div>
+              <div class="manager-chip-row">
+                <span v-for="toolset in agent.toolsets" :key="`${agent.id}-${toolset}`" class="manager-chip">
+                  {{ toolset }}
+                </span>
+              </div>
+              <div class="manager-card-actions">
+                <button type="button" class="agent-secondary-btn" @click="harness.setActiveAgent(agent.id); setHarnessSection('chat')">
+                  <i class="pi pi-comments" />
+                  <span>Use</span>
+                </button>
+                <button type="button" class="agent-secondary-btn" @click="openEditAgentDialog(agent)">
+                  <i class="pi pi-pencil" />
+                  <span>Edit</span>
+                </button>
+                <button type="button" class="agent-secondary-btn" @click="harness.duplicateAgent(agent.id)">
+                  <i class="pi pi-copy" />
+                  <span>Duplicate</span>
+                </button>
+              </div>
+            </article>
+          </section>
+        </main>
+
+        <main v-else class="harness-main harness-dashboard-main">
+          <header class="dashboard-toolbar">
+            <div>
+              <div class="toolbar-title">
+                <i class="pi pi-book" />
+                <span>Skills</span>
+              </div>
+              <p>Maintain reusable instructions and domain knowledge that the AI tools can retrieve.</p>
+            </div>
+            <div class="dashboard-actions">
+              <InputText v-model="skillSearch" placeholder="Search skills..." class="dashboard-search" />
+              <input
+                ref="skillFileInputRef"
+                type="file"
+                accept=".json,.md,.txt"
+                multiple
+                hidden
+                @change="importSkillFiles"
+              />
+              <button type="button" class="agent-secondary-btn" @click="triggerSkillImport">
+                <i class="pi pi-upload" />
+                <span>Import</span>
+              </button>
+              <button type="button" class="agent-secondary-btn" @click="exportSkills">
+                <i class="pi pi-download" />
+                <span>Export</span>
+              </button>
+              <button type="button" class="agent-primary-btn" @click="openCreateSkillDialog">
+                <i class="pi pi-plus" />
+                <span>Add Skill</span>
+              </button>
+            </div>
+          </header>
+
+          <section class="dashboard-list">
+            <article
+              v-for="skill in filteredHarnessSkills"
+              :key="skill.id"
+              class="manager-card skill-manager-card"
+              :class="{ muted: skill.enabled === false }"
+            >
+              <div class="manager-card-header">
+                <span class="manager-agent-mark manager-agent-mark--skill">
+                  <i class="pi pi-book" />
+                </span>
+                <div class="manager-card-title">
+                  <strong>{{ skill.name }}</strong>
+                  <span>{{ skill.description }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="toolset-switch"
+                  :class="{ active: skill.enabled !== false }"
+                  title="Enable or disable skill"
+                  @click="toggleSkillEnabled(skill)"
+                >
+                  <span />
+                </button>
+              </div>
+              <div class="manager-chip-row">
+                <span v-if="skill.domain === 'sql'" class="manager-chip manager-chip--strong">SQL</span>
+                <span v-for="tag in parseSkillTags(skill.tags)" :key="`${skill.id}-${tag}`" class="manager-chip">
+                  {{ tag }}
+                </span>
+              </div>
+              <div class="manager-card-meta">
+                <span><i class="pi pi-clock" />{{ formatSkillDate(skill.updatedAt) }}</span>
+                <span><i class="pi pi-align-left" />{{ formatSkillSize(skill.content.length) }}</span>
+              </div>
+              <div class="manager-card-actions">
+                <button type="button" class="agent-secondary-btn" @click="openEditSkillDialog(skill)">
+                  <i class="pi pi-pencil" />
+                  <span>Edit</span>
+                </button>
+                <button type="button" class="agent-danger-btn" @click="confirmDeleteSkill(skill)">
+                  <i class="pi pi-trash" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </article>
+            <div v-if="filteredHarnessSkills.length === 0" class="dashboard-empty">
+              <i class="pi pi-book" />
+              <span>No skills match this search.</span>
+            </div>
+          </section>
+        </main>
       </template>
     </MCard>
 
@@ -572,6 +758,283 @@
       @approve="resolveApproval(true)"
       @reject="resolveApproval(false)"
     />
+
+    <Dialog
+      v-model:visible="contextPickerVisible"
+      modal
+      header="Add NetSuite Context"
+      :style="{ width: 'min(920px, 96vw)' }"
+      class="context-dialog"
+    >
+      <div class="context-picker">
+        <div class="context-tabs">
+          <button
+            type="button"
+            :class="{ active: contextPickerTab === 'records' }"
+            @click="contextPickerTab = 'records'; loadRecordTypes()"
+          >
+            <i class="pi pi-table" />
+            <span>Records</span>
+          </button>
+          <button
+            type="button"
+            :class="{ active: contextPickerTab === 'files' }"
+            @click="contextPickerTab = 'files'; loadCabinetFolder(cabinetFolderId)"
+          >
+            <i class="pi pi-folder" />
+            <span>File Cabinet</span>
+          </button>
+        </div>
+
+        <section v-if="contextPickerTab === 'records'" class="context-panel">
+          <div class="context-toolbar">
+            <Select
+              v-model="selectedRecordType"
+              :options="recordTypes"
+              option-label="name"
+              placeholder="Record type"
+              filter
+              class="context-select"
+              :loading="recordTypesLoading"
+              @change="selectRecordType"
+            />
+            <InputText
+              v-model="recordSearch"
+              placeholder="Search name, id, tranid..."
+              class="context-search"
+              @keydown.enter.prevent="loadRecordPage(1)"
+            />
+            <button type="button" class="agent-secondary-btn" :disabled="!selectedRecordType || recordsLoading" @click="loadRecordPage(1)">
+              <i :class="recordsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-search'" />
+              <span>Search</span>
+            </button>
+          </div>
+          <div v-if="recordListError" class="context-error">{{ recordListError }}</div>
+          <DataTable
+            :value="filteredRecordRows"
+            data-key="id"
+            class="context-data-table"
+            size="small"
+            paginator
+            :rows="recordPageSize"
+            :rows-per-page-options="[10, 20, 50]"
+            :loading="recordsLoading"
+            scrollable
+            scroll-height="min(46vh, 420px)"
+          >
+            <template #empty>
+              <div class="context-empty context-empty--table">
+                {{ selectedRecordType ? "No records match this search." : "Select a record type to browse records." }}
+              </div>
+            </template>
+            <Column field="label" header="Record" sortable>
+              <template #body="{ data }">
+                <div class="context-primary-cell">
+                  <strong>{{ data.label }}</strong>
+                  <small>#{{ data.id }}</small>
+                </div>
+              </template>
+            </Column>
+            <Column field="meta" header="Details">
+              <template #body="{ data }">
+                <span class="context-muted-cell">{{ data.meta || selectedRecordType?.id }}</span>
+              </template>
+            </Column>
+            <Column header="" class="context-action-column">
+              <template #body="{ data }">
+                <button
+                  type="button"
+                  class="context-add-btn"
+                  :class="{ attached: isRecordAttached(data) }"
+                  :disabled="isRecordAttachBusy(data) || isRecordAttached(data)"
+                  :title="isRecordAttached(data) ? 'Added to context' : 'Add record context'"
+                  @click.stop="attachRecordContext(data)"
+                >
+                  <i :class="recordActionIcon(data)" />
+                  <span>{{ isRecordAttached(data) ? "Added" : "Add" }}</span>
+                </button>
+              </template>
+            </Column>
+          </DataTable>
+        </section>
+
+        <section v-else class="context-panel">
+          <div class="context-toolbar">
+            <button type="button" class="agent-secondary-btn" @click="loadCabinetFolder(null)">
+              <i class="pi pi-home" />
+            </button>
+            <div class="context-breadcrumbs">
+              <button
+                v-for="crumb in cabinetBreadcrumbs"
+                :key="crumb.id"
+                type="button"
+                @click="loadCabinetFolder(crumb.id)"
+              >
+                {{ crumb.name }}
+              </button>
+            </div>
+            <InputText
+              v-model="cabinetSearch"
+              placeholder="Search files..."
+              class="context-search"
+              @keydown.enter.prevent="searchCabinetFiles"
+            />
+            <button type="button" class="agent-secondary-btn" :disabled="cabinetLoading" @click="searchCabinetFiles">
+              <i :class="cabinetLoading ? 'pi pi-spin pi-spinner' : 'pi pi-search'" />
+              <span>Search</span>
+            </button>
+          </div>
+          <div v-if="cabinetError" class="context-error">{{ cabinetError }}</div>
+          <DataTable
+            :value="filteredCabinetRows"
+            data-key="key"
+            class="context-data-table"
+            size="small"
+            paginator
+            :rows="12"
+            :rows-per-page-options="[12, 24, 50]"
+            :loading="cabinetLoading"
+            scrollable
+            scroll-height="min(46vh, 420px)"
+          >
+            <template #empty>
+              <div class="context-empty context-empty--table">
+                No supported files or folders match this view.
+              </div>
+            </template>
+            <Column field="name" header="Name" sortable>
+              <template #body="{ data }">
+                <button
+                  v-if="data.kind === 'folder'"
+                  type="button"
+                  class="context-folder-link"
+                  @click="loadCabinetFolder(data.id)"
+                >
+                  <i class="pi pi-folder text-amber-500" />
+                  <span>{{ data.name }}</span>
+                </button>
+                <div v-else class="context-primary-cell">
+                  <span>
+                    <i :class="data.filetype === 'PDF' ? 'pi pi-file-pdf text-red-500' : 'pi pi-file text-blue-500'" />
+                    {{ data.name }}
+                  </span>
+                  <small>#{{ data.id }}</small>
+                </div>
+              </template>
+            </Column>
+            <Column field="filetype" header="Type" sortable>
+              <template #body="{ data }">
+                <span class="context-muted-cell">{{ data.kind === 'folder' ? 'Folder' : data.filetype }}</span>
+              </template>
+            </Column>
+            <Column field="filesize" header="Size" sortable>
+              <template #body="{ data }">
+                <span class="context-muted-cell">{{ data.kind === 'folder' ? '-' : formatFileSize(data.filesize) }}</span>
+              </template>
+            </Column>
+            <Column header="" class="context-action-column">
+              <template #body="{ data }">
+                <button
+                  v-if="data.kind === 'file'"
+                  type="button"
+                  class="context-add-btn"
+                  :class="{ attached: isCabinetFileAttached(data) }"
+                  :disabled="isCabinetFileAttachBusy(data) || isCabinetFileAttached(data) || !data.url"
+                  :title="isCabinetFileAttached(data) ? 'Added to context' : 'Add file context'"
+                  @click.stop="attachCabinetFileContext(data)"
+                >
+                  <i :class="cabinetActionIcon(data)" />
+                  <span>{{ isCabinetFileAttached(data) ? "Added" : "Add" }}</span>
+                </button>
+              </template>
+            </Column>
+          </DataTable>
+        </section>
+      </div>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="skillDialogVisible"
+      modal
+      :header="skillEditingId === null ? 'Add Skill' : 'Edit Skill'"
+      :style="{ width: 'min(720px, 94vw)' }"
+    >
+      <div class="skill-editor">
+        <div class="agent-tabs">
+          <button type="button" :class="{ active: skillEditorMode === 'manual' }" @click="skillEditorMode = 'manual'">
+            Manual
+          </button>
+          <button type="button" :class="{ active: skillEditorMode === 'generate' }" @click="skillEditorMode = 'generate'">
+            Generate with AI
+          </button>
+        </div>
+
+        <section v-if="skillEditorMode === 'generate'" class="agent-generate-panel">
+          <Textarea
+            v-model="skillGeneratePrompt"
+            class="agent-textarea"
+            rows="4"
+            placeholder="Describe the skill you want: NetSuite domain, common mistakes, APIs, searches, examples, and when the agent should use it."
+          />
+          <div class="agent-generate-actions">
+            <span v-if="skillGenerateProgress" class="generate-progress">{{ skillGenerateProgress }}</span>
+            <span v-else-if="skillGenerateError" class="generate-error">{{ skillGenerateError }}</span>
+            <button type="button" class="agent-primary-btn" :disabled="skillGenerating" @click="generateSkillWithAi">
+              <i :class="skillGenerating ? 'pi pi-spin pi-spinner' : 'pi pi-sparkles'" />
+              <span>{{ skillGenerating ? "Generating" : "Generate" }}</span>
+            </button>
+          </div>
+        </section>
+
+        <div class="skill-editor-form">
+          <label>
+            <span>Name</span>
+            <InputText v-model="skillForm.name" class="agent-input" />
+          </label>
+          <label>
+            <span>Description</span>
+            <InputText v-model="skillForm.description" class="agent-input" />
+          </label>
+          <label>
+            <span>Tags</span>
+            <InputText v-model="skillForm.tags" class="agent-input" placeholder="suiteql, records, scripts" />
+          </label>
+          <label>
+            <span>Domain</span>
+            <div class="skill-domain-toggle">
+              <button type="button" :class="{ active: skillForm.domain === 'global' }" @click="skillForm.domain = 'global'">Global</button>
+              <button type="button" :class="{ active: skillForm.domain === 'sql' }" @click="skillForm.domain = 'sql'">SQL</button>
+            </div>
+          </label>
+          <label>
+            <span>Content</span>
+            <Textarea v-model="skillForm.content" class="agent-textarea skill-content-textarea" rows="12" auto-resize />
+          </label>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="agent-secondary-btn" @click="skillDialogVisible = false">Cancel</button>
+        <button type="button" class="agent-primary-btn" @click="saveSkillForm">
+          <i class="pi pi-check" />
+          <span>Save Skill</span>
+        </button>
+      </template>
+    </Dialog>
+
+    <Dialog
+      v-model:visible="skillDeleteDialogVisible"
+      modal
+      header="Delete Skill"
+      :style="{ width: 'min(420px, 92vw)' }"
+    >
+      <p class="delete-message">
+        Delete <strong>{{ skillDeleteTarget?.name }}</strong>? This cannot be undone.
+      </p>
+      <template #footer>
+        <button type="button" class="agent-secondary-btn" @click="skillDeleteDialogVisible = false">Cancel</button>
+        <button type="button" class="agent-danger-btn" @click="executeDeleteSkill">Delete</button>
+      </template>
+    </Dialog>
 
     <Dialog
       v-model:visible="agentDialogVisible"
@@ -713,12 +1176,17 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import Dialog from "primevue/dialog";
 import ColorPicker from "primevue/colorpicker";
+import Column from "primevue/column";
+import DataTable from "primevue/datatable";
 import InputNumber from "primevue/inputnumber";
 import InputText from "primevue/inputtext";
 import Select from "primevue/select";
 import Textarea from "primevue/textarea";
+import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
+import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
@@ -740,6 +1208,16 @@ import type {
 import { agentCache, cacheVersion } from "../utils/agentCacheStore";
 import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
 import { downloadDocumentAsPdf, extractPdfText } from "../utils/pdfUtils";
+import {
+  addSkill,
+  deleteSkill,
+  exportAllSkills,
+  getAllSkills,
+  importSkills,
+  updateSkill,
+  type Skill,
+  type SkillExport,
+} from "../utils/skillsDb";
 
 type HarnessItemView = Omit<Readonly<HarnessItemRecord>, "attachments"> & {
   readonly attachments?: readonly HarnessAttachment[];
@@ -772,6 +1250,39 @@ interface HarnessTurnView {
   hasError: boolean;
 }
 
+type HarnessSection = "chat" | "agents" | "skills";
+type ContextPickerTab = "records" | "files";
+
+interface RecordTypeOption {
+  id: string;
+  name: string;
+}
+
+interface RecordListRow {
+  id: string;
+  label: string;
+  meta: string;
+  raw: Record<string, unknown>;
+}
+
+interface CabinetFolderRow {
+  id: number;
+  name: string;
+}
+
+interface CabinetFileRow {
+  id: number;
+  name: string;
+  filetype: string;
+  filesize: number;
+  folder?: number;
+  url?: string;
+}
+
+type CabinetContextRow =
+  | (CabinetFolderRow & { key: string; kind: "folder"; filetype: ""; filesize: 0; folder?: number; url?: undefined })
+  | (CabinetFileRow & { key: string; kind: "file" });
+
 withDefaults(defineProps<{ vhOffset?: number }>(), {
   vhOffset: 100,
 });
@@ -789,6 +1300,8 @@ const harness = useNetsuiteAgentHarness(
     })
 );
 const { chatCompletion } = useAiProvider();
+const route = useRoute();
+const router = useRouter();
 
 const prompt = ref("");
 const streamRef = ref<HTMLDivElement | null>(null);
@@ -796,6 +1309,8 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 const pendingAttachments = ref<HarnessAttachment[]>([]);
 const isProcessingFiles = ref(false);
 const isDragOver = ref(false);
+const shouldStickToBottom = ref(true);
+let lastStreamScrollHeight = 0;
 const expandedToolIds = ref(new Set<string>());
 const expandedToolsetIds = ref(new Set<HarnessToolsetId>());
 const expandedActionTurnIds = ref(new Set<string>());
@@ -809,6 +1324,53 @@ const agentGenerating = ref(false);
 const agentGeneratePrompt = ref("");
 const agentGenerateProgress = ref("");
 const agentGenerateError = ref("");
+const agentManagerSearch = ref("");
+
+const contextPickerVisible = ref(false);
+const contextPickerTab = ref<ContextPickerTab>("records");
+const recordTypes = ref<RecordTypeOption[]>([]);
+const recordTypesLoading = ref(false);
+const selectedRecordType = ref<RecordTypeOption | null>(null);
+const recordSearch = ref("");
+const recordRows = ref<RecordListRow[]>([]);
+const recordPageSize = 10;
+const recordFetchLimit = 500;
+const recordsLoading = ref(false);
+const recordListError = ref("");
+const attachingContextId = ref<string | null>(null);
+const cabinetFolderId = ref<number | null>(null);
+const cabinetBreadcrumbs = ref<CabinetFolderRow[]>([]);
+const cabinetFolders = ref<CabinetFolderRow[]>([]);
+const cabinetFiles = ref<CabinetFileRow[]>([]);
+const cabinetSearch = ref("");
+const cabinetLoading = ref(false);
+const cabinetError = ref("");
+
+const skills = ref<Skill[]>([]);
+const skillSearch = ref("");
+const skillDialogVisible = ref(false);
+const skillEditorMode = ref<"manual" | "generate">("manual");
+const skillGeneratePrompt = ref("");
+const skillGenerateProgress = ref("");
+const skillGenerateError = ref("");
+const skillGenerating = ref(false);
+const skillDeleteDialogVisible = ref(false);
+const skillEditingId = ref<number | null>(null);
+const skillDeleteTarget = ref<Skill | null>(null);
+const skillFileInputRef = ref<HTMLInputElement | null>(null);
+const skillForm = ref<{
+  name: string;
+  description: string;
+  tags: string;
+  content: string;
+  domain: "global" | "sql";
+}>({
+  name: "",
+  description: "",
+  tags: "",
+  content: "",
+  domain: "global",
+});
 
 const ACCEPTED_TEXT_EXTENSIONS = new Set([
   "txt",
@@ -839,6 +1401,38 @@ const ACCEPTED_TEXT_EXTENSIONS = new Set([
   "yml",
   "toml",
 ]);
+
+const SUPPORTED_CABINET_FILE_TYPES = new Set([
+  "JAVASCRIPT",
+  "TYPESCRIPT",
+  "PLAINTEXT",
+  "CSV",
+  "XMLDOC",
+  "HTMLDOC",
+  "JSON",
+  "STYLESHEET",
+  "FREEMARKER",
+  "SVGIMAGE",
+  "CONFIG",
+  "PDF",
+]);
+
+const TRANSACTION_RECORD_TYPES: Record<string, string> = {
+  cashsale: "CashSale",
+  creditmemo: "CustCred",
+  customerdeposit: "CustDep",
+  customerpayment: "CustPymt",
+  estimate: "Estimate",
+  invoice: "CustInvc",
+  itemfulfillment: "ItemShip",
+  journalentry: "Journal",
+  opportunity: "Opprtnty",
+  purchaseorder: "PurchOrd",
+  returnauthorization: "RtnAuth",
+  salesorder: "SalesOrd",
+  vendorbill: "VendBill",
+  vendorcredit: "VendCred",
+};
 
 const modes: Array<{
   id: HarnessPermissionMode;
@@ -876,6 +1470,17 @@ const quickPrompts = [
   "Find the file cabinet source for a Suitelet by script name",
 ];
 
+const harnessNavItems: Array<{
+  id: HarnessSection;
+  label: string;
+  icon: string;
+  route: string;
+}> = [
+  { id: "chat", label: "Harness", icon: "pi pi-comments", route: "/netsuite-agent-harness" },
+  { id: "agents", label: "Agents", icon: "pi pi-users", route: "/netsuite-agent-harness/agents" },
+  { id: "skills", label: "Skills", icon: "pi pi-book", route: "/netsuite-agent-harness/skills" },
+];
+
 const shellStyle = computed(() => ({
   height: "100%",
   overflow: "hidden",
@@ -884,6 +1489,73 @@ const shellStyle = computed(() => ({
 const canSubmit = computed(
   () => prompt.value.trim().length > 0 || pendingAttachments.value.length > 0
 );
+
+const activeHarnessSection = computed<HarnessSection>(() => {
+  if (route.path.endsWith("/agents")) return "agents";
+  if (route.path.endsWith("/skills")) return "skills";
+  return "chat";
+});
+
+const filteredHarnessAgents = computed(() => {
+  const q = agentManagerSearch.value.trim().toLowerCase();
+  const list = [...harness.agents.value];
+  if (!q) return list;
+  return list.filter((agent) =>
+    `${agent.name} ${agent.shortName} ${agent.description} ${agent.systemFocus}`
+      .toLowerCase()
+      .includes(q)
+  );
+});
+
+const filteredHarnessSkills = computed(() => {
+  const q = skillSearch.value.trim().toLowerCase();
+  if (!q) return skills.value;
+  const terms = q.split(/\s+/);
+  return skills.value.filter((skill) => {
+    const haystack = `${skill.name} ${skill.description} ${skill.tags} ${skill.content}`
+      .toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+});
+
+const filteredRecordRows = computed(() => {
+  const q = recordSearch.value.trim().toLowerCase();
+  if (!q) return recordRows.value;
+  return recordRows.value.filter((row) =>
+    `${row.id} ${row.label} ${row.meta} ${JSON.stringify(row.raw)}`
+      .toLowerCase()
+      .includes(q)
+  );
+});
+
+const selectedCabinetFiles = computed(() =>
+  cabinetFiles.value.filter((file) => isSupportedCabinetFile(file))
+);
+
+const cabinetRows = computed<CabinetContextRow[]>(() => [
+  ...cabinetFolders.value.map((folder) => ({
+    ...folder,
+    key: `folder:${folder.id}`,
+    kind: "folder" as const,
+    filetype: "" as const,
+    filesize: 0 as const,
+  })),
+  ...selectedCabinetFiles.value.map((file) => ({
+    ...file,
+    key: `file:${file.id}`,
+    kind: "file" as const,
+  })),
+]);
+
+const filteredCabinetRows = computed(() => {
+  const q = cabinetSearch.value.trim().toLowerCase();
+  if (!q) return cabinetRows.value;
+  return cabinetRows.value.filter((row) =>
+    `${row.id} ${row.name} ${row.kind} ${row.filetype} ${row.folder ?? ""}`
+      .toLowerCase()
+      .includes(q)
+  );
+});
 
 const isAssistantMessage = (item: HarnessItemView): boolean =>
   item.kind === "message" && item.role === "assistant";
@@ -1139,6 +1811,568 @@ const resolveViewPlaceholders = (content: string | null | undefined): string => 
   });
 };
 
+const setHarnessSection = (section: HarnessSection) => {
+  const target = harnessNavItems.find((item) => item.id === section);
+  if (target && route.path !== target.route) {
+    void router.push(target.route);
+  }
+};
+
+const toggleHarnessAgentEnabled = async (agent: Readonly<HarnessAgent>) => {
+  await harness.saveAgent({
+    id: agent.id,
+    name: agent.name,
+    shortName: agent.shortName,
+    icon: agent.icon,
+    color: agent.color,
+    description: agent.description,
+    defaultPermissionMode: agent.defaultPermissionMode,
+    toolsets: [...agent.toolsets],
+    enabledToolNames: agent.enabledToolNames ? [...agent.enabledToolNames] : undefined,
+    maxSteps: agent.maxSteps,
+    systemFocus: agent.systemFocus,
+    enabled: agent.enabled === false,
+    builtIn: agent.builtIn,
+  });
+};
+
+const refreshSkills = async () => {
+  skills.value = await getAllSkills();
+};
+
+const openCreateSkillDialog = () => {
+  skillEditingId.value = null;
+  skillEditorMode.value = "manual";
+  skillGeneratePrompt.value = "";
+  skillGenerateProgress.value = "";
+  skillGenerateError.value = "";
+  skillForm.value = {
+    name: "",
+    description: "",
+    tags: "",
+    content: "",
+    domain: "global",
+  };
+  skillDialogVisible.value = true;
+};
+
+const openEditSkillDialog = (skill: Skill) => {
+  skillEditingId.value = skill.id ?? null;
+  skillEditorMode.value = "manual";
+  skillGeneratePrompt.value = "";
+  skillGenerateProgress.value = "";
+  skillGenerateError.value = "";
+  skillForm.value = {
+    name: skill.name,
+    description: skill.description,
+    tags: skill.tags,
+    content: skill.content,
+    domain: skill.domain ?? "global",
+  };
+  skillDialogVisible.value = true;
+};
+
+const saveSkillForm = async () => {
+  const payload = {
+    name: skillForm.value.name.trim(),
+    description: skillForm.value.description.trim(),
+    tags: skillForm.value.tags.trim(),
+    content: skillForm.value.content.trim(),
+    domain: skillForm.value.domain,
+  };
+  if (!payload.name || !payload.content) return;
+
+  if (skillEditingId.value !== null) {
+    await updateSkill(skillEditingId.value, payload);
+  } else {
+    await addSkill({ ...payload, enabled: true });
+  }
+  skillDialogVisible.value = false;
+  await refreshSkills();
+};
+
+const toggleSkillEnabled = async (skill: Skill) => {
+  if (skill.id === undefined) return;
+  await updateSkill(skill.id, { enabled: skill.enabled === false });
+  await refreshSkills();
+};
+
+const confirmDeleteSkill = (skill: Skill) => {
+  skillDeleteTarget.value = skill;
+  skillDeleteDialogVisible.value = true;
+};
+
+const executeDeleteSkill = async () => {
+  if (skillDeleteTarget.value?.id === undefined) return;
+  await deleteSkill(skillDeleteTarget.value.id);
+  skillDeleteDialogVisible.value = false;
+  skillDeleteTarget.value = null;
+  await refreshSkills();
+};
+
+const triggerSkillImport = () => {
+  skillFileInputRef.value?.click();
+};
+
+const importSkillFiles = async (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const files = input.files;
+  if (!files?.length) return;
+
+  for (const file of Array.from(files)) {
+    try {
+      const text = await file.text();
+      if (file.name.toLowerCase().endsWith(".json")) {
+        const parsed = JSON.parse(text);
+        const items: SkillExport[] = Array.isArray(parsed) ? parsed : [parsed];
+        await importSkills(
+          items
+            .filter((item) => typeof item.name === "string" && typeof item.content === "string")
+            .map((item) => ({
+              name: item.name,
+              description: item.description || "",
+              tags: item.tags || "",
+              content: item.content,
+              domain: item.domain ?? "global",
+            }))
+        );
+      } else {
+        await addSkill({
+          name: file.name.replace(/\.(md|txt)$/i, ""),
+          description: `Imported from ${file.name}`,
+          tags: "",
+          content: text,
+          enabled: true,
+        });
+      }
+    } catch (err) {
+      console.error("[Harness] Skill import failed", err);
+    }
+  }
+
+  input.value = "";
+  await refreshSkills();
+};
+
+const exportSkills = async () => {
+  const data = await exportAllSkills();
+  if (data.length === 0) return;
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `skills-export-${new Date().toISOString().slice(0, 10)}.json`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
+const parseSkillTags = (tags: string): string[] =>
+  tags.split(/[,\s]+/).map((tag) => tag.trim()).filter(Boolean);
+
+const formatSkillDate = (dateStr: string): string => {
+  const date = new Date(dateStr);
+  return Number.isNaN(date.getTime())
+    ? "Unknown"
+    : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+const formatSkillSize = (chars: number): string =>
+  chars < 1000 ? `${chars} chars` : `${(chars / 1000).toFixed(1)}K chars`;
+
+const openContextPicker = (tab: ContextPickerTab = "records") => {
+  contextPickerTab.value = tab;
+  contextPickerVisible.value = true;
+  if (tab === "records" && recordTypes.value.length === 0) {
+    void loadRecordTypes();
+  }
+  if (tab === "files" && cabinetFolders.value.length === 0 && cabinetFiles.value.length === 0) {
+    void loadCabinetFolder(null);
+  }
+};
+
+const escapeSuiteQLString = (value: string): string =>
+  value.replace(/'/g, "''");
+
+const normalizeApiRows = (response: ApiResponse): Record<string, unknown>[] => {
+  const message = response?.message;
+  if (Array.isArray(message)) return message as Record<string, unknown>[];
+  if (Array.isArray(message?.results)) return message.results as Record<string, unknown>[];
+  return normalizeRows(message);
+};
+
+const normalizeRows = (value: unknown): Record<string, unknown>[] => {
+  if (Array.isArray(value)) return value as Record<string, unknown>[];
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of ["results", "items", "files", "folders", "subfolders", "records", "rows"]) {
+    const nested = record[key];
+    if (Array.isArray(nested)) return nested as Record<string, unknown>[];
+    if (nested && typeof nested === "object") {
+      const nestedRows = normalizeRows(nested);
+      if (nestedRows.length) return nestedRows;
+    }
+  }
+  return [];
+};
+
+const runSuiteQLRows = async (
+  sql: string,
+  limit = 100
+): Promise<Record<string, unknown>[]> => {
+  const response = await callApi(
+    RequestRoutes.RUN_SUITEQL_QUERY,
+    { sql, limit },
+    ApiRequestType.NORMAL
+  );
+  return normalizeApiRows(response);
+};
+
+const loadRecordTypes = async () => {
+  recordTypesLoading.value = true;
+  try {
+    const response = await callApi(RequestRoutes.GET_ALL_RECORD_TYPES);
+    const rows = Array.isArray(response.message) ? response.message : [];
+    recordTypes.value = rows
+      .map((row: any) => ({
+        id: String(row.id ?? "").toLowerCase(),
+        name: String(row.name ?? row.id ?? ""),
+      }))
+      .filter((row) => row.id && row.name)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    recordListError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    recordTypesLoading.value = false;
+  }
+};
+
+const isNumericSearch = (value: string): boolean => /^\d+$/.test(value.trim());
+
+const recordSearchClause = (fields: string[]): string => {
+  const search = recordSearch.value.trim();
+  if (!search) return "";
+  const pieces: string[] = [];
+  if (isNumericSearch(search)) pieces.push(`id = ${Number(search)}`);
+  for (const field of fields) {
+    pieces.push(`LOWER(${field}) LIKE LOWER('%${escapeSuiteQLString(search)}%')`);
+  }
+  return pieces.length ? ` AND (${pieces.join(" OR ")})` : "";
+};
+
+const mapRecordRows = (rows: Record<string, unknown>[]): RecordListRow[] =>
+  rows.map((row) => {
+    const id = String(row.id ?? row.ID ?? "");
+    const label =
+      String(row.name ?? row.entityid ?? row.altname ?? row.tranid ?? row.scriptid ?? row.displayname ?? "")
+        .trim() || `#${id}`;
+    const meta = Object.entries(row)
+      .filter(([key, value]) => key.toLowerCase() !== "id" && value !== null && value !== undefined && value !== "")
+      .slice(0, 3)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(" | ");
+    return { id, label, meta, raw: row };
+  }).filter((row) => row.id);
+
+const buildRecordQueries = (recordType: string): string[] => {
+  const transactionCode = TRANSACTION_RECORD_TYPES[recordType];
+  if (transactionCode) {
+    return [
+      `SELECT id, tranid, BUILTIN.DF(entity) AS entity, trandate FROM transaction WHERE type = '${transactionCode}'${recordSearchClause(["tranid"])} ORDER BY id DESC`,
+    ];
+  }
+
+  const table = recordType.replace(/[^a-z0-9_]/gi, "");
+  return [
+    `SELECT id, name FROM ${table} WHERE 1 = 1${recordSearchClause(["name"])} ORDER BY id DESC`,
+    `SELECT id, entityid, altname FROM ${table} WHERE 1 = 1${recordSearchClause(["entityid", "altname"])} ORDER BY id DESC`,
+    `SELECT id, scriptid, name FROM ${table} WHERE 1 = 1${recordSearchClause(["scriptid", "name"])} ORDER BY id DESC`,
+    `SELECT id FROM ${table} ORDER BY id DESC`,
+  ].map((query) => query.replace(/\s+/g, " ").trim());
+};
+
+const loadRecordPage = async (_page = 1) => {
+  if (!selectedRecordType.value) return;
+  recordsLoading.value = true;
+  recordListError.value = "";
+
+  try {
+    let rows: Record<string, unknown>[] = [];
+    let lastError = "";
+    for (const sql of buildRecordQueries(selectedRecordType.value.id)) {
+      try {
+        rows = await runSuiteQLRows(sql, recordFetchLimit);
+        if (rows.length > 0 || sql.includes("SELECT id FROM")) break;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    if (rows.length === 0 && lastError) recordListError.value = lastError;
+    recordRows.value = mapRecordRows(rows);
+  } catch (err) {
+    recordListError.value = err instanceof Error ? err.message : String(err);
+    recordRows.value = [];
+  } finally {
+    recordsLoading.value = false;
+  }
+};
+
+const selectRecordType = async () => {
+  recordRows.value = [];
+  if (selectedRecordType.value) await loadRecordPage(1);
+};
+
+const isRecordAttached = (row: RecordListRow): boolean =>
+  pendingAttachments.value.some(
+    (attachment) =>
+      attachment.source === "record" &&
+      attachment.sourceId === row.id &&
+      attachment.sourceType === selectedRecordType.value?.id
+  );
+
+const isRecordAttachBusy = (row: RecordListRow): boolean =>
+  attachingContextId.value === `record:${selectedRecordType.value?.id}:${row.id}`;
+
+const recordActionIcon = (row: RecordListRow): string => {
+  if (isRecordAttachBusy(row)) return "pi pi-spin pi-spinner";
+  if (isRecordAttached(row)) return "pi pi-check";
+  return "pi pi-plus";
+};
+
+const attachRecordContext = async (row: RecordListRow) => {
+  if (!selectedRecordType.value || isRecordAttached(row) || isRecordAttachBusy(row)) return;
+  attachingContextId.value = `record:${selectedRecordType.value.id}:${row.id}`;
+  recordListError.value = "";
+  try {
+    const response = await callApi(RequestRoutes.LOAD_RECORD, {
+      type: selectedRecordType.value.id,
+      id: row.id,
+    });
+    const content = [
+      "NetSuite record context",
+      `recordType: ${selectedRecordType.value.id}`,
+      `recordTypeName: ${selectedRecordType.value.name}`,
+      `internalId: ${row.id}`,
+      `label: ${row.label}`,
+      "",
+      JSON.stringify(response.message ?? row.raw, null, 2),
+    ].join("\n");
+    pendingAttachments.value.push({
+      name: `${selectedRecordType.value.name}: ${row.label} (#${row.id})`,
+      type: "text",
+      content,
+      size: content.length,
+      source: "record",
+      sourceId: row.id,
+      sourceType: selectedRecordType.value.id,
+    });
+  } catch (err) {
+    recordListError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    attachingContextId.value = null;
+  }
+};
+
+const isSupportedCabinetFile = (file: CabinetFileRow): boolean =>
+  SUPPORTED_CABINET_FILE_TYPES.has(String(file.filetype ?? "").toUpperCase());
+
+const cabinetSupportedTypeSql = (): string =>
+  [...SUPPORTED_CABINET_FILE_TYPES]
+    .map((type) => `'${escapeSuiteQLString(type)}'`)
+    .join(", ");
+
+const mapCabinetFolders = (rows: Record<string, unknown>[]): CabinetFolderRow[] =>
+  rows
+    .map((row) => ({
+      id: Number(row.id ?? row.ID),
+      name: String(row.name ?? row.Name ?? row.id ?? ""),
+    }))
+    .filter((row) => Number.isFinite(row.id) && row.name);
+
+const mapCabinetFiles = (
+  rows: Record<string, unknown>[],
+  fallbackFolder?: number
+): CabinetFileRow[] =>
+  rows
+    .map((row) => ({
+      id: Number(row.id ?? row.ID),
+      name: String(row.name ?? row.Name ?? row.id ?? ""),
+      filetype: String(row.filetype ?? row.fileType ?? row.FILETYPE ?? "").toUpperCase(),
+      filesize: Number(row.filesize ?? row.fileSize ?? row.FILESIZE ?? 0),
+      folder: row.folder !== undefined && row.folder !== null
+        ? Number(row.folder)
+        : fallbackFolder,
+      url: row.url ? String(row.url) : undefined,
+    }))
+    .filter((row) => Number.isFinite(row.id) && row.name);
+
+const loadCabinetBreadcrumbs = async (folderId: number | null) => {
+  if (folderId === null) {
+    cabinetBreadcrumbs.value = [];
+    return;
+  }
+  const crumbs: CabinetFolderRow[] = [];
+  let current: number | null = folderId;
+  for (let i = 0; i < 20 && current !== null; i++) {
+    const rows = await runSuiteQLRows(
+      `SELECT id, name, parent FROM MediaItemFolder WHERE id = ${current} AND ROWNUM <= 1`,
+      1
+    );
+    const row = rows[0];
+    if (!row) break;
+    crumbs.unshift({ id: Number(row.id), name: String(row.name ?? row.id) });
+    current = row.parent === null || row.parent === undefined ? null : Number(row.parent);
+  }
+  cabinetBreadcrumbs.value = crumbs;
+};
+
+const loadCabinetFolder = async (folderId: number | null) => {
+  cabinetLoading.value = true;
+  cabinetError.value = "";
+  cabinetSearch.value = "";
+  cabinetFolderId.value = folderId;
+  try {
+    if (folderId === null) {
+      const rows = await runSuiteQLRows(
+        "SELECT id, name FROM MediaItemFolder WHERE parent IS NULL ORDER BY name",
+        200
+      );
+      cabinetFolders.value = mapCabinetFolders(rows);
+      cabinetFiles.value = [];
+      cabinetBreadcrumbs.value = [];
+    } else {
+      const [folderRows, fileRows] = await Promise.all([
+        runSuiteQLRows(
+          `SELECT id, name FROM MediaItemFolder WHERE parent = ${folderId} ORDER BY name`,
+          500
+        ),
+        runSuiteQLRows(
+          `SELECT id, name, folder, filesize, filetype, url FROM File WHERE folder = ${folderId} AND filetype IN (${cabinetSupportedTypeSql()}) ORDER BY name`,
+          500
+        ),
+      ]);
+      cabinetFolders.value = mapCabinetFolders(folderRows);
+      cabinetFiles.value = mapCabinetFiles(fileRows, folderId);
+      await loadCabinetBreadcrumbs(folderId);
+    }
+  } catch (err) {
+    cabinetError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    cabinetLoading.value = false;
+  }
+};
+
+const searchCabinetFiles = async () => {
+  const query = cabinetSearch.value.trim();
+  if (!query) {
+    await loadCabinetFolder(cabinetFolderId.value);
+    return;
+  }
+  cabinetLoading.value = true;
+  cabinetError.value = "";
+  try {
+    const searchClause = isNumericSearch(query)
+      ? `(id = ${Number(query)} OR LOWER(name) LIKE LOWER('%${escapeSuiteQLString(query)}%'))`
+      : `LOWER(name) LIKE LOWER('%${escapeSuiteQLString(query)}%')`;
+    const [folderRows, fileRows] = await Promise.all([
+      runSuiteQLRows(
+        `SELECT id, name, parent FROM MediaItemFolder WHERE ${searchClause} ORDER BY name`,
+        100
+      ),
+      runSuiteQLRows(
+        `SELECT id, name, folder, filesize, filetype, url FROM File WHERE ${searchClause} AND filetype IN (${cabinetSupportedTypeSql()}) ORDER BY name`,
+        250
+      ),
+    ]);
+    cabinetFolders.value = mapCabinetFolders(folderRows);
+    cabinetFiles.value = mapCabinetFiles(fileRows);
+    cabinetBreadcrumbs.value = [];
+    cabinetFolderId.value = null;
+  } catch (err) {
+    cabinetError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    cabinetLoading.value = false;
+  }
+};
+
+const dataUrlToFile = (dataUrl: string, name: string): File => {
+  const [header = "", body = ""] = dataUrl.split(",", 2);
+  const contentType = /^data:([^;]+);/i.exec(header)?.[1] || "application/octet-stream";
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], name, { type: contentType });
+};
+
+const isCabinetFileAttached = (file: CabinetFileRow): boolean =>
+  pendingAttachments.value.some(
+    (attachment) =>
+      attachment.source === "filecabinet" &&
+      attachment.sourceId === String(file.id)
+  );
+
+const isCabinetFileAttachBusy = (file: CabinetFileRow): boolean =>
+  attachingContextId.value === `file:${file.id}`;
+
+const cabinetActionIcon = (file: CabinetFileRow): string => {
+  if (isCabinetFileAttachBusy(file)) return "pi pi-spin pi-spinner";
+  if (isCabinetFileAttached(file)) return "pi pi-check";
+  return "pi pi-plus";
+};
+
+const attachCabinetFileContext = async (file: CabinetFileRow) => {
+  if (
+    !file.url ||
+    !isSupportedCabinetFile(file) ||
+    isCabinetFileAttached(file) ||
+    isCabinetFileAttachBusy(file)
+  ) {
+    return;
+  }
+  attachingContextId.value = `file:${file.id}`;
+  cabinetError.value = "";
+  try {
+    const response = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
+      fileUrl: file.url,
+    });
+    const result = response.message ?? {};
+    const isPdf = file.filetype === "PDF" || String(result.contentType ?? "").includes("application/pdf");
+    let content = "";
+    if (isPdf) {
+      const pdfFile = dataUrlToFile(String(result.content ?? ""), file.name);
+      const extracted = await extractPdfText(pdfFile);
+      content = extracted.pages
+        .map((page) => `<page ${page.pageNumber}>\n${page.text}\n</page ${page.pageNumber}>`)
+        .join("\n\n");
+    } else {
+      content = String(result.content ?? "");
+    }
+    const context = [
+      "NetSuite File Cabinet context",
+      `fileId: ${file.id}`,
+      `name: ${file.name}`,
+      `fileType: ${file.filetype}`,
+      file.folder !== undefined ? `folderId: ${file.folder}` : "",
+      file.url ? `url: ${file.url}` : "",
+      "",
+      content,
+    ].filter((line) => line !== "").join("\n");
+    pendingAttachments.value.push({
+      name: `${file.name} (#${file.id})`,
+      type: isPdf ? "pdf" : "text",
+      content: context,
+      size: context.length,
+      source: "filecabinet",
+      sourceId: String(file.id),
+      sourceType: file.filetype,
+    });
+  } catch (err) {
+    cabinetError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    attachingContextId.value = null;
+  }
+};
+
 const openCreateAgentDialog = () => {
   editingAgentId.value = null;
   agentEditorMode.value = "manual";
@@ -1315,6 +2549,103 @@ Rules:
   }
 };
 
+const generateSkillWithAi = async () => {
+  const request = skillGeneratePrompt.value.trim();
+  if (!request || skillGenerating.value) return;
+
+  skillGenerating.value = true;
+  skillGenerateError.value = "";
+  skillGenerateProgress.value = "";
+
+  try {
+    const existingSkills = skills.value
+      .slice(0, 20)
+      .map((skill) => `- ${skill.name}: ${skill.description} [${skill.tags}]`)
+      .join("\n");
+    const toolsetList = harness.toolsets
+      .map((toolset) => `${toolset.id}: ${toolset.name} - ${toolset.description}`)
+      .join("\n");
+
+    const systemPrompt = `You generate reusable NetSuite skills for the Magic NetSuite Agent Harness.
+Return one raw JSON object only. Do not wrap it in markdown.
+
+Before generating, search and read NetSuite documentation for the requested domain whenever it involves SuiteScript, SuiteQL, records, scripts, File Cabinet, deployments, bundles, PDFs, permissions, governance, or NetSuite behavior. Use the documentation to make the skill specific and operational, not generic.
+
+Available harness toolsets for context:
+${toolsetList}
+
+Existing skills, to avoid duplicates:
+${existingSkills || "- None"}
+
+JSON schema:
+{
+  "name": "2-6 word skill name",
+  "description": "One practical sentence explaining when to use it",
+  "tags": "comma-separated tags",
+  "domain": "global" | "sql",
+  "content": "A comprehensive markdown skill with triggers, rules, workflow, evidence requirements, examples, pitfalls, and NetSuite-specific guidance"
+}
+
+Rules:
+- The content must be directly useful to an AI agent during work.
+- Include sections for When to use, Workflow, NetSuite checks, Common pitfalls, and Output expectations.
+- Include concrete SuiteScript/SuiteQL/API names when documentation supports them.
+- Prefer domain "sql" only for SuiteQL-heavy skills; otherwise use "global".
+- Do not invent unsupported API behavior. If docs are unclear, say what to verify.`;
+
+    const generator = useAgent({
+      chatCompletion,
+      systemPrompt,
+      tools: netsuiteDocsTools,
+      keepHistory: false,
+      onToolStart: (name, input) => {
+        const inputRecord = input as Record<string, unknown>;
+        if (name === "search_netsuite_docs") {
+          skillGenerateProgress.value = `Searching docs: ${String(inputRecord.query ?? "")}`;
+        } else if (name === "read_netsuite_doc_page") {
+          skillGenerateProgress.value = "Reading NetSuite docs";
+        } else {
+          skillGenerateProgress.value = `Using ${name}`;
+        }
+      },
+      onToolResult: () => {
+        skillGenerateProgress.value = "Writing skill";
+      },
+    });
+
+    await generator.run(request);
+    const lastMessage = [...generator.history.value]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    const raw = (lastMessage?.content ?? "")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    const parsed = JSON.parse(raw) as Partial<{
+      name: string;
+      description: string;
+      tags: string;
+      domain: "global" | "sql";
+      content: string;
+    }>;
+
+    skillForm.value = {
+      name: String(parsed.name || skillForm.value.name || "Generated NetSuite Skill"),
+      description: String(parsed.description || skillForm.value.description || "Generated NetSuite operating guidance."),
+      tags: String(parsed.tags || skillForm.value.tags || "netsuite"),
+      domain: parsed.domain === "sql" ? "sql" : "global",
+      content: String(parsed.content || skillForm.value.content || ""),
+    };
+    skillEditorMode.value = "manual";
+  } catch (err) {
+    skillGenerateError.value = `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+  } finally {
+    skillGenerating.value = false;
+    skillGenerateProgress.value = "";
+  }
+};
+
 const resolveApproval = (approved: boolean) => {
   approvalVisible.value = false;
   approvalResolver?.(approved);
@@ -1366,11 +2697,58 @@ const saveEdit = async (item: HarnessItemView) => {
   await scrollToBottom();
 };
 
+const isStreamNearBottom = (threshold = 120): boolean => {
+  const el = streamRef.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+};
+
+const onStreamScroll = () => {
+  shouldStickToBottom.value = isStreamNearBottom();
+  lastStreamScrollHeight = streamRef.value?.scrollHeight ?? 0;
+};
+
 const scrollToBottom = async () => {
   await nextTick();
   if (streamRef.value) {
     streamRef.value.scrollTop = streamRef.value.scrollHeight;
+    shouldStickToBottom.value = true;
+    lastStreamScrollHeight = streamRef.value.scrollHeight;
   }
+};
+
+const isDynamicTargetInOrAboveViewport = (target: EventTarget | null | undefined): boolean => {
+  const el = streamRef.value;
+  if (!el || !(target instanceof Element)) return true;
+  const targetRect = target.getBoundingClientRect();
+  const streamRect = el.getBoundingClientRect();
+  return targetRect.top <= streamRect.bottom;
+};
+
+const syncStreamScrollAfterRender = async (
+  options: { target?: EventTarget | null } = {}
+) => {
+  const el = streamRef.value;
+  if (!el) return;
+  const wasNearBottom = isStreamNearBottom(80);
+  const previousHeight = lastStreamScrollHeight || el.scrollHeight;
+  const previousTop = el.scrollTop;
+  const shouldPreservePosition = !options.target || isDynamicTargetInOrAboveViewport(options.target);
+  await nextTick();
+  if (!streamRef.value) return;
+  if (wasNearBottom) {
+    await scrollToBottom();
+    return;
+  }
+  const heightDelta = streamRef.value.scrollHeight - previousHeight;
+  if (heightDelta > 0 && shouldPreservePosition) {
+    streamRef.value.scrollTop = previousTop + heightDelta;
+  }
+  lastStreamScrollHeight = streamRef.value.scrollHeight;
+};
+
+const handleDynamicContentLoad = (event: Event) => {
+  void syncStreamScrollAfterRender({ target: event.target });
 };
 
 const formatDate = (iso: string) =>
@@ -1514,6 +2892,13 @@ const formatFileSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+const attachmentIcon = (attachment: HarnessAttachment): string => {
+  if (attachment.source === "record") return "pi pi-table";
+  if (attachment.source === "filecabinet") return "pi pi-folder";
+  if (attachment.type === "pdf") return "pi pi-file-pdf";
+  return "pi pi-file";
+};
+
 const artifactIcon = (artifact: HarnessArtifactView): string => {
   if (artifact.kind === "image") return "pi pi-image";
   return "pi pi-file-pdf";
@@ -1600,12 +2985,13 @@ const onDrop = async (event: DragEvent) => {
 watch(
   () => harness.items.value.map((item) => `${item.id}:${item.content.length}:${item.status}`).join("|"),
   () => {
-    void scrollToBottom();
+    void syncStreamScrollAfterRender();
   }
 );
 
 onMounted(async () => {
   await harness.initialize();
+  await refreshSkills();
   await scrollToBottom();
 });
 
@@ -1679,6 +3065,44 @@ onBeforeUnmount(() => {
 .mini-btn:hover {
   background: var(--harness-accent-soft);
   border-color: #c4b5fd;
+  color: var(--harness-accent-strong);
+}
+
+.harness-section-nav {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.harness-section-btn {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px 0 12px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--p-slate-600);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.harness-section-btn i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+}
+
+.harness-section-btn:hover,
+.harness-section-btn.active {
+  border-color: var(--harness-accent-border);
+  background: white;
   color: var(--harness-accent-strong);
 }
 
@@ -1890,6 +3314,175 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex-direction: column;
   background: #ffffff;
+}
+
+.harness-dashboard-main {
+  overflow: hidden;
+}
+
+.dashboard-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: #ffffff;
+}
+
+.dashboard-toolbar p {
+  margin: 3px 0 0;
+  color: var(--p-slate-500);
+  font-size: 0.78rem;
+}
+
+.dashboard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dashboard-search {
+  width: min(260px, 34vw);
+}
+
+.dashboard-grid,
+.dashboard-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.dashboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.manager-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 11px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.manager-card.muted {
+  opacity: 0.58;
+}
+
+.manager-card-header {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.manager-agent-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.85rem;
+}
+
+.manager-agent-mark--skill {
+  background: var(--p-slate-700);
+}
+
+.manager-card-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manager-card-title strong,
+.manager-card-title span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-card-title strong {
+  color: var(--p-slate-800);
+  font-size: 0.85rem;
+}
+
+.manager-card-title span {
+  color: var(--p-slate-500);
+  font-size: 0.72rem;
+}
+
+.manager-card-meta,
+.manager-chip-row,
+.manager-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.manager-card-meta {
+  color: var(--p-slate-500);
+  font-size: 0.7rem;
+  font-weight: 650;
+}
+
+.manager-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.manager-chip {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--p-slate-600);
+  padding: 2px 7px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.manager-chip--strong {
+  border-color: var(--harness-accent-border);
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
+}
+
+.skill-manager-card {
+  gap: 8px;
+}
+
+.dashboard-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 160px;
+  color: var(--p-slate-400);
+  font-size: 0.82rem;
 }
 
 .harness-toolbar {
@@ -2735,7 +4328,7 @@ onBeforeUnmount(() => {
 
 .composer-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) 36px;
+  grid-template-columns: 36px 36px minmax(0, 1fr) 36px;
   gap: 8px;
   align-items: center;
 }
@@ -3092,6 +4685,295 @@ onBeforeUnmount(() => {
 
 .activity-status--rejected {
   background: #f59e0b;
+}
+
+.context-picker,
+.context-panel,
+.skill-editor,
+.skill-editor-form {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.skill-editor {
+  gap: 10px;
+}
+
+.context-picker {
+  gap: 12px;
+}
+
+.context-tabs {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.context-tabs button,
+.skill-domain-toggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.context-tabs button {
+  min-width: 150px;
+  min-height: 32px;
+}
+
+.context-tabs button.active,
+.skill-domain-toggle button.active {
+  background: white;
+  color: var(--harness-accent-strong);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.context-panel {
+  gap: 10px;
+}
+
+.context-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.context-select {
+  min-width: 260px;
+}
+
+.context-search {
+  flex: 1;
+  min-width: 180px;
+}
+
+.context-error {
+  border: 1px solid var(--p-red-200);
+  border-radius: 7px;
+  background: var(--p-red-50);
+  color: var(--p-red-700);
+  padding: 8px 10px;
+  font-size: 0.78rem;
+}
+
+.context-data-table {
+  overflow: hidden;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.context-data-table :deep(.p-datatable-thead > tr > th),
+.context-data-table :deep(.p-paginator) {
+  background: #f8fafc;
+}
+
+.context-data-table :deep(.p-datatable-thead > tr > th) {
+  padding: 8px 10px;
+  color: var(--p-slate-500);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.context-data-table :deep(.p-datatable-tbody > tr > td) {
+  padding: 7px 10px;
+  color: var(--p-slate-700);
+  font-size: 0.78rem;
+  vertical-align: middle;
+}
+
+.context-data-table :deep(.p-datatable-tbody > tr:hover) {
+  background: var(--harness-accent-softer);
+}
+
+.context-data-table :deep(.p-paginator) {
+  border-top: 1px solid var(--p-slate-200);
+  padding: 4px 8px;
+}
+
+.context-primary-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.context-primary-cell > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.context-primary-cell strong,
+.context-primary-cell span,
+.context-primary-cell small,
+.context-muted-cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-primary-cell small,
+.context-muted-cell {
+  color: var(--p-slate-400);
+  font-size: 0.68rem;
+}
+
+.context-folder-link {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-700);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+}
+
+.context-folder-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-folder-link:hover {
+  color: var(--harness-accent-strong);
+}
+
+.context-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 74px;
+  min-height: 28px;
+  border: 1px solid var(--harness-accent-border);
+  border-radius: 7px;
+  background: white;
+  color: var(--harness-accent-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.context-add-btn i {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transform-origin: center center;
+}
+
+.context-add-btn.attached {
+  border-color: var(--p-emerald-200);
+  background: var(--p-emerald-50);
+  color: var(--p-emerald-700);
+}
+
+.context-add-btn:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.context-loading,
+.context-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 120px;
+  color: var(--p-slate-400);
+  font-size: 0.8rem;
+}
+
+.context-empty--table {
+  min-height: 88px;
+}
+
+.context-breadcrumbs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  flex: 1;
+}
+
+.context-breadcrumbs button {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: var(--p-slate-600);
+  cursor: pointer;
+  padding: 5px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.skill-editor-form {
+  gap: 10px;
+}
+
+.skill-editor-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.skill-editor-form label span {
+  color: var(--p-slate-500);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.skill-domain-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.skill-domain-toggle button {
+  min-height: 30px;
+  min-width: 76px;
+  padding: 0 9px;
+}
+
+.skill-content-textarea {
+  min-height: 260px;
+  font-family: "JetBrains Mono", monospace;
 }
 
 .agent-editor {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MCard from "../components/universal/card/MCard.vue";
@@ -31,6 +32,7 @@ const items = ref<ScriptItem[]>([]);
 const scriptTypes = ref<{ id: string; label: string }[]>([]);
 const scriptTypesSelected = ref<{ id: string; label: string }[]>([]);
 const loading = ref(false);
+const router = useRouter();
 
 const copyToClipboard = async (text: string) => {
   if (!text) return;
@@ -185,6 +187,10 @@ const openSuitelet = async (script: string, deployment: string) => {
   window.open(url, "_blank");
 };
 
+const openScriptDetail = (scriptId: number) => {
+  router.push(`/scripts/${scriptId}`);
+};
+
 onMounted(async () => {
   await getScripts();
   await getScriptTypes();
@@ -311,16 +317,28 @@ onMounted(async () => {
           :contextMenu="scriptIdentityContextMenu"
         >
           <template #default="{ value, row }">
-            <div
-              class="flex gap-2 cursor-pointer hover:underline"
-              @mousedown="
-                (e) => handleScriptClick(() => getScriptUrl(row.internalid), e)
-              "
-            >
-              <i class="pi pi-link text-[var(--p-slate-600)]"></i>
-              <span class="text-[var(--p-slate-600)]">
-                {{ value }}
-              </span>
+            <div class="flex gap-2 items-center">
+              <button
+                type="button"
+                class="script-detail-link"
+                title="Open script detail"
+                @click="openScriptDetail(row.internalid)"
+              >
+                <i class="pi pi-code text-[var(--p-slate-600)]"></i>
+                <span class="text-[var(--p-slate-600)]">
+                  {{ value }}
+                </span>
+              </button>
+              <button
+                type="button"
+                class="script-external-link"
+                title="Open in NetSuite"
+                @mousedown="
+                  (e) => handleScriptClick(() => getScriptUrl(row.internalid), e)
+                "
+              >
+                <i class="pi pi-external-link"></i>
+              </button>
             </div>
           </template>
         </MTableColumn>
@@ -378,4 +396,30 @@ onMounted(async () => {
   </MCard>
 </template>
 
-<style scoped></style>
+<style scoped>
+.script-detail-link,
+.script-external-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-600);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.script-detail-link:hover span {
+  text-decoration: underline;
+}
+
+.script-external-link {
+  color: var(--p-slate-400);
+  padding: 0.15rem;
+}
+
+.script-external-link:hover {
+  color: var(--p-purple-600);
+}
+</style>
