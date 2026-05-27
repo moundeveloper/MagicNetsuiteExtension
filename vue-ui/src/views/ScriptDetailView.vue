@@ -574,6 +574,10 @@ onMounted(loadScript);
               </button>
             </div>
             <div class="suitelet-preview-body">
+              <div
+                v-if="isResizingSuiteletPanel"
+                class="suitelet-preview-drag-shield"
+              />
               <div v-if="suiteletUrlLoading" class="loading-state compact">
                 <i class="pi pi-spin pi-spinner" />
                 <span>Loading Suitelet...</span>
@@ -921,10 +925,19 @@ onMounted(loadScript);
 }
 
 .suitelet-preview-body {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1;
   background: white;
+}
+
+.suitelet-preview-drag-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  cursor: col-resize;
+  background: transparent;
 }
 
 .suitelet-preview-frame {
