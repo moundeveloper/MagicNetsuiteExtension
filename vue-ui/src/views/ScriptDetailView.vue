@@ -69,6 +69,13 @@ const logs = ref<LogItem[]>([]);
 const logsLoading = ref(false);
 const logSearch = ref("");
 const selectedDeploymentIds = ref<number[]>([]);
+const selectedSuiteletDeploymentId = ref<string>("");
+const suiteletUrl = ref("");
+const suiteletUrlLoading = ref(false);
+const suiteletUrlError = ref("");
+const showSuiteletPreviewPanel = ref(true);
+const suiteletPanelWidth = ref(520);
+const isResizingSuiteletPanel = ref(false);
 const selectedLogLevels = ref<string[]>([]);
 const startDate = ref<Date | null>(null);
 const endDate = ref<Date | null>(null);
@@ -81,6 +88,20 @@ const LOG_LEVELS = [
 ];
 
 const dirty = computed(() => code.value !== savedCode.value);
+const isSuiteletScript = computed(() => {
+  const type = script.value?.scriptType?.toLowerCase() ?? "";
+  return type === "scriptlet" || type.includes("suitelet");
+});
+
+const selectedSuiteletDeployment = computed(() =>
+  deployments.value.find((deployment) => deployment.primarykey === selectedSuiteletDeploymentId.value) ??
+  deployments.value[0] ??
+  null
+);
+
+const shouldShowSuiteletPreviewPanel = computed(
+  () => isSuiteletScript.value && showSuiteletPreviewPanel.value
+);
 
 const deploymentOptions = computed(() =>
   deployments.value.map((deployment) => ({
@@ -152,6 +173,13 @@ const loadScript = async () => {
     fileId.value = file?.fileId != null ? Number(file.fileId) : null;
     fileFolderId.value = file?.fileFolderId != null ? Number(file.fileFolderId) : null;
     deployments.value = (deploymentsResponse as ApiResponse).message ?? [];
+    selectedSuiteletDeploymentId.value = deployments.value[0]?.primarykey ?? "";
+    if (isSuiteletScript.value && selectedSuiteletDeployment.value) {
+      await loadSuiteletPreviewUrl();
+    } else {
+      suiteletUrl.value = "";
+      suiteletUrlError.value = "";
+    }
     await loadVersions();
     await fetchLogs();
   } catch (err) {
@@ -212,6 +240,71 @@ const openDeployment = async (deploymentId: string) => {
     deployment: deploymentId,
   });
   if (response.message) window.open(response.message, "_blank");
+};
+
+const loadSuiteletPreviewUrl = async () => {
+  if (!isSuiteletScript.value || !script.value?.scriptid || !selectedSuiteletDeployment.value?.scriptid) {
+    suiteletUrl.value = "";
+    return;
+  }
+
+  suiteletUrlLoading.value = true;
+  suiteletUrlError.value = "";
+  try {
+    const response = await callApi(RequestRoutes.SUITELET_URL, {
+      script: script.value.scriptid,
+      deployment: selectedSuiteletDeployment.value.scriptid,
+      iframe: true,
+    });
+    suiteletUrl.value = String(response.message ?? "");
+  } catch (err) {
+    suiteletUrl.value = "";
+    suiteletUrlError.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    suiteletUrlLoading.value = false;
+  }
+};
+
+const selectSuiteletDeployment = async (deployment: DeploymentItem) => {
+  selectedSuiteletDeploymentId.value = deployment.primarykey;
+  showSuiteletPreviewPanel.value = true;
+  await loadSuiteletPreviewUrl();
+};
+
+const openSuiteletPreview = () => {
+  showSuiteletPreviewPanel.value = true;
+  if (!suiteletUrl.value) void loadSuiteletPreviewUrl();
+};
+
+const toggleSuiteletPreview = () => {
+  if (showSuiteletPreviewPanel.value) {
+    showSuiteletPreviewPanel.value = false;
+    return;
+  }
+
+  openSuiteletPreview();
+};
+
+const openSuiteletInNewTab = () => {
+  if (suiteletUrl.value) window.open(suiteletUrl.value, "_blank");
+};
+
+const startSuiteletPanelResize = (e: MouseEvent) => {
+  e.preventDefault();
+  isResizingSuiteletPanel.value = true;
+  const startX = e.clientX;
+  const startWidth = suiteletPanelWidth.value;
+  const onMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX;
+    suiteletPanelWidth.value = Math.min(900, Math.max(320, startWidth + delta));
+  };
+  const onUp = () => {
+    isResizingSuiteletPanel.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 };
 
 const fetchLogs = async () => {
@@ -285,6 +378,16 @@ onMounted(loadScript);
               <i class="pi pi-external-link" />
               <span>Open</span>
             </button>
+            <button
+              v-if="isSuiteletScript"
+              type="button"
+              class="secondary-btn"
+              :disabled="deployments.length === 0"
+              @click="toggleSuiteletPreview"
+            >
+              <i :class="showSuiteletPreviewPanel ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" />
+              <span>{{ showSuiteletPreviewPanel ? 'Hide Preview' : 'Show Preview' }}</span>
+            </button>
             <button type="button" class="primary-btn" :disabled="!dirty || saving || !fileId" @click="saveScript">
               <i :class="saving ? 'pi pi-spin pi-spinner' : 'pi pi-save'" />
               <span>{{ saving ? 'Saving' : 'Save' }}</span>
@@ -355,14 +458,25 @@ onMounted(loadScript);
                   :key="deployment.primarykey"
                   type="button"
                   class="deployment-row"
-                  @click="openDeployment(deployment.primarykey)"
+                  :class="{ active: isSuiteletScript && selectedSuiteletDeploymentId === deployment.primarykey }"
+                  @click="isSuiteletScript ? selectSuiteletDeployment(deployment) : openDeployment(deployment.primarykey)"
                 >
                   <span>
                     <strong>{{ deployment.scriptid }}</strong>
                     <small>{{ deployment.recordtype || 'All records' }}</small>
                   </span>
-                  <span :class="deployment.isdeployed ? 'status-on' : 'status-off'">
-                    {{ deployment.isdeployed ? 'Deployed' : 'Off' }}
+                  <span class="deployment-actions">
+                    <span :class="deployment.isdeployed ? 'status-on' : 'status-off'">
+                      {{ deployment.isdeployed ? 'Deployed' : 'Off' }}
+                    </span>
+                    <button
+                      type="button"
+                      class="deployment-open-btn"
+                      title="Open deployment record"
+                      @click.stop="openDeployment(deployment.primarykey)"
+                    >
+                      <i class="pi pi-external-link" />
+                    </button>
                   </span>
                 </button>
               </div>
@@ -420,6 +534,67 @@ onMounted(loadScript);
               </div>
             </section>
           </aside>
+
+          <aside
+            v-if="shouldShowSuiteletPreviewPanel"
+            class="suitelet-preview-panel"
+            :style="{ width: `${suiteletPanelWidth}px` }"
+          >
+            <div
+              class="suitelet-preview-resize-handle"
+              :class="{ 'suitelet-preview-resize-handle--active': isResizingSuiteletPanel }"
+              @mousedown="startSuiteletPanelResize"
+            />
+            <div class="suitelet-preview-header">
+              <i class="pi pi-window-maximize text-sm" />
+              <div class="suitelet-preview-title">
+                <h4>Suitelet Preview</h4>
+                <span>{{ selectedSuiteletDeployment?.scriptid || 'No deployment selected' }}</span>
+              </div>
+              <button
+                type="button"
+                class="suitelet-preview-action"
+                title="Refresh preview"
+                :disabled="suiteletUrlLoading"
+                @click="loadSuiteletPreviewUrl"
+              >
+                <i :class="suiteletUrlLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+              </button>
+              <button
+                type="button"
+                class="suitelet-preview-action"
+                title="Open Suitelet in new tab"
+                :disabled="!suiteletUrl"
+                @click="openSuiteletInNewTab"
+              >
+                <i class="pi pi-external-link" />
+              </button>
+              <button type="button" class="suitelet-preview-action" title="Close preview" @click="showSuiteletPreviewPanel = false">
+                <i class="pi pi-times" />
+              </button>
+            </div>
+            <div class="suitelet-preview-body">
+              <div v-if="suiteletUrlLoading" class="loading-state compact">
+                <i class="pi pi-spin pi-spinner" />
+                <span>Loading Suitelet...</span>
+              </div>
+              <div v-else-if="suiteletUrlError" class="suitelet-preview-empty">
+                <i class="pi pi-exclamation-triangle" />
+                <span>{{ suiteletUrlError }}</span>
+              </div>
+              <iframe
+                v-else-if="suiteletUrl"
+                :key="suiteletUrl"
+                :src="suiteletUrl"
+                class="suitelet-preview-frame"
+                title="Suitelet Preview"
+              />
+              <div v-else class="suitelet-preview-empty">
+                <i class="pi pi-window-maximize" />
+                <span>Select a deployment to preview.</span>
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
     </template>
@@ -474,8 +649,7 @@ onMounted(loadScript);
 }
 
 .script-detail-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 35%);
+  display: flex;
   min-height: 0;
   flex: 1;
 }
@@ -490,6 +664,8 @@ onMounted(loadScript);
 }
 
 .editor-column {
+  flex: 1;
+  min-width: 0;
   border-right: 1px solid var(--p-slate-200);
 }
 
@@ -564,6 +740,9 @@ onMounted(loadScript);
 }
 
 .script-side {
+  flex: 0 0 35%;
+  width: 35%;
+  min-width: 320px;
   background: #fbfdff;
 }
 
@@ -607,10 +786,50 @@ onMounted(loadScript);
   text-align: left;
 }
 
+.deployment-row.active {
+  border-color: var(--p-indigo-300);
+  background: var(--p-indigo-50);
+}
+
 .deployment-row span:first-child {
   display: flex;
   min-width: 0;
   flex-direction: column;
+}
+
+.deployment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.deployment-open-btn,
+.suitelet-preview-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+}
+
+.deployment-open-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.deployment-open-btn:hover,
+.suitelet-preview-action:hover:not(:disabled) {
+  border-color: var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-700);
+}
+
+.deployment-open-btn i,
+.suitelet-preview-action i {
+  font-size: 0.72rem;
 }
 
 .status-on,
@@ -629,6 +848,103 @@ onMounted(loadScript);
 .status-off {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.suitelet-preview-panel {
+  position: relative;
+  display: flex;
+  min-width: 320px;
+  max-width: 900px;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  overflow: hidden;
+}
+
+.suitelet-preview-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 10;
+  width: 5px;
+  cursor: col-resize;
+  transition: background 0.15s;
+}
+
+.suitelet-preview-resize-handle:hover,
+.suitelet-preview-resize-handle--active {
+  background: var(--p-blue-200);
+}
+
+.suitelet-preview-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-bottom: 1px solid var(--p-slate-200);
+  padding: 9px 10px 9px 13px;
+}
+
+.suitelet-preview-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.suitelet-preview-title h4 {
+  margin: 0;
+  color: var(--p-slate-800);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.suitelet-preview-title span {
+  overflow: hidden;
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suitelet-preview-action {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.suitelet-preview-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.suitelet-preview-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  background: white;
+}
+
+.suitelet-preview-frame {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  border: none;
+  background: white;
+}
+
+.suitelet-preview-empty {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--p-slate-400);
+  font-size: 0.78rem;
+  text-align: center;
 }
 
 .log-filters {
@@ -770,10 +1086,11 @@ onMounted(loadScript);
 
 @media (max-width: 980px) {
   .script-detail-body {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 
-  .script-side {
+  .script-side,
+  .suitelet-preview-panel {
     display: none;
   }
 }

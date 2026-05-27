@@ -342,18 +342,27 @@ window.getScriptDeploymentUrl = async (N, { deployment }) => {
   return scriptUrl;
 };
 
-window.getSuiteletUrl = async (N, { script, deployment }) => {
+window.getSuiteletUrl = async (
+  N,
+  { script, deployment, returnExternalUrl = false, iframe = false }
+) => {
   const { url } = N;
-  const suiteletUrl =
-    "https://" +
-    url.resolveDomain({ hostType: url.HostType.APPLICATION }) +
-    url.resolveScript({
-      scriptId: script,
-      deploymentId: deployment,
-      returnExternalUrl: false
-    });
-  console.log("Suitelet URL:", suiteletUrl);
-  return suiteletUrl;
+  const resolvedScriptUrl = url.resolveScript({
+    scriptId: script,
+    deploymentId: deployment,
+    returnExternalUrl
+  });
+  const suiteletUrl = /^https?:\/\//i.test(resolvedScriptUrl)
+    ? resolvedScriptUrl
+    : "https://" +
+      url.resolveDomain({ hostType: url.HostType.APPLICATION }) +
+      resolvedScriptUrl;
+  const suiteletUrlForContext =
+    iframe && !/[?&]ifrmcntnr=/i.test(suiteletUrl)
+      ? `${suiteletUrl}${suiteletUrl.includes("?") ? "&" : "?"}ifrmcntnr=T`
+      : suiteletUrl;
+  console.log("Suitelet URL:", suiteletUrlForContext);
+  return suiteletUrlForContext;
 };
 
 window.saveScriptlet = async (
