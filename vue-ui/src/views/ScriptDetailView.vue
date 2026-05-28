@@ -76,6 +76,8 @@ const suiteletUrlError = ref("");
 const showSuiteletPreviewPanel = ref(true);
 const suiteletPanelWidth = ref(520);
 const isResizingSuiteletPanel = ref(false);
+const scriptSidePanelWidth = ref(420);
+const isResizingScriptSidePanel = ref(false);
 const selectedLogLevels = ref<string[]>([]);
 const startDate = ref<Date | null>(null);
 const endDate = ref<Date | null>(null);
@@ -307,6 +309,24 @@ const startSuiteletPanelResize = (e: MouseEvent) => {
   document.addEventListener("mouseup", onUp);
 };
 
+const startScriptSidePanelResize = (e: MouseEvent) => {
+  e.preventDefault();
+  isResizingScriptSidePanel.value = true;
+  const startX = e.clientX;
+  const startWidth = scriptSidePanelWidth.value;
+  const onMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX;
+    scriptSidePanelWidth.value = Math.min(760, Math.max(320, startWidth + delta));
+  };
+  const onUp = () => {
+    isResizingScriptSidePanel.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+};
+
 const fetchLogs = async () => {
   if (!Number.isFinite(scriptId.value)) return;
   logsLoading.value = true;
@@ -391,6 +411,7 @@ onMounted(loadScript);
             <button type="button" class="primary-btn" :disabled="!dirty || saving || !fileId" @click="saveScript">
               <i :class="saving ? 'pi pi-spin pi-spinner' : 'pi pi-save'" />
               <span>{{ saving ? 'Saving' : 'Save' }}</span>
+              <kbd v-if="!saving" class="shortcut-kbd">Ctrl+S</kbd>
             </button>
           </div>
         </header>
@@ -443,10 +464,26 @@ onMounted(loadScript);
               </div>
               <DiffViewer :original="selectedVersion.content" :modified="code" language="javascript" />
             </div>
-            <FileCodeEditor v-else v-model="code" language="javascript" :readonly="!fileId" @ctrl-s="saveScript" />
+            <FileCodeEditor
+              v-else
+              v-model="code"
+              language="javascript"
+              :readonly="!fileId"
+              @ctrl-s="saveScript"
+            />
           </section>
 
-          <aside class="script-side">
+          <div
+            class="script-side-resize-handle"
+            :class="{ 'script-side-resize-handle--active': isResizingScriptSidePanel }"
+            @mousedown="startScriptSidePanelResize"
+          />
+
+          <aside class="script-side" :style="{ width: `${scriptSidePanelWidth}px` }">
+            <div
+              v-if="isResizingScriptSidePanel"
+              class="script-side-drag-shield"
+            />
             <section class="side-section">
               <div class="section-title">
                 <span>Deployments</span>
@@ -670,7 +707,6 @@ onMounted(loadScript);
 .editor-column {
   flex: 1;
   min-width: 0;
-  border-right: 1px solid var(--p-slate-200);
 }
 
 .editor-toolbar {
@@ -744,10 +780,34 @@ onMounted(loadScript);
 }
 
 .script-side {
-  flex: 0 0 35%;
-  width: 35%;
+  position: relative;
+  flex: 0 0 auto;
   min-width: 320px;
+  max-width: 760px;
   background: #fbfdff;
+  overflow: hidden;
+}
+
+.script-side-resize-handle {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  border-left: 1px solid var(--p-slate-200);
+  border-right: 1px solid var(--p-slate-200);
+  background: #f8fafc;
+  transition: background 0.15s;
+}
+
+.script-side-resize-handle:hover,
+.script-side-resize-handle--active {
+  background: var(--p-blue-200);
+}
+
+.script-side-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  cursor: col-resize;
+  background: transparent;
 }
 
 .side-section {
@@ -1013,6 +1073,18 @@ onMounted(loadScript);
   padding: 6px 10px;
 }
 
+.shortcut-kbd {
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.85);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem;
+  line-height: 1;
+  padding: 2px 4px;
+}
+
 .danger-btn {
   min-height: 30px;
   border: 1px solid var(--p-red-200);
@@ -1103,6 +1175,7 @@ onMounted(loadScript);
   }
 
   .script-side,
+  .script-side-resize-handle,
   .suitelet-preview-panel {
     display: none;
   }
