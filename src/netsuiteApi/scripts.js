@@ -357,12 +357,28 @@ window.getSuiteletUrl = async (
     : "https://" +
       url.resolveDomain({ hostType: url.HostType.APPLICATION }) +
       resolvedScriptUrl;
-  const suiteletUrlForContext =
-    iframe && !/[?&]ifrmcntnr=/i.test(suiteletUrl)
-      ? `${suiteletUrl}${suiteletUrl.includes("?") ? "&" : "?"}ifrmcntnr=T`
-      : suiteletUrl;
+  const suiteletUrlForContext = iframe
+    ? appendQueryParams(suiteletUrl, {
+        ifrmcntnr: "T",
+        popup: "T",
+        whence: ""
+      })
+    : suiteletUrl;
   console.log("Suitelet URL:", suiteletUrlForContext);
   return suiteletUrlForContext;
+};
+
+const appendQueryParams = (targetUrl, params) => {
+  const [baseUrl, hash = ""] = String(targetUrl).split("#", 2);
+  const [path, query = ""] = baseUrl.split("?", 2);
+  const searchParams = new URLSearchParams(query);
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (!searchParams.has(key)) searchParams.set(key, value);
+  });
+
+  const nextUrl = `${path}?${searchParams.toString()}`;
+  return hash ? `${nextUrl}#${hash}` : nextUrl;
 };
 
 window.saveScriptlet = async (
