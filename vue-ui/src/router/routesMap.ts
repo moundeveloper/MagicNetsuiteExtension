@@ -21,6 +21,7 @@ import MultiAgentView from "../views/MultiAgentView.vue";
 import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
 import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
+import NotebookView from "../views/NotebookView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -235,6 +236,14 @@ export const routes: FullRoute[] = [
     breadcrumb: "Feedback"
   },
   {
+    route: "/notebook",
+    name: "Notebook",
+    icon: "pi pi-bookmark",
+    component: NotebookView,
+    status: RouteStatus.release,
+    breadcrumb: "Notebook"
+  },
+  {
     route: "/multi-agent",
     name: "Multi-Agent",
     icon: "pi pi-sitemap",
@@ -295,8 +304,11 @@ export const getRouteMap = (): RouteItem[] => {
 
 export const getRoutes = () => {
   const result: any[] = [];
+  const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 
   for (const route of routes) {
+    if (route.adminOnly && !isAdmin) continue;
+
     const baseRoute = {
       path: route.route,
       name: route.name,

@@ -144,6 +144,20 @@
                 </button>
                 <button
                   class="toolbar-btn"
+                  @click="saveQueryToNotebook(file)"
+                  title="Save query to Notebook"
+                >
+                  <i class="pi pi-bookmark"></i>
+                  <span>Notebook</span>
+                </button>
+                <NotebookContextPanel
+                  v-if="currentFile?.id === file.id"
+                  :context="currentNotebookContext"
+                  compact
+                  class="toolbar-notebook-context"
+                />
+                <button
+                  class="toolbar-btn"
                   :class="showAiEditor ? 'toolbar-btn-active' : ''"
                   @click="toggleAiEditor"
                   title="Toggle AI SQL Editor"
@@ -257,8 +271,8 @@
               <!-- Editor + bottom panel splitter + AI editor -->
               <div class="flex-1 min-h-0 flex flex-row">
                 <!-- Main editor area -->
-                <div class="flex-1 min-w-0">
-                <vue-splitter is-horizontal data-ignore class="h-full">
+                <div class="flex-1 min-w-0 flex flex-col min-h-0">
+                <vue-splitter is-horizontal data-ignore class="flex-1 min-h-0">
                   <template #top-pane>
                     <SuiteQLCodeEditor
                       v-model="file.code"
@@ -691,6 +705,7 @@ import {
   nextTick
 } from "vue";
 import { useRouter } from "vue-router";
+import { useToast } from "primevue/usetoast";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button } from "primevue";
@@ -698,6 +713,7 @@ import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
 import SqlAiEditor from "../components/SqlAiEditor.vue";
+import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
@@ -718,8 +734,10 @@ import {
   lintSuiteQL
 } from "../utils/suiteqlLinter";
 import type { SuiteQLSchemaContext } from "../utils/suiteqlLinter";
+import { upsertNotebookEntry } from "../utils/notebookDb";
 
 const router = useRouter();
+const toast = useToast();
 
 // ============================================================================
 // Types
@@ -1045,6 +1063,14 @@ const getEditorQuery = (): string => {
   const editorEl = editorRefs.value[file.id];
   return editorEl?.getValue() ?? file.code;
 };
+
+const currentNotebookContext = computed(() => ({
+  type: "query" as const,
+  title: currentFile.value?.name || "SuiteQL query",
+  summary: "SuiteQL editor query",
+  code: getEditorQuery(),
+  tags: ["suiteql"]
+}));
 
 // ============================================================================
 // File Management
@@ -1635,6 +1661,26 @@ console.log('${file.name} results:', results.length, results);`;
   }
 };
 
+const saveQueryToNotebook = async (file: QueryFile) => {
+  const editorEl = editorRefs.value[file.id];
+  const code = editorEl?.getValue() ?? file.code;
+  await upsertNotebookEntry({
+    type: "query",
+    title: file.name || "SuiteQL query",
+    summary: "Saved from the SuiteQL editor",
+    body: file.error ? `Last error:\n${file.error}` : "",
+    code,
+    tags: ["suiteql"],
+    pinned: false
+  });
+  toast.add({
+    severity: "success",
+    summary: "Saved to Notebook",
+    detail: "SuiteQL query added to your knowledge base",
+    life: 2400
+  });
+};
+
 // ============================================================================
 // Code Change Handler
 // ============================================================================
@@ -1958,6 +2004,24 @@ onBeforeUnmount(async () => {
 
 .toolbar-btn i {
   font-size: 0.7rem;
+}
+
+.toolbar-notebook-context {
+  margin-left: -0.2rem;
+}
+
+.toolbar-notebook-context :deep(.notebook-peek) {
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 4px;
+  color: var(--p-slate-600);
+  outline-color: var(--p-slate-200);
+}
+
+.toolbar-notebook-context :deep(.notebook-peek strong) {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
 }
 
 /* ── Limit pills ── */

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from "vue";
+import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
@@ -348,8 +348,19 @@ const handleCompareVersionSwap = () => {
   monacoEditorDiff.value.swap();
 };
 
+const handleTemplateShortcut = (event: KeyboardEvent) => {
+  if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
+  event.preventDefault();
+  void saveTemplate();
+};
+
 onMounted(async () => {
+  window.addEventListener("keydown", handleTemplateShortcut);
   await getTemplate(null);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handleTemplateShortcut);
 });
 </script>
 
@@ -369,9 +380,9 @@ onMounted(async () => {
       <ExpandableSidebar>
         <template #collapsed>
           <div class="flex flex-col gap-2">
-            <Button @click="saveTemplate" size="small" class="!p-2">
+            <button type="button" class="primary-btn primary-btn--icon" :disabled="loading" title="Save template" @click="saveTemplate">
               <i class="pi pi-save font-medium"></i>
-            </Button>
+            </button>
           </div>
         </template>
         <template #default>
@@ -399,10 +410,11 @@ onMounted(async () => {
           <div class="sidebar-section">
             <h4>Actions</h4>
             <div class="flex flex-col gap-2">
-              <Button @click="saveTemplate">
-                <i class="pi pi-save font-medium"></i>
-                Save
-              </Button>
+              <button type="button" class="primary-btn" :disabled="loading" @click="saveTemplate">
+                <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-save'"></i>
+                <span>{{ loading ? "Saving" : "Save" }}</span>
+                <kbd v-if="!loading" class="shortcut-kbd">Ctrl+S</kbd>
+              </button>
             </div>
           </div>
           <div class="sidebar-section">
@@ -631,5 +643,50 @@ onMounted(async () => {
 
 .sidebar-section.error p {
   color: var(--p-red-600);
+}
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 7px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 750;
+  padding: 6px 10px;
+}
+
+.primary-btn:hover:not(:disabled) {
+  border-color: var(--p-slate-400);
+  background: var(--p-slate-100);
+  color: var(--p-slate-800);
+}
+
+.primary-btn--icon {
+  width: 32px;
+  padding: 0;
+}
+
+.primary-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.shortcut-kbd {
+  flex-shrink: 0;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 3px;
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.58rem;
+  line-height: 1;
+  padding: 2px 4px;
 }
 </style>

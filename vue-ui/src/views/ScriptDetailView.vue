@@ -8,6 +8,7 @@ import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
 import FileCodeEditor from "../components/FileCodeEditor.vue";
 import DiffViewer from "../components/DiffViewer.vue";
+import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import {
@@ -16,8 +17,9 @@ import {
   formatVersionDate,
   getVersionsForFile,
   saveVersion,
-  type FileVersion,
+  type FileVersion
 } from "../utils/fileVersionsDb";
+import { upsertNotebookEntry } from "../utils/notebookDb";
 
 interface ScriptItem {
   id: number;
@@ -90,7 +92,7 @@ const LOG_LEVELS = [
   { id: "DEBUG", label: "Debug" },
   { id: "AUDIT", label: "Audit" },
   { id: "ERROR", label: "Error" },
-  { id: "EMERGENCY", label: "Emergency" },
+  { id: "EMERGENCY", label: "Emergency" }
 ];
 
 const dirty = computed(() => code.value !== savedCode.value);
@@ -99,20 +101,39 @@ const isSuiteletScript = computed(() => {
   return type === "scriptlet" || type.includes("suitelet");
 });
 
-const selectedSuiteletDeployment = computed(() =>
-  deployments.value.find((deployment) => deployment.primarykey === selectedSuiteletDeploymentId.value) ??
-  deployments.value[0] ??
-  null
+const selectedSuiteletDeployment = computed(
+  () =>
+    deployments.value.find(
+      (deployment) =>
+        deployment.primarykey === selectedSuiteletDeploymentId.value
+    ) ??
+    deployments.value[0] ??
+    null
 );
 
 const shouldShowSuiteletPreviewPanel = computed(
   () => isSuiteletScript.value && showSuiteletPreviewPanel.value
 );
 
+const notebookContext = computed(() => ({
+  type: "script" as const,
+  title: script.value?.name || `Script #${scriptId.value}`,
+  summary: `${script.value?.scriptType || "Script"} · ${script.value?.scriptid || scriptId.value}`,
+  netsuiteId: scriptId.value,
+  scriptId: script.value?.scriptid ?? "",
+  filePath: script.value?.scriptfile ?? "",
+  code: code.value,
+  tags: [
+    "script",
+    script.value?.scriptType ?? "",
+    script.value?.scriptid ?? ""
+  ].filter(Boolean)
+}));
+
 const deploymentOptions = computed(() =>
   deployments.value.map((deployment) => ({
     id: Number(deployment.primarykey),
-    label: `${deployment.scriptid}${deployment.deploymentid ? ` · #${deployment.deploymentid}` : ""}${deployment.recordtype ? ` · ${deployment.recordtype}` : ""}`,
+    label: `${deployment.scriptid}${deployment.deploymentid ? ` · #${deployment.deploymentid}` : ""}${deployment.recordtype ? ` · ${deployment.recordtype}` : ""}`
   }))
 );
 
@@ -148,7 +169,7 @@ const formatDateTime = (value: string): string => {
         day: "2-digit",
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit",
+        second: "2-digit"
       });
 };
 
@@ -158,7 +179,7 @@ const normalizeScript = (row: any): ScriptItem => ({
   scriptid: String(row.scriptid ?? ""),
   owner: row.owner ? String(row.owner) : undefined,
   scriptfile: row.scriptfile ? String(row.scriptfile) : undefined,
-  scriptType: String(row.scripttype ?? row.scriptType ?? ""),
+  scriptType: String(row.scripttype ?? row.scriptType ?? "")
 });
 
 const loadVersions = async () => {
@@ -178,14 +199,15 @@ const loadScript = async () => {
 
     const [fileResponse, deploymentsResponse] = await Promise.all([
       callApi(RequestRoutes.SCRIPT_FILES, { scriptIds: [scriptId.value] }),
-      callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, { scriptId: scriptId.value }),
+      callApi(RequestRoutes.SCRIPT_DEPLOYMENTS, { scriptId: scriptId.value })
     ]);
 
     const file = ((fileResponse as ApiResponse).message ?? [])[0];
     code.value = String(file?.scriptFile ?? "");
     savedCode.value = code.value;
     fileId.value = file?.fileId != null ? Number(file.fileId) : null;
-    fileFolderId.value = file?.fileFolderId != null ? Number(file.fileFolderId) : null;
+    fileFolderId.value =
+      file?.fileFolderId != null ? Number(file.fileFolderId) : null;
     deployments.value = (deploymentsResponse as ApiResponse).message ?? [];
     selectedSuiteletDeploymentId.value = deployments.value[0]?.primarykey ?? "";
     if (isSuiteletScript.value && selectedSuiteletDeployment.value) {
@@ -207,16 +229,22 @@ const saveScript = async () => {
   if (!fileId.value || !dirty.value || saving.value) return;
   saving.value = true;
   try {
-    await saveVersion(fileId.value, script.value?.scriptfile || script.value?.name || "script.js", savedCode.value);
+    await saveVersion(
+      fileId.value,
+      script.value?.scriptfile || script.value?.name || "script.js",
+      savedCode.value
+    );
     const response = await callApi(RequestRoutes.UPDATE_FILE_CONTENT, {
       fileId: fileId.value,
       fileContent: code.value,
-      fileName: script.value?.scriptfile || `${script.value?.scriptid || "script"}.js`,
+      fileName:
+        script.value?.scriptfile || `${script.value?.scriptid || "script"}.js`,
       folderId: fileFolderId.value,
-      mediaType: "JAVASCRIPT",
+      mediaType: "JAVASCRIPT"
     });
     const result = response.message ?? response;
-    if (result?.isUpdated === false) throw new Error("NetSuite returned a save failure.");
+    if (result?.isUpdated === false)
+      throw new Error("NetSuite returned a save failure.");
     savedCode.value = code.value;
     selectedVersion.value = null;
     await loadVersions();
@@ -245,19 +273,70 @@ const clearHistory = async () => {
 };
 
 const openScriptInNetSuite = async () => {
-  const response = await callApi(RequestRoutes.SCRIPT_URL, { scriptId: scriptId.value });
+  const response = await callApi(RequestRoutes.SCRIPT_URL, {
+    scriptId: scriptId.value
+  });
   if (response.message) window.open(response.message, "_blank");
+};
+
+const saveScriptToNotebook = async () => {
+  if (!script.value) return;
+  const urlResponse = await callApi(RequestRoutes.SCRIPT_URL, {
+    scriptId: scriptId.value
+  });
+  const deploymentLines = deployments.value
+    .map(
+      (deployment) =>
+        `- ${deployment.scriptid}${deployment.deploymentid ? ` (#${deployment.deploymentid})` : ""}${deployment.status ? `, ${deployment.status}` : ""}${deployment.recordtype ? `, ${deployment.recordtype}` : ""}`
+    )
+    .join("\n");
+
+  await upsertNotebookEntry({
+    type: "script",
+    title:
+      script.value.name || script.value.scriptid || `Script #${scriptId.value}`,
+    summary: `${script.value.scriptType || "Script"} · ${script.value.scriptid}`,
+    body: [
+      `Internal ID: ${scriptId.value}`,
+      `Script ID: ${script.value.scriptid}`,
+      script.value.owner ? `Owner: ${script.value.owner}` : "",
+      script.value.scriptfile ? `File: ${script.value.scriptfile}` : "",
+      deploymentLines ? `\nDeployments:\n${deploymentLines}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    url: String(urlResponse.message ?? ""),
+    netsuiteId: String(scriptId.value),
+    scriptId: script.value.scriptid,
+    filePath: script.value.scriptfile ?? "",
+    code: code.value,
+    tags: ["script", script.value.scriptType, script.value.scriptid].filter(
+      Boolean
+    ),
+    pinned: true
+  });
+
+  toast.add({
+    severity: "success",
+    summary: "Saved to Notebook",
+    detail: "Script, deployments, link, and current code captured",
+    life: 2600
+  });
 };
 
 const openDeployment = async (deploymentId: string) => {
   const response = await callApi(RequestRoutes.SCRIPT_DEPLOYMENT_URL, {
-    deployment: deploymentId,
+    deployment: deploymentId
   });
   if (response.message) window.open(response.message, "_blank");
 };
 
 const loadSuiteletPreviewUrl = async () => {
-  if (!isSuiteletScript.value || !script.value?.scriptid || !selectedSuiteletDeployment.value?.scriptid) {
+  if (
+    !isSuiteletScript.value ||
+    !script.value?.scriptid ||
+    !selectedSuiteletDeployment.value?.scriptid
+  ) {
     suiteletUrl.value = "";
     return;
   }
@@ -268,7 +347,7 @@ const loadSuiteletPreviewUrl = async () => {
     const response = await callApi(RequestRoutes.SUITELET_URL, {
       script: script.value.scriptid,
       deployment: selectedSuiteletDeployment.value.scriptid,
-      iframe: true,
+      iframe: true
     });
     suiteletUrl.value = String(response.message ?? "");
   } catch (err) {
@@ -328,7 +407,10 @@ const startScriptSidePanelResize = (e: MouseEvent) => {
   const startWidth = scriptSidePanelWidth.value;
   const onMove = (ev: MouseEvent) => {
     const delta = startX - ev.clientX;
-    scriptSidePanelWidth.value = Math.min(760, Math.max(320, startWidth + delta));
+    scriptSidePanelWidth.value = Math.min(
+      760,
+      Math.max(320, startWidth + delta)
+    );
   };
   const onUp = () => {
     isResizingScriptSidePanel.value = false;
@@ -348,7 +430,7 @@ const fetchLogs = async () => {
       endDate: endDate.value,
       scriptIds: [scriptId.value],
       deploymentIds: selectedDeploymentIds.value,
-      scriptTypes: [],
+      scriptTypes: []
     });
     const rows = Array.isArray(response.message) ? response.message : [];
     logs.value = rows.map((log: any) => ({
@@ -358,7 +440,7 @@ const fetchLogs = async () => {
       level: String(log.type ?? "DEBUG").toUpperCase(),
       message: String(log.detail ?? ""),
       deploymentId: String(log["scriptDeployment.internalid"] ?? ""),
-      deploymentName: String(log["scriptDeployment.scriptid"] ?? ""),
+      deploymentName: String(log["scriptDeployment.scriptid"] ?? "")
     }));
   } finally {
     logsLoading.value = false;
@@ -373,7 +455,7 @@ const clearExecutionLogs = async () => {
       severity: "warn",
       summary: "No deployments",
       detail: "There are no deployments available to clear.",
-      life: 3000,
+      life: 3000
     });
     return;
   }
@@ -385,8 +467,9 @@ const clearExecutionLogs = async () => {
     toast.add({
       severity: "error",
       summary: "Cannot clear logs",
-      detail: "NetSuite did not return a deployment number for one or more deployments.",
-      life: 5000,
+      detail:
+        "NetSuite did not return a deployment number for one or more deployments.",
+      life: 5000
     });
     return;
   }
@@ -402,14 +485,14 @@ const clearExecutionLogs = async () => {
       await callApi(RequestRoutes.CLEAR_SCRIPT_LOGS, {
         scriptId: scriptId.value,
         deploymentNumber: deployment.deploymentid,
-        deploymentRecordId: deployment.primarykey,
+        deploymentRecordId: deployment.primarykey
       });
     }
     toast.add({
       severity: "success",
       summary: "Logs cleared",
       detail: `Cleared execution logs for ${scope}.`,
-      life: 3000,
+      life: 3000
     });
     await fetchLogs();
   } catch (err) {
@@ -417,7 +500,7 @@ const clearExecutionLogs = async () => {
       severity: "error",
       summary: "Clear logs failed",
       detail: err instanceof Error ? err.message : String(err),
-      life: 6000,
+      life: 6000
     });
   } finally {
     clearingLogs.value = false;
@@ -457,18 +540,44 @@ onMounted(loadScript);
     <template #default="{ contentHeight }">
       <div class="script-detail" :style="{ height: `${contentHeight}px` }">
         <header class="script-detail-header">
-          <button type="button" class="icon-btn" title="Back to scripts" @click="router.push('/scripts')">
+          <button
+            type="button"
+            class="icon-btn"
+            title="Back to scripts"
+            @click="router.push('/scripts')"
+          >
             <i class="pi pi-angle-left" />
           </button>
           <div class="script-heading">
             <strong>{{ script?.name || `Script #${scriptId}` }}</strong>
-            <span>{{ script?.scriptid }} · {{ script?.scriptType }} · {{ script?.scriptfile || 'No file name' }}</span>
+            <span
+              >{{ script?.scriptid }} · {{ script?.scriptType }} ·
+              {{ script?.scriptfile || "No file name" }}</span
+            >
           </div>
           <div class="header-actions">
-            <button type="button" class="secondary-btn" @click="openScriptInNetSuite">
+            <button
+              type="button"
+              class="secondary-btn"
+              @click="openScriptInNetSuite"
+            >
               <i class="pi pi-external-link" />
               <span>Open</span>
             </button>
+            <button
+              type="button"
+              class="secondary-btn"
+              :disabled="!script"
+              @click="saveScriptToNotebook"
+            >
+              <i class="pi pi-bookmark" />
+              <span>Notebook</span>
+            </button>
+            <NotebookContextPanel
+              :context="notebookContext"
+              compact
+              class="header-notebook-context"
+            />
             <button
               v-if="isSuiteletScript"
               type="button"
@@ -476,12 +585,25 @@ onMounted(loadScript);
               :disabled="deployments.length === 0"
               @click="toggleSuiteletPreview"
             >
-              <i :class="showSuiteletPreviewPanel ? 'pi pi-window-minimize' : 'pi pi-window-maximize'" />
-              <span>{{ showSuiteletPreviewPanel ? 'Hide Preview' : 'Show Preview' }}</span>
+              <i
+                :class="
+                  showSuiteletPreviewPanel
+                    ? 'pi pi-window-minimize'
+                    : 'pi pi-window-maximize'
+                "
+              />
+              <span>{{
+                showSuiteletPreviewPanel ? "Hide Preview" : "Show Preview"
+              }}</span>
             </button>
-            <button type="button" class="primary-btn" :disabled="!dirty || saving || !fileId" @click="saveScript">
+            <button
+              type="button"
+              class="primary-btn"
+              :disabled="!dirty || saving || !fileId"
+              @click="saveScript"
+            >
               <i :class="saving ? 'pi pi-spin pi-spinner' : 'pi pi-save'" />
-              <span>{{ saving ? 'Saving' : 'Save' }}</span>
+              <span>{{ saving ? "Saving" : "Save" }}</span>
               <kbd v-if="!saving" class="shortcut-kbd">Ctrl+S</kbd>
             </button>
           </div>
@@ -498,9 +620,14 @@ onMounted(loadScript);
             <div class="editor-toolbar">
               <div class="editor-status">
                 <span v-if="dirty" class="dirty-dot" />
-                <span>{{ dirty ? 'Unsaved changes' : 'Saved' }}</span>
+                <span>{{ dirty ? "Unsaved changes" : "Saved" }}</span>
               </div>
-              <button type="button" class="secondary-btn" :disabled="versions.length === 0" @click="showHistory = !showHistory">
+              <button
+                type="button"
+                class="secondary-btn"
+                :disabled="versions.length === 0"
+                @click="showHistory = !showHistory"
+              >
                 <i class="pi pi-history" />
                 <span>History {{ versions.length }}</span>
               </button>
@@ -513,27 +640,61 @@ onMounted(loadScript);
                   :key="version.id"
                   type="button"
                   :class="{ active: selectedVersion?.id === version.id }"
-                  @click="selectedVersion = selectedVersion?.id === version.id ? null : version"
+                  @click="
+                    selectedVersion =
+                      selectedVersion?.id === version.id ? null : version
+                  "
                 >
                   <span>{{ formatVersionDate(version.savedAt) }}</span>
                   <small>{{ version.fileName }}</small>
                 </button>
               </div>
-              <button v-if="versions.length" type="button" class="danger-btn" @click="clearHistory">
+              <button
+                v-if="versions.length"
+                type="button"
+                class="danger-btn"
+                @click="clearHistory"
+              >
                 Clear History
               </button>
             </div>
 
             <div v-if="selectedVersion" class="diff-shell">
               <div class="diff-toolbar">
-                <span>Comparing {{ formatVersionDate(selectedVersion.savedAt) }} against current editor</span>
+                <span
+                  >Comparing
+                  {{ formatVersionDate(selectedVersion.savedAt) }} against
+                  current editor</span
+                >
                 <div>
-                  <button type="button" class="secondary-btn" @click="restoreVersion(selectedVersion)">Restore</button>
-                  <button type="button" class="danger-btn" @click="removeVersion(selectedVersion)">Delete Version</button>
-                  <button type="button" class="secondary-btn" @click="selectedVersion = null">Close</button>
+                  <button
+                    type="button"
+                    class="secondary-btn"
+                    @click="restoreVersion(selectedVersion)"
+                  >
+                    Restore
+                  </button>
+                  <button
+                    type="button"
+                    class="danger-btn"
+                    @click="removeVersion(selectedVersion)"
+                  >
+                    Delete Version
+                  </button>
+                  <button
+                    type="button"
+                    class="secondary-btn"
+                    @click="selectedVersion = null"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <DiffViewer :original="selectedVersion.content" :modified="code" language="javascript" />
+              <DiffViewer
+                :original="selectedVersion.content"
+                :modified="code"
+                language="javascript"
+              />
             </div>
             <FileCodeEditor
               v-else
@@ -546,11 +707,16 @@ onMounted(loadScript);
 
           <div
             class="script-side-resize-handle"
-            :class="{ 'script-side-resize-handle--active': isResizingScriptSidePanel }"
+            :class="{
+              'script-side-resize-handle--active': isResizingScriptSidePanel
+            }"
             @mousedown="startScriptSidePanelResize"
           />
 
-          <aside class="script-side" :style="{ width: `${scriptSidePanelWidth}px` }">
+          <aside
+            class="script-side"
+            :style="{ width: `${scriptSidePanelWidth}px` }"
+          >
             <div
               v-if="isResizingScriptSidePanel"
               class="script-side-drag-shield"
@@ -566,16 +732,28 @@ onMounted(loadScript);
                   :key="deployment.primarykey"
                   type="button"
                   class="deployment-row"
-                  :class="{ active: isSuiteletScript && selectedSuiteletDeploymentId === deployment.primarykey }"
-                  @click="isSuiteletScript ? selectSuiteletDeployment(deployment) : openDeployment(deployment.primarykey)"
+                  :class="{
+                    active:
+                      isSuiteletScript &&
+                      selectedSuiteletDeploymentId === deployment.primarykey
+                  }"
+                  @click="
+                    isSuiteletScript
+                      ? selectSuiteletDeployment(deployment)
+                      : openDeployment(deployment.primarykey)
+                  "
                 >
                   <span>
                     <strong>{{ deployment.scriptid }}</strong>
-                    <small>{{ deployment.recordtype || 'All records' }}</small>
+                    <small>{{ deployment.recordtype || "All records" }}</small>
                   </span>
                   <span class="deployment-actions">
-                    <span :class="deployment.isdeployed ? 'status-on' : 'status-off'">
-                      {{ deployment.isdeployed ? 'Deployed' : 'Off' }}
+                    <span
+                      :class="
+                        deployment.isdeployed ? 'status-on' : 'status-off'
+                      "
+                    >
+                      {{ deployment.isdeployed ? "Deployed" : "Off" }}
                     </span>
                     <button
                       type="button"
@@ -597,21 +775,46 @@ onMounted(loadScript);
                   <button
                     type="button"
                     class="danger-btn"
-                    :disabled="logsLoading || clearingLogs || deployments.length === 0"
+                    :disabled="
+                      logsLoading || clearingLogs || deployments.length === 0
+                    "
                     title="Clear execution logs"
                     @click="clearExecutionLogs"
                   >
-                    <i :class="clearingLogs ? 'pi pi-spin pi-spinner' : 'pi pi-trash'" />
+                    <i
+                      :class="
+                        clearingLogs ? 'pi pi-spin pi-spinner' : 'pi pi-trash'
+                      "
+                    />
                     <span>Clear</span>
                   </button>
-                  <button type="button" class="secondary-btn" :disabled="logsLoading || clearingLogs" @click="fetchLogs">
-                    <i :class="logsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+                  <button
+                    type="button"
+                    class="secondary-btn"
+                    :disabled="logsLoading || clearingLogs"
+                    @click="fetchLogs"
+                  >
+                    <i
+                      :class="
+                        logsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'
+                      "
+                    />
                   </button>
                 </div>
               </div>
               <div class="log-filters">
-                <DatePicker v-model="startDate" showTime hourFormat="24" placeholder="Start" />
-                <DatePicker v-model="endDate" showTime hourFormat="24" placeholder="End" />
+                <DatePicker
+                  v-model="startDate"
+                  showTime
+                  hourFormat="24"
+                  placeholder="Start"
+                />
+                <DatePicker
+                  v-model="endDate"
+                  showTime
+                  hourFormat="24"
+                  placeholder="End"
+                />
                 <MultiSelect
                   v-model="selectedDeploymentIds"
                   :options="deploymentOptions"
@@ -640,15 +843,27 @@ onMounted(loadScript);
                   <i class="pi pi-spin pi-spinner" />
                   <span>Fetching logs...</span>
                 </div>
-                <article v-for="log in filteredLogs" v-else :key="log.id" class="log-row">
+                <article
+                  v-for="log in filteredLogs"
+                  v-else
+                  :key="log.id"
+                  class="log-row"
+                >
                   <div class="log-row-head">
-                    <strong :class="`level-${log.level.toLowerCase()}`">{{ log.level }}</strong>
+                    <strong :class="`level-${log.level.toLowerCase()}`">{{
+                      log.level
+                    }}</strong>
                     <span>{{ formatDateTime(log.datetime) }}</span>
                   </div>
-                  <div class="log-title">{{ log.title || log.deploymentName }}</div>
+                  <div class="log-title">
+                    {{ log.title || log.deploymentName }}
+                  </div>
                   <pre>{{ log.message }}</pre>
                 </article>
-                <div v-if="!logsLoading && filteredLogs.length === 0" class="empty-state">
+                <div
+                  v-if="!logsLoading && filteredLogs.length === 0"
+                  class="empty-state"
+                >
                   No logs match the current filters.
                 </div>
               </div>
@@ -662,14 +877,20 @@ onMounted(loadScript);
           >
             <div
               class="suitelet-preview-resize-handle"
-              :class="{ 'suitelet-preview-resize-handle--active': isResizingSuiteletPanel }"
+              :class="{
+                'suitelet-preview-resize-handle--active':
+                  isResizingSuiteletPanel
+              }"
               @mousedown="startSuiteletPanelResize"
             />
             <div class="suitelet-preview-header">
               <i class="pi pi-window-maximize text-sm" />
               <div class="suitelet-preview-title">
                 <h4>Suitelet Preview</h4>
-                <span>{{ selectedSuiteletDeployment?.scriptid || 'No deployment selected' }}</span>
+                <span>{{
+                  selectedSuiteletDeployment?.scriptid ||
+                  "No deployment selected"
+                }}</span>
               </div>
               <button
                 type="button"
@@ -678,7 +899,13 @@ onMounted(loadScript);
                 :disabled="suiteletUrlLoading"
                 @click="loadSuiteletPreviewUrl"
               >
-                <i :class="suiteletUrlLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+                <i
+                  :class="
+                    suiteletUrlLoading
+                      ? 'pi pi-spin pi-spinner'
+                      : 'pi pi-refresh'
+                  "
+                />
               </button>
               <button
                 type="button"
@@ -689,7 +916,12 @@ onMounted(loadScript);
               >
                 <i class="pi pi-external-link" />
               </button>
-              <button type="button" class="suitelet-preview-action" title="Close preview" @click="showSuiteletPreviewPanel = false">
+              <button
+                type="button"
+                class="suitelet-preview-action"
+                title="Close preview"
+                @click="showSuiteletPreviewPanel = false"
+              >
                 <i class="pi pi-times" />
               </button>
             </div>
@@ -742,6 +974,24 @@ onMounted(loadScript);
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.header-notebook-context {
+  margin-left: -4px;
+}
+
+.header-notebook-context :deep(.notebook-peek) {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--p-slate-600);
+  outline-color: var(--p-slate-200);
+}
+
+.header-notebook-context :deep(.notebook-peek strong) {
+  position: absolute;
+  top: -5px;
+  right: -5px;
 }
 
 .script-detail-header {
@@ -1156,18 +1406,24 @@ onMounted(loadScript);
 
 .primary-btn {
   min-height: 32px;
-  border: 1px solid var(--p-slate-800);
-  background: var(--p-slate-800);
-  color: white;
+  border: 1px solid var(--p-slate-300);
+  background: var(--p-button-primary-background);
+  color: var(--p-slate-600);
   padding: 6px 10px;
+}
+
+.primary-btn:hover:not(:disabled) {
+  border-color: var(--p-slate-400);
+  background: var(--p-button-primary-hover-background);
+  color: var(--p-slate-800);
 }
 
 .shortcut-kbd {
   flex-shrink: 0;
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  border: 1px solid var(--p-slate-300);
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.85);
+  background: var(--p-slate-100);
+  color: var(--p-slate-600);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.58rem;
   line-height: 1;

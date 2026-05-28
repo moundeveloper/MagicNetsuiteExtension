@@ -880,6 +880,7 @@ import {
   updateBookmarkExists,
   updateBookmarkName
 } from "../utils/fileCabinetBookmarksDb";
+import { upsertNotebookEntry } from "../utils/notebookDb";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -1627,6 +1628,11 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     actions.push({ label: "Copy File ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(item.id)) });
   }
   actions.push({ label: "Copy Name", icon: "pi pi-file", handler: () => copyToClipboard(item.name) });
+  actions.push({
+    label: "Save to Notebook",
+    icon: "pi pi-bookmark",
+    handler: () => saveFileCabinetItemToNotebook(item)
+  });
   const alreadyBookmarked = props.bookmarkedIds.has(item.id);
   actions.push({
     label: alreadyBookmarked ? "Remove Bookmark" : "Add Bookmark",
@@ -1637,6 +1643,27 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     actions.push({ label: "Delete", icon: "pi pi-trash text-red-500", handler: () => confirmDeleteItem(item), danger: true });
   }
   showContextMenuAt(event, actions);
+};
+
+const saveFileCabinetItemToNotebook = async (item: CabinetItem) => {
+  await upsertNotebookEntry({
+    type: "file",
+    title: item.name,
+    summary: item.type === "folder" ? "File Cabinet folder" : `${(item as FileItem).filetype || "File"} · #${item.id}`,
+    body: [
+      `Type: ${item.type}`,
+      `Internal ID: ${item.id}`,
+      item.type === "folder" ? `Parent: ${(item as FolderItem).parent ?? "Root"}` : `Folder: ${(item as FileItem).folder}`,
+      item.description ? `Description: ${item.description}` : ""
+    ].filter(Boolean).join("\n"),
+    url: item.type === "file" ? ((item as FileItem).url ?? "") : getNetsuiteEditUrl(item),
+    netsuiteId: String(item.id),
+    filePath: item.name,
+    group: "File Cabinet",
+    tags: ["file-cabinet", item.type, item.name],
+    pinned: true
+  });
+  toast.add({ severity: "success", summary: "Saved to Notebook", detail: item.name, life: 2200 });
 };
 
 const handleBodyContextMenu = (event: MouseEvent) => {

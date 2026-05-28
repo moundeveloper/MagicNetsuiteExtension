@@ -66,6 +66,11 @@
   box-sizing: border-box;
 }
 
+button {
+  border: 0;
+  font: inherit;
+}
+
 a {
   text-decoration: inherit;
 }

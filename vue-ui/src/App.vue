@@ -5,6 +5,7 @@ import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
+import GridPattern from "./components/universal/patterns/GridPattern.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -44,7 +45,8 @@ onMounted(async () => {
     const port = chrome.runtime.connect({ name: "sidePanel" });
 
     port.onDisconnect.addListener(() => {
-      if (isAdmin) console.log("Disconnected from background (cleanup if needed)");
+      if (isAdmin)
+        console.log("Disconnected from background (cleanup if needed)");
     });
   } catch (error) {
     if (isAdmin) console.log("[App] Error", "Could not connect to background");
@@ -62,6 +64,7 @@ onBeforeUnmount(() => {
 
 <template>
   <Toast />
+  <GridPattern v-if="!isProcessingRoute" class="app-background-decoration" />
   <AppHeader v-if="!isProcessingRoute" />
 
   <RouterView v-slot="{ Component, route }">
@@ -79,12 +82,29 @@ onBeforeUnmount(() => {
 
 <style scoped>
 main {
+  position: relative;
   height: 100%;
   overflow: hidden;
   padding: 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  z-index: 1;
+}
+
+.app-background-decoration {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.app-background-decoration :deep(.sci-fi-background) {
+  min-height: 100vh;
+}
+
+.app-background-decoration :deep(.particle-canvas) {
+  position: fixed;
 }
 
 main.full-screen {

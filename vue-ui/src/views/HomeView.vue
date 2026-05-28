@@ -30,6 +30,7 @@ const allFeatures = computed(() => {
       !blackList.includes(route.name.toLowerCase()) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
       route.status !== RouteStatus.deprecated &&
+      (!route.adminOnly || isAdmin.value) &&
       (privilegeLevel === Privilege.ADMIN ||
         route.status === RouteStatus.release)
   );
