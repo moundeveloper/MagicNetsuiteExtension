@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import DatePicker from "primevue/datepicker";
 import InputText from "primevue/inputtext";
 import MultiSelect from "primevue/multiselect";
+import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
 import FileCodeEditor from "../components/FileCodeEditor.vue";
 import DiffViewer from "../components/DiffViewer.vue";
@@ -30,6 +31,7 @@ interface ScriptItem {
 interface DeploymentItem {
   primarykey: string;
   scriptid: string;
+  deploymentid?: string | number;
   recordtype?: string;
   isdeployed?: boolean;
   status?: string;
@@ -49,6 +51,7 @@ interface LogItem {
 const props = defineProps<{ vhOffset: number }>();
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 
 const scriptId = computed(() => Number(route.params.scriptId));
 const loading = ref(false);
@@ -67,6 +70,7 @@ const showHistory = ref(false);
 
 const logs = ref<LogItem[]>([]);
 const logsLoading = ref(false);
+const clearingLogs = ref(false);
 const logSearch = ref("");
 const selectedDeploymentIds = ref<number[]>([]);
 const selectedSuiteletDeploymentId = ref<string>("");
@@ -108,9 +112,17 @@ const shouldShowSuiteletPreviewPanel = computed(
 const deploymentOptions = computed(() =>
   deployments.value.map((deployment) => ({
     id: Number(deployment.primarykey),
-    label: `${deployment.scriptid}${deployment.recordtype ? ` · ${deployment.recordtype}` : ""}`,
+    label: `${deployment.scriptid}${deployment.deploymentid ? ` · #${deployment.deploymentid}` : ""}${deployment.recordtype ? ` · ${deployment.recordtype}` : ""}`,
   }))
 );
+
+const deploymentsTargetedForLogClear = computed(() => {
+  if (selectedDeploymentIds.value.length === 0) return deployments.value;
+  const selected = new Set(selectedDeploymentIds.value.map(String));
+  return deployments.value.filter((deployment) =>
+    selected.has(String(deployment.primarykey))
+  );
+});
 
 const filteredLogs = computed(() => {
   const q = logSearch.value.trim().toLowerCase();
@@ -353,6 +365,65 @@ const fetchLogs = async () => {
   }
 };
 
+const clearExecutionLogs = async () => {
+  if (!Number.isFinite(scriptId.value) || clearingLogs.value) return;
+  const targets = deploymentsTargetedForLogClear.value;
+  if (targets.length === 0) {
+    toast.add({
+      severity: "warn",
+      summary: "No deployments",
+      detail: "There are no deployments available to clear.",
+      life: 3000,
+    });
+    return;
+  }
+
+  const missingDeploymentNumbers = targets.filter(
+    (deployment) => !deployment.deploymentid
+  );
+  if (missingDeploymentNumbers.length > 0) {
+    toast.add({
+      severity: "error",
+      summary: "Cannot clear logs",
+      detail: "NetSuite did not return a deployment number for one or more deployments.",
+      life: 5000,
+    });
+    return;
+  }
+
+  const scope =
+    selectedDeploymentIds.value.length > 0
+      ? `${targets.length} selected deployment${targets.length === 1 ? "" : "s"}`
+      : `all ${targets.length} deployment${targets.length === 1 ? "" : "s"} for this script`;
+
+  clearingLogs.value = true;
+  try {
+    for (const deployment of targets) {
+      await callApi(RequestRoutes.CLEAR_SCRIPT_LOGS, {
+        scriptId: scriptId.value,
+        deploymentNumber: deployment.deploymentid,
+        deploymentRecordId: deployment.primarykey,
+      });
+    }
+    toast.add({
+      severity: "success",
+      summary: "Logs cleared",
+      detail: `Cleared execution logs for ${scope}.`,
+      life: 3000,
+    });
+    await fetchLogs();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Clear logs failed",
+      detail: err instanceof Error ? err.message : String(err),
+      life: 6000,
+    });
+  } finally {
+    clearingLogs.value = false;
+  }
+};
+
 const setLastHour = () => {
   endDate.value = new Date();
   startDate.value = new Date(Date.now() - 60 * 60 * 1000);
@@ -522,9 +593,21 @@ onMounted(loadScript);
             <section class="side-section side-section--logs">
               <div class="section-title">
                 <span>Execution Logs</span>
-                <button type="button" class="secondary-btn" :disabled="logsLoading" @click="fetchLogs">
-                  <i :class="logsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
-                </button>
+                <div class="section-actions">
+                  <button
+                    type="button"
+                    class="danger-btn"
+                    :disabled="logsLoading || clearingLogs || deployments.length === 0"
+                    title="Clear execution logs"
+                    @click="clearExecutionLogs"
+                  >
+                    <i :class="clearingLogs ? 'pi pi-spin pi-spinner' : 'pi pi-trash'" />
+                    <span>Clear</span>
+                  </button>
+                  <button type="button" class="secondary-btn" :disabled="logsLoading || clearingLogs" @click="fetchLogs">
+                    <i :class="logsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+                  </button>
+                </div>
               </div>
               <div class="log-filters">
                 <DatePicker v-model="startDate" showTime hourFormat="24" placeholder="Start" />
@@ -654,6 +737,7 @@ onMounted(loadScript);
 .editor-toolbar,
 .diff-toolbar,
 .section-title,
+.section-actions,
 .header-actions {
   display: flex;
   align-items: center;
@@ -825,6 +909,11 @@ onMounted(loadScript);
   color: var(--p-slate-700);
   font-size: 0.8rem;
   font-weight: 800;
+}
+
+.section-actions {
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .deployment-list,
@@ -1094,7 +1183,8 @@ onMounted(loadScript);
 }
 
 .primary-btn:disabled,
-.secondary-btn:disabled {
+.secondary-btn:disabled,
+.danger-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }

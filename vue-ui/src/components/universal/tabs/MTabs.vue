@@ -216,6 +216,7 @@ watch(
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0.6rem;
+  border: 0;
   border-radius: 0.25rem;
   outline: 1px solid var(--p-slate-300);
   background-color: var(--m-slate-150);
@@ -263,6 +264,8 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 0;
+  cursor: pointer;
   padding: 0.2rem;
   border-radius: 0.25rem;
   margin-left: 0.25rem;
@@ -287,6 +290,8 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 0;
+  cursor: pointer;
   padding: 0.3rem;
   border-radius: 0.25rem;
   outline: 1px solid var(--p-slate-300);

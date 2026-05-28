@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useSettings } from "../states/settingsState";
-import { ref, watch } from "vue";
+import { onMounted, ref, watch } from "vue";
 import InputText from "primevue/inputtext";
 import InputNumber from "primevue/inputnumber";
 import Checkbox from "primevue/checkbox";
@@ -10,8 +10,10 @@ import {
   COPILOT_CLIENT_ID,
   fetchCopilotModels
 } from "../composables/useAiProvider";
+import { getExtensionUserId, regenerateExtensionUserId } from "../utils/extensionUser";
 
 const { settings } = useSettings();
+const extensionUserId = ref("");
 
 const providerOptions = [
   { label: "OpenRouter (free models + paid)", value: "openrouter" },
@@ -155,6 +157,14 @@ const disconnectCopilot = () => {
 
 const copyUserCode = () => {
   navigator.clipboard.writeText(copilotUserCode.value).catch(() => {});
+};
+
+const copyExtensionUserId = () => {
+  navigator.clipboard.writeText(extensionUserId.value).catch(() => {});
+};
+
+const resetExtensionUserId = async () => {
+  extensionUserId.value = await regenerateExtensionUserId();
 };
 
 const fetchCopilotModelList = async () => {
@@ -370,6 +380,10 @@ const modelLabel = (m: OllamaModel) => {
   const tag = [size, quant].filter(Boolean).join(" · ");
   return tag ? `${m.name}  (${tag})` : m.name;
 };
+
+onMounted(async () => {
+  extensionUserId.value = await getExtensionUserId();
+});
 </script>
 
 <template>
@@ -406,6 +420,30 @@ const modelLabel = (m: OllamaModel) => {
         binary
       />
     </div>
+  </div>
+
+  <!-- Extension identity section -->
+  <div class="settings-section">
+    <h2>Extension Identity</h2>
+    <div class="shortcut-item">
+      <label for="extension-user-id">User ID:</label>
+      <InputText
+        id="extension-user-id"
+        :model-value="extensionUserId"
+        readonly
+        class="url-input identity-input"
+      />
+      <Button size="small" severity="secondary" outlined @click="copyExtensionUserId" title="Copy user ID">
+        <i class="pi pi-copy" />
+      </Button>
+      <Button size="small" severity="secondary" outlined @click="resetExtensionUserId" title="Generate a new user ID">
+        <i class="pi pi-refresh" />
+      </Button>
+    </div>
+    <p class="provider-hint">
+      Used to identify your feedback requests without requiring an account.
+      Regenerating it starts a new feedback identity on this browser.
+    </p>
   </div>
 
   <!-- AI Provider section -->

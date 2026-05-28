@@ -2054,8 +2054,11 @@ onBeforeUnmount(async () => {
 
 .bottom-tab {
   cursor: pointer;
+  border: 0;
   border-top: 2px solid transparent;
   border-bottom: 2px solid transparent;
+  background: transparent;
+  font: inherit;
   user-select: none;
   font-size: 0.72rem;
   padding: 0.45rem 0.9rem;

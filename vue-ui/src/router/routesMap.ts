@@ -20,6 +20,7 @@ import ApiTesterView from "../views/ApiTesterView.vue";
 import MultiAgentView from "../views/MultiAgentView.vue";
 import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
 import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
+import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -226,11 +227,19 @@ export const routes: FullRoute[] = [
     breadcrumb: "API Tester"
   },
   {
+    route: "/feature-feedback",
+    name: "Feedback",
+    icon: "pi pi-comments",
+    component: FeatureFeedbackView,
+    status: RouteStatus.release,
+    breadcrumb: "Feedback"
+  },
+  {
     route: "/multi-agent",
     name: "Multi-Agent",
     icon: "pi pi-sitemap",
     component: MultiAgentView,
-    status: RouteStatus.release,
+    status: RouteStatus.draft,
     breadcrumb: "Multi-Agent"
   },
   {

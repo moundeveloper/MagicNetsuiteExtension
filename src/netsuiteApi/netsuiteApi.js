@@ -358,6 +358,21 @@ const handlers = {
       scriptTypes
     });
   },
+  CLEAR_SCRIPT_LOGS: async ({
+    modules,
+    payload: { scriptId, deploymentNumber, deploymentRecordId }
+  }) => {
+    console.log("Clear Script Logs action received", {
+      scriptId,
+      deploymentNumber,
+      deploymentRecordId
+    });
+    return window.clearScriptExecutionLogs(modules, {
+      scriptId,
+      deploymentNumber,
+      deploymentRecordId
+    });
+  },
   ROOT_FOLDERS: async ({ modules }) => {
     console.log("Root Folders action received");
     return window.getRootFolders(modules);
