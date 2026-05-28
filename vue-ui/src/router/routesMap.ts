@@ -2,7 +2,6 @@ import CustomRecordsView from "../views/CustomRecordsView.vue";
 import HomeView from "../views/HomeView.vue";
 import ScriptsView from "../views/ScriptsView.vue";
 import ScriptDetailView from "../views/ScriptDetailView.vue";
-import RequestScript from "../views/RequestScriptView.vue";
 import RunQuickScriptView from "../views/RunQuickScriptView.vue";
 import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
@@ -119,14 +118,6 @@ export const routes: FullRoute[] = [
     component: BetterFilecabinetView,
     status: RouteStatus.release,
     breadcrumb: "Better File Cabinet"
-  },
-  {
-    route: "/request-script",
-    name: "Request Script",
-    icon: "pi pi-globe",
-    component: RequestScript,
-    status: RouteStatus.draft,
-    breadcrumb: "Request Script"
   },
   {
     route: "/custom-records",
