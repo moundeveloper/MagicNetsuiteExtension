@@ -4,10 +4,8 @@ import ScriptsView from "../views/ScriptsView.vue";
 import ScriptDetailView from "../views/ScriptDetailView.vue";
 import RequestScript from "../views/RequestScriptView.vue";
 import RunQuickScriptView from "../views/RunQuickScriptView.vue";
-import ExportRecordView from "../views/ExportRecordView.vue";
 import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
-import RequestSnifferView from "../views/RequestSnifferView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
 import BundleDetailView from "../views/BundleDetailView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
@@ -98,14 +96,6 @@ export const routes: FullRoute[] = [
     breadcrumb: "Logs"
   },
   {
-    route: "/request-sniffer",
-    name: "Request Sniffer",
-    icon: "pi pi-receipt",
-    component: RequestSnifferView,
-    status: RouteStatus.draft,
-    breadcrumb: "Request Sniffer"
-  },
-  {
     route: "/bundles",
     name: "Bundles",
     icon: "pi pi-box",
@@ -187,15 +177,6 @@ export const routes: FullRoute[] = [
     status: RouteStatus.release,
     breadcrumb: "Scripts Deployed"
   },
-
-  {
-    route: "/export-record",
-    name: "Export Record",
-    icon: "pi pi-download",
-    component: ExportRecordView,
-    status: RouteStatus.fix,
-    breadcrumb: "Export Record"
-  },
   {
     route: "/templates",
     name: "Templates",
@@ -274,14 +255,18 @@ export const routes: FullRoute[] = [
         name: "HarnessAgents",
         component: NetsuiteAgentHarnessView,
         breadcrumb: "Agents",
-        breadcrumbParents: [{ label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }]
+        breadcrumbParents: [
+          { label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }
+        ]
       },
       {
         route: "/netsuite-agent-harness/skills",
         name: "HarnessSkills",
         component: NetsuiteAgentHarnessView,
         breadcrumb: "Skills",
-        breadcrumbParents: [{ label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }]
+        breadcrumbParents: [
+          { label: "NetSuite Agent Harness", route: "/netsuite-agent-harness" }
+        ]
       }
     ]
   },
