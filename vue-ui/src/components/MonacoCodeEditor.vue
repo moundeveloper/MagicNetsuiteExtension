@@ -162,13 +162,18 @@ onMounted(async () => {
   let formatted = props.modelValue;
 
   if (props.language === "javascript" || props.language === "typescript") {
-    formatted = await prettier.format(props.modelValue, {
-      parser: "babel",
-      plugins: [parserBabel, prettierPluginEstree],
-      semi: true,
-      singleQuote: true,
-      tabWidth: 2
-    });
+    try {
+      formatted = await prettier.format(props.modelValue, {
+        parser: "babel",
+        plugins: [parserBabel, prettierPluginEstree],
+        semi: true,
+        singleQuote: true,
+        tabWidth: 2
+      });
+    } catch (error) {
+      console.warn("[MonacoCodeEditor] Unable to format initial code:", error);
+      formatted = props.modelValue;
+    }
   } else if (props.language === "xml") {
     formatted = formatFtl(props.modelValue);
   }
