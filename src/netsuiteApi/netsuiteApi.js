@@ -257,6 +257,18 @@ const handlers = {
 
     return window.runQuickScriptServer(modules, { code, userId }, csrfToken);
   },
+  RENDER_FREEMARKER_TEMPLATE: async ({
+    modules,
+    payload: { template, recordType, recordId },
+    csrfToken
+  }) => {
+    console.log("Render FreeMarker Template action received");
+    return window.renderFreemarkerTemplateServer(
+      modules,
+      { template, recordType, recordId },
+      csrfToken
+    );
+  },
   CHECK_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
     return window.checkMagicNetsuiteComponents(modules, {}, csrfToken);
   },

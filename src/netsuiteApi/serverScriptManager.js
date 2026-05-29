@@ -90,6 +90,50 @@ window.checkMagicNetsuiteComponents = async ({ query }) => {
 };
 
 window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
+  const mutation = await ensureMagicNetsuiteServerSuitelet(N, csrfToken);
+
+  // Execute server-side script — code is passed directly in the POST body
+  const execResult = await window.executeServerScript(N, {
+    suiteletScriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
+    deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
+    userId,
+    code
+  });
+
+  return {
+    success: true,
+    logs: execResult?.logs || [],
+    result: execResult?.result,
+    error: execResult?.error,
+    mutation
+  };
+};
+
+window.renderFreemarkerTemplateServer = async (
+  N,
+  { template, recordType, recordId },
+  csrfToken
+) => {
+  const mutation = await ensureMagicNetsuiteServerSuitelet(N, csrfToken);
+
+  const renderResult = await window.executeFreemarkerTemplate(N, {
+    suiteletScriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
+    deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
+    deployUrl: mutation.deployUrl,
+    template,
+    recordType,
+    recordId
+  });
+
+  return {
+    success: !!renderResult?.success,
+    html: renderResult?.html || "",
+    error: renderResult?.error,
+    mutation
+  };
+};
+
+async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
   const { query } = N;
 
   const {
@@ -101,9 +145,6 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
 
   const mutation = {};
 
-  // -------------------------
-  // FOLDER
-  // -------------------------
   if (!folderExists) {
     const { folderId } = await window.createFolder(N, {
       folderName: CONFIG.FOLDER_NAME,
@@ -113,7 +154,6 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
 
     mutation.folderId = folderId;
   } else {
-    // hydrate existing folder
     const [folder] = (
       await query.runSuiteQL.promise({
         query: `SELECT id FROM MediaItemFolder WHERE name = ? AND parent = -15`,
@@ -124,11 +164,6 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.folderId = folder?.id;
   }
 
-  console.log("mutation", mutation);
-
-  // -------------------------
-  // FILES
-  // -------------------------
   const files = (
     await query.runSuiteQL.promise({
       query: `SELECT id, name FROM file WHERE folder = ? AND name = ?`,
@@ -136,41 +171,28 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     })
   ).asMappedResults();
 
-  console.log("files", files);
-
   const fileMap = new Map(files.map((f) => [f.name, f.id]));
 
-  // Server file
   if (!serverFileExists) {
-    const suiteletContent = buildSuiteletContent();
     const serverResult = await window.uploadFile(N, {
       fileName: CONFIG.SERVER_FILE,
-      fileContent: suiteletContent,
+      fileContent: buildSuiteletContent(),
       folderId: mutation.folderId,
       csrfToken
     });
 
-    const serverFileId = serverResult.uploaded?.[0]?.fileId;
-
-    mutation.serverFileId = serverFileId;
+    mutation.serverFileId = serverResult.uploaded?.[0]?.fileId;
   } else {
     mutation.serverFileId = fileMap.get(CONFIG.SERVER_FILE);
 
-    // Always refresh the server file so the deployed suitelet stays current.
-    const suiteletContent = buildSuiteletContent();
     await window.updateNetsuiteFileContent(N, {
       fileId: mutation.serverFileId,
-      fileContent: suiteletContent,
+      fileContent: buildSuiteletContent(),
       fileName: CONFIG.SERVER_FILE,
       folderId: mutation.folderId
     });
   }
 
-  console.log("mutation", mutation);
-
-  // -------------------------
-  // SCRIPT
-  // -------------------------
   if (!suiteletScriptExists) {
     const { scriptRecordId } = await window.createScriptRecord(
       N,
@@ -198,11 +220,6 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.scriptRecordId = script?.id;
   }
 
-  console.log("mutation", mutation);
-
-  // -------------------------
-  // DEPLOYMENT
-  // -------------------------
   if (!suiteletDeployed) {
     const { deployUrl } = await window.createScriptDeployRecord(N, {
       name: CONFIG.SUITELET_DEPLOYMENT_NAME,
@@ -216,22 +233,60 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
     mutation.deployUrl = deployUrl;
   }
 
-  // Execute server-side script — code is passed directly in the POST body
-  const execResult = await window.executeServerScript(N, {
-    suiteletScriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
-    deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
-    userId,
-    code
-  });
+  await waitForMagicNetsuiteServerReady(N, mutation.deployUrl);
 
-  return {
-    success: true,
-    logs: execResult?.logs || [],
-    result: execResult?.result,
-    error: execResult?.error,
-    mutation
-  };
-};
+  return mutation;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function getMagicNetsuiteServerUrl(N, deployUrl) {
+  const { url } = N;
+  const suiteletUrl =
+    deployUrl ||
+    url.resolveScript({
+      scriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
+      deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
+      returnExternalUrl: false
+    });
+
+  return `https://${url.resolveDomain({
+    hostType: url.HostType.APPLICATION
+  })}${suiteletUrl}`;
+}
+
+async function waitForMagicNetsuiteServerReady(N, deployUrl) {
+  const fullUrl = getMagicNetsuiteServerUrl(N, deployUrl);
+  let lastError = "";
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const response = await fetch(fullUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        body: "action=pingMagicServer",
+        credentials: "include"
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        const result = JSON.parse(text);
+        if (result?.success && result?.ready) return;
+        lastError = result?.error || text;
+      } else {
+        lastError = `HTTP ${response.status}`;
+      }
+    } catch (err) {
+      lastError = err?.message || String(err);
+    }
+
+    await sleep(750);
+  }
+
+  throw new Error(`Magic Netsuite server Suitelet is not ready yet: ${lastError}`);
+}
 
 /**
  * Create a script deployment
@@ -347,6 +402,43 @@ window.executeServerScript = async (
     return result;
   } catch (error) {
     console.error("[executeServerScript]", error);
+    throw error;
+  }
+};
+
+window.executeFreemarkerTemplate = async (
+  N,
+  { suiteletScriptId, deploymentId, deployUrl, template, recordType, recordId }
+) => {
+  const { url } = N;
+
+  try {
+    const fullUrl = getMagicNetsuiteServerUrl(N, deployUrl);
+    const body = new URLSearchParams();
+    body.set("action", "renderFreemarker");
+    body.set("template", template);
+    if (recordType && recordId) {
+      body.set("recordType", recordType);
+      body.set("recordId", recordId);
+    }
+
+    const response = await fetch(fullUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString(),
+      credentials: "include"
+    });
+
+    if (!response.ok) {
+      throw new Error(`FreeMarker render failed: ${response.status}`);
+    }
+
+    const responseText = await response.text();
+    return JSON.parse(responseText);
+  } catch (error) {
+    console.error("[executeFreemarkerTemplate]", error);
     throw error;
   }
 };
@@ -507,6 +599,21 @@ define(
     return { logs: __logs, result: __result };
   };
 
+  var renderFreemarkerTemplate = function(template, recordType, recordId) {
+    var renderer = render.create();
+    renderer.templateContent = template;
+    if (recordType && recordId) {
+      renderer.addRecord({
+        templateName: 'record',
+        record: record.load({
+          type: recordType,
+          id: recordId
+        })
+      });
+    }
+    return renderer.renderAsString();
+  };
+
   var onRequest = function(context) {
     try {
       if (context.request.method !== 'POST') {
@@ -517,6 +624,37 @@ define(
       var action = context.request.parameters.action;
       if (!action) {
         context.response.write(JSON.stringify({ success: false, error: 'Missing action parameter', logs: [] }));
+        return;
+      }
+
+      if (action === 'pingMagicServer') {
+        context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
+        context.response.write(JSON.stringify({ success: true, ready: true }));
+        return;
+      }
+
+      if (action === 'renderFreemarker') {
+        var template = context.request.parameters.template;
+        if (!template) {
+          context.response.write(JSON.stringify({ success: false, error: 'Missing template parameter' }));
+          return;
+        }
+
+        try {
+          var html = renderFreemarkerTemplate(
+            template,
+            context.request.parameters.recordType,
+            context.request.parameters.recordId
+          );
+          context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
+          context.response.write(JSON.stringify({ success: true, html: html }));
+        } catch (renderError) {
+          context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
+          context.response.write(JSON.stringify({
+            success: false,
+            error: renderError.message || String(renderError)
+          }));
+        }
         return;
       }
 

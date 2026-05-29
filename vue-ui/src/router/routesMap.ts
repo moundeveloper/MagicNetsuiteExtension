@@ -22,6 +22,7 @@ import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
 import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
 import NotebookView from "../views/NotebookView.vue";
+import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -186,6 +187,14 @@ export const routes: FullRoute[] = [
         breadcrumbParents: [{ label: "Templates", route: "/templates" }]
       }
     ]
+  },
+  {
+    route: "/freemarker-renderer",
+    name: "FreeMarker Renderer",
+    icon: "pi pi-eye",
+    component: FreemarkerRendererView,
+    status: RouteStatus.release,
+    breadcrumb: "FreeMarker Renderer"
   },
   {
     route: "/processing",
