@@ -149,9 +149,10 @@ const openPanel = () => {
     const rect = triggerRef.value.getBoundingClientRect();
     const width = Math.min(352, window.innerWidth - 24);
     const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.right - width));
+    const top = Math.max(12, Math.min(window.innerHeight - 220, rect.bottom + 8));
     popoverStyle.value = {
       position: "fixed",
-      top: `${Math.min(window.innerHeight - 220, rect.bottom + 8)}px`,
+      top: `${top}px`,
       left: `${left}px`,
       width: `${width}px`
     };
@@ -310,7 +311,7 @@ onBeforeUnmount(() => {
 }
 
 .notebook-context.expanded {
-  z-index: 40;
+  z-index: 2147483000;
 }
 
 .notebook-panel {
@@ -324,8 +325,10 @@ onBeforeUnmount(() => {
   color: #1e293b;
 }
 
-.notebook-context.compact .notebook-panel {
+.notebook-panel.compact {
   z-index: 2147483000;
+  max-height: min(28rem, calc(100vh - 24px));
+  overflow-y: auto;
   box-shadow: 0 18px 45px rgba(15, 23, 42, 0.16);
 }
 
@@ -459,16 +462,17 @@ button:disabled {
 .note-capture button {
   padding: 0.3rem 0.48rem;
   border-radius: 5px;
-  background: #f8fafc;
-  color: #475569;
-  outline: 1px solid #cbd5e1;
+  background: #475569;
+  color: #f8fafc;
+  outline: 1px solid #475569;
   font-size: 0.72rem;
   font-weight: 800;
 }
 
 .note-capture button:hover:not(:disabled) {
-  background: #e2e8f0;
-  color: #0f172a;
+  background: #334155;
+  color: white;
+  outline-color: #334155;
 }
 
 .related-search {

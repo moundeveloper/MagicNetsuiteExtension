@@ -1330,24 +1330,30 @@ button:disabled {
 
 .save-btn {
   min-height: 32px;
-  border: 1px solid #cbd5e1;
-  color: #475569;
-  background: white;
+  border: 1px solid #475569;
+  color: #f8fafc;
+  background: #475569;
   padding: 6px 10px;
 }
 
 .save-btn:hover:not(:disabled) {
-  border-color: #94a3b8;
-  color: #0f172a;
-  background: #e2e8f0;
+  border-color: #334155;
+  color: white;
+  background: #334155;
+}
+
+.save-btn:disabled {
+  border-color: #cbd5e1;
+  color: #f8fafc;
+  background: #cbd5e1;
 }
 
 .shortcut-kbd {
   flex-shrink: 0;
-  border: 1px solid #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: 3px;
-  background: #f8fafc;
-  color: #64748b;
+  background: rgba(255, 255, 255, 0.18);
+  color: #f8fafc;
   font-family: "JetBrains Mono", monospace;
   font-size: 0.58rem;
   line-height: 1;

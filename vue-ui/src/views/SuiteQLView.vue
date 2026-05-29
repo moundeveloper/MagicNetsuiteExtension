@@ -124,7 +124,7 @@
               <!-- Editor toolbar — slim icon+label buttons -->
               <div
                 class="editor-toolbar shrink-0 flex items-center gap-1.5 px-2 py-1 border-b border-slate-200"
-                style="position: relative; z-index: 0"
+                style="position: relative; z-index: 60"
               >
                 <button
                   class="toolbar-btn"
@@ -2008,6 +2008,8 @@ onBeforeUnmount(async () => {
 
 .toolbar-notebook-context {
   margin-left: -0.2rem;
+  position: relative;
+  z-index: 70;
 }
 
 .toolbar-notebook-context :deep(.notebook-peek) {

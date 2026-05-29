@@ -978,6 +978,8 @@ onMounted(loadScript);
 
 .header-notebook-context {
   margin-left: -4px;
+  position: relative;
+  z-index: 70;
 }
 
 .header-notebook-context :deep(.notebook-peek) {

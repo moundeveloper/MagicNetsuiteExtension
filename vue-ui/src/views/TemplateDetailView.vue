@@ -651,10 +651,10 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 6px;
   min-height: 32px;
-  border: 1px solid var(--p-slate-300);
+  border: 1px solid var(--p-slate-600);
   border-radius: 7px;
-  background: white;
-  color: var(--p-slate-600);
+  background: var(--p-slate-600);
+  color: var(--p-slate-50);
   cursor: pointer;
   font: inherit;
   font-size: 0.74rem;
@@ -663,9 +663,9 @@ onBeforeUnmount(() => {
 }
 
 .primary-btn:hover:not(:disabled) {
-  border-color: var(--p-slate-400);
-  background: var(--p-slate-100);
-  color: var(--p-slate-800);
+  border-color: var(--p-slate-700);
+  background: var(--p-slate-700);
+  color: white;
 }
 
 .primary-btn--icon {
@@ -674,7 +674,10 @@ onBeforeUnmount(() => {
 }
 
 .primary-btn:disabled {
-  opacity: 0.45;
+  background: var(--p-slate-300);
+  border-color: var(--p-slate-300);
+  color: var(--p-slate-100);
+  opacity: 0.7;
   cursor: not-allowed;
 }
 
