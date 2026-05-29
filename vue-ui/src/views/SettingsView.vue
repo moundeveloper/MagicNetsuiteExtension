@@ -387,68 +387,69 @@ onMounted(async () => {
 </script>
 
 <template>
-  <!-- Shortcuts section -->
-  <div class="settings-section">
-    <h2>Shortcuts</h2>
-    <div class="shortcut-item">
-      <label for="extension-toggle">Toggle Extension:</label>
-      <span class="shortcut-value">{{ settings.extensionToggle }}</span>
-      <small>(Fixed, change in Chrome extensions settings)</small>
+  <div class="settings-view">
+    <!-- Shortcuts section -->
+    <div class="settings-section">
+      <h2>Shortcuts</h2>
+      <div class="shortcut-item">
+        <label for="extension-toggle">Toggle Extension:</label>
+        <span class="shortcut-value">{{ settings.extensionToggle }}</span>
+        <small>(Fixed, change in Chrome extensions settings)</small>
+      </div>
+      <div class="shortcut-item">
+        <label for="drawer-open">Open Navigation Drawer:</label>
+        <InputText
+          id="drawer-open"
+          v-model="settings.drawerOpen"
+          placeholder="e.g., ctrl+k"
+        />
+      </div>
+      <div class="shortcut-item">
+        <label for="modules-search">SuiteScript Module Search:</label>
+        <InputText
+          id="modules-search"
+          v-model="settings.modulesSearch"
+          placeholder="e.g., ctrl+m"
+        />
+        <small>(On NetSuite pages)</small>
+      </div>
+      <div class="shortcut-item">
+        <label for="customization-open">Open On Customization Page:</label>
+        <Checkbox
+          id="customization-open"
+          v-model="settings.openOnCustomizationPage"
+          binary
+        />
+      </div>
     </div>
-    <div class="shortcut-item">
-      <label for="drawer-open">Open Navigation Drawer:</label>
-      <InputText
-        id="drawer-open"
-        v-model="settings.drawerOpen"
-        placeholder="e.g., ctrl+k"
-      />
-    </div>
-    <div class="shortcut-item">
-      <label for="modules-search">SuiteScript Module Search:</label>
-      <InputText
-        id="modules-search"
-        v-model="settings.modulesSearch"
-        placeholder="e.g., ctrl+m"
-      />
-      <small>(On NetSuite pages)</small>
-    </div>
-    <div class="shortcut-item">
-      <label for="customization-open">Open On Customization Page:</label>
-      <Checkbox
-        id="customization-open"
-        v-model="settings.openOnCustomizationPage"
-        binary
-      />
-    </div>
-  </div>
 
-  <!-- Extension identity section -->
-  <div class="settings-section">
-    <h2>Extension Identity</h2>
-    <div class="shortcut-item">
-      <label for="extension-user-id">User ID:</label>
-      <InputText
-        id="extension-user-id"
-        :model-value="extensionUserId"
-        readonly
-        class="url-input identity-input"
-      />
-      <Button size="small" severity="secondary" outlined @click="copyExtensionUserId" title="Copy user ID">
-        <i class="pi pi-copy" />
-      </Button>
-      <Button size="small" severity="secondary" outlined @click="resetExtensionUserId" title="Generate a new user ID">
-        <i class="pi pi-refresh" />
-      </Button>
+    <!-- Extension identity section -->
+    <div class="settings-section">
+      <h2>Extension Identity</h2>
+      <div class="shortcut-item">
+        <label for="extension-user-id">User ID:</label>
+        <InputText
+          id="extension-user-id"
+          :model-value="extensionUserId"
+          readonly
+          class="url-input identity-input"
+        />
+        <Button size="small" severity="secondary" outlined @click="copyExtensionUserId" title="Copy user ID">
+          <i class="pi pi-copy" />
+        </Button>
+        <Button size="small" severity="secondary" outlined @click="resetExtensionUserId" title="Generate a new user ID">
+          <i class="pi pi-refresh" />
+        </Button>
+      </div>
+      <p class="provider-hint">
+        Used to identify your feedback requests without requiring an account.
+        Regenerating it starts a new feedback identity on this browser.
+      </p>
     </div>
-    <p class="provider-hint">
-      Used to identify your feedback requests without requiring an account.
-      Regenerating it starts a new feedback identity on this browser.
-    </p>
-  </div>
 
-  <!-- AI Provider section -->
-  <div class="settings-section">
-    <h2>AI Provider</h2>
+    <!-- AI Provider section -->
+    <div class="settings-section">
+      <h2>AI Provider</h2>
 
     <div class="shortcut-item">
       <label for="ai-provider">Provider:</label>
@@ -851,10 +852,18 @@ onMounted(async () => {
         4096). Only connected providers and their models are shown.
       </p>
     </template>
+    </div>
   </div>
 </template>
 
 <style scoped>
+.settings-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
 .settings-section {
   margin-top: 2rem;
 }
