@@ -171,7 +171,7 @@ onMounted(async () => {
         tabWidth: 2
       });
     } catch (error) {
-      console.warn("[MonacoCodeEditor] Unable to format initial code:", error);
+      console.warn("[MonacoCodeEditor] Format skipped: invalid code.");
       formatted = props.modelValue;
     }
   } else if (props.language === "xml") {

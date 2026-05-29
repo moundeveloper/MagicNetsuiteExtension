@@ -18,8 +18,14 @@ const props = withDefaults(defineProps<Props>(), {
   readOnly: false
 });
 
+const emit = defineEmits<{
+  "update:modified": [value: string];
+  "ctrl-s": [];
+}>();
+
 const containerRef = ref<HTMLDivElement | null>(null);
 let diffEditor: monaco.editor.IStandaloneDiffEditor | null = null;
+let isUpdatingFromProps = false;
 
 const formatValue = (value: string): string => {
   if (props.language === "xml") {
@@ -47,6 +53,21 @@ onMounted(() => {
     )
   });
 
+  diffEditor.getModifiedEditor().onDidChangeModelContent(() => {
+    if (isUpdatingFromProps) return;
+    emit("update:modified", diffEditor?.getModifiedEditor().getValue() ?? "");
+  });
+
+  diffEditor.getModifiedEditor().addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+    () => { emit("ctrl-s"); }
+  );
+
+  diffEditor.getOriginalEditor().addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+    () => { emit("ctrl-s"); }
+  );
+
   monaco.editor.defineTheme("monokai", themeJson as any);
   monaco.editor.setTheme("monokai");
 });
@@ -65,7 +86,9 @@ watch(
   (val) => {
     const model = diffEditor?.getModel();
     if (model && model.original.getValue() !== val) {
+      isUpdatingFromProps = true;
       model.original.setValue(formatValue(val));
+      isUpdatingFromProps = false;
     }
   }
 );
@@ -75,7 +98,9 @@ watch(
   (val) => {
     const model = diffEditor?.getModel();
     if (model && model.modified.getValue() !== val) {
+      isUpdatingFromProps = true;
       model.modified.setValue(formatValue(val));
+      isUpdatingFromProps = false;
     }
   }
 );
@@ -110,7 +135,18 @@ function swap(): void {
   oldModified.dispose();
 }
 
-defineExpose({ swap });
+const getModifiedValue = (): string => {
+  return diffEditor?.getModifiedEditor().getValue() ?? props.modified;
+};
+
+const hasTextFocus = (): boolean => {
+  return !!(
+    diffEditor?.getModifiedEditor().hasTextFocus() ||
+    diffEditor?.getOriginalEditor().hasTextFocus()
+  );
+};
+
+defineExpose({ swap, getModifiedValue, hasTextFocus });
 </script>
 
 <template>

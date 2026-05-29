@@ -36,6 +36,7 @@ const code = ref<string>("");
 const template = ref<RecordItem | null>(null);
 const loading = ref(false);
 const versions = ref<number[]>([]);
+const latestVersion = ref<number | null>(null);
 const selectedVersion = ref<number | null>(null);
 const compareVersionLeft = ref<number | "currentCode" | null>(null);
 const compareVersionRight = ref<number | "currentCode" | null>(null);
@@ -89,6 +90,7 @@ const parseErrorHtml = (raw: string) => {
 };
 
 const getTemplate = async (version?: number | null) => {
+  const requestedVersion = version ?? null;
   const templateData = route.query.data
     ? JSON.parse(route.query.data as string)
     : null;
@@ -114,11 +116,20 @@ const getTemplate = async (version?: number | null) => {
     );
 
     const { templateContent, currentVersion } = templateResponse;
+    const nextLatestVersion = Math.max(
+      latestVersion.value ?? 0,
+      Number(currentVersion) || 0,
+      requestedVersion ?? 0
+    );
 
     code.value = templateContent;
     originalCode = templateContent;
-    versions.value = Array.from({ length: currentVersion }, (_, i) => i + 1);
-    selectedVersion.value = currentVersion;
+    latestVersion.value = nextLatestVersion || null;
+    versions.value = Array.from(
+      { length: nextLatestVersion },
+      (_, i) => i + 1
+    );
+    selectedVersion.value = requestedVersion ?? latestVersion.value;
   } catch (error) {
     console.error("Error fetching template content:", error);
   } finally {
@@ -195,6 +206,8 @@ enum Tabs {
   RenderTemplate = "renderTemplate"
 }
 
+const activeTab = ref<Tabs>(Tabs.Editor);
+
 const tabs = ref([
   { id: Tabs.Editor, label: "Editor" },
   { id: Tabs.CompareVersions, label: "Compare Versions" },
@@ -259,8 +272,26 @@ const handleChange = (val: string) => {
   console.log("Modified changed");
 };
 
+const syncDiffEditorToCurrentCode = () => {
+  if (activeTab.value !== Tabs.CompareVersions || !monacoEditorDiff.value) {
+    return;
+  }
+
+  code.value = monacoEditorDiff.value.getModifiedValue();
+  rightCode.value = code.value;
+  compareVersionRight.value = "currentCode";
+};
+
+const handleDiffModifiedChange = (value: string) => {
+  rightCode.value = value;
+  code.value = value;
+  compareVersionRight.value = "currentCode";
+};
+
 const saveTemplate = async () => {
-  if (!template.value) return;
+  if (!template.value || loading.value) return;
+
+  syncDiffEditorToCurrentCode();
 
   loaderText.value = "Saving Template";
   loading.value = true;
@@ -288,7 +319,7 @@ const saveTemplate = async () => {
         savedSearch: template.value.savedSearch,
         name: template.value.name,
         recordType: template.value.customRecordTypeScriptId,
-        fromVersion: selectedVersion.value,
+        fromVersion: latestVersion.value ?? selectedVersion.value,
         templateScriptId: template.value.scriptId
       }
     );
@@ -310,8 +341,13 @@ const saveTemplate = async () => {
       return;
     }
 
-    versions.value = [...versions.value, templateVersion];
-    selectedVersion.value = templateVersion;
+    const savedVersion = Number(templateVersion);
+    latestVersion.value = savedVersion;
+    versions.value = [...new Set([...versions.value, savedVersion])].sort(
+      (a, b) => a - b
+    );
+    selectedVersion.value = savedVersion;
+    originalCode = code.value;
 
     console.log("Template saved successfully");
     toast.add({
@@ -431,7 +467,7 @@ onBeforeUnmount(() => {
                   <span v-if="!slotProps.value">{{
                     slotProps.placeholder
                   }}</span>
-                  <span v-else-if="Math.max(...versions) === slotProps.value"
+                  <span v-else-if="latestVersion === slotProps.value"
                     >{{ slotProps.value }} Latest</span
                   >
                   <span v-else>{{ slotProps.value }}</span>
@@ -439,7 +475,7 @@ onBeforeUnmount(() => {
               </template>
               <template #option="slotProps">
                 <span class="flex items-center gap-2">
-                  <span v-if="Math.max(...versions) === slotProps.option"
+                  <span v-if="latestVersion === slotProps.option"
                     >{{ slotProps.option }} Latest</span
                   >
                   <span v-else>{{ slotProps.option }}</span>
@@ -476,7 +512,7 @@ onBeforeUnmount(() => {
                     <span v-else-if="slotProps.value === 'currentCode'"
                       >Current (Unsaved)</span
                     >
-                    <span v-else-if="Math.max(...versions) === slotProps.value"
+                    <span v-else-if="latestVersion === slotProps.value"
                       >{{ slotProps.value }} Latest</span
                     >
                     <span v-else>{{ slotProps.value }}</span>
@@ -487,7 +523,7 @@ onBeforeUnmount(() => {
                     <span v-if="slotProps.option === 'currentCode'"
                       >Current (Unsaved)</span
                     >
-                    <span v-else-if="Math.max(...versions) === slotProps.option"
+                    <span v-else-if="latestVersion === slotProps.option"
                       >{{ slotProps.option }} Latest</span
                     >
                     <span v-else>{{ slotProps.option }}</span>
@@ -509,7 +545,7 @@ onBeforeUnmount(() => {
                     <span v-else-if="slotProps.value === 'currentCode'"
                       >Current (Unsaved)</span
                     >
-                    <span v-else-if="Math.max(...versions) === slotProps.value"
+                    <span v-else-if="latestVersion === slotProps.value"
                       >{{ slotProps.value }} Latest</span
                     >
                     <span v-else>{{ slotProps.value }}</span>
@@ -520,7 +556,7 @@ onBeforeUnmount(() => {
                     <span v-if="slotProps.option === 'currentCode'"
                       >Current (Unsaved)</span
                     >
-                    <span v-else-if="Math.max(...versions) === slotProps.option"
+                    <span v-else-if="latestVersion === slotProps.option"
                       >{{ slotProps.option }} Latest</span
                     >
                     <span v-else>{{ slotProps.option }}</span>
@@ -540,6 +576,7 @@ onBeforeUnmount(() => {
         <MTabs
           class="w-full"
           :tabs="tabHeaders"
+          v-model="activeTab"
           @update:modelValue="handleTabChange"
         >
           <template #editor="{ contentHeight }">
@@ -550,7 +587,12 @@ onBeforeUnmount(() => {
               >
                 <MLoader :text="loaderText" />
               </div>
-              <MonacoCodeEditor v-else v-model="code" language="xml" />
+              <MonacoCodeEditor
+                v-else
+                v-model="code"
+                language="xml"
+                @ctrl-s="saveTemplate"
+              />
             </div>
           </template>
           <template #compare="{ contentHeight }">
@@ -568,6 +610,8 @@ onBeforeUnmount(() => {
                 :original="leftCodeComputed"
                 :modified="rightCodeComputed"
                 language="xml"
+                @update:modified="handleDiffModifiedChange"
+                @ctrl-s="saveTemplate"
               />
             </div>
           </template>
