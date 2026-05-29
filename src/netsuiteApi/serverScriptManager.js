@@ -154,6 +154,7 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     });
 
     mutation.folderId = folderId;
+    await waitUntilMagicFolderExists(N, mutation.folderId);
   } else {
     const [folder] = (
       await query.runSuiteQL.promise({
@@ -165,10 +166,14 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     mutation.folderId = folder?.id;
   }
 
+  if (!mutation.folderId) {
+    throw new Error("Magic Netsuite scripts folder is not available yet");
+  }
+
   const files = (
     await query.runSuiteQL.promise({
       query: `SELECT id, name FROM file WHERE folder = ? AND name = ?`,
-      params: [mutation.folderId, CONFIG.SERVER_FILE]
+      params: [String(mutation.folderId), CONFIG.SERVER_FILE]
     })
   ).asMappedResults();
 
@@ -183,6 +188,11 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     });
 
     mutation.serverFileId = serverResult.uploaded?.[0]?.fileId;
+    const serverFile = await waitUntilMagicServerFileExists(
+      N,
+      mutation.folderId
+    );
+    mutation.serverFileId = mutation.serverFileId || serverFile?.id;
   } else {
     mutation.serverFileId = fileMap.get(CONFIG.SERVER_FILE);
 
@@ -192,6 +202,11 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
       fileName: CONFIG.SERVER_FILE,
       folderId: mutation.folderId
     });
+    await waitUntilMagicServerFileExists(N, mutation.folderId);
+  }
+
+  if (!mutation.serverFileId) {
+    throw new Error("Magic Netsuite server file is not available yet");
   }
 
   if (!suiteletScriptExists) {
@@ -210,6 +225,8 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     );
 
     mutation.scriptRecordId = scriptRecordId;
+    const script = await waitUntilMagicScriptExists(N);
+    mutation.scriptRecordId = mutation.scriptRecordId || script?.id;
   } else {
     const [script] = (
       await query.runSuiteQL.promise({
@@ -219,6 +236,10 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     ).asMappedResults();
 
     mutation.scriptRecordId = script?.id;
+  }
+
+  if (!mutation.scriptRecordId) {
+    throw new Error("Magic Netsuite Suitelet script is not available yet");
   }
 
   if (!suiteletDeployed) {
@@ -232,6 +253,7 @@ async function ensureMagicNetsuiteServerSuitelet(N, csrfToken) {
     });
 
     mutation.deployUrl = deployUrl;
+    await waitUntilMagicDeploymentExists(N, mutation.scriptRecordId);
   }
 
   await waitForMagicNetsuiteServerReady(N, mutation.deployUrl);
@@ -243,17 +265,32 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function getMagicNetsuiteServerUrl(N, deployUrl) {
   const { url } = N;
-  const suiteletUrl =
+  const domain = url.resolveDomain({
+    hostType: url.HostType.APPLICATION
+  });
+
+  const normalizeSuiteletUrl = (value) => {
+    if (!value) return "";
+
+    let normalized = String(value).trim();
+    normalized = normalized.replace(/^https\/\//i, "https://");
+    normalized = normalized.replace(/^http\/\//i, "http://");
+
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    if (normalized.startsWith("//")) return `https:${normalized}`;
+    if (!normalized.startsWith("/")) normalized = `/${normalized}`;
+
+    return `https://${domain}${normalized}`;
+  };
+
+  return normalizeSuiteletUrl(
     deployUrl ||
     url.resolveScript({
       scriptId: "customscript" + CONFIG.SUITELET_SCRIPT_ID,
       deploymentId: "customdeploy" + CONFIG.SUITELET_SCRIPT_DEPLOY_ID,
       returnExternalUrl: false
-    });
-
-  return `https://${url.resolveDomain({
-    hostType: url.HostType.APPLICATION
-  })}${suiteletUrl}`;
+    })
+  );
 }
 
 async function waitForMagicNetsuiteServerReady(N, deployUrl) {
@@ -287,6 +324,117 @@ async function waitForMagicNetsuiteServerReady(N, deployUrl) {
   }
 
   throw new Error(`Magic Netsuite server Suitelet is not ready yet: ${lastError}`);
+}
+
+async function waitUntilSuiteQL(
+  N,
+  queryText,
+  params,
+  predicate,
+  label,
+  timeoutMs = 10000
+) {
+  const startedAt = Date.now();
+  let lastError = "";
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const rows = (
+        await N.query.runSuiteQL.promise({
+          query: queryText,
+          params
+        })
+      ).asMappedResults();
+
+      if (predicate(rows)) return rows;
+    } catch (err) {
+      lastError = err?.message || String(err);
+    }
+
+    await sleep(500);
+  }
+
+  throw new Error(
+    `${label} did not settle before timeout${lastError ? `: ${lastError}` : ""}`
+  );
+}
+
+async function waitUntilMagicScriptDeleted(N) {
+  await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM script WHERE scriptid = ?`,
+    [CONFIG.scriptId],
+    (rows) => rows.length === 0,
+    "Suitelet script deletion"
+  );
+}
+
+async function waitUntilMagicFolderExists(N, folderId) {
+  const [folder] = await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM MediaItemFolder WHERE id = ?`,
+    [String(folderId)],
+    (rows) => rows.length > 0,
+    "Scripts folder creation"
+  );
+
+  return folder;
+}
+
+async function waitUntilMagicServerFileExists(N, folderId) {
+  const [serverFile] = await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM file WHERE folder = ? AND name = ?`,
+    [String(folderId), CONFIG.SERVER_FILE],
+    (rows) => rows.length > 0,
+    "Server file creation"
+  );
+
+  return serverFile;
+}
+
+async function waitUntilMagicScriptExists(N) {
+  const [script] = await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM script WHERE scriptid = ?`,
+    [CONFIG.scriptId],
+    (rows) => rows.length > 0,
+    "Suitelet script creation"
+  );
+
+  return script;
+}
+
+async function waitUntilMagicDeploymentExists(N, scriptRecordId) {
+  const [deployment] = await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM scriptdeployment WHERE script = ?`,
+    [String(scriptRecordId)],
+    (rows) => rows.length > 0,
+    "Suitelet deployment creation"
+  );
+
+  return deployment;
+}
+
+async function waitUntilMagicServerFileDeleted(N, folderId) {
+  await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM file WHERE folder = ? AND name = ?`,
+    [String(folderId), CONFIG.SERVER_FILE],
+    (rows) => rows.length === 0,
+    "Server file deletion"
+  );
+}
+
+async function waitUntilMagicScriptsFolderDeleted(N, folderId) {
+  await waitUntilSuiteQL(
+    N,
+    `SELECT id FROM MediaItemFolder WHERE id = ?`,
+    [String(folderId)],
+    (rows) => rows.length === 0,
+    "Scripts folder deletion"
+  );
 }
 
 /**
@@ -370,17 +518,15 @@ window.executeServerScript = async (
   const { url } = N;
 
   try {
-    const suiteletUrl =
+    const fullUrl = getMagicNetsuiteServerUrl(
+      N,
       deployUrl ||
-      url.resolveScript({
-        scriptId: suiteletScriptId,
-        deploymentId: deploymentId,
-        returnExternalUrl: false
-      });
-
-    const fullUrl = `https://${url.resolveDomain({
-      hostType: url.HostType.APPLICATION
-    })}${suiteletUrl}`;
+        url.resolveScript({
+          scriptId: suiteletScriptId,
+          deploymentId: deploymentId,
+          returnExternalUrl: false
+        })
+    );
 
     const response = await fetch(fullUrl, {
       method: "POST",
@@ -478,6 +624,7 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
         },
         csrfToken
       );
+      await waitUntilMagicScriptDeleted(N);
       addStep("Suitelet Script", "removed");
     } else {
       addStep("Suitelet Script", "skipped");
@@ -501,12 +648,18 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
     return { steps };
   }
 
+  if (!folderId) {
+    addStep("Server File", "skipped");
+    addStep("Scripts Folder", "skipped");
+    return { steps };
+  }
+
   // ── Server file ──────────────────────────────────────────────────────────
   try {
     const [{ id: serverFileId } = {}] = (
       await query.runSuiteQL.promise({
         query: `SELECT id FROM file WHERE folder = ? AND name = ?`,
-        params: [folderId, CONFIG.SERVER_FILE]
+        params: [String(folderId), CONFIG.SERVER_FILE]
       })
     ).asMappedResults();
 
@@ -516,6 +669,7 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
         { fileId: serverFileId, folderId },
         csrfToken
       );
+      await waitUntilMagicServerFileDeleted(N, folderId);
       addStep("Server File", "removed");
     } else {
       addStep("Server File", "skipped");
@@ -526,12 +680,9 @@ window.removeMagicNetsuiteComponents = async (N, {}, csrfToken) => {
 
   // ── Folder ───────────────────────────────────────────────────────────────
   try {
-    if (folderId) {
-      await window.deleteFolder(N, { folderId });
-      addStep("Scripts Folder", "removed");
-    } else {
-      addStep("Scripts Folder", "skipped");
-    }
+    await window.deleteFolder(N, { folderId });
+    await waitUntilMagicScriptsFolderDeleted(N, folderId);
+    addStep("Scripts Folder", "removed");
   } catch (err) {
     addStep("Scripts Folder", "error", String(err));
   }
