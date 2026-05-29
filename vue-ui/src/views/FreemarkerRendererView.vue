@@ -209,7 +209,7 @@
 
         <div class="pane">
           <div class="pane-toolbar">
-            <span>Rendered</span>
+            <span>PDF Preview</span>
             <span v-if="lastRenderedAt" class="muted">{{ lastRenderedAt }}</span>
           </div>
 
@@ -217,12 +217,15 @@
             {{ renderError }}
           </div>
 
+          <div v-else-if="!renderedPdfUrl" class="preview-empty">
+            Run the template to generate a PDF preview.
+          </div>
+
           <iframe
             v-else
             class="render-frame"
-            title="Rendered FreeMarker template"
-            sandbox=""
-            :srcdoc="renderedHtml"
+            title="Rendered FreeMarker PDF"
+            :src="renderedPdfUrl"
           ></iframe>
         </div>
       </div>
@@ -441,7 +444,7 @@ const transactionRecordTypeOptions: RecordTypeOption[] = [
 ];
 
 const template = ref(defaultTemplate);
-const renderedHtml = ref("<div style=\"font-family:sans-serif;padding:16px;color:#475569\">Run the template to see the rendered output.</div>");
+const renderedPdfUrl = ref("");
 const renderError = ref("");
 const isRendering = ref(false);
 const lastRenderedAt = ref("");
@@ -517,7 +520,9 @@ const renderTemplate = async () => {
       return;
     }
 
-    renderedHtml.value = result.html || "";
+    renderedPdfUrl.value = result.pdf
+      ? `data:${result.mimeType || "application/pdf"};base64,${result.pdf}`
+      : "";
     lastRenderedAt.value = new Date().toLocaleTimeString();
     await checkServerComponents();
   } catch (err: any) {
@@ -814,6 +819,15 @@ onMounted(async () => {
   background: var(--p-red-50);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.8125rem;
+}
+
+.preview-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--p-slate-500);
+  background: white;
+  font-size: 0.875rem;
 }
 
 .sidebar-section {

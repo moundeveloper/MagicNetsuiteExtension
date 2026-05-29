@@ -127,7 +127,8 @@ window.renderFreemarkerTemplateServer = async (
 
   return {
     success: !!renderResult?.success,
-    html: renderResult?.html || "",
+    pdf: renderResult?.pdf || "",
+    mimeType: renderResult?.mimeType || "application/pdf",
     error: renderResult?.error,
     mutation
   };
@@ -611,7 +612,7 @@ define(
         })
       });
     }
-    return renderer.renderAsString();
+    return renderer.renderAsPdf();
   };
 
   var onRequest = function(context) {
@@ -641,13 +642,17 @@ define(
         }
 
         try {
-          var html = renderFreemarkerTemplate(
+          var pdfFile = renderFreemarkerTemplate(
             template,
             context.request.parameters.recordType,
             context.request.parameters.recordId
           );
           context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
-          context.response.write(JSON.stringify({ success: true, html: html }));
+          context.response.write(JSON.stringify({
+            success: true,
+            mimeType: 'application/pdf',
+            pdf: pdfFile.getContents()
+          }));
         } catch (renderError) {
           context.response.setHeader({ name: 'Content-Type', value: 'application/json' });
           context.response.write(JSON.stringify({
