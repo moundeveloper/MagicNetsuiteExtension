@@ -36,24 +36,23 @@
               <span class="flex-1 text-left">{{ isRendering ? "Rendering..." : "Render" }}</span>
               <kbd class="render-kbd">Ctrl+↵</kbd>
             </Button>
-            <div class="flex gap-2">
-              <Button size="small" severity="secondary" outlined class="flex-1" @click="useTransactionTemplate">
-                Transaction
-              </Button>
-              <Button size="small" severity="secondary" outlined class="flex-1" @click="useCustomRecordTemplate">
-                Custom
-              </Button>
-            </div>
           </div>
 
           <div class="sidebar-section">
             <h4>Record Context</h4>
-            <div class="flex gap-2">
+            <div class="context-mode-grid">
+              <Button
+                size="small"
+                :severity="contextMode === 'freestyle' ? 'primary' : 'secondary'"
+                :outlined="contextMode !== 'freestyle'"
+                @click="setContextMode('freestyle')"
+              >
+                Freestyle
+              </Button>
               <Button
                 size="small"
                 :severity="contextMode === 'transaction' ? 'primary' : 'secondary'"
                 :outlined="contextMode !== 'transaction'"
-                class="flex-1"
                 @click="setContextMode('transaction')"
               >
                 Transaction
@@ -62,55 +61,56 @@
                 size="small"
                 :severity="contextMode === 'customrecord' ? 'primary' : 'secondary'"
                 :outlined="contextMode !== 'customrecord'"
-                class="flex-1"
                 @click="setContextMode('customrecord')"
               >
                 Custom
               </Button>
             </div>
 
-            <Select
-              v-model="selectedRecordType"
-              :options="recordTypeOptions"
-              optionLabel="name"
-              placeholder="Record type"
-              size="small"
-              class="w-full"
-              :loading="recordTypesLoading"
-              filter
-              @change="loadRecords"
-            />
-
-            <div class="flex gap-2">
-              <InputText
-                v-model="recordSearch"
+            <template v-if="contextMode !== 'freestyle'">
+              <Select
+                v-model="selectedRecordType"
+                :options="recordTypeOptions"
+                optionLabel="name"
+                placeholder="Record type"
                 size="small"
-                class="flex-1 min-w-0"
-                placeholder="Search records"
-                @keydown.enter="loadRecords"
+                class="w-full"
+                :loading="recordTypesLoading"
+                filter
+                @change="loadRecords"
               />
-              <Button
+
+              <div class="flex gap-2">
+                <InputText
+                  v-model="recordSearch"
+                  size="small"
+                  class="flex-1 min-w-0"
+                  placeholder="Search records"
+                  @keydown.enter="loadRecords"
+                />
+                <Button
+                  size="small"
+                  icon="pi pi-search"
+                  :loading="recordsLoading"
+                  @click="loadRecords"
+                />
+              </div>
+
+              <Select
+                v-model="selectedRecord"
+                :options="recordRows"
+                optionLabel="label"
+                placeholder="Record"
                 size="small"
-                icon="pi pi-search"
+                class="w-full"
                 :loading="recordsLoading"
-                @click="loadRecords"
+                filter
               />
-            </div>
 
-            <Select
-              v-model="selectedRecord"
-              :options="recordRows"
-              optionLabel="label"
-              placeholder="Record"
-              size="small"
-              class="w-full"
-              :loading="recordsLoading"
-              filter
-            />
-
-            <div v-if="selectedRecord" class="text-xs text-slate-500">
-              {{ selectedRecord.meta || `ID: ${selectedRecord.id}` }}
-            </div>
+              <div v-if="selectedRecord" class="text-xs text-slate-500">
+                {{ selectedRecord.meta || `ID: ${selectedRecord.id}` }}
+              </div>
+            </template>
             <div v-if="recordListError" class="text-xs text-red-500">
               {{ recordListError }}
             </div>
@@ -144,6 +144,35 @@
 
             <div v-if="serverStatus.error" class="text-xs text-red-500">
               {{ serverStatus.error }}
+            </div>
+
+            <Button
+              size="small"
+              :severity="removeConfirmPending ? 'warn' : 'danger'"
+              :loading="isRemoving"
+              :disabled="isRemoving"
+              class="w-full mt-2"
+              @click="removeServerComponents"
+            >
+              {{ removeConfirmPending ? 'Click Again to Confirm' : 'Remove Server Components' }}
+            </Button>
+
+            <div v-if="removeStatus" class="text-xs space-y-1 mt-2">
+              <div
+                v-for="step in removeStatus.steps"
+                :key="step.name"
+                :class="{
+                  'text-green-600': step.status === 'removed',
+                  'text-gray-500': step.status === 'skipped',
+                  'text-red-500': step.status === 'error'
+                }"
+              >
+                <span v-if="step.status === 'removed'">✓</span>
+                <span v-else-if="step.status === 'skipped'">–</span>
+                <span v-else>✗</span>
+                {{ step.name }}
+                <span v-if="step.error" class="ml-1 opacity-75">({{ step.error }})</span>
+              </div>
             </div>
           </div>
 
@@ -212,6 +241,41 @@ import { RequestRoutes } from "../types/request";
 
 const STORAGE_KEY = "freemarkerRendererTemplate";
 const CONTEXT_MODE_KEY = "freemarkerRendererContextMode";
+
+const freestyleTemplate = `<?xml version="1.0"?>
+<!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
+<pdf>
+  <head>
+    <style>
+      body { font-size: 10pt; }
+      table { font-size: 9pt; table-layout: fixed; width: 100%; }
+      th { font-weight: bold; font-size: 8pt; padding: 6px; background-color: #e3e3e3; color: #333333; }
+      td { padding: 4px 6px; }
+      .title { font-size: 24pt; }
+    </style>
+  </head>
+  <body size="Letter">
+    <table>
+      <tr>
+        <td><span class="title">FreeMarker Preview</span></td>
+        <td align="right">\${.now?string("yyyy-MM-dd HH:mm:ss")}</td>
+      </tr>
+    </table>
+    <br />
+    <table>
+      <tr>
+        <th>Example</th>
+        <th>Value</th>
+      </tr>
+      <#list ["One", "Two", "Three"] as row>
+        <tr>
+          <td>\${row}</td>
+          <td>\${row_index + 1}</td>
+        </tr>
+      </#list>
+    </table>
+  </body>
+</pdf>`;
 
 const customRecordTemplate = `<?xml version="1.0"?>
 <!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
@@ -329,9 +393,9 @@ const transactionTemplate = `<?xml version="1.0"?>
   </body>
 </pdf>`;
 
-const defaultTemplate = customRecordTemplate;
+const defaultTemplate = freestyleTemplate;
 
-type ContextMode = "transaction" | "customrecord";
+type ContextMode = "freestyle" | "transaction" | "customrecord";
 
 interface RecordTypeOption {
   id: string;
@@ -382,7 +446,7 @@ const renderError = ref("");
 const isRendering = ref(false);
 const lastRenderedAt = ref("");
 const toast = useToast();
-const contextMode = ref<ContextMode>("customrecord");
+const contextMode = ref<ContextMode>("freestyle");
 const customRecordTypes = ref<RecordTypeOption[]>([]);
 const selectedRecordType = ref<RecordTypeOption | null>(null);
 const selectedRecord = ref<RecordListRow | null>(null);
@@ -408,9 +472,28 @@ const serverStatus = ref<{
   error: null
 });
 
+interface RemoveStep {
+  name: string;
+  status: "removed" | "skipped" | "error";
+  error?: string;
+}
+
+const removeConfirmPending = ref(false);
+const isRemoving = ref(false);
+const removeStatus = ref<{ steps: RemoveStep[] } | null>(null);
+let removeConfirmTimer: number | undefined;
+
 const renderTemplate = async () => {
   if (!template.value.trim()) {
     renderError.value = "Template is empty.";
+    return;
+  }
+
+  if (
+    contextMode.value !== "freestyle" &&
+    (!selectedRecordType.value || !selectedRecord.value)
+  ) {
+    renderError.value = "Select a record type and record, or switch to Freestyle.";
     return;
   }
 
@@ -422,8 +505,8 @@ const renderTemplate = async () => {
       RequestRoutes.RENDER_FREEMARKER_TEMPLATE,
       {
         template: template.value,
-        recordType: selectedRecordType.value?.id,
-        recordId: selectedRecord.value?.id
+        recordType: contextMode.value === "freestyle" ? undefined : selectedRecordType.value?.id,
+        recordId: contextMode.value === "freestyle" ? undefined : selectedRecord.value?.id
       },
       ApiRequestType.NORMAL
     );
@@ -468,16 +551,6 @@ const openFreemarkerReference = () => {
   window.open("https://freemarker.apache.org/docs/index.html", "_blank");
 };
 
-const useTransactionTemplate = () => {
-  template.value = transactionTemplate;
-  setContextMode("transaction");
-};
-
-const useCustomRecordTemplate = () => {
-  template.value = customRecordTemplate;
-  setContextMode("customrecord");
-};
-
 const setContextMode = (mode: ContextMode) => {
   contextMode.value = mode;
   selectedRecordType.value = null;
@@ -485,8 +558,65 @@ const setContextMode = (mode: ContextMode) => {
   recordRows.value = [];
   recordListError.value = "";
   localStorage.setItem(CONTEXT_MODE_KEY, mode);
+  template.value =
+    mode === "transaction"
+      ? transactionTemplate
+      : mode === "customrecord"
+        ? customRecordTemplate
+        : freestyleTemplate;
   if (mode === "customrecord" && customRecordTypes.value.length === 0) {
     void loadRecordTypes();
+  }
+};
+
+const removeServerComponents = async () => {
+  if (!removeConfirmPending.value) {
+    removeConfirmPending.value = true;
+    toast.add({
+      severity: "warn",
+      summary: "Confirm Removal",
+      detail: "Click the button again within 3 seconds to confirm",
+      life: 3000
+    });
+    removeConfirmTimer = window.setTimeout(() => {
+      removeConfirmPending.value = false;
+    }, 3000);
+    return;
+  }
+
+  removeConfirmPending.value = false;
+  if (removeConfirmTimer) {
+    clearTimeout(removeConfirmTimer);
+    removeConfirmTimer = undefined;
+  }
+
+  isRemoving.value = true;
+  removeStatus.value = null;
+
+  try {
+    const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
+    const result = (response as ApiResponse)?.message || response;
+    if (result?.steps && Array.isArray(result.steps)) {
+      removeStatus.value = { steps: result.steps };
+      const removedCount = result.steps.filter((step: RemoveStep) => step.status === "removed").length;
+      const errorCount = result.steps.filter((step: RemoveStep) => step.status === "error").length;
+      toast.add({
+        severity: errorCount > 0 ? "warn" : "success",
+        summary: "Components Removed",
+        detail: `${removedCount} removed, ${errorCount} error(s)`,
+        life: 4000
+      });
+    }
+    await checkServerComponents();
+  } catch (err: any) {
+    toast.add({
+      severity: "error",
+      summary: "Removal Failed",
+      detail: err?.message || "Unknown error",
+      life: 5000
+    });
+  } finally {
+    isRemoving.value = false;
   }
 };
 
@@ -620,7 +750,7 @@ onMounted(async () => {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) template.value = saved;
   const savedMode = localStorage.getItem(CONTEXT_MODE_KEY);
-  if (savedMode === "transaction" || savedMode === "customrecord") {
+  if (savedMode === "freestyle" || savedMode === "transaction" || savedMode === "customrecord") {
     contextMode.value = savedMode;
   }
   await Promise.all([checkServerComponents(), loadRecordTypes()]);
@@ -702,6 +832,17 @@ onMounted(async () => {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--p-slate-700);
+}
+
+.context-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.375rem;
+}
+
+.context-mode-grid :deep(.p-button) {
+  min-width: 0;
+  padding-inline: 0.5rem;
 }
 
 .render-kbd {
