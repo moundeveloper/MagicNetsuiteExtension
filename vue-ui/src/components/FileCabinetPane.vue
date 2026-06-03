@@ -1,5 +1,8 @@
 <template>
-  <div class="fc-pane-wrapper" :class="{ 'fc-pane--context-picker': props.contextPicker }">
+  <div
+    class="fc-pane-wrapper"
+    :class="{ 'fc-pane--context-picker': props.contextPicker }"
+  >
     <!-- ── Main content area ─────────────────────────────────────────────── -->
     <div class="fc-pane-main">
       <!-- Breadcrumb bar -->
@@ -26,7 +29,12 @@
         </template>
         <div class="ml-auto flex items-center gap-2">
           <template v-if="openedFile">
-            <Button size="small" severity="secondary" outlined @click="closeFile">
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              @click="closeFile"
+            >
               <i class="pi pi-arrow-left text-xs mr-1"></i>
               Back
             </Button>
@@ -36,10 +44,21 @@
               v-if="currentFolderInfo && !props.contextPicker"
               class="fc-view-toggle"
               :class="{ active: props.bookmarkedIds.has(currentFolderInfo.id) }"
-              :title="props.bookmarkedIds.has(currentFolderInfo.id) ? 'Remove Bookmark' : 'Bookmark this folder'"
+              :title="
+                props.bookmarkedIds.has(currentFolderInfo.id)
+                  ? 'Remove Bookmark'
+                  : 'Bookmark this folder'
+              "
               @click="toggleBookmark(currentFolderInfo)"
             >
-              <i :class="props.bookmarkedIds.has(currentFolderInfo.id) ? 'pi pi-bookmark-fill' : 'pi pi-bookmark'" class="text-xs"></i>
+              <i
+                :class="
+                  props.bookmarkedIds.has(currentFolderInfo.id)
+                    ? 'pi pi-bookmark-fill'
+                    : 'pi pi-bookmark'
+                "
+                class="text-xs"
+              ></i>
             </button>
             <InputText
               v-model="contentSearch"
@@ -54,12 +73,25 @@
               :disabled="isLoading"
               @click="refreshCurrentFolder"
             >
-              <i :class="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" class="text-xs"></i>
+              <i
+                :class="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"
+                class="text-xs"
+              ></i>
             </button>
-            <button v-if="!props.contextPicker" class="fc-view-toggle" title="New Folder" @click="openNewFolderDialog">
+            <button
+              v-if="!props.contextPicker"
+              class="fc-view-toggle"
+              title="New Folder"
+              @click="openNewFolderDialog"
+            >
               <i class="pi pi-folder-plus text-xs"></i>
             </button>
-            <button v-if="!props.contextPicker" class="fc-view-toggle" title="New Text File" @click="openNewFileDialog">
+            <button
+              v-if="!props.contextPicker"
+              class="fc-view-toggle"
+              title="New Text File"
+              @click="openNewFileDialog"
+            >
               <i class="pi pi-file-edit text-xs"></i>
             </button>
             <div class="fc-view-seg">
@@ -96,8 +128,15 @@
             @input="handleGlobalSearch"
             @keydown.escape="clearGlobalSearch"
           />
-          <i v-if="globalSearchLoading" class="pi pi-spin pi-spinner text-xs text-gray-400"></i>
-          <button v-if="globalSearchQuery" class="fc-search-close" @click="clearGlobalSearch">
+          <i
+            v-if="globalSearchLoading"
+            class="pi pi-spin pi-spinner text-xs text-gray-400"
+          ></i>
+          <button
+            v-if="globalSearchQuery"
+            class="fc-search-close"
+            @click="clearGlobalSearch"
+          >
             <i class="pi pi-times text-xs"></i>
           </button>
         </div>
@@ -108,7 +147,14 @@
             class="fc-search-result-item"
             @click="handleSearchResultClick(result)"
           >
-            <i :class="result.type === 'folder' ? 'pi pi-folder text-amber-500' : 'pi pi-file text-gray-500'" class="text-xs"></i>
+            <i
+              :class="
+                result.type === 'folder'
+                  ? 'pi pi-folder text-amber-500'
+                  : 'pi pi-file text-gray-500'
+              "
+              class="text-xs"
+            ></i>
             <span class="fc-search-result-name">{{ result.name }}</span>
             <span class="fc-search-result-path">{{ result.path }}</span>
             <button
@@ -120,22 +166,51 @@
               title="Add to context"
               @click.stop="addSearchResultToContext(result)"
             >
-              <i :class="props.attachedFileIds?.has(result.id) ? 'pi pi-check' : 'pi pi-plus'" />
+              <i
+                :class="
+                  props.attachedFileIds?.has(result.id)
+                    ? 'pi pi-check'
+                    : 'pi pi-plus'
+                "
+              />
             </button>
             <button
               v-else-if="!props.contextPicker"
               class="fc-search-result-bookmark"
-              :title="props.bookmarkedIds.has(result.id) ? 'Remove Bookmark' : 'Add Bookmark'"
+              :title="
+                props.bookmarkedIds.has(result.id)
+                  ? 'Remove Bookmark'
+                  : 'Add Bookmark'
+              "
               @click.stop="toggleBookmarkFromSearchResult(result)"
             >
-              <i :class="props.bookmarkedIds.has(result.id) ? 'pi pi-bookmark-fill text-amber-400' : 'pi pi-bookmark text-gray-400'" class="text-xs"></i>
+              <i
+                :class="
+                  props.bookmarkedIds.has(result.id)
+                    ? 'pi pi-bookmark-fill text-amber-400'
+                    : 'pi pi-bookmark text-gray-400'
+                "
+                class="text-xs"
+              ></i>
             </button>
           </div>
         </div>
-        <div v-else-if="globalSearchQuery.trim().length >= 3 && !globalSearchLoading" class="fc-search-empty">
+        <div
+          v-else-if="
+            globalSearchQuery.trim().length >= 3 && !globalSearchLoading
+          "
+          class="fc-search-empty"
+        >
           No results found
         </div>
-        <div v-else-if="globalSearchQuery.trim().length > 0 && globalSearchQuery.trim().length < 3 && !globalSearchLoading" class="fc-search-empty">
+        <div
+          v-else-if="
+            globalSearchQuery.trim().length > 0 &&
+            globalSearchQuery.trim().length < 3 &&
+            !globalSearchLoading
+          "
+          class="fc-search-empty"
+        >
           Type at least 3 characters to search
         </div>
       </div>
@@ -145,24 +220,44 @@
         <div v-if="fileLoading" class="flex-1 flex items-center justify-center">
           <div class="text-center">
             <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
-            <p class="text-sm text-gray-500 mt-2">Loading {{ openedFile.name }}...</p>
+            <p class="text-sm text-gray-500 mt-2">
+              Loading {{ openedFile.name }}...
+            </p>
           </div>
         </div>
-        <div v-else-if="fileLoadError" class="flex-1 flex items-center justify-center">
+        <div
+          v-else-if="fileLoadError"
+          class="flex-1 flex items-center justify-center"
+        >
           <div class="text-center text-red-500">
             <i class="pi pi-exclamation-circle text-3xl mb-2"></i>
             <p class="text-sm">{{ fileLoadError }}</p>
-            <Button size="small" class="mt-2" @click="openFile(openedFile!)">Retry</Button>
+            <Button size="small" class="mt-2" @click="openFile(openedFile!)"
+              >Retry</Button
+            >
           </div>
         </div>
-        <div v-else-if="fileIsBinary && fileContent" class="fc-file-view" :class="isPdfFile(openedFile!) && pdfObjectUrl ? 'fc-file-pdf' : 'fc-file-image'">
+        <div
+          v-else-if="fileIsBinary && fileContent"
+          class="fc-file-view"
+          :class="
+            isPdfFile(openedFile!) && pdfObjectUrl
+              ? 'fc-file-pdf'
+              : 'fc-file-image'
+          "
+        >
           <iframe
             v-if="isPdfFile(openedFile!) && pdfObjectUrl"
             :src="pdfObjectUrl"
             class="fc-pdf-viewer"
             title="PDF Viewer"
           ></iframe>
-          <img v-else :src="fileContent" :alt="openedFile!.name" class="fc-image-content" />
+          <img
+            v-else
+            :src="fileContent"
+            :alt="openedFile!.name"
+            class="fc-image-content"
+          />
         </div>
         <template v-else-if="fileContent !== null && !fileIsBinary">
           <div v-if="isTextFile(openedFile)" class="fc-edit-toolbar">
@@ -170,14 +265,20 @@
               <label class="fc-edit-toggle">
                 <input type="checkbox" v-model="isEditing" />
                 <span class="fc-toggle-slider"></span>
-                <span class="fc-toggle-label">{{ isEditing ? 'Editing' : 'Read-only' }}</span>
+                <span class="fc-toggle-label">{{
+                  isEditing ? "Editing" : "Read-only"
+                }}</span>
               </label>
             </div>
             <div class="fc-edit-toolbar-right">
               <template v-if="isEditing">
-                <Button size="small" :disabled="isSaving || !hasUnsavedChanges" @click="saveFile">
+                <Button
+                  size="small"
+                  :disabled="isSaving || !hasUnsavedChanges"
+                  @click="saveFile"
+                >
                   <i class="pi pi-save text-xs mr-1"></i>
-                  {{ isSaving ? 'Saving...' : 'Save' }}
+                  {{ isSaving ? "Saving..." : "Save" }}
                   <kbd v-if="!isSaving" class="fc-kbd">Ctrl+S</kbd>
                 </Button>
                 <div class="fc-history-wrapper">
@@ -190,12 +291,19 @@
                   >
                     <i class="pi pi-history text-xs mr-1"></i>
                     History
-                    <span v-if="versionHistory.length > 0" class="fc-history-badge">{{ versionHistory.length }}</span>
+                    <span
+                      v-if="versionHistory.length > 0"
+                      class="fc-history-badge"
+                      >{{ versionHistory.length }}</span
+                    >
                   </Button>
                   <div v-if="historyDropdownOpen" class="fc-history-dropdown">
                     <div class="fc-history-header">
                       <span>Version History</span>
-                      <button class="fc-history-close" @click="historyDropdownOpen = false">
+                      <button
+                        class="fc-history-close"
+                        @click="historyDropdownOpen = false"
+                      >
                         <i class="pi pi-times text-xs"></i>
                       </button>
                     </div>
@@ -207,12 +315,24 @@
                         :class="{ active: selectedVersionId === ver.id }"
                         @click="selectVersion(ver)"
                       >
-                        <div class="fc-history-item-time">{{ formatVersionDate(ver.savedAt) }}</div>
-                        <div class="fc-history-item-name">{{ ver.fileName }}</div>
+                        <div class="fc-history-item-time">
+                          {{ formatVersionDate(ver.savedAt) }}
+                        </div>
+                        <div class="fc-history-item-name">
+                          {{ ver.fileName }}
+                        </div>
                       </div>
                     </div>
-                    <div v-if="versionHistory.length > 0" class="fc-history-footer">
-                      <Button size="small" severity="danger" class="w-full" @click="commitHistory">
+                    <div
+                      v-if="versionHistory.length > 0"
+                      class="fc-history-footer"
+                    >
+                      <Button
+                        size="small"
+                        severity="danger"
+                        class="w-full"
+                        @click="commitHistory"
+                      >
                         <i class="pi pi-check text-xs mr-1"></i>
                         Commit (Clear History)
                       </Button>
@@ -233,18 +353,32 @@
             </div>
           </div>
 
-          <div v-if="showingDiff && selectedVersionContent !== null" class="fc-file-view fc-file-diff">
+          <div
+            v-if="showingDiff && selectedVersionContent !== null"
+            class="fc-file-view fc-file-diff"
+          >
             <div class="fc-diff-bar">
               <span class="text-xs text-gray-600">
                 <i class="pi pi-clock text-xs mr-1"></i>
-                Comparing: <strong>{{ selectedVersionLabel }}</strong> vs Current
+                Comparing: <strong>{{ selectedVersionLabel }}</strong> vs
+                Current
               </span>
               <div class="flex items-center gap-2">
-                <Button size="small" severity="secondary" outlined @click="revertToVersion">
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="revertToVersion"
+                >
                   <i class="pi pi-undo text-xs mr-1"></i>
                   Revert to This
                 </Button>
-                <Button size="small" severity="secondary" outlined @click="closeDiff">
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="closeDiff"
+                >
                   <i class="pi pi-times text-xs mr-1"></i>
                   Close Diff
                 </Button>
@@ -270,11 +404,21 @@
                 </span>
               </div>
               <div class="flex items-center gap-2">
-                <Button size="small" severity="secondary" outlined @click="loadCompareFromClipboard">
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="loadCompareFromClipboard"
+                >
                   <i class="pi pi-clipboard text-xs mr-1"></i>
                   Paste Clipboard
                 </Button>
-                <Button size="small" severity="secondary" outlined @click="swapCompare">
+                <Button
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="swapCompare"
+                >
                   <i class="pi pi-sort-alt text-xs mr-1"></i>
                   Swap
                 </Button>
@@ -308,30 +452,33 @@
 
       <!-- ═══ FOLDER LISTING VIEW ═══ -->
       <template v-else>
+        <div
+          class="fc-drop-zone"
+          :class="{ 'fc-drag-over': !props.contextPicker && isDragOver }"
+          @dragover="handleDragOver"
+          @dragleave="handleDragLeave"
+          @drop="handleDrop"
+          @contextmenu.prevent="handleBodyContextMenu($event)"
+        >
+          <!-- Deletion loading overlay -->
+          <div v-if="isDeleting" class="fc-delete-overlay">
+            <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+            <span class="text-sm text-gray-600 mt-2">Deleting...</span>
+          </div>
+          <!-- Rename loading overlay -->
+          <div v-if="isRenamingLoading" class="fc-delete-overlay">
+            <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+            <span class="text-sm text-gray-600 mt-2">Renaming...</span>
+          </div>
+          <!-- Move loading overlay -->
+          <div v-if="isMoveLoading" class="fc-delete-overlay">
+            <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
+            <span class="text-sm text-gray-600 mt-2">Moving...</span>
+          </div>
           <div
-            class="fc-drop-zone"
-            :class="{ 'fc-drag-over': !props.contextPicker && isDragOver }"
-            @dragover="handleDragOver"
-            @dragleave="handleDragLeave"
-            @drop="handleDrop"
-            @contextmenu.prevent="handleBodyContextMenu($event)"
+            v-if="!props.contextPicker && isDragOver"
+            class="fc-drop-overlay"
           >
-            <!-- Deletion loading overlay -->
-            <div v-if="isDeleting" class="fc-delete-overlay">
-              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
-              <span class="text-sm text-gray-600 mt-2">Deleting...</span>
-            </div>
-            <!-- Rename loading overlay -->
-            <div v-if="isRenamingLoading" class="fc-delete-overlay">
-              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
-              <span class="text-sm text-gray-600 mt-2">Renaming...</span>
-            </div>
-            <!-- Move loading overlay -->
-            <div v-if="isMoveLoading" class="fc-delete-overlay">
-              <i class="pi pi-spin pi-spinner text-xl text-indigo-500"></i>
-              <span class="text-sm text-gray-600 mt-2">Moving...</span>
-            </div>
-          <div v-if="!props.contextPicker && isDragOver" class="fc-drop-overlay">
             <i class="pi pi-cloud-upload text-4xl text-indigo-500"></i>
             <p>Drop files to upload to this folder</p>
           </div>
@@ -342,17 +489,29 @@
           <div v-if="isLoading" class="flex-1 flex items-center justify-center">
             <i class="pi pi-spin pi-spinner text-2xl text-gray-400"></i>
           </div>
-          <div v-else-if="loadError" class="flex-1 flex items-center justify-center">
+          <div
+            v-else-if="loadError"
+            class="flex-1 flex items-center justify-center"
+          >
             <div class="text-center text-red-500">
               <i class="pi pi-exclamation-circle text-3xl mb-2"></i>
               <p class="text-sm">{{ loadError }}</p>
-              <Button size="small" class="mt-2" @click="refreshCurrentFolder">Retry</Button>
+              <Button size="small" class="mt-2" @click="refreshCurrentFolder"
+                >Retry</Button
+              >
             </div>
           </div>
-          <div v-else-if="filteredItems.length === 0 && !isLoading" class="flex-1 flex items-center justify-center">
+          <div
+            v-else-if="filteredItems.length === 0 && !isLoading"
+            class="flex-1 flex items-center justify-center"
+          >
             <div class="text-center text-gray-500">
               <i class="pi pi-folder-open text-4xl mb-2"></i>
-              <p>{{ contentSearch ? 'No matching items' : 'This folder is empty' }}</p>
+              <p>
+                {{
+                  contentSearch ? "No matching items" : "This folder is empty"
+                }}
+              </p>
             </div>
           </div>
           <!-- Grid view -->
@@ -361,7 +520,11 @@
               v-for="item in filteredItems"
               :key="item.type + '-' + item.id"
               class="fc-grid-item"
-              :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
+              :class="{
+                selected: isSelected(item),
+                'fc-drop-target':
+                  item.type === 'folder' && dropTargetFolderId === item.id
+              }"
               :draggable="renamingItemId !== item.id"
               @click="handleItemClick(item, $event)"
               @mousedown.middle.prevent="emit('open-in-newtab', item)"
@@ -376,7 +539,10 @@
               <div class="fc-grid-icon">
                 <i :class="getItemIcon(item)" class="text-2xl"></i>
               </div>
-              <div class="fc-grid-label" :title="renamingItemId === item.id ? undefined : item.name">
+              <div
+                class="fc-grid-label"
+                :title="renamingItemId === item.id ? undefined : item.name"
+              >
                 <input
                   v-if="renamingItemId === item.id"
                   v-model="renameValue"
@@ -389,16 +555,28 @@
                 <template v-else>{{ item.name }}</template>
               </div>
               <div class="fc-grid-meta">
-                <template v-if="item.type === 'folder'">{{ item.numfolderfiles ?? 0 }} files</template>
+                <template v-if="item.type === 'folder'"
+                  >{{ item.numfolderfiles ?? 0 }} files</template
+                >
                 <template v-else>{{ formatFileSize(item.filesize) }}</template>
               </div>
-              <div v-if="props.contextPicker && item.type === 'file'" class="fc-grid-add">
+              <div
+                v-if="props.contextPicker && item.type === 'file'"
+                class="fc-grid-add"
+              >
                 <button
                   type="button"
                   class="fc-add-btn"
                   :class="{ attached: props.attachedFileIds?.has(item.id) }"
-                  :disabled="props.attachedFileIds?.has(item.id) || props.attachingFileIds?.has(item.id)"
-                  :title="props.attachedFileIds?.has(item.id) ? 'Added to context' : 'Add to context'"
+                  :disabled="
+                    props.attachedFileIds?.has(item.id) ||
+                    props.attachingFileIds?.has(item.id)
+                  "
+                  :title="
+                    props.attachedFileIds?.has(item.id)
+                      ? 'Added to context'
+                      : 'Add to context'
+                  "
                   @click.stop="emit('add-to-context', item)"
                 >
                   <i
@@ -421,19 +599,54 @@
                 <tr>
                   <th class="fc-th-name" @click="toggleSort('name')">
                     Name
-                    <i v-if="sortField === 'name'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                    <i
+                      v-if="sortField === 'name'"
+                      :class="
+                        sortDir === 'asc'
+                          ? 'pi pi-sort-up-fill'
+                          : 'pi pi-sort-down-fill'
+                      "
+                      class="text-xs ml-1"
+                    ></i>
                   </th>
                   <th class="fc-th-type" @click="toggleSort('fileType')">
                     Type
-                    <i v-if="sortField === 'fileType'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                    <i
+                      v-if="sortField === 'fileType'"
+                      :class="
+                        sortDir === 'asc'
+                          ? 'pi pi-sort-up-fill'
+                          : 'pi pi-sort-down-fill'
+                      "
+                      class="text-xs ml-1"
+                    ></i>
                   </th>
                   <th class="fc-th-size" @click="toggleSort('size')">
                     Size
-                    <i v-if="sortField === 'size'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                    <i
+                      v-if="sortField === 'size'"
+                      :class="
+                        sortDir === 'asc'
+                          ? 'pi pi-sort-up-fill'
+                          : 'pi pi-sort-down-fill'
+                      "
+                      class="text-xs ml-1"
+                    ></i>
                   </th>
-                  <th class="fc-th-date" @click="toggleSort('lastmodifieddate')">
+                  <th
+                    class="fc-th-date"
+                    @click="toggleSort('lastmodifieddate')"
+                  >
                     Modified
-                    <i v-if="sortField === 'lastmodifieddate'" :class="sortDir === 'asc' ? 'pi pi-sort-up-fill' : 'pi pi-sort-down-fill'" class="text-xs ml-1"></i>
+                    <i
+                      v-if="sortField === 'lastmodifieddate'"
+                      :class="
+                        sortDir === 'asc'
+                          ? 'pi pi-sort-up-fill'
+                          : 'pi pi-sort-down-fill'
+                      "
+                      class="text-xs ml-1"
+                    ></i>
                   </th>
                   <th class="fc-th-id">ID</th>
                   <th v-if="props.contextPicker" class="fc-th-action"></th>
@@ -444,7 +657,11 @@
                   v-for="item in filteredItems"
                   :key="item.type + '-' + item.id"
                   class="fc-table-row"
-                  :class="{ selected: isSelected(item), 'fc-drop-target': item.type === 'folder' && dropTargetFolderId === item.id }"
+                  :class="{
+                    selected: isSelected(item),
+                    'fc-drop-target':
+                      item.type === 'folder' && dropTargetFolderId === item.id
+                  }"
                   :draggable="renamingItemId !== item.id"
                   @click="handleItemClick(item, $event)"
                   @mousedown.middle.prevent="emit('open-in-newtab', item)"
@@ -452,11 +669,11 @@
                   @contextmenu.prevent.stop="handleItemContext(item, $event)"
                   @dragstart="handleItemDragStart(item, $event)"
                   @dragend="handleItemDragEnd"
-                   @dragover.prevent="handleFolderDragOver(item, $event)"
-                   @dragleave="handleFolderDragLeave"
-                   @drop.prevent.stop="handleMoveItemDrop(item, $event)"
-                 >
-                   <td class="fc-td-name">
+                  @dragover.prevent="handleFolderDragOver(item, $event)"
+                  @dragleave="handleFolderDragLeave"
+                  @drop.prevent.stop="handleMoveItemDrop(item, $event)"
+                >
+                  <td class="fc-td-name">
                     <i :class="getItemIcon(item)" class="text-sm mr-2"></i>
                     <input
                       v-if="renamingItemId === item.id"
@@ -469,12 +686,20 @@
                     />
                     <span v-else>{{ item.name }}</span>
                   </td>
-                  <td class="fc-td-type">{{ item.type === 'folder' ? 'Folder' : (item.filetype || '—') }}</td>
-                  <td class="fc-td-size">
-                    <template v-if="item.type === 'folder'">{{ formatFolderSize(item.foldersize) }}</template>
-                    <template v-else>{{ formatFileSize(item.filesize) }}</template>
+                  <td class="fc-td-type">
+                    {{
+                      item.type === "folder" ? "Folder" : item.filetype || "—"
+                    }}
                   </td>
-                  <td class="fc-td-date">{{ item.lastmodifieddate || '—' }}</td>
+                  <td class="fc-td-size">
+                    <template v-if="item.type === 'folder'">{{
+                      formatFolderSize(item.foldersize)
+                    }}</template>
+                    <template v-else>{{
+                      formatFileSize(item.filesize)
+                    }}</template>
+                  </td>
+                  <td class="fc-td-date">{{ item.lastmodifieddate || "—" }}</td>
                   <td class="fc-td-id">{{ item.id }}</td>
                   <td v-if="props.contextPicker" class="fc-td-action">
                     <button
@@ -482,8 +707,15 @@
                       type="button"
                       class="fc-add-btn"
                       :class="{ attached: props.attachedFileIds?.has(item.id) }"
-                      :disabled="props.attachedFileIds?.has(item.id) || props.attachingFileIds?.has(item.id)"
-                      :title="props.attachedFileIds?.has(item.id) ? 'Added to context' : 'Add to context'"
+                      :disabled="
+                        props.attachedFileIds?.has(item.id) ||
+                        props.attachingFileIds?.has(item.id)
+                      "
+                      :title="
+                        props.attachedFileIds?.has(item.id)
+                          ? 'Added to context'
+                          : 'Add to context'
+                      "
                       @click.stop="emit('add-to-context', item)"
                     >
                       <i
@@ -505,8 +737,13 @@
 
         <!-- Status bar -->
         <div class="fc-status-bar">
-          <span>{{ folderCount }} folder{{ folderCount !== 1 ? 's' : '' }}, {{ fileCount }} file{{ fileCount !== 1 ? 's' : '' }}</span>
-          <span v-if="selectedItems.length > 0" class="ml-4">{{ selectedItems.length }} selected</span>
+          <span
+            >{{ folderCount }} folder{{ folderCount !== 1 ? "s" : "" }},
+            {{ fileCount }} file{{ fileCount !== 1 ? "s" : "" }}</span
+          >
+          <span v-if="selectedItems.length > 0" class="ml-4"
+            >{{ selectedItems.length }} selected</span
+          >
           <Button
             v-if="!props.contextPicker && selectedItems.length > 1"
             size="small"
@@ -533,15 +770,27 @@
         @mousedown="startPanelResize"
       />
       <div class="fc-detail-header">
-        <i :class="getItemIcon(detailItem)" class="text-sm flex-shrink-0" style="margin-top:1px"></i>
+        <i
+          :class="getItemIcon(detailItem)"
+          class="text-sm flex-shrink-0"
+          style="margin-top: 1px"
+        ></i>
         <h4>{{ detailItem.name }}</h4>
         <button
           class="fc-detail-bookmark"
-          :title="props.bookmarkedIds.has(detailItem.id) ? 'Remove Bookmark' : 'Add Bookmark'"
+          :title="
+            props.bookmarkedIds.has(detailItem.id)
+              ? 'Remove Bookmark'
+              : 'Add Bookmark'
+          "
           @click="toggleBookmark(detailItem)"
         >
           <i
-            :class="props.bookmarkedIds.has(detailItem.id) ? 'pi pi-bookmark-fill text-yellow-400' : 'pi pi-bookmark text-gray-400'"
+            :class="
+              props.bookmarkedIds.has(detailItem.id)
+                ? 'pi pi-bookmark-fill text-yellow-400'
+                : 'pi pi-bookmark text-gray-400'
+            "
             class="text-sm"
           ></i>
         </button>
@@ -551,9 +800,13 @@
       </div>
       <div class="fc-detail-body">
         <div
-          v-if="detailItem.type === 'file' && isPreviewable(detailItem as FileItem)"
+          v-if="
+            detailItem.type === 'file' && isPreviewable(detailItem as FileItem)
+          "
           class="fc-detail-preview"
-          :style="{ maxHeight: Math.min(Math.round(detailPanelWidth * 0.85), 480) + 'px' }"
+          :style="{
+            maxHeight: Math.min(Math.round(detailPanelWidth * 0.85), 480) + 'px'
+          }"
         >
           <div v-if="previewLoading" class="fc-preview-loading">
             <i class="pi pi-spin pi-spinner text-sm text-gray-400"></i>
@@ -577,8 +830,15 @@
             </div>
           </template>
         </div>
-        <div v-if="detailItem.type === 'file' && (detailItem as FileItem).url" class="fc-detail-actions">
-          <Button size="small" class="w-full" @click="openFile(detailItem as FileItem)">
+        <div
+          v-if="detailItem.type === 'file' && (detailItem as FileItem).url"
+          class="fc-detail-actions"
+        >
+          <Button
+            size="small"
+            class="w-full"
+            @click="openFile(detailItem as FileItem)"
+          >
             <i class="pi pi-eye text-xs mr-1"></i>
             Open File
           </Button>
@@ -586,19 +846,30 @@
         <div class="fc-detail-fields">
           <div class="fc-detail-field">
             <span class="label">Type</span>
-            <span class="value">{{ detailItem.type === 'folder' ? 'Folder' : (detailItem.filetype || '—') }}</span>
+            <span class="value">{{
+              detailItem.type === "folder"
+                ? "Folder"
+                : detailItem.filetype || "—"
+            }}</span>
           </div>
           <div class="fc-detail-field">
             <span class="label">Size</span>
             <span class="value">
-              {{ detailItem.type === 'folder' ? formatFolderSize(detailItem.foldersize) : formatFileSize(detailItem.filesize) }}
+              {{
+                detailItem.type === "folder"
+                  ? formatFolderSize(detailItem.foldersize)
+                  : formatFileSize(detailItem.filesize)
+              }}
             </span>
           </div>
           <div class="fc-detail-field">
             <span class="label">Modified</span>
-            <span class="value">{{ detailItem.lastmodifieddate || '—' }}</span>
+            <span class="value">{{ detailItem.lastmodifieddate || "—" }}</span>
           </div>
-          <div v-if="detailItem.type === 'file' && detailItem.createddate" class="fc-detail-field">
+          <div
+            v-if="detailItem.type === 'file' && detailItem.createddate"
+            class="fc-detail-field"
+          >
             <span class="label">Created</span>
             <span class="value">{{ detailItem.createddate }}</span>
           </div>
@@ -612,8 +883,13 @@
           </div>
           <div class="fc-detail-field">
             <span class="label">Open in NetSuite</span>
-            <a :href="getNetsuiteEditUrl(detailItem)" target="_blank" class="value text-blue-600 hover:underline text-xs break-all">
-              {{ detailItem.type === 'file' ? 'Edit File' : 'Edit Folder' }} <i class="pi pi-external-link text-[10px]"></i>
+            <a
+              :href="getNetsuiteEditUrl(detailItem)"
+              target="_blank"
+              class="value text-blue-600 hover:underline text-xs break-all"
+            >
+              {{ detailItem.type === "file" ? "Edit File" : "Edit Folder" }}
+              <i class="pi pi-external-link text-[10px]"></i>
             </a>
           </div>
           <div v-if="detailItem.type === 'folder'" class="fc-detail-field">
@@ -638,8 +914,14 @@
         <div
           v-for="(action, idx) in contextMenu.actions"
           :key="idx"
-          :class="['fc-context-item', { 'fc-context-item--danger': action.danger }]"
-          @click="action.handler(); contextMenu.visible = false"
+          :class="[
+            'fc-context-item',
+            { 'fc-context-item--danger': action.danger }
+          ]"
+          @click="
+            action.handler();
+            contextMenu.visible = false;
+          "
         >
           <i :class="action.icon" class="text-xs"></i>
           <span>{{ action.label }}</span>
@@ -649,18 +931,25 @@
 
     <!-- Drop version confirmation dialog -->
     <Teleport to="body">
-      <div v-if="showDropConfirm" class="fc-confirm-overlay" @click.self="confirmDropCancel">
+      <div
+        v-if="showDropConfirm"
+        class="fc-confirm-overlay"
+        @click.self="confirmDropCancel"
+      >
         <div class="fc-confirm-box">
           <div class="fc-confirm-header">
             <i class="pi pi-exclamation-triangle text-amber-500"></i>
             <span>History Full</span>
           </div>
           <p class="fc-confirm-body">
-            You already have 5 saved versions. Saving now will permanently delete the oldest version
+            You already have 5 saved versions. Saving now will permanently
+            delete the oldest version
             <strong>({{ dropConfirmDate }})</strong> to make room.
           </p>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" @click="confirmDropCancel">Cancel</Button>
+            <Button size="small" severity="secondary" @click="confirmDropCancel"
+              >Cancel</Button
+            >
             <Button size="small" severity="warn" @click="confirmDropProceed">
               <i class="pi pi-save text-xs mr-1"></i>
               Save Anyway
@@ -672,27 +961,56 @@
 
     <!-- Delete confirmation dialog -->
     <Teleport to="body">
-      <div v-if="showDeleteConfirm" class="fc-confirm-overlay" @click.self="cancelDelete">
+      <div
+        v-if="showDeleteConfirm"
+        class="fc-confirm-overlay"
+        @click.self="cancelDelete"
+      >
         <div class="fc-confirm-box">
           <div class="fc-confirm-header fc-confirm-danger">
             <i class="pi pi-exclamation-triangle text-red-500"></i>
-            <span v-if="deleteTargets.length === 1">Delete {{ deleteTargets[0]!.type === 'folder' ? 'Folder' : 'File' }}</span>
+            <span v-if="deleteTargets.length === 1"
+              >Delete
+              {{
+                deleteTargets[0]!.type === "folder" ? "Folder" : "File"
+              }}</span
+            >
             <span v-else>Delete {{ deleteTargets.length }} Items</span>
           </div>
           <div class="fc-confirm-body">
             <template v-if="deleteTargets.length === 1">
-              <p>Are you sure you want to delete <strong>{{ deleteTargets[0]!.name }}</strong>?</p>
-              <p v-if="deleteTargets[0]!.type === 'file' && isTextFile(deleteTargets[0] as any)" class="text-xs text-gray-400 mt-1">
-                The file content will be saved to trash for 15 days so you can restore it.
+              <p>
+                Are you sure you want to delete
+                <strong>{{ deleteTargets[0]!.name }}</strong
+                >?
               </p>
-              <p v-else-if="deleteTargets[0]!.type === 'file'" class="text-xs text-gray-400 mt-1">
+              <p
+                v-if="
+                  deleteTargets[0]!.type === 'file' &&
+                  isTextFile(deleteTargets[0] as any)
+                "
+                class="text-xs text-gray-400 mt-1"
+              >
+                The file content will be saved to trash for 15 days so you can
+                restore it.
+              </p>
+              <p
+                v-else-if="deleteTargets[0]!.type === 'file'"
+                class="text-xs text-gray-400 mt-1"
+              >
                 Binary files cannot be restored from trash.
               </p>
             </template>
             <template v-else>
-              <p>Are you sure you want to delete <strong>{{ deleteTargets.length }}</strong> items?</p>
+              <p>
+                Are you sure you want to delete
+                <strong>{{ deleteTargets.length }}</strong> items?
+              </p>
               <ul class="fc-delete-list">
-                <li v-for="t in deleteTargets.slice(0, 8)" :key="`${t.type}-${t.id}`">
+                <li
+                  v-for="t in deleteTargets.slice(0, 8)"
+                  :key="`${t.type}-${t.id}`"
+                >
                   <i :class="getItemIcon(t)" class="text-xs"></i>
                   {{ t.name }}
                 </li>
@@ -700,7 +1018,9 @@
                   ... and {{ deleteTargets.length - 8 }} more
                 </li>
               </ul>
-              <p class="text-xs text-gray-400 mt-1">Text file content will be saved to trash for 15 days.</p>
+              <p class="text-xs text-gray-400 mt-1">
+                Text file content will be saved to trash for 15 days.
+              </p>
             </template>
             <div v-if="folderContentWarning" class="fc-folder-warning">
               <i class="pi pi-info-circle text-blue-400 text-xs"></i>
@@ -708,8 +1028,15 @@
             </div>
           </div>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" @click="cancelDelete">Cancel</Button>
-            <Button size="small" severity="danger" @click="executeDelete" :loading="isDeleting">
+            <Button size="small" severity="secondary" @click="cancelDelete"
+              >Cancel</Button
+            >
+            <Button
+              size="small"
+              severity="danger"
+              @click="executeDelete"
+              :loading="isDeleting"
+            >
               <i class="pi pi-trash text-xs mr-1"></i>
               Delete
             </Button>
@@ -720,21 +1047,39 @@
 
     <!-- Move confirmation dialog -->
     <Teleport to="body">
-      <div v-if="showMoveConfirm" class="fc-confirm-overlay" @click.self="cancelMove">
+      <div
+        v-if="showMoveConfirm"
+        class="fc-confirm-overlay"
+        @click.self="cancelMove"
+      >
         <div class="fc-confirm-box">
           <div class="fc-confirm-header">
             <i class="pi pi-arrow-right-arrow-left text-blue-400"></i>
-            <span v-if="moveTargets.length === 1">Move {{ moveTargets[0]!.type === 'folder' ? 'Folder' : 'File' }}</span>
+            <span v-if="moveTargets.length === 1"
+              >Move
+              {{ moveTargets[0]!.type === "folder" ? "Folder" : "File" }}</span
+            >
             <span v-else>Move {{ moveTargets.length }} Items</span>
           </div>
           <div class="fc-confirm-body">
             <template v-if="moveTargets.length === 1">
-              <p>Move <strong>{{ moveTargets[0]!.name }}</strong> into <strong>{{ moveDestFolder?.name }}</strong>?</p>
+              <p>
+                Move <strong>{{ moveTargets[0]!.name }}</strong> into
+                <strong>{{ moveDestFolder?.name }}</strong
+                >?
+              </p>
             </template>
             <template v-else>
-              <p>Move <strong>{{ moveTargets.length }}</strong> items into <strong>{{ moveDestFolder?.name }}</strong>?</p>
+              <p>
+                Move <strong>{{ moveTargets.length }}</strong> items into
+                <strong>{{ moveDestFolder?.name }}</strong
+                >?
+              </p>
               <ul class="fc-delete-list">
-                <li v-for="t in moveTargets.slice(0, 8)" :key="`${t.type}-${t.id}`">
+                <li
+                  v-for="t in moveTargets.slice(0, 8)"
+                  :key="`${t.type}-${t.id}`"
+                >
                   <i :class="getItemIcon(t)" class="text-xs"></i>
                   {{ t.name }}
                 </li>
@@ -745,8 +1090,15 @@
             </template>
           </div>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" @click="cancelMove">Cancel</Button>
-            <Button size="small" severity="info" @click="executeMove" :loading="isMoveLoading">
+            <Button size="small" severity="secondary" @click="cancelMove"
+              >Cancel</Button
+            >
+            <Button
+              size="small"
+              severity="info"
+              @click="executeMove"
+              :loading="isMoveLoading"
+            >
               <i class="pi pi-arrow-right-arrow-left text-xs mr-1"></i>
               Move
             </Button>
@@ -757,7 +1109,11 @@
 
     <!-- New Folder dialog -->
     <Teleport to="body">
-      <div v-if="showNewFolderDialog" class="fc-confirm-overlay" @click.self="cancelNewFolder">
+      <div
+        v-if="showNewFolderDialog"
+        class="fc-confirm-overlay"
+        @click.self="cancelNewFolder"
+      >
         <div class="fc-confirm-box">
           <div class="fc-confirm-header">
             <i class="pi pi-folder-plus text-amber-500"></i>
@@ -766,7 +1122,12 @@
           <div class="fc-confirm-body">
             <p class="mb-2">
               Create a new folder inside
-              <strong>{{ breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1]!.name : 'Root' }}</strong>.
+              <strong>{{
+                breadcrumbs.length > 0
+                  ? breadcrumbs[breadcrumbs.length - 1]!.name
+                  : "Root"
+              }}</strong
+              >.
             </p>
             <InputText
               ref="newFolderInputRef"
@@ -779,8 +1140,15 @@
             />
           </div>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" @click="cancelNewFolder">Cancel</Button>
-            <Button size="small" @click="executeNewFolder" :loading="isCreatingFolder" :disabled="!newFolderName.trim()">
+            <Button size="small" severity="secondary" @click="cancelNewFolder"
+              >Cancel</Button
+            >
+            <Button
+              size="small"
+              @click="executeNewFolder"
+              :loading="isCreatingFolder"
+              :disabled="!newFolderName.trim()"
+            >
               <i class="pi pi-check text-xs mr-1"></i>
               Create
             </Button>
@@ -791,8 +1159,12 @@
 
     <!-- New File dialog -->
     <Teleport to="body">
-      <div v-if="showNewFileDialog" class="fc-confirm-overlay" @click.self="cancelNewFile">
-        <div class="fc-confirm-box" style="max-width:460px">
+      <div
+        v-if="showNewFileDialog"
+        class="fc-confirm-overlay"
+        @click.self="cancelNewFile"
+      >
+        <div class="fc-confirm-box" style="max-width: 460px">
           <div class="fc-confirm-header">
             <i class="pi pi-file-edit text-blue-500"></i>
             <span>New Text File</span>
@@ -800,7 +1172,12 @@
           <div class="fc-confirm-body">
             <p class="mb-3">
               Create a new file in
-              <strong>{{ breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1]!.name : 'Root' }}</strong>.
+              <strong>{{
+                breadcrumbs.length > 0
+                  ? breadcrumbs[breadcrumbs.length - 1]!.name
+                  : "Root"
+              }}</strong
+              >.
             </p>
 
             <!-- Name + Extension row -->
@@ -830,7 +1207,10 @@
             </p>
 
             <!-- Initial content -->
-            <label class="fc-nf-label mt-3">Initial content <span class="text-gray-400">(optional)</span></label>
+            <label class="fc-nf-label mt-3"
+              >Initial content
+              <span class="text-gray-400">(optional)</span></label
+            >
             <textarea
               v-model="newFileContent"
               class="fc-nf-content"
@@ -840,8 +1220,19 @@
             />
           </div>
           <div class="fc-confirm-actions">
-            <Button size="small" severity="secondary" outlined @click="cancelNewFile">Cancel</Button>
-            <Button size="small" @click="executeNewFile" :loading="isCreatingFile" :disabled="!newFileBaseName.trim()">
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
+              @click="cancelNewFile"
+              >Cancel</Button
+            >
+            <Button
+              size="small"
+              @click="executeNewFile"
+              :loading="isCreatingFile"
+              :disabled="!newFileBaseName.trim()"
+            >
               <i class="pi pi-check text-xs mr-1"></i>
               Create
             </Button>
@@ -853,7 +1244,14 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  watch,
+  nextTick
+} from "vue";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
@@ -1008,7 +1406,18 @@ const isRenamingLoading = ref(false);
 
 // ── Global search ──────────────────────────────────────────────────────────
 const globalSearchQuery = ref("");
-const globalSearchResults = ref<{ id: number; name: string; path: string; type: "file" | "folder"; url?: string; folder?: number; filetype?: string; filesize?: number }[]>([]);
+const globalSearchResults = ref<
+  {
+    id: number;
+    name: string;
+    path: string;
+    type: "file" | "folder";
+    url?: string;
+    folder?: number;
+    filetype?: string;
+    filesize?: number;
+  }[]
+>([]);
 const globalSearchLoading = ref(false);
 
 // ── Delete & Trash ─────────────────────────────────────────────────────────
@@ -1024,7 +1433,12 @@ const moveTargets = ref<CabinetItem[]>([]);
 const moveDestFolder = ref<CabinetItem | null>(null);
 const moveSrcFolderId = ref<number | null>(null);
 
-type ContextMenuAction = { label: string; icon: string; handler: () => void; danger?: boolean };
+type ContextMenuAction = {
+  label: string;
+  icon: string;
+  handler: () => void;
+  danger?: boolean;
+};
 
 const contextMenu = ref({
   visible: false,
@@ -1055,7 +1469,9 @@ const isResizingPanel = ref(false);
 const isEditing = ref(false);
 const editorContent = ref("");
 const isSaving = ref(false);
-const hasUnsavedChanges = computed(() => editorContent.value !== fileContent.value);
+const hasUnsavedChanges = computed(
+  () => editorContent.value !== fileContent.value
+);
 
 // Version history
 const versionHistory = ref<FileVersion[]>([]);
@@ -1076,8 +1492,12 @@ const showDropConfirm = ref(false);
 const dropConfirmDate = ref("");
 let dropConfirmResolve: ((proceed: boolean) => void) | null = null;
 
-const confirmDropCancel = () => { if (dropConfirmResolve) dropConfirmResolve(false); };
-const confirmDropProceed = () => { if (dropConfirmResolve) dropConfirmResolve(true); };
+const confirmDropCancel = () => {
+  if (dropConfirmResolve) dropConfirmResolve(false);
+};
+const confirmDropProceed = () => {
+  if (dropConfirmResolve) dropConfirmResolve(true);
+};
 
 // ── New folder ─────────────────────────────────────────────────────────────
 const showNewFolderDialog = ref(false);
@@ -1104,35 +1524,57 @@ const FILE_EXTENSIONS = [
   { label: "CSV (.csv)", value: "csv" },
   { label: "SQL (.sql)", value: "sql" },
   { label: "FreeMarker (.ftl)", value: "ftl" },
-  { label: "SHTML (.shtml)", value: "shtml" },
+  { label: "SHTML (.shtml)", value: "shtml" }
 ];
 
 // ── File type helpers ──────────────────────────────────────────────────────
 
 const TEXT_FILE_TYPES = new Set([
-  "JAVASCRIPT", "TYPESCRIPT", "PLAINTEXT", "CSV", "XMLDOC", "HTMLDOC",
-  "JSON", "STYLESHEET", "FREEMARKER", "SVGIMAGE", "CONFIG"
+  "JAVASCRIPT",
+  "TYPESCRIPT",
+  "PLAINTEXT",
+  "CSV",
+  "XMLDOC",
+  "HTMLDOC",
+  "JSON",
+  "STYLESHEET",
+  "FREEMARKER",
+  "SVGIMAGE",
+  "CONFIG"
 ]);
 
 const IMAGE_FILE_TYPES = new Set([
-  "JPGIMAGE", "PNGIMAGE", "GIFIMAGE", "BMPIMAGE", "TIFFIMAGE", "ICON"
+  "JPGIMAGE",
+  "PNGIMAGE",
+  "GIFIMAGE",
+  "BMPIMAGE",
+  "TIFFIMAGE",
+  "ICON"
 ]);
 
 const isTextFile = (item: FileItem) => TEXT_FILE_TYPES.has(item.filetype);
 const isImageFile = (item: FileItem) => IMAGE_FILE_TYPES.has(item.filetype);
 const isPdfFile = (item: FileItem) => item.filetype === "PDF";
-const isPreviewable = (item: FileItem) => isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
+const isPreviewable = (item: FileItem) =>
+  isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
 
 const getCodeLanguage = (item: FileItem): "javascript" | "sql" => {
-  if (item.filetype === "JAVASCRIPT" || item.filetype === "TYPESCRIPT") return "javascript";
+  if (item.filetype === "JAVASCRIPT" || item.filetype === "TYPESCRIPT")
+    return "javascript";
   return "javascript";
 };
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
 const allItems = computed<CabinetItem[]>(() => {
-  const folders: CabinetItem[] = currentSubfolders.value.map((f) => ({ ...f, type: "folder" as const }));
-  const files: CabinetItem[] = currentFiles.value.map((f) => ({ ...f, type: "file" as const }));
+  const folders: CabinetItem[] = currentSubfolders.value.map((f) => ({
+    ...f,
+    type: "folder" as const
+  }));
+  const files: CabinetItem[] = currentFiles.value.map((f) => ({
+    ...f,
+    type: "file" as const
+  }));
   return [...folders, ...files];
 });
 
@@ -1148,12 +1590,20 @@ const filteredItems = computed(() => {
     if (sortField.value === "name") {
       cmp = a.name.localeCompare(b.name);
     } else if (sortField.value === "fileType") {
-      const aType = a.type === "folder" ? "Folder" : (a as FileItem).filetype || "";
-      const bType = b.type === "folder" ? "Folder" : (b as FileItem).filetype || "";
+      const aType =
+        a.type === "folder" ? "Folder" : (a as FileItem).filetype || "";
+      const bType =
+        b.type === "folder" ? "Folder" : (b as FileItem).filetype || "";
       cmp = aType.localeCompare(bType);
     } else if (sortField.value === "size") {
-      const aSize = a.type === "folder" ? (a as FolderItem).foldersize : (a as FileItem).filesize;
-      const bSize = b.type === "folder" ? (b as FolderItem).foldersize : (b as FileItem).filesize;
+      const aSize =
+        a.type === "folder"
+          ? (a as FolderItem).foldersize
+          : (a as FileItem).filesize;
+      const bSize =
+        b.type === "folder"
+          ? (b as FolderItem).foldersize
+          : (b as FileItem).filesize;
       cmp = (aSize || 0) - (bSize || 0);
     } else if (sortField.value === "lastmodifieddate") {
       cmp = (a.lastmodifieddate || "").localeCompare(b.lastmodifieddate || "");
@@ -1163,8 +1613,12 @@ const filteredItems = computed(() => {
   return items;
 });
 
-const folderCount = computed(() => allItems.value.filter((i) => i.type === "folder").length);
-const fileCount = computed(() => allItems.value.filter((i) => i.type === "file").length);
+const folderCount = computed(
+  () => allItems.value.filter((i) => i.type === "folder").length
+);
+const fileCount = computed(
+  () => allItems.value.filter((i) => i.type === "file").length
+);
 
 // ── SuiteQL ────────────────────────────────────────────────────────────────
 
@@ -1202,7 +1656,9 @@ const fetchRootFolders = async () => {
   rootFolders.value = rows.map(mapFolderRow);
 };
 
-const fetchFolderInfo = async (folderId: number): Promise<FolderItem | null> => {
+const fetchFolderInfo = async (
+  folderId: number
+): Promise<FolderItem | null> => {
   const rows = await runQuery(`
     SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
     FROM MediaItemFolder WHERE id = ${folderId} AND ROWNUM <= 1
@@ -1243,13 +1699,21 @@ const fetchFiles = async (folderId: number): Promise<FileItem[]> => {
 };
 
 const buildBreadcrumbs = async (folderId: number | null) => {
-  if (folderId === null) { breadcrumbs.value = []; return; }
+  if (folderId === null) {
+    breadcrumbs.value = [];
+    return;
+  }
   const crumbs: { id: number; name: string }[] = [];
   let current = folderId;
   for (let i = 0; i < 20 && current !== null; i++) {
     const rootMatch = rootFolders.value.find((f) => f.id === current);
-    if (rootMatch) { crumbs.unshift({ id: rootMatch.id, name: rootMatch.name }); break; }
-    const rows = await runQuery(`SELECT id, name, parent FROM MediaItemFolder WHERE id = ${current} AND ROWNUM <= 1`);
+    if (rootMatch) {
+      crumbs.unshift({ id: rootMatch.id, name: rootMatch.name });
+      break;
+    }
+    const rows = await runQuery(
+      `SELECT id, name, parent FROM MediaItemFolder WHERE id = ${current} AND ROWNUM <= 1`
+    );
     if (rows.length === 0) break;
     crumbs.unshift({ id: rows[0].id, name: rows[0].name });
     current = rows[0].parent;
@@ -1282,7 +1746,11 @@ const navigateToFolder = async (folderId: number | null) => {
       breadcrumbs.value = [];
       currentFolderInfo.value = null;
     } else {
-      const [folderInfo, folders, files] = await Promise.all([fetchFolderInfo(folderId), fetchChildFolders(folderId), fetchFiles(folderId)]);
+      const [folderInfo, folders, files] = await Promise.all([
+        fetchFolderInfo(folderId),
+        fetchChildFolders(folderId),
+        fetchFiles(folderId)
+      ]);
       currentFolderInfo.value = folderInfo;
       currentSubfolders.value = folders;
       currentFiles.value = files;
@@ -1308,7 +1776,11 @@ const refreshCurrentFolder = async () => {
 
 const fetchFileContent = async (file: FileItem) => {
   if (!file.url) return null;
-  const response = await callApi(RequestRoutes.FETCH_FILE_CONTENT, { fileUrl: file.url }, ApiRequestType.NORMAL);
+  const response = await callApi(
+    RequestRoutes.FETCH_FILE_CONTENT,
+    { fileUrl: file.url },
+    ApiRequestType.NORMAL
+  );
   const result = (response as ApiResponse)?.message || response;
   if (result?.error) throw new Error(result.error);
   return result;
@@ -1324,10 +1796,12 @@ const searchResultToFileItem = (
   filesize: result.filesize || 0,
   folder: result.folder || 0,
   lastmodifieddate: null,
-  url: result.url,
+  url: result.url
 });
 
-const addSearchResultToContext = (result: (typeof globalSearchResults.value)[0]) => {
+const addSearchResultToContext = (
+  result: (typeof globalSearchResults.value)[0]
+) => {
   if (result.type !== "file") return;
   emit("add-to-context", searchResultToFileItem(result));
   globalSearchQuery.value = "";
@@ -1340,7 +1814,12 @@ const openFile = async (file: FileItem) => {
     return;
   }
   if (!file.url) {
-    toast.add({ severity: "warn", summary: "No URL", detail: "This file has no accessible URL", life: 3000 });
+    toast.add({
+      severity: "warn",
+      summary: "No URL",
+      detail: "This file has no accessible URL",
+      life: 3000
+    });
     return;
   }
   openedFile.value = file;
@@ -1358,7 +1837,10 @@ const openFile = async (file: FileItem) => {
   selectedVersionContent.value = null;
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
-  if (pdfObjectUrl.value) { URL.revokeObjectURL(pdfObjectUrl.value); pdfObjectUrl.value = null; }
+  if (pdfObjectUrl.value) {
+    URL.revokeObjectURL(pdfObjectUrl.value);
+    pdfObjectUrl.value = null;
+  }
   updateLabel();
 
   try {
@@ -1376,7 +1858,9 @@ const openFile = async (file: FileItem) => {
           for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
           const blob = new Blob([bytes], { type: "application/pdf" });
           pdfObjectUrl.value = URL.createObjectURL(blob);
-        } catch { /* leave pdfObjectUrl null */ }
+        } catch {
+          /* leave pdfObjectUrl null */
+        }
       }
     }
     await loadVersionHistory(file.id);
@@ -1401,12 +1885,19 @@ const closeFile = () => {
   selectedVersionId.value = null;
   historyDropdownOpen.value = false;
   versionHistory.value = [];
-  if (pdfObjectUrl.value) { URL.revokeObjectURL(pdfObjectUrl.value); pdfObjectUrl.value = null; }
+  if (pdfObjectUrl.value) {
+    URL.revokeObjectURL(pdfObjectUrl.value);
+    pdfObjectUrl.value = null;
+  }
   updateLabel();
 };
 
 const loadPreview = async (file: FileItem) => {
-  if (!file.url || !isPreviewable(file)) { previewContent.value = null; previewError.value = false; return; }
+  if (!file.url || !isPreviewable(file)) {
+    previewContent.value = null;
+    previewError.value = false;
+    return;
+  }
   previewLoading.value = true;
   previewError.value = false;
   try {
@@ -1416,8 +1907,13 @@ const loadPreview = async (file: FileItem) => {
         previewContent.value = result.content;
       } else {
         const trimmed = result.content.trimStart();
-        const isHtmlPage = /^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed);
-        if (isHtmlPage) { previewContent.value = null; previewError.value = true; return; }
+        const isHtmlPage =
+          /^<!doctype\s+html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed);
+        if (isHtmlPage) {
+          previewContent.value = null;
+          previewError.value = true;
+          return;
+        }
         const lines = result.content.split("\n");
         previewContent.value = lines.slice(0, 50).join("\n");
         if (lines.length > 50) previewContent.value += "\n// ... truncated";
@@ -1455,19 +1951,37 @@ const saveFile = async () => {
   }
   isSaving.value = true;
   try {
-    if (fileContent.value !== null) await saveVersion(file.id, file.name, fileContent.value);
+    if (fileContent.value !== null)
+      await saveVersion(file.id, file.name, fileContent.value);
     const response = await callApi(
       RequestRoutes.UPDATE_FILE_CONTENT,
-      { fileId: file.id, fileContent: editorContent.value, fileName: file.name, folderId: file.folder, mediaType: file.filetype || "JAVASCRIPT" },
+      {
+        fileId: file.id,
+        fileContent: editorContent.value,
+        fileName: file.name,
+        folderId: file.folder,
+        mediaType: file.filetype || "JAVASCRIPT"
+      },
       ApiRequestType.NORMAL
     );
     const result = (response as ApiResponse)?.message || response;
-    if (result?.isUpdated === false) throw new Error("NetSuite returned failure status");
+    if (result?.isUpdated === false)
+      throw new Error("NetSuite returned failure status");
     fileContent.value = editorContent.value;
     await loadVersionHistory(file.id);
-    toast.add({ severity: "success", summary: "Saved", detail: `${file.name} saved to NetSuite`, life: 3000 });
+    toast.add({
+      severity: "success",
+      summary: "Saved",
+      detail: `${file.name} saved to NetSuite`,
+      life: 3000
+    });
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Save Failed", detail: err.message || "Failed to save file", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Save Failed",
+      detail: err.message || "Failed to save file",
+      life: 5000
+    });
   } finally {
     isSaving.value = false;
   }
@@ -1475,7 +1989,8 @@ const saveFile = async () => {
 
 const toggleHistoryDropdown = () => {
   historyDropdownOpen.value = !historyDropdownOpen.value;
-  if (historyDropdownOpen.value && openedFile.value) loadVersionHistory(openedFile.value.id);
+  if (historyDropdownOpen.value && openedFile.value)
+    loadVersionHistory(openedFile.value.id);
 };
 
 const selectVersion = async (ver: FileVersion) => {
@@ -1493,7 +2008,12 @@ const revertToVersion = () => {
     showingDiff.value = false;
     selectedVersionContent.value = null;
     selectedVersionId.value = null;
-    toast.add({ severity: "info", summary: "Reverted", detail: "Editor content restored. Save to apply changes to NetSuite.", life: 4000 });
+    toast.add({
+      severity: "info",
+      summary: "Reverted",
+      detail: "Editor content restored. Save to apply changes to NetSuite.",
+      life: 4000
+    });
   }
 };
 
@@ -1508,7 +2028,12 @@ const commitHistory = async () => {
   const count = await clearVersionHistory(openedFile.value.id);
   versionHistory.value = [];
   historyDropdownOpen.value = false;
-  toast.add({ severity: "success", summary: "History Cleared", detail: `${count} version${count !== 1 ? "s" : ""} removed.`, life: 4000 });
+  toast.add({
+    severity: "success",
+    summary: "History Cleared",
+    detail: `${count} version${count !== 1 ? "s" : ""} removed.`,
+    life: 4000
+  });
 };
 
 // ── Comparator ─────────────────────────────────────────────────────────────
@@ -1521,7 +2046,9 @@ const openCompare = () => {
   showCompare.value = true;
 };
 
-const closeCompare = () => { showCompare.value = false; };
+const closeCompare = () => {
+  showCompare.value = false;
+};
 
 const loadCompareFromClipboard = async () => {
   try {
@@ -1529,7 +2056,12 @@ const loadCompareFromClipboard = async () => {
     compareB.value = text;
     compareKey.value++;
   } catch {
-    toast.add({ severity: "warn", summary: "Clipboard unavailable", detail: "Grant clipboard permission and try again", life: 3000 });
+    toast.add({
+      severity: "warn",
+      summary: "Clipboard unavailable",
+      detail: "Grant clipboard permission and try again",
+      life: 3000
+    });
   }
 };
 
@@ -1548,7 +2080,9 @@ const isSelected = (item: CabinetItem) =>
 const handleItemClick = (item: CabinetItem, event: MouseEvent) => {
   if (renamingItemId.value === item.id) return;
   if (event.ctrlKey || event.metaKey) {
-    const idx = selectedItems.value.findIndex((s) => s.type === item.type && s.id === item.id);
+    const idx = selectedItems.value.findIndex(
+      (s) => s.type === item.type && s.id === item.id
+    );
     if (idx >= 0) selectedItems.value.splice(idx, 1);
     else selectedItems.value.push(item);
   } else if (isSelected(item) && selectedItems.value.length > 1) {
@@ -1577,7 +2111,11 @@ const showContextMenuAt = (event: MouseEvent, actions: ContextMenuAction[]) => {
 
   void nextTick(() => {
     if (!contextMenuRef.value || !contextMenu.value.visible) return;
-    const position = getViewportBoundedMenuPosition(cursorX, cursorY, contextMenuRef.value);
+    const position = getViewportBoundedMenuPosition(
+      cursorX,
+      cursorY,
+      contextMenuRef.value
+    );
     contextMenu.value.x = position.x;
     contextMenu.value.y = position.y;
   });
@@ -1593,7 +2131,7 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
       actions.push({
         label: "Open Folder",
         icon: "pi pi-folder-open",
-        handler: () => navigateToFolder(item.id),
+        handler: () => navigateToFolder(item.id)
       });
     } else {
       const attached = props.attachedFileIds?.has(item.id);
@@ -1602,7 +2140,7 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
         icon: attached ? "pi pi-check" : "pi pi-plus",
         handler: () => {
           if (!attached) emit("add-to-context", item as FileItem);
-        },
+        }
       });
     }
     showContextMenuAt(event, actions);
@@ -1611,23 +2149,71 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
 
   const actions: ContextMenuAction[] = [];
   if (item.type === "folder") {
-    actions.push({ label: "Open Folder", icon: "pi pi-folder-open", handler: () => navigateToFolder(item.id) });
-    actions.push({ label: "Open in NetSuite", icon: "pi pi-external-link", handler: () => window.open(getNetsuiteEditUrl(item), "_blank") });
-    if (item.id > 0) actions.push({ label: "Rename", icon: "pi pi-pencil", handler: () => startRename(item) });
-    actions.push({ label: "Copy Folder ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(item.id)) });
+    actions.push({
+      label: "Open Folder",
+      icon: "pi pi-folder-open",
+      handler: () => navigateToFolder(item.id)
+    });
+    actions.push({
+      label: "Open in NetSuite",
+      icon: "pi pi-external-link",
+      handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
+    });
+    if (item.id > 0)
+      actions.push({
+        label: "Rename",
+        icon: "pi pi-pencil",
+        handler: () => startRename(item)
+      });
+    actions.push({
+      label: "Copy Folder ID",
+      icon: "pi pi-copy",
+      handler: () => copyToClipboard(String(item.id))
+    });
   } else {
     if (item.url) {
-      actions.push({ label: "Open File", icon: "pi pi-eye", handler: () => openFile(item as FileItem) });
-      actions.push({ label: "Open in NetSuite", icon: "pi pi-external-link", handler: () => window.open(getNetsuiteEditUrl(item), "_blank") });
-      actions.push({ label: "Copy URL", icon: "pi pi-link", handler: () => copyToClipboard(item.url!) });
+      actions.push({
+        label: "Open File",
+        icon: "pi pi-eye",
+        handler: () => openFile(item as FileItem)
+      });
+      actions.push({
+        label: "Open in NetSuite",
+        icon: "pi pi-external-link",
+        handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
+      });
+      actions.push({
+        label: "Copy URL",
+        icon: "pi pi-link",
+        handler: () => copyToClipboard(item.url!)
+      });
       if (isTextFile(item as FileItem)) {
-        actions.push({ label: "Compare", icon: "pi pi-arrows-h", handler: async () => { await openFile(item as FileItem); openCompare(); } });
+        actions.push({
+          label: "Compare",
+          icon: "pi pi-arrows-h",
+          handler: async () => {
+            await openFile(item as FileItem);
+            openCompare();
+          }
+        });
       }
     }
-    actions.push({ label: "Rename", icon: "pi pi-pencil", handler: () => startRename(item) });
-    actions.push({ label: "Copy File ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(item.id)) });
+    actions.push({
+      label: "Rename",
+      icon: "pi pi-pencil",
+      handler: () => startRename(item)
+    });
+    actions.push({
+      label: "Copy File ID",
+      icon: "pi pi-copy",
+      handler: () => copyToClipboard(String(item.id))
+    });
   }
-  actions.push({ label: "Copy Name", icon: "pi pi-file", handler: () => copyToClipboard(item.name) });
+  actions.push({
+    label: "Copy Name",
+    icon: "pi pi-file",
+    handler: () => copyToClipboard(item.name)
+  });
   actions.push({
     label: "Save to Notebook",
     icon: "pi pi-bookmark",
@@ -1640,7 +2226,12 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
     handler: () => toggleBookmark(item)
   });
   if (item.id > 0) {
-    actions.push({ label: "Delete", icon: "pi pi-trash text-red-500", handler: () => confirmDeleteItem(item), danger: true });
+    actions.push({
+      label: "Delete",
+      icon: "pi pi-trash text-red-500",
+      handler: () => confirmDeleteItem(item),
+      danger: true
+    });
   }
   showContextMenuAt(event, actions);
 };
@@ -1649,21 +2240,36 @@ const saveFileCabinetItemToNotebook = async (item: CabinetItem) => {
   await upsertNotebookEntry({
     type: "file",
     title: item.name,
-    summary: item.type === "folder" ? "File Cabinet folder" : `${(item as FileItem).filetype || "File"} · #${item.id}`,
+    summary:
+      item.type === "folder"
+        ? "File Cabinet folder"
+        : `${(item as FileItem).filetype || "File"} · #${item.id}`,
     body: [
       `Type: ${item.type}`,
       `Internal ID: ${item.id}`,
-      item.type === "folder" ? `Parent: ${(item as FolderItem).parent ?? "Root"}` : `Folder: ${(item as FileItem).folder}`,
+      item.type === "folder"
+        ? `Parent: ${(item as FolderItem).parent ?? "Root"}`
+        : `Folder: ${(item as FileItem).folder}`,
       item.description ? `Description: ${item.description}` : ""
-    ].filter(Boolean).join("\n"),
-    url: item.type === "file" ? ((item as FileItem).url ?? "") : getNetsuiteEditUrl(item),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    url:
+      item.type === "file"
+        ? ((item as FileItem).url ?? "")
+        : getNetsuiteEditUrl(item),
     netsuiteId: String(item.id),
     filePath: item.name,
     group: "File Cabinet",
     tags: ["file-cabinet", item.type, item.name],
     pinned: true
   });
-  toast.add({ severity: "success", summary: "Saved to Notebook", detail: item.name, life: 2200 });
+  toast.add({
+    severity: "success",
+    summary: "Saved to Notebook",
+    detail: item.name,
+    life: 2200
+  });
 };
 
 const handleBodyContextMenu = (event: MouseEvent) => {
@@ -1673,18 +2279,35 @@ const handleBodyContextMenu = (event: MouseEvent) => {
   const isOnItem = target.closest(".fc-grid-item, .fc-table-row");
   if (isOnItem) return;
   const actions: ContextMenuAction[] = [
-    { label: "New Folder", icon: "pi pi-folder-plus", handler: () => openNewFolderDialog() },
-    { label: "New File",   icon: "pi pi-file-edit",   handler: () => openNewFileDialog() },
+    {
+      label: "New Folder",
+      icon: "pi pi-folder-plus",
+      handler: () => openNewFolderDialog()
+    },
+    {
+      label: "New File",
+      icon: "pi pi-file-edit",
+      handler: () => openNewFileDialog()
+    }
   ];
   if (currentFolderId.value !== null) {
-    actions.push({ label: "Copy Folder ID", icon: "pi pi-copy", handler: () => copyToClipboard(String(currentFolderId.value)) });
+    actions.push({
+      label: "Copy Folder ID",
+      icon: "pi pi-copy",
+      handler: () => copyToClipboard(String(currentFolderId.value))
+    });
   }
   showContextMenuAt(event, actions);
 };
 
 const copyToClipboard = (text: string) => {
   navigator.clipboard.writeText(text).then(() => {
-    toast.add({ severity: "success", summary: "Copied", detail: text.length > 50 ? text.slice(0, 50) + "..." : text, life: 2000 });
+    toast.add({
+      severity: "success",
+      summary: "Copied",
+      detail: text.length > 50 ? text.slice(0, 50) + "..." : text,
+      life: 2000
+    });
   });
 };
 
@@ -1716,32 +2339,63 @@ const cancelRename = () => {
 
 const commitRename = async (item: CabinetItem) => {
   const newName = renameValue.value.trim();
-  if (!newName || newName === item.name || isRenamingLoading.value) { cancelRename(); return; }
+  if (!newName || newName === item.name || isRenamingLoading.value) {
+    cancelRename();
+    return;
+  }
   isRenamingLoading.value = true;
   try {
     if (item.type === "folder") {
-      await callApi(RequestRoutes.RENAME_FOLDER, { folderId: item.id, newName, parentFolderId: item.parent ?? -15 }, ApiRequestType.NORMAL);
+      await callApi(
+        RequestRoutes.RENAME_FOLDER,
+        { folderId: item.id, newName, parentFolderId: item.parent ?? -15 },
+        ApiRequestType.NORMAL
+      );
       const folderItem = currentSubfolders.value.find((f) => f.id === item.id);
       if (folderItem) folderItem.name = newName;
     } else {
       const fi = item as FileItem;
-      await callApi(RequestRoutes.RENAME_FILE, { fileId: fi.id, newName, folderId: fi.folder, filetype: fi.filetype || "", filesize: fi.filesize || 0 }, ApiRequestType.NORMAL);
+      await callApi(
+        RequestRoutes.RENAME_FILE,
+        {
+          fileId: fi.id,
+          newName,
+          folderId: fi.folder,
+          filetype: fi.filetype || "",
+          filesize: fi.filesize || 0
+        },
+        ApiRequestType.NORMAL
+      );
       const fileItem = currentFiles.value.find((f) => f.id === fi.id);
       if (fileItem) fileItem.name = newName;
     }
-    if (detailItem.value?.id === item.id) detailItem.value = { ...detailItem.value, name: newName };
+    if (detailItem.value?.id === item.id)
+      detailItem.value = { ...detailItem.value, name: newName };
     // Sync bookmark name if this item is bookmarked
     if (props.currentEnvironment && props.currentEnvironment !== "unknown") {
-      const bm = await getBookmarkByNetsuiteId(props.currentEnvironment, item.id);
+      const bm = await getBookmarkByNetsuiteId(
+        props.currentEnvironment,
+        item.id
+      );
       if (bm?.id !== undefined) {
         await updateBookmarkName(bm.id, newName);
         emit("bookmark-changed");
       }
     }
-    toast.add({ severity: "success", summary: "Renamed", detail: newName, life: 2000 });
+    toast.add({
+      severity: "success",
+      summary: "Renamed",
+      detail: newName,
+      life: 2000
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    toast.add({ severity: "error", summary: "Rename Failed", detail: msg, life: 3500 });
+    toast.add({
+      severity: "error",
+      summary: "Rename Failed",
+      detail: msg,
+      life: 3500
+    });
   } finally {
     isRenamingLoading.value = false;
     renamingItemId.value = null;
@@ -1752,16 +2406,34 @@ const commitRename = async (item: CabinetItem) => {
 // ── Bookmarks ──────────────────────────────────────────────────────────────
 
 const toggleBookmark = async (item: CabinetItem) => {
-  if (!props.currentEnvironment || props.currentEnvironment === "unknown") return;
-  const existing = await getBookmarkByNetsuiteId(props.currentEnvironment, item.id);
+  if (!props.currentEnvironment || props.currentEnvironment === "unknown")
+    return;
+  const existing = await getBookmarkByNetsuiteId(
+    props.currentEnvironment,
+    item.id
+  );
   if (existing) {
     await removeBookmark(existing.id!);
-    toast.add({ severity: "info", summary: "Bookmark Removed", detail: item.name, life: 2000 });
+    toast.add({
+      severity: "info",
+      summary: "Bookmark Removed",
+      detail: item.name,
+      life: 2000
+    });
   } else {
-    const parentFolderId = item.type === "folder" ? ((item as FolderItem).parent ?? null) : (item as FileItem).folder;
-    const isCurrentFolder = item.type === "folder" && item.id === currentFolderId.value;
-    const parentCrumbIndex = isCurrentFolder ? breadcrumbs.value.length - 2 : breadcrumbs.value.length - 1;
-    const parentFolderName = parentCrumbIndex >= 0 ? breadcrumbs.value[parentCrumbIndex]!.name : "Root";
+    const parentFolderId =
+      item.type === "folder"
+        ? ((item as FolderItem).parent ?? null)
+        : (item as FileItem).folder;
+    const isCurrentFolder =
+      item.type === "folder" && item.id === currentFolderId.value;
+    const parentCrumbIndex = isCurrentFolder
+      ? breadcrumbs.value.length - 2
+      : breadcrumbs.value.length - 1;
+    const parentFolderName =
+      parentCrumbIndex >= 0
+        ? breadcrumbs.value[parentCrumbIndex]!.name
+        : "Root";
     const newBmId = await addBookmark({
       environment: props.currentEnvironment,
       itemType: item.type,
@@ -1774,20 +2446,40 @@ const toggleBookmark = async (item: CabinetItem) => {
     });
     try {
       const table = item.type === "file" ? "File" : "MediaItemFolder";
-      const rows = await runQuery(`SELECT id FROM ${table} WHERE id = ${item.id}`);
+      const rows = await runQuery(
+        `SELECT id FROM ${table} WHERE id = ${item.id}`
+      );
       await updateBookmarkExists(newBmId, rows.length > 0);
-    } catch { /* skip */ }
-    toast.add({ severity: "success", summary: "Bookmarked", detail: item.name, life: 2000 });
+    } catch {
+      /* skip */
+    }
+    toast.add({
+      severity: "success",
+      summary: "Bookmarked",
+      detail: item.name,
+      life: 2000
+    });
   }
   emit("bookmark-changed");
 };
 
-const toggleBookmarkFromSearchResult = async (result: typeof globalSearchResults.value[0]) => {
-  if (!props.currentEnvironment || props.currentEnvironment === "unknown") return;
-  const existing = await getBookmarkByNetsuiteId(props.currentEnvironment, result.id);
+const toggleBookmarkFromSearchResult = async (
+  result: (typeof globalSearchResults.value)[0]
+) => {
+  if (!props.currentEnvironment || props.currentEnvironment === "unknown")
+    return;
+  const existing = await getBookmarkByNetsuiteId(
+    props.currentEnvironment,
+    result.id
+  );
   if (existing) {
     await removeBookmark(existing.id!);
-    toast.add({ severity: "info", summary: "Bookmark Removed", detail: result.name, life: 2000 });
+    toast.add({
+      severity: "info",
+      summary: "Bookmark Removed",
+      detail: result.name,
+      life: 2000
+    });
   } else {
     const newBmId = await addBookmark({
       environment: props.currentEnvironment,
@@ -1801,24 +2493,41 @@ const toggleBookmarkFromSearchResult = async (result: typeof globalSearchResults
     });
     try {
       const table = result.type === "file" ? "File" : "MediaItemFolder";
-      const rows = await runQuery(`SELECT id FROM ${table} WHERE id = ${result.id}`);
+      const rows = await runQuery(
+        `SELECT id FROM ${table} WHERE id = ${result.id}`
+      );
       await updateBookmarkExists(newBmId, rows.length > 0);
-    } catch { /* skip */ }
-    toast.add({ severity: "success", summary: "Bookmarked", detail: result.name, life: 2000 });
+    } catch {
+      /* skip */
+    }
+    toast.add({
+      severity: "success",
+      summary: "Bookmarked",
+      detail: result.name,
+      life: 2000
+    });
   }
   emit("bookmark-changed");
 };
 
 const toggleSort = (field: string) => {
-  if (sortField.value === field) sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
-  else { sortField.value = field; sortDir.value = "asc"; }
+  if (sortField.value === field)
+    sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
+  else {
+    sortField.value = field;
+    sortDir.value = "asc";
+  }
 };
 
 // ── Formatting ─────────────────────────────────────────────────────────────
 
 const getNetsuiteEditUrl = (item: CabinetItem): string => {
-  const env = props.currentEnvironment !== "unknown" ? props.currentEnvironment : "system.netsuite.com";
-  if (item.type === "file") return `https://${env}/app/common/media/mediaitem.nl?id=${item.id}&e=T`;
+  const env =
+    props.currentEnvironment !== "unknown"
+      ? props.currentEnvironment
+      : "system.netsuite.com";
+  if (item.type === "file")
+    return `https://${env}/app/common/media/mediaitem.nl?id=${item.id}&e=T`;
   return `https://${env}/app/common/media/mediaitemfolder.nl?id=${item.id}&e=T`;
 };
 
@@ -1836,19 +2545,32 @@ const formatFolderSize = (kb: number | null | undefined): string => {
 };
 
 const FILE_TYPE_ICONS: Record<string, string> = {
-  JAVASCRIPT: "pi pi-code text-yellow-600", TYPESCRIPT: "pi pi-code text-blue-600",
-  XMLDOC: "pi pi-file text-orange-500", HTMLDOC: "pi pi-globe text-red-500",
-  PLAINTEXT: "pi pi-file-edit text-gray-500", CSV: "pi pi-table text-green-600",
-  EXCEL: "pi pi-file-excel text-green-700", PDF: "pi pi-file-pdf text-red-600",
-  JPGIMAGE: "pi pi-image text-purple-500", PNGIMAGE: "pi pi-image text-purple-500",
-  GIFIMAGE: "pi pi-image text-purple-500", BMPIMAGE: "pi pi-image text-purple-500",
-  TIFFIMAGE: "pi pi-image text-purple-500", SVGIMAGE: "pi pi-image text-purple-500",
-  ICON: "pi pi-image text-purple-500", JSON: "pi pi-file text-yellow-500",
-  MISCBINARY: "pi pi-file text-gray-400", STYLESHEET: "pi pi-palette text-blue-500",
-  FREEMARKER: "pi pi-file text-teal-500", AUTOCAD: "pi pi-file text-gray-600",
-  ZIP: "pi pi-box text-amber-600", GZIP: "pi pi-box text-amber-600",
-  TAR: "pi pi-box text-amber-600", WORD: "pi pi-file-word text-blue-700",
-  POWERPOINT: "pi pi-file text-orange-600", CERTIFICATE: "pi pi-shield text-green-500"
+  JAVASCRIPT: "pi pi-code text-yellow-600",
+  TYPESCRIPT: "pi pi-code text-blue-600",
+  XMLDOC: "pi pi-file text-orange-500",
+  HTMLDOC: "pi pi-globe text-red-500",
+  PLAINTEXT: "pi pi-file-edit text-gray-500",
+  CSV: "pi pi-table text-green-600",
+  EXCEL: "pi pi-file-excel text-green-700",
+  PDF: "pi pi-file-pdf text-red-600",
+  JPGIMAGE: "pi pi-image text-purple-500",
+  PNGIMAGE: "pi pi-image text-purple-500",
+  GIFIMAGE: "pi pi-image text-purple-500",
+  BMPIMAGE: "pi pi-image text-purple-500",
+  TIFFIMAGE: "pi pi-image text-purple-500",
+  SVGIMAGE: "pi pi-image text-purple-500",
+  ICON: "pi pi-image text-purple-500",
+  JSON: "pi pi-file text-yellow-500",
+  MISCBINARY: "pi pi-file text-gray-400",
+  STYLESHEET: "pi pi-palette text-blue-500",
+  FREEMARKER: "pi pi-file text-teal-500",
+  AUTOCAD: "pi pi-file text-gray-600",
+  ZIP: "pi pi-box text-amber-600",
+  GZIP: "pi pi-box text-amber-600",
+  TAR: "pi pi-box text-amber-600",
+  WORD: "pi pi-file-word text-blue-700",
+  POWERPOINT: "pi pi-file text-orange-600",
+  CERTIFICATE: "pi pi-shield text-green-500"
 };
 
 const getItemIcon = (item: CabinetItem): string => {
@@ -1869,7 +2591,10 @@ const getItemIcon = (item: CabinetItem): string => {
 // ── Context menu dismiss ───────────────────────────────────────────────────
 
 const handleDocClick = (event: MouseEvent) => {
-  if (contextMenuRef.value && !contextMenuRef.value.contains(event.target as Node)) {
+  if (
+    contextMenuRef.value &&
+    !contextMenuRef.value.contains(event.target as Node)
+  ) {
     contextMenu.value.visible = false;
   }
 };
@@ -1891,7 +2616,10 @@ const handleDragOver = (event: DragEvent) => {
   event.preventDefault();
   if (event.dataTransfer?.types.includes("Files")) {
     isDragOver.value = true;
-  } else if (event.dataTransfer?.types.includes("application/fc-item") && currentFolderId.value !== null) {
+  } else if (
+    event.dataTransfer?.types.includes("application/fc-item") &&
+    currentFolderId.value !== null
+  ) {
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
   }
 };
@@ -1912,9 +2640,10 @@ const handleDrop = async (event: DragEvent) => {
   const fcItemJson = event.dataTransfer?.getData("application/fc-item");
   if (fcItemJson) {
     if (currentFolderId.value !== null) {
-      const currentName = breadcrumbs.value.length > 0
-        ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
-        : "Root";
+      const currentName =
+        breadcrumbs.value.length > 0
+          ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+          : "Root";
       const targetFolder: FolderItem = {
         type: "folder",
         id: currentFolderId.value,
@@ -1923,7 +2652,7 @@ const handleDrop = async (event: DragEvent) => {
         foldertype: "DEFAULT",
         numfolderfiles: 0,
         foldersize: 0,
-        lastmodifieddate: null,
+        lastmodifieddate: null
       };
       await handleMoveItemDrop(targetFolder, event);
     }
@@ -1941,18 +2670,43 @@ const handleDrop = async (event: DragEvent) => {
       const file = files[i]!;
       uploadProgress.value = `Uploading ${i + 1}/${files.length}: ${file.name}`;
       const fileContentBase64 = arrayBufferToBase64(await file.arrayBuffer());
-      const response = await callApi(RequestRoutes.UPLOAD_FILE, { fileName: file.name, fileContentBase64, mimeType: file.type || "application/octet-stream", folderId: targetFolderId }, ApiRequestType.NORMAL);
+      const response = await callApi(
+        RequestRoutes.UPLOAD_FILE,
+        {
+          fileName: file.name,
+          fileContentBase64,
+          mimeType: file.type || "application/octet-stream",
+          folderId: targetFolderId
+        },
+        ApiRequestType.NORMAL
+      );
       const result = (response as ApiResponse)?.message || response;
       if (result?.uploaded?.length > 0) uploaded.push(file.name);
       else errors.push(file.name);
     }
     if (uploaded.length > 0) {
-      toast.add({ severity: "success", summary: "Upload Complete", detail: `${uploaded.length} file${uploaded.length > 1 ? "s" : ""} uploaded`, life: 3000 });
+      toast.add({
+        severity: "success",
+        summary: "Upload Complete",
+        detail: `${uploaded.length} file${uploaded.length > 1 ? "s" : ""} uploaded`,
+        life: 3000
+      });
       await refreshCurrentFolder();
     }
-    if (errors.length > 0) toast.add({ severity: "error", summary: "Upload Errors", detail: `Failed: ${errors.join(", ")}`, life: 5000 });
+    if (errors.length > 0)
+      toast.add({
+        severity: "error",
+        summary: "Upload Errors",
+        detail: `Failed: ${errors.join(", ")}`,
+        life: 5000
+      });
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Upload Failed", detail: err.message || "An error occurred during upload", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Upload Failed",
+      detail: err.message || "An error occurred during upload",
+      life: 5000
+    });
   } finally {
     isUploading.value = false;
     uploadProgress.value = "";
@@ -1968,13 +2722,20 @@ const handleItemDragStart = (item: CabinetItem, event: DragEvent) => {
     const isInSelection = selectedItems.value.some(
       (s) => s.type === item.type && s.id === item.id
     );
-    const itemsToDrag: CabinetItem[] = isInSelection && selectedItems.value.length > 1
-      ? [...selectedItems.value]
-      : [item];
+    const itemsToDrag: CabinetItem[] =
+      isInSelection && selectedItems.value.length > 1
+        ? [...selectedItems.value]
+        : [item];
     event.dataTransfer.setData("application/fc-item", JSON.stringify(item));
-    event.dataTransfer.setData("application/fc-items", JSON.stringify(itemsToDrag));
+    event.dataTransfer.setData(
+      "application/fc-items",
+      JSON.stringify(itemsToDrag)
+    );
     // Snapshot the source folder so cross-pane drops use the right srcFolderId.
-    event.dataTransfer.setData("application/fc-srcfolder", String(currentFolderId.value ?? ""));
+    event.dataTransfer.setData(
+      "application/fc-srcfolder",
+      String(currentFolderId.value ?? "")
+    );
     event.dataTransfer.effectAllowed = "move";
   }
 };
@@ -2000,21 +2761,30 @@ const handleMoveItemDrop = (targetFolder: CabinetItem, event: DragEvent) => {
   const itemJson = event.dataTransfer?.getData("application/fc-item");
   if (!itemJson) return;
   let draggedItem: CabinetItem;
-  try { draggedItem = JSON.parse(itemJson); } catch { return; }
+  try {
+    draggedItem = JSON.parse(itemJson);
+  } catch {
+    return;
+  }
 
   const itemsJson = event.dataTransfer?.getData("application/fc-items");
   let itemsToMove: CabinetItem[];
   if (itemsJson) {
-    try { itemsToMove = JSON.parse(itemsJson); } catch { itemsToMove = [draggedItem]; }
+    try {
+      itemsToMove = JSON.parse(itemsJson);
+    } catch {
+      itemsToMove = [draggedItem];
+    }
   } else {
     itemsToMove = [draggedItem];
   }
 
   const filtered = itemsToMove.filter((item) => {
     if (item.id === targetFolder.id) return false;
-    const itemSrcFolder = item.type === "folder"
-      ? (item as FolderItem).parent ?? currentFolderId.value
-      : (item as FileItem).folder;
+    const itemSrcFolder =
+      item.type === "folder"
+        ? ((item as FolderItem).parent ?? currentFolderId.value)
+        : (item as FileItem).folder;
     return itemSrcFolder !== targetFolder.id;
   });
   if (filtered.length === 0) return;
@@ -2024,7 +2794,7 @@ const handleMoveItemDrop = (targetFolder: CabinetItem, event: DragEvent) => {
     ? Number(srcFolderSnap)
     : filtered[0]!.type === "file"
       ? (filtered[0] as FileItem).folder
-      : (filtered[0] as FolderItem).parent ?? currentFolderId.value;
+      : ((filtered[0] as FolderItem).parent ?? currentFolderId.value);
 
   // Stage and show confirm popup (same pattern as delete)
   moveTargets.value = filtered;
@@ -2048,7 +2818,9 @@ const executeMove = async () => {
 
   showMoveConfirm.value = false;
   const fileIds = filtered.filter((i) => i.type === "file").map((i) => i.id);
-  const folderIds = filtered.filter((i) => i.type === "folder").map((i) => i.id);
+  const folderIds = filtered
+    .filter((i) => i.type === "folder")
+    .map((i) => i.id);
 
   isMoveLoading.value = true;
   try {
@@ -2057,12 +2829,23 @@ const executeMove = async () => {
       { srcFolderId, dstFolderId: targetFolder.id, fileIds, folderIds },
       ApiRequestType.NORMAL
     );
-    const label = filtered.length === 1 ? filtered[0]!.name : `${filtered.length} items`;
-    toast.add({ severity: "success", summary: "Moved", detail: `${label} → ${targetFolder.name}`, life: 3000 });
+    const label =
+      filtered.length === 1 ? filtered[0]!.name : `${filtered.length} items`;
+    toast.add({
+      severity: "success",
+      summary: "Moved",
+      detail: `${label} → ${targetFolder.name}`,
+      life: 3000
+    });
     emit("item-moved", targetFolder.id);
     await refreshCurrentFolder();
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Move Failed", detail: err.message || "Failed to move item", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Move Failed",
+      detail: err.message || "Failed to move item",
+      life: 5000
+    });
   } finally {
     isMoveLoading.value = false;
     moveTargets.value = [];
@@ -2078,7 +2861,10 @@ let searchDebounce: ReturnType<typeof setTimeout> | null = null;
 const handleGlobalSearch = () => {
   if (searchDebounce) clearTimeout(searchDebounce);
   const q = globalSearchQuery.value.trim();
-  if (!q || q.length < 3) { globalSearchResults.value = []; return; }
+  if (!q || q.length < 3) {
+    globalSearchResults.value = [];
+    return;
+  }
   searchDebounce = setTimeout(() => executeGlobalSearch(q), 500);
 };
 
@@ -2087,28 +2873,55 @@ const executeGlobalSearch = async (query: string) => {
   try {
     const escaped = query.replace(/'/g, "''");
     const [fileRows, folderRows] = await Promise.all([
-      runQuery(`SELECT f.id, f.name, f.folder, f.url, f.fileType, f.fileSize, mf.name AS foldername FROM File f LEFT JOIN MediaItemFolder mf ON f.folder = mf.id WHERE LOWER(f.name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 30`),
-      runQuery(`SELECT id, name, parent FROM MediaItemFolder WHERE LOWER(name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 15`)
+      runQuery(
+        `SELECT f.id, f.name, f.folder, f.url, f.fileType, f.fileSize, mf.name AS foldername FROM File f LEFT JOIN MediaItemFolder mf ON f.folder = mf.id WHERE LOWER(f.name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 30`
+      ),
+      runQuery(
+        `SELECT id, name, parent FROM MediaItemFolder WHERE LOWER(name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 15`
+      )
     ]);
     const results: typeof globalSearchResults.value = [];
     for (const folder of folderRows) {
       if (!folder?.id) continue;
-      results.push({ id: Number(folder.id), name: folder.name || "Unnamed", path: folder.parent ? `(parent: ${folder.parent})` : "(root)", type: "folder" });
+      results.push({
+        id: Number(folder.id),
+        name: folder.name || "Unnamed",
+        path: folder.parent ? `(parent: ${folder.parent})` : "(root)",
+        type: "folder"
+      });
     }
     for (const file of fileRows) {
       if (!file?.id) continue;
-      results.push({ id: Number(file.id), name: file.name || "Unnamed", path: file.foldername ? `/${file.foldername}/` : `(folder: ${file.folder})`, type: "file", url: file.url || undefined, folder: file.folder ? Number(file.folder) : undefined, filetype: file.filetype || undefined, filesize: file.filesize ? Number(file.filesize) : undefined });
+      results.push({
+        id: Number(file.id),
+        name: file.name || "Unnamed",
+        path: file.foldername
+          ? `/${file.foldername}/`
+          : `(folder: ${file.folder})`,
+        type: "file",
+        url: file.url || undefined,
+        folder: file.folder ? Number(file.folder) : undefined,
+        filetype: file.filetype || undefined,
+        filesize: file.filesize ? Number(file.filesize) : undefined
+      });
     }
     globalSearchResults.value = results;
   } catch {
     globalSearchResults.value = [];
-    toast.add({ severity: "error", summary: "Search Error", detail: "Failed to search file cabinet", life: 3000 });
+    toast.add({
+      severity: "error",
+      summary: "Search Error",
+      detail: "Failed to search file cabinet",
+      life: 3000
+    });
   } finally {
     globalSearchLoading.value = false;
   }
 };
 
-const handleSearchResultClick = async (result: typeof globalSearchResults.value[0]) => {
+const handleSearchResultClick = async (
+  result: (typeof globalSearchResults.value)[0]
+) => {
   if (props.contextPicker && result.type === "file") {
     addSearchResultToContext(result);
     return;
@@ -2123,7 +2936,10 @@ const handleSearchResultClick = async (result: typeof globalSearchResults.value[
   }
 };
 
-const clearGlobalSearch = () => { globalSearchQuery.value = ""; globalSearchResults.value = []; };
+const clearGlobalSearch = () => {
+  globalSearchQuery.value = "";
+  globalSearchResults.value = [];
+};
 
 // ── New Folder ─────────────────────────────────────────────────────────────
 
@@ -2136,7 +2952,10 @@ const openNewFolderDialog = () => {
   });
 };
 
-const cancelNewFolder = () => { showNewFolderDialog.value = false; newFolderName.value = ""; };
+const cancelNewFolder = () => {
+  showNewFolderDialog.value = false;
+  newFolderName.value = "";
+};
 
 const executeNewFolder = async () => {
   const name = newFolderName.value.trim();
@@ -2144,16 +2963,30 @@ const executeNewFolder = async () => {
   isCreatingFolder.value = true;
   try {
     const parentFolder = currentFolderId.value ?? null;
-    const response = await callApi(RequestRoutes.CREATE_FOLDER, { name, parentFolder }, ApiRequestType.NORMAL);
+    const response = await callApi(
+      RequestRoutes.CREATE_FOLDER,
+      { name, parentFolder },
+      ApiRequestType.NORMAL
+    );
     const result = (response as ApiResponse)?.message || response;
     const newId = result?.folderId || result?.id;
     showNewFolderDialog.value = false;
     newFolderName.value = "";
-    toast.add({ severity: "success", summary: "Folder Created", detail: `"${name}" created`, life: 3000 });
+    toast.add({
+      severity: "success",
+      summary: "Folder Created",
+      detail: `"${name}" created`,
+      life: 3000
+    });
     await refreshCurrentFolder();
     if (parentFolder !== null) emit("expand-folder", parentFolder);
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create folder", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Create Failed",
+      detail: err.message || "Failed to create folder",
+      life: 5000
+    });
   } finally {
     isCreatingFolder.value = false;
   }
@@ -2191,14 +3024,25 @@ const executeNewFile = async () => {
       ApiRequestType.NORMAL
     );
     const result = (response as ApiResponse)?.message || response;
-    if (!result?.uploaded?.length) throw new Error("NetSuite did not confirm the upload");
+    if (!result?.uploaded?.length)
+      throw new Error("NetSuite did not confirm the upload");
     showNewFileDialog.value = false;
     newFileBaseName.value = "";
     newFileContent.value = "";
-    toast.add({ severity: "success", summary: "File Created", detail: `"${fileName}" created`, life: 3000 });
+    toast.add({
+      severity: "success",
+      summary: "File Created",
+      detail: `"${fileName}" created`,
+      life: 3000
+    });
     await refreshCurrentFolder();
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Create Failed", detail: err.message || "Failed to create file", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Create Failed",
+      detail: err.message || "Failed to create file",
+      life: 5000
+    });
   } finally {
     isCreatingFile.value = false;
   }
@@ -2208,7 +3052,12 @@ const executeNewFile = async () => {
 
 const confirmDeleteItem = async (item: CabinetItem) => {
   if (item.id < 0) {
-    toast.add({ severity: "warn", summary: "Cannot Delete", detail: `"${item.name}" is a system folder and cannot be deleted.`, life: 4000 });
+    toast.add({
+      severity: "warn",
+      summary: "Cannot Delete",
+      detail: `"${item.name}" is a system folder and cannot be deleted.`,
+      life: 4000
+    });
     return;
   }
   deleteTargets.value = [item];
@@ -2222,13 +3071,21 @@ const confirmBulkDelete = async () => {
   const eligible = selectedItems.value.filter((i) => i.id > 0);
   const skipped = selectedItems.value.length - eligible.length;
   if (skipped > 0 && eligible.length === 0) {
-    toast.add({ severity: "warn", summary: "Cannot Delete", detail: "Selected items include only system folders which cannot be deleted.", life: 4000 });
+    toast.add({
+      severity: "warn",
+      summary: "Cannot Delete",
+      detail:
+        "Selected items include only system folders which cannot be deleted.",
+      life: 4000
+    });
     return;
   }
   deleteTargets.value = eligible;
   deleteRecursive.value = false;
   folderContentWarning.value = null;
-  const folders = deleteTargets.value.filter((t) => t.type === "folder") as FolderItem[];
+  const folders = deleteTargets.value.filter(
+    (t) => t.type === "folder"
+  ) as FolderItem[];
   if (folders.length > 0) await checkFolderContents(folders);
   showDeleteConfirm.value = true;
 };
@@ -2237,8 +3094,12 @@ const checkFolderContents = async (folders: FolderItem[]) => {
   try {
     const ids = folders.map((f) => f.id).join(",");
     const [fileRows, subRows] = await Promise.all([
-      runQuery(`SELECT folder, COUNT(*) AS cnt FROM File WHERE folder IN (${ids}) GROUP BY folder`),
-      runQuery(`SELECT parent, COUNT(*) AS cnt FROM MediaItemFolder WHERE parent IN (${ids}) GROUP BY parent`)
+      runQuery(
+        `SELECT folder, COUNT(*) AS cnt FROM File WHERE folder IN (${ids}) GROUP BY folder`
+      ),
+      runQuery(
+        `SELECT parent, COUNT(*) AS cnt FROM MediaItemFolder WHERE parent IN (${ids}) GROUP BY parent`
+      )
     ]);
     let totalFiles = 0;
     let totalSubfolders = 0;
@@ -2246,8 +3107,12 @@ const checkFolderContents = async (folders: FolderItem[]) => {
     for (const r of subRows) totalSubfolders += Number(r.cnt);
     if (totalFiles > 0 || totalSubfolders > 0) {
       const parts: string[] = [];
-      if (totalFiles > 0) parts.push(`${totalFiles} file${totalFiles !== 1 ? "s" : ""}`);
-      if (totalSubfolders > 0) parts.push(`${totalSubfolders} subfolder${totalSubfolders !== 1 ? "s" : ""}`);
+      if (totalFiles > 0)
+        parts.push(`${totalFiles} file${totalFiles !== 1 ? "s" : ""}`);
+      if (totalSubfolders > 0)
+        parts.push(
+          `${totalSubfolders} subfolder${totalSubfolders !== 1 ? "s" : ""}`
+        );
       folderContentWarning.value = `Contains ${parts.join(" and ")} — all will be saved to trash.`;
     }
   } catch {
@@ -2267,7 +3132,10 @@ const executeDelete = async () => {
   if (items.length === 0) return;
   isDeleting.value = true;
   showDeleteConfirm.value = false;
-  const folderName = breadcrumbs.value.length > 0 ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name : "Root";
+  const folderName =
+    breadcrumbs.value.length > 0
+      ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
+      : "Root";
   let deletedCount = 0;
   const errors: string[] = [];
   try {
@@ -2275,20 +3143,54 @@ const executeDelete = async () => {
       try {
         if (item.type === "folder") {
           const snapshot = await buildFolderSnapshot(item.id);
-          await trashItem({ environment: props.currentEnvironment, itemType: "folder", netsuiteId: item.id, name: item.name, originalFolderId: (item as FolderItem).parent, originalFolderName: folderName, content: JSON.stringify(snapshot), fileType: null, fileSize: null });
+          await trashItem({
+            environment: props.currentEnvironment,
+            itemType: "folder",
+            netsuiteId: item.id,
+            name: item.name,
+            originalFolderId: (item as FolderItem).parent,
+            originalFolderName: folderName,
+            content: JSON.stringify(snapshot),
+            fileType: null,
+            fileSize: null
+          });
           await deleteNetsuiteRecursive(item.id);
-          await callApi(RequestRoutes.DELETE_FOLDER, { folderId: item.id }, ApiRequestType.NORMAL);
+          await callApi(
+            RequestRoutes.DELETE_FOLDER,
+            { folderId: item.id },
+            ApiRequestType.NORMAL
+          );
         } else {
           let content: string | null = null;
           if (isTextFile(item as FileItem)) {
             try {
-              const resp = await callApi(RequestRoutes.FETCH_FILE_CONTENT, { fileUrl: (item as FileItem).url }, ApiRequestType.NORMAL);
+              const resp = await callApi(
+                RequestRoutes.FETCH_FILE_CONTENT,
+                { fileUrl: (item as FileItem).url },
+                ApiRequestType.NORMAL
+              );
               const result = (resp as ApiResponse)?.message || resp;
               if (result?.content && !result?.binary) content = result.content;
-            } catch { /* best effort */ }
+            } catch {
+              /* best effort */
+            }
           }
-          await trashItem({ environment: props.currentEnvironment, itemType: "file", netsuiteId: item.id, name: item.name, originalFolderId: (item as FileItem).folder, originalFolderName: folderName, content, fileType: (item as FileItem).filetype, fileSize: (item as FileItem).filesize });
-          await callApi(RequestRoutes.DELETE_FILE, { fileId: item.id, folderId: (item as FileItem).folder }, ApiRequestType.NORMAL);
+          await trashItem({
+            environment: props.currentEnvironment,
+            itemType: "file",
+            netsuiteId: item.id,
+            name: item.name,
+            originalFolderId: (item as FileItem).folder,
+            originalFolderName: folderName,
+            content,
+            fileType: (item as FileItem).filetype,
+            fileSize: (item as FileItem).filesize
+          });
+          await callApi(
+            RequestRoutes.DELETE_FILE,
+            { fileId: item.id, folderId: (item as FileItem).folder },
+            ApiRequestType.NORMAL
+          );
         }
         deletedCount++;
       } catch (err: any) {
@@ -2296,12 +3198,29 @@ const executeDelete = async () => {
       }
     }
     emit("trash-changed");
-    if (deletedCount > 0) toast.add({ severity: "success", summary: "Deleted", detail: `${deletedCount} item${deletedCount !== 1 ? "s" : ""} moved to trash`, life: 3000 });
-    if (errors.length > 0) toast.add({ severity: "error", summary: "Some Deletions Failed", detail: errors.slice(0, 3).join("\n"), life: 6000 });
+    if (deletedCount > 0)
+      toast.add({
+        severity: "success",
+        summary: "Deleted",
+        detail: `${deletedCount} item${deletedCount !== 1 ? "s" : ""} moved to trash`,
+        life: 3000
+      });
+    if (errors.length > 0)
+      toast.add({
+        severity: "error",
+        summary: "Some Deletions Failed",
+        detail: errors.slice(0, 3).join("\n"),
+        life: 6000
+      });
     selectedItems.value = [];
     await refreshCurrentFolder();
   } catch (err: any) {
-    toast.add({ severity: "error", summary: "Delete Failed", detail: err.message || "Failed to delete items", life: 5000 });
+    toast.add({
+      severity: "error",
+      summary: "Delete Failed",
+      detail: err.message || "Failed to delete items",
+      life: 5000
+    });
   } finally {
     isDeleting.value = false;
     deleteTargets.value = [];
@@ -2310,36 +3229,71 @@ const executeDelete = async () => {
   }
 };
 
-const buildFolderSnapshot = async (folderId: number): Promise<FolderSnapshot> => {
-  const fileRows = await runQuery(`SELECT id, name, fileType, fileSize, url FROM File WHERE folder = ${folderId}`);
+const buildFolderSnapshot = async (
+  folderId: number
+): Promise<FolderSnapshot> => {
+  const fileRows = await runQuery(
+    `SELECT id, name, fileType, fileSize, url FROM File WHERE folder = ${folderId}`
+  );
   const files: FileSnapshot[] = [];
   for (const f of fileRows) {
     let content: string | null = null;
     if (f.filetype && TEXT_FILE_TYPES.has(f.filetype)) {
       try {
-        const resp = await callApi(RequestRoutes.FETCH_FILE_CONTENT, { fileUrl: f.url }, ApiRequestType.NORMAL);
+        const resp = await callApi(
+          RequestRoutes.FETCH_FILE_CONTENT,
+          { fileUrl: f.url },
+          ApiRequestType.NORMAL
+        );
         const result = (resp as ApiResponse)?.message || resp;
         if (result?.content && !result?.binary) content = result.content;
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
-    files.push({ id: Number(f.id), name: f.name, filetype: f.filetype || "", filesize: f.filesize ? Number(f.filesize) : 0, content });
+    files.push({
+      id: Number(f.id),
+      name: f.name,
+      filetype: f.filetype || "",
+      filesize: f.filesize ? Number(f.filesize) : 0,
+      content
+    });
   }
-  const subfolderRows = await runQuery(`SELECT id, name FROM MediaItemFolder WHERE parent = ${folderId}`);
+  const subfolderRows = await runQuery(
+    `SELECT id, name FROM MediaItemFolder WHERE parent = ${folderId}`
+  );
   const subfolders: SubfolderSnapshot[] = [];
   for (const sf of subfolderRows) {
     const childSnapshot = await buildFolderSnapshot(Number(sf.id));
-    subfolders.push({ id: Number(sf.id), name: sf.name, snapshot: childSnapshot });
+    subfolders.push({
+      id: Number(sf.id),
+      name: sf.name,
+      snapshot: childSnapshot
+    });
   }
   return { files, subfolders };
 };
 
 const deleteNetsuiteRecursive = async (folderId: number) => {
-  const fileRows = await runQuery(`SELECT id FROM File WHERE folder = ${folderId}`);
-  for (const f of fileRows) await callApi(RequestRoutes.DELETE_FILE, { fileId: Number(f.id), folderId }, ApiRequestType.NORMAL);
-  const subfolderRows = await runQuery(`SELECT id FROM MediaItemFolder WHERE parent = ${folderId}`);
+  const fileRows = await runQuery(
+    `SELECT id FROM File WHERE folder = ${folderId}`
+  );
+  for (const f of fileRows)
+    await callApi(
+      RequestRoutes.DELETE_FILE,
+      { fileId: Number(f.id), folderId },
+      ApiRequestType.NORMAL
+    );
+  const subfolderRows = await runQuery(
+    `SELECT id FROM MediaItemFolder WHERE parent = ${folderId}`
+  );
   for (const sf of subfolderRows) {
     await deleteNetsuiteRecursive(Number(sf.id));
-    await callApi(RequestRoutes.DELETE_FOLDER, { folderId: Number(sf.id) }, ApiRequestType.NORMAL);
+    await callApi(
+      RequestRoutes.DELETE_FOLDER,
+      { folderId: Number(sf.id) },
+      ApiRequestType.NORMAL
+    );
   }
 };
 
@@ -2380,7 +3334,8 @@ const updateLabel = () => {
 watch(detailItem, (item) => {
   previewContent.value = null;
   previewError.value = false;
-  if (item && item.type === "file" && isPreviewable(item as FileItem)) loadPreview(item as FileItem);
+  if (item && item.type === "file" && isPreviewable(item as FileItem))
+    loadPreview(item as FileItem);
 });
 
 watch(currentFolderInfo, (info) => {
@@ -2404,7 +3359,12 @@ onBeforeUnmount(() => {
 
 // ── Expose ─────────────────────────────────────────────────────────────────
 
-defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFile });
+defineExpose({
+  navigateToFolder,
+  refreshCurrentFolder,
+  currentFolderInfo,
+  openFile
+});
 </script>
 
 <style scoped>
@@ -2449,10 +3409,18 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   transition: background 0.15s;
 }
 
-.fc-breadcrumb-item:hover { background: var(--p-slate-200); }
-.fc-breadcrumb-item.active { font-weight: 600; color: var(--p-slate-800); }
+.fc-breadcrumb-item:hover {
+  background: var(--p-slate-200);
+}
+.fc-breadcrumb-item.active {
+  font-weight: 600;
+  color: var(--p-slate-800);
+}
 
-.fc-filter-input { max-width: 160px; font-size: 0.75rem; }
+.fc-filter-input {
+  max-width: 160px;
+  font-size: 0.75rem;
+}
 
 .fc-view-toggle {
   width: 26px;
@@ -2510,12 +3478,14 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   align-items: center;
   justify-content: center;
   color: var(--p-slate-500);
-  transition: background 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    color 0.12s;
   position: relative;
 }
 
 .fc-view-seg-btn + .fc-view-seg-btn::before {
-  content: '';
+  content: "";
   position: absolute;
   left: 0;
   top: 20%;
@@ -2536,7 +3506,9 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 
 /* Hide the divider when either neighbouring button is active */
 .fc-view-seg-btn.active + .fc-view-seg-btn::before,
-.fc-view-seg-btn.active::before { display: none; }
+.fc-view-seg-btn.active::before {
+  display: none;
+}
 
 /* ── Grid view ───────────────────────────────────────────────────────────── */
 .fc-grid-view {
@@ -2562,11 +3534,25 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   border: 1px solid transparent;
 }
 
-.fc-grid-item:hover { background: var(--p-slate-100); }
-.fc-grid-item.selected { background: var(--p-indigo-50); border-color: var(--p-indigo-300); }
-.fc-grid-item.fc-drop-target { outline: 2px solid var(--p-indigo-400); background: rgba(99, 102, 241, 0.12); }
+.fc-grid-item:hover {
+  background: var(--p-slate-100);
+}
+.fc-grid-item.selected {
+  background: var(--p-indigo-50);
+  border-color: var(--p-indigo-300);
+}
+.fc-grid-item.fc-drop-target {
+  outline: 2px solid var(--p-indigo-400);
+  background: rgba(99, 102, 241, 0.12);
+}
 
-.fc-grid-icon { width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; }
+.fc-grid-icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .fc-grid-label {
   font-size: 0.75rem;
@@ -2580,13 +3566,27 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   -webkit-box-orient: vertical;
 }
 
-.fc-grid-meta { font-size: 0.65rem; color: var(--p-slate-400); }
+.fc-grid-meta {
+  font-size: 0.65rem;
+  color: var(--p-slate-400);
+}
 
 /* ── List view ───────────────────────────────────────────────────────────── */
-.fc-list-view { flex: 1; overflow-y: auto; }
+.fc-list-view {
+  flex: 1;
+  overflow-y: auto;
+}
 
-.fc-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-.fc-table thead { position: sticky; top: 0; z-index: 1; }
+.fc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.fc-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .fc-table th {
   background: var(--p-slate-100);
   padding: 0.5rem 0.75rem;
@@ -2599,18 +3599,50 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   user-select: none;
   white-space: nowrap;
 }
-.fc-table th:hover { background: var(--p-slate-200); }
-.fc-th-name { width: 40%; }
-.fc-th-type { width: 15%; }
-.fc-th-size { width: 15%; }
-.fc-th-date { width: 20%; }
-.fc-th-id { width: 10%; }
-.fc-table-row { cursor: pointer; transition: background 0.1s; }
-.fc-table-row:hover { background: var(--p-slate-50); }
-.fc-table-row.selected { background: var(--p-indigo-50); }
-.fc-table-row.fc-drop-target { outline: 2px solid var(--p-indigo-400); background: rgba(99, 102, 241, 0.12); }
-.fc-table-row td { padding: 0.4rem 0.75rem; border-bottom: 1px solid var(--p-slate-100); color: var(--p-slate-700); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fc-td-name { display: flex; align-items: center; }
+.fc-table th:hover {
+  background: var(--p-slate-200);
+}
+.fc-th-name {
+  width: 40%;
+}
+.fc-th-type {
+  width: 15%;
+}
+.fc-th-size {
+  width: 15%;
+}
+.fc-th-date {
+  width: 20%;
+}
+.fc-th-id {
+  width: 10%;
+}
+.fc-table-row {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.fc-table-row:hover {
+  background: var(--p-slate-50);
+}
+.fc-table-row.selected {
+  background: var(--p-indigo-50);
+}
+.fc-table-row.fc-drop-target {
+  outline: 2px solid var(--p-indigo-400);
+  background: rgba(99, 102, 241, 0.12);
+}
+.fc-table-row td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--p-slate-100);
+  color: var(--p-slate-700);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fc-td-name {
+  display: flex;
+  align-items: center;
+}
 
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 .fc-status-bar {
@@ -2623,7 +3655,10 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   display: flex;
   align-items: center;
 }
-.fc-bulk-delete-btn { font-size: 0.65rem !important; padding: 0.2rem 0.5rem !important; }
+.fc-bulk-delete-btn {
+  font-size: 0.65rem !important;
+  padding: 0.2rem 0.5rem !important;
+}
 
 /* ── Detail panel ────────────────────────────────────────────────────────── */
 .fc-detail-panel {
@@ -2649,7 +3684,9 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   transition: background 0.15s;
 }
 .fc-detail-resize-handle:hover,
-.fc-detail-resize-handle--active { background: var(--p-blue-200); }
+.fc-detail-resize-handle--active {
+  background: var(--p-blue-200);
+}
 
 .fc-detail-header {
   display: flex;
@@ -2659,20 +3696,57 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   border-bottom: 1px solid var(--p-slate-200);
 }
 
-.fc-detail-header h4 { margin: 0; font-size: 0.8rem; font-weight: 600; color: var(--p-slate-800); word-break: break-word; flex: 1; min-width: 0; }
-.fc-detail-close { background: none; border: none; cursor: pointer; padding: 0.25rem; color: var(--p-slate-400); border-radius: 3px; flex-shrink: 0; }
-.fc-detail-close:hover { background: var(--p-slate-200); }
-.fc-detail-body { padding: 0.75rem; }
-.fc-detail-fields { display: flex; flex-direction: column; gap: 0.5rem; }
-.fc-detail-field { display: flex; flex-direction: column; gap: 0.125rem; }
-.fc-detail-field .label { font-size: 0.65rem; font-weight: 600; color: var(--p-slate-500); text-transform: uppercase; letter-spacing: 0.03em; }
-.fc-detail-field .value { font-size: 0.8rem; color: var(--p-slate-700); }
+.fc-detail-header h4 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--p-slate-800);
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+.fc-detail-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: var(--p-slate-400);
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.fc-detail-close:hover {
+  background: var(--p-slate-200);
+}
+.fc-detail-body {
+  padding: 0.75rem;
+}
+.fc-detail-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.fc-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+.fc-detail-field .label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--p-slate-500);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.fc-detail-field .value {
+  font-size: 0.8rem;
+  color: var(--p-slate-700);
+}
 
 /* ── Context menu ────────────────────────────────────────────────────────── */
 .fc-context-menu {
   position: fixed;
   background: white;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
   min-width: 160px;
   max-height: calc(100vh - 16px);
@@ -2692,21 +3766,65 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   color: var(--p-slate-700);
   transition: background 0.1s;
 }
-.fc-context-item:hover { background: var(--p-slate-100); }
-.fc-context-item--danger { border-top: 1px solid var(--p-slate-200); color: var(--p-red-600); }
-.fc-context-item--danger:hover { background: var(--p-red-50); }
+.fc-context-item:hover {
+  background: var(--p-slate-100);
+}
+.fc-context-item--danger {
+  border-top: 1px solid var(--p-slate-200);
+  color: var(--p-red-600);
+}
+.fc-context-item--danger:hover {
+  background: var(--p-red-50);
+}
 
 /* ── File views ──────────────────────────────────────────────────────────── */
-.fc-file-view { flex: 1; overflow: auto; min-height: 0; }
-.fc-file-image { display: flex; align-items: center; justify-content: center; padding: 1rem; background: var(--p-slate-100); }
-.fc-image-content { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-.fc-file-pdf { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.fc-pdf-viewer { width: 100%; flex: 1; border: none; display: block; }
-.fc-file-code { padding: 0; }
-.fc-file-code :deep(.code-viewer-wrapper) { height: 100%; }
-.fc-file-code :deep(.code-viewer) { height: 100%; border-radius: 0; }
-.fc-file-code :deep(.cm-editor) { height: 100%; }
-.fc-file-code :deep(.file-code-editor) { height: 100%; }
+.fc-file-view {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.fc-file-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--p-slate-100);
+}
+.fc-image-content {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+.fc-file-pdf {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.fc-pdf-viewer {
+  width: 100%;
+  flex: 1;
+  border: none;
+  display: block;
+}
+.fc-file-code {
+  padding: 0;
+}
+.fc-file-code :deep(.code-viewer-wrapper) {
+  height: 100%;
+}
+.fc-file-code :deep(.code-viewer) {
+  height: 100%;
+  border-radius: 0;
+}
+.fc-file-code :deep(.cm-editor) {
+  height: 100%;
+}
+.fc-file-code :deep(.file-code-editor) {
+  height: 100%;
+}
 
 /* CodeMirror editors inside fc-file-code fill the container */
 /* ── Edit toolbar ────────────────────────────────────────────────────────── */
@@ -2720,116 +3838,570 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   flex-shrink: 0;
   gap: 0.5rem;
 }
-.fc-edit-toolbar-left { display: flex; align-items: center; gap: 0.5rem; }
-.fc-edit-toolbar-right { display: flex; align-items: center; gap: 0.5rem; }
-.fc-edit-toggle { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none; }
-.fc-edit-toggle input { display: none; }
-.fc-toggle-slider { width: 32px; height: 18px; border-radius: 9px; background: var(--p-slate-300); position: relative; transition: background 0.2s; flex-shrink: 0; }
-.fc-toggle-slider::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; transition: transform 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
-.fc-edit-toggle input:checked + .fc-toggle-slider { background: var(--p-indigo-500); }
-.fc-edit-toggle input:checked + .fc-toggle-slider::after { transform: translateX(14px); }
-.fc-toggle-label { font-size: 0.75rem; color: var(--p-slate-600); font-weight: 500; }
-.fc-kbd { font-size: 0.55rem; font-family: "JetBrains Mono", monospace; background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.25); border-radius: 3px; padding: 1px 4px; margin-left: 0.35rem; line-height: 1; }
-.fc-btn-active { background: var(--p-indigo-100) !important; color: var(--p-indigo-700) !important; border-color: var(--p-indigo-300) !important; }
+.fc-edit-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.fc-edit-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.fc-edit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.fc-edit-toggle input {
+  display: none;
+}
+.fc-toggle-slider {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--p-slate-300);
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.fc-toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+.fc-edit-toggle input:checked + .fc-toggle-slider {
+  background: var(--p-indigo-500);
+}
+.fc-edit-toggle input:checked + .fc-toggle-slider::after {
+  transform: translateX(14px);
+}
+.fc-toggle-label {
+  font-size: 0.75rem;
+  color: var(--p-slate-600);
+  font-weight: 500;
+}
+.fc-kbd {
+  font-size: 0.55rem;
+  font-family: "JetBrains Mono", monospace;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 0.35rem;
+  line-height: 1;
+}
+.fc-btn-active {
+  background: var(--p-indigo-100) !important;
+  color: var(--p-indigo-700) !important;
+  border-color: var(--p-indigo-300) !important;
+}
 
 /* ── History dropdown ────────────────────────────────────────────────────── */
-.fc-history-wrapper { position: relative; }
-.fc-history-badge { font-size: 0.6rem; background: var(--p-indigo-500); color: white; border-radius: 8px; padding: 0 0.35rem; margin-left: 0.25rem; line-height: 1.5; font-weight: 600; }
-.fc-history-dropdown { position: absolute; top: calc(100% + 4px); right: 0; width: 260px; background: white; border: 1px solid var(--p-slate-200); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 100; overflow: hidden; }
-.fc-history-header { display: flex; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--p-slate-200); font-size: 0.75rem; font-weight: 600; color: var(--p-slate-700); }
-.fc-history-close { background: none; border: none; cursor: pointer; color: var(--p-slate-400); padding: 0.15rem; border-radius: 3px; }
-.fc-history-close:hover { background: var(--p-slate-200); }
-.fc-history-list { max-height: 240px; overflow-y: auto; }
-.fc-history-item { padding: 0.5rem 0.75rem; cursor: pointer; transition: background 0.1s; border-bottom: 1px solid var(--p-slate-100); }
-.fc-history-item:hover { background: var(--p-slate-50); }
-.fc-history-item.active { background: var(--p-indigo-50); border-left: 3px solid var(--p-indigo-500); }
-.fc-history-item-time { font-size: 0.7rem; font-weight: 600; color: var(--p-slate-700); }
-.fc-history-item-name { font-size: 0.65rem; color: var(--p-slate-500); margin-top: 0.125rem; }
-.fc-history-footer { padding: 0.5rem 0.75rem; border-top: 1px solid var(--p-slate-200); background: var(--p-slate-50); }
+.fc-history-wrapper {
+  position: relative;
+}
+.fc-history-badge {
+  font-size: 0.6rem;
+  background: var(--p-indigo-500);
+  color: white;
+  border-radius: 8px;
+  padding: 0 0.35rem;
+  margin-left: 0.25rem;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.fc-history-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 260px;
+  background: white;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  overflow: hidden;
+}
+.fc-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--p-slate-200);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+.fc-history-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--p-slate-400);
+  padding: 0.15rem;
+  border-radius: 3px;
+}
+.fc-history-close:hover {
+  background: var(--p-slate-200);
+}
+.fc-history-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.fc-history-item {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+.fc-history-item:hover {
+  background: var(--p-slate-50);
+}
+.fc-history-item.active {
+  background: var(--p-indigo-50);
+  border-left: 3px solid var(--p-indigo-500);
+}
+.fc-history-item-time {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--p-slate-700);
+}
+.fc-history-item-name {
+  font-size: 0.65rem;
+  color: var(--p-slate-500);
+  margin-top: 0.125rem;
+}
+.fc-history-footer {
+  padding: 0.5rem 0.75rem;
+  border-top: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+}
 
 /* ── Diff/Compare bars ───────────────────────────────────────────────────── */
-.fc-diff-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.75rem; background: var(--p-amber-50); border-bottom: 1px solid var(--p-amber-200); flex-shrink: 0; }
-.fc-file-diff { display: flex; flex-direction: column; width: 100%; min-width: 0; }
-.fc-file-diff :deep(.diff-viewer) { flex: 1; max-height: none; border: none; border-radius: 0; width: 100%; }
-.fc-file-compare { display: flex; flex-direction: column; width: 100%; min-width: 0; flex: 1; overflow: hidden; }
-.fc-compare-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.4rem 0.75rem; background: var(--p-indigo-50); border-bottom: 1px solid var(--p-indigo-200); flex-shrink: 0; gap: 0.5rem; }
-.fc-compare-labels { display: flex; gap: 1rem; align-items: center; flex: 1; min-width: 0; }
-.fc-compare-label { font-size: 0.72rem; font-weight: 500; color: var(--p-slate-600); }
-.fc-compare-label-left { color: var(--p-indigo-600); }
-.fc-compare-label-right { color: var(--p-teal-600); }
-.fc-file-compare :deep(.diff-comparator) { flex: 1; max-height: none; border: none; border-radius: 0; width: 100%; }
+.fc-diff-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: var(--p-amber-50);
+  border-bottom: 1px solid var(--p-amber-200);
+  flex-shrink: 0;
+}
+.fc-file-diff {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+.fc-file-diff :deep(.diff-viewer) {
+  flex: 1;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+}
+.fc-file-compare {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.fc-compare-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  background: var(--p-indigo-50);
+  border-bottom: 1px solid var(--p-indigo-200);
+  flex-shrink: 0;
+  gap: 0.5rem;
+}
+.fc-compare-labels {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.fc-compare-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--p-slate-600);
+}
+.fc-compare-label-left {
+  color: var(--p-indigo-600);
+}
+.fc-compare-label-right {
+  color: var(--p-teal-600);
+}
+.fc-file-compare :deep(.diff-comparator) {
+  flex: 1;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  width: 100%;
+}
 
 /* ── Detail panel preview ────────────────────────────────────────────────── */
-.fc-detail-preview { margin-bottom: 0.75rem; border: 1px solid var(--p-slate-200); border-radius: 4px; overflow: hidden; }
-.fc-preview-loading { display: flex; align-items: center; justify-content: center; padding: 1rem; }
-.fc-preview-unavailable { display: flex; align-items: center; justify-content: center; gap: 0.4rem; padding: 0.75rem; color: var(--p-slate-400); font-size: 0.75rem; font-style: italic; }
-.fc-preview-image { width: 100%; height: auto; max-height: 100%; object-fit: contain; display: block; }
-.fc-preview-code { overflow: hidden; font-size: 0.65rem; height: 100%; }
-.fc-preview-code :deep(.code-viewer) { border-radius: 0; font-size: 10px; }
-.fc-preview-code :deep(.cm-editor) { max-height: 400px; }
-.fc-detail-actions { margin-bottom: 0.75rem; }
-.fc-detail-bookmark { background: none; border: none; cursor: pointer; padding: 0.25rem; color: var(--p-slate-400); border-radius: 3px; flex-shrink: 0; margin-right: 0.25rem; }
-.fc-detail-bookmark:hover { background: var(--p-slate-200); }
+.fc-detail-preview {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.fc-preview-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.fc-preview-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  color: var(--p-slate-400);
+  font-size: 0.75rem;
+  font-style: italic;
+}
+.fc-preview-image {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.fc-preview-code {
+  overflow: hidden;
+  font-size: 0.65rem;
+  height: 100%;
+}
+.fc-preview-code :deep(.code-viewer) {
+  border-radius: 0;
+  font-size: 10px;
+}
+.fc-preview-code :deep(.cm-editor) {
+  max-height: 400px;
+}
+.fc-detail-actions {
+  margin-bottom: 0.75rem;
+}
+.fc-detail-bookmark {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.25rem;
+  color: var(--p-slate-400);
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+}
+.fc-detail-bookmark:hover {
+  background: var(--p-slate-200);
+}
 
 /* ── Drop zone & upload ──────────────────────────────────────────────────── */
-.fc-drop-zone { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
-.fc-drop-zone.fc-drag-over { outline: 2px dashed var(--p-indigo-400); outline-offset: -4px; background: rgba(99,102,241,0.03); }
-.fc-drop-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; background: rgba(255,255,255,0.92); z-index: 10; pointer-events: none; border-radius: 4px; }
-.fc-drop-overlay p { font-size: 0.85rem; font-weight: 500; color: var(--p-indigo-600); }
-.fc-delete-overlay { position: absolute; inset: 0; z-index: 15; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.75); backdrop-filter: blur(2px); pointer-events: all; }
-.fc-upload-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.75rem; background: var(--p-indigo-50); border-bottom: 1px solid var(--p-indigo-200); font-size: 0.75rem; color: var(--p-indigo-700); flex-shrink: 0; }
+.fc-drop-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+}
+.fc-drop-zone.fc-drag-over {
+  outline: 2px dashed var(--p-indigo-400);
+  outline-offset: -4px;
+  background: rgba(99, 102, 241, 0.03);
+}
+.fc-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  background: rgba(255, 255, 255, 0.92);
+  z-index: 10;
+  pointer-events: none;
+  border-radius: 4px;
+}
+.fc-drop-overlay p {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--p-indigo-600);
+}
+.fc-delete-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(2px);
+  pointer-events: all;
+}
+.fc-upload-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--p-indigo-50);
+  border-bottom: 1px solid var(--p-indigo-200);
+  font-size: 0.75rem;
+  color: var(--p-indigo-700);
+  flex-shrink: 0;
+}
 
 /* ── Global search ───────────────────────────────────────────────────────── */
-.fc-global-search { border-bottom: 1px solid var(--p-slate-200); background: var(--p-slate-50); flex-shrink: 0; }
-.fc-search-input-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.75rem; }
-.fc-search-input { flex: 1; border: none; background: transparent; outline: none; font-size: 0.8rem; color: var(--p-slate-800); font-family: inherit; }
-.fc-search-input::placeholder { color: var(--p-slate-400); }
-.fc-search-close { background: none; border: none; padding: 0.2rem; cursor: pointer; color: var(--p-slate-500); border-radius: 3px; }
-.fc-search-close:hover { background: var(--p-slate-200); }
-.fc-search-results { max-height: 280px; overflow-y: auto; border-top: 1px solid var(--p-slate-200); }
-.fc-search-result-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.75rem; cursor: pointer; font-size: 0.78rem; transition: background 0.1s; }
-.fc-search-result-item:hover { background: var(--p-indigo-50); }
-.fc-search-result-name { font-weight: 500; color: var(--p-slate-800); white-space: nowrap; }
-.fc-search-result-path { color: var(--p-slate-400); font-size: 0.7rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-.fc-search-result-bookmark { background: none; border: none; padding: 0.2rem; cursor: pointer; border-radius: 3px; flex-shrink: 0; opacity: 0; transition: opacity 0.15s; }
-.fc-search-result-item:hover .fc-search-result-bookmark { opacity: 1; }
-.fc-search-result-bookmark:hover { background: var(--p-slate-200); }
+.fc-global-search {
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  flex-shrink: 0;
+}
+.fc-search-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+}
+.fc-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 0.8rem;
+  color: var(--p-slate-800);
+  font-family: inherit;
+}
+.fc-search-input::placeholder {
+  color: var(--p-slate-400);
+}
+.fc-search-close {
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  cursor: pointer;
+  color: var(--p-slate-500);
+  border-radius: 3px;
+}
+.fc-search-close:hover {
+  background: var(--p-slate-200);
+}
+.fc-search-results {
+  max-height: 280px;
+  overflow-y: auto;
+  border-top: 1px solid var(--p-slate-200);
+}
+.fc-search-result-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: background 0.1s;
+}
+.fc-search-result-item:hover {
+  background: var(--p-indigo-50);
+}
+.fc-search-result-name {
+  font-weight: 500;
+  color: var(--p-slate-800);
+  white-space: nowrap;
+}
+.fc-search-result-path {
+  color: var(--p-slate-400);
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.fc-search-result-bookmark {
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.fc-search-result-item:hover .fc-search-result-bookmark {
+  opacity: 1;
+}
+.fc-search-result-bookmark:hover {
+  background: var(--p-slate-200);
+}
 
 .fc-search-add-btn {
   flex-shrink: 0;
   margin-left: auto;
 }
-.fc-search-empty { padding: 0.75rem; text-align: center; font-size: 0.75rem; color: var(--p-slate-400); border-top: 1px solid var(--p-slate-200); }
+.fc-search-empty {
+  padding: 0.75rem;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--p-slate-400);
+  border-top: 1px solid var(--p-slate-200);
+}
 
 /* ── Confirm dialogs ─────────────────────────────────────────────────────── */
-.fc-confirm-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.4); z-index: 9999; }
-.fc-confirm-box { background: white; border-radius: 0.5rem; box-shadow: 0 20px 60px rgba(0,0,0,0.2); padding: 1.25rem; max-width: 380px; width: 90%; }
-.fc-confirm-header { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; font-size: 0.9rem; margin-bottom: 0.75rem; color: var(--p-slate-800); }
-.fc-confirm-body { font-size: 0.8rem; color: var(--p-slate-600); line-height: 1.5; margin-bottom: 1rem; }
-.fc-confirm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-.fc-confirm-danger span { color: var(--p-red-600); }
-.fc-delete-list { margin: 0.5rem 0; padding: 0; list-style: none; max-height: 160px; overflow-y: auto; font-size: 0.75rem; border: 1px solid var(--p-slate-200); border-radius: 4px; padding: 0.4rem; }
-.fc-delete-list li { display: flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0; }
-.fc-folder-warning { display: flex; align-items: flex-start; gap: 0.35rem; margin-top: 0.5rem; padding: 0.4rem 0.5rem; background: var(--p-amber-50, #fffbeb); border: 1px solid var(--p-amber-200, #fde68a); border-radius: 4px; font-size: 0.72rem; color: var(--p-amber-800, #92400e); line-height: 1.4; }
+.fc-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 9999;
+}
+.fc-confirm-box {
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  padding: 1.25rem;
+  max-width: 380px;
+  width: 90%;
+}
+.fc-confirm-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: var(--p-slate-800);
+}
+.fc-confirm-body {
+  font-size: 0.8rem;
+  color: var(--p-slate-600);
+  line-height: 1.5;
+  margin-bottom: 1rem;
+}
+.fc-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.fc-confirm-danger span {
+  color: var(--p-red-600);
+}
+.fc-delete-list {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 4px;
+  padding: 0.4rem;
+}
+.fc-delete-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0;
+}
+.fc-folder-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--p-amber-50, #fffbeb);
+  border: 1px solid var(--p-amber-200, #fde68a);
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: var(--p-amber-800, #92400e);
+  line-height: 1.4;
+}
 
 /* ── New-file dialog ─────────────────────────────────────────────────────── */
-.fc-nf-label { display: block; font-size: 0.72rem; font-weight: 500; color: var(--p-slate-500); margin-bottom: 0.25rem; }
-.fc-nf-label.mt-3 { margin-top: 0.75rem; }
-.fc-nf-name-row { display: flex; align-items: center; gap: 0.35rem; }
-.fc-nf-name-input { flex: 1; min-width: 0; }
-.fc-nf-dot { font-weight: 600; color: var(--p-slate-500); }
-.fc-nf-ext-select { flex-shrink: 0; min-width: 9rem; max-width: 12rem; }
-.fc-nf-preview { margin-top: 0.3rem; font-size: 0.72rem; color: var(--p-slate-400); display: flex; align-items: center; gap: 0.3rem; }
+.fc-nf-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--p-slate-500);
+  margin-bottom: 0.25rem;
+}
+.fc-nf-label.mt-3 {
+  margin-top: 0.75rem;
+}
+.fc-nf-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fc-nf-name-input {
+  flex: 1;
+  min-width: 0;
+}
+.fc-nf-dot {
+  font-weight: 600;
+  color: var(--p-slate-500);
+}
+.fc-nf-ext-select {
+  flex-shrink: 0;
+  min-width: 9rem;
+  max-width: 12rem;
+}
+.fc-nf-preview {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--p-slate-400);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
 .fc-nf-content {
-  width: 100%; margin-top: 0.25rem; border: 1px solid var(--p-slate-300); border-radius: 5px;
-  padding: 0.4rem 0.5rem; font-size: 0.72rem; font-family: "JetBrains Mono", "Fira Code", monospace;
-  color: var(--p-slate-800); resize: vertical; outline: none; box-sizing: border-box;
+  width: 100%;
+  margin-top: 0.25rem;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 5px;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.72rem;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: var(--p-slate-800);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
   line-height: 1.5;
 }
-.fc-nf-content:focus { border-color: var(--p-indigo-400); box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.fc-nf-content:focus {
+  border-color: var(--p-indigo-400);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
 
 /* ── Inline rename ───────────────────────────────────────────────────────── */
-.fc-rename-input { width: 100%; max-width: 100%; border: 1px solid var(--p-indigo-400); border-radius: 3px; padding: 1px 4px; font-size: inherit; background: var(--p-surface-0, #fff); color: inherit; outline: none; box-shadow: 0 0 0 2px rgba(99,102,241,0.15); }
+.fc-rename-input {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--p-indigo-400);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: inherit;
+  background: var(--p-surface-0, #fff);
+  color: inherit;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
 
 /* ── Context picker mode ─────────────────────────────────────────────────── */
 .fc-pane--context-picker .fc-pane-main {
@@ -2878,7 +4450,10 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
   color: var(--p-slate-600);
   cursor: pointer;
   font-size: 0.72rem;
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
 }
 
 .fc-add-btn:hover:not(:disabled) {
@@ -2896,5 +4471,7 @@ defineExpose({ navigateToFolder, refreshCurrentFolder, currentFolderInfo, openFi
 }
 
 /* ── PrimeVue overrides ──────────────────────────────────────────────────── */
-:deep(.p-inputtext) { font-size: 0.75rem; }
+:deep(.p-inputtext) {
+  font-size: 0.75rem;
+}
 </style>

@@ -1642,7 +1642,6 @@ export const useAgent = (options: AgentOptions = {}) => {
     "calculate",
     "get_current_time",
     "fetch_url",
-    "generate_pdf",
   ]);
 
   // Tools hidden from the AI to prevent meta-tool distraction.

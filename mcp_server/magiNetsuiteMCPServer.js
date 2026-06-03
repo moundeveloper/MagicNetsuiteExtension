@@ -252,6 +252,181 @@ async function callExtension(method, params) {
   });
 }
 
+function pdfDataUrlToBuffer(dataUrl) {
+  const value = String(dataUrl || "").trim();
+  const match = /^data:application\/pdf[^,]*;base64,(.+)$/i.exec(
+    value
+  );
+  if (match) return Buffer.from(match[1], "base64");
+
+  if (/^[A-Za-z0-9+/=\r\n]+$/.test(value) && value.length > 32) {
+    const buffer = Buffer.from(value, "base64");
+    return buffer.slice(0, 5).toString("ascii") === "%PDF-" ? buffer : null;
+  }
+
+  return null;
+}
+
+function decodePdfLiteralString(value) {
+  let output = "";
+  for (let i = 0; i < value.length; i++) {
+    const char = value[i];
+    if (char !== "\\") {
+      output += char;
+      continue;
+    }
+
+    const next = value[++i];
+    if (next === "n") output += "\n";
+    else if (next === "r") output += "\r";
+    else if (next === "t") output += "\t";
+    else if (next === "b") output += "\b";
+    else if (next === "f") output += "\f";
+    else if (next === "(" || next === ")" || next === "\\") output += next;
+    else if (/[0-7]/.test(next || "")) {
+      let octal = next;
+      for (let j = 0; j < 2 && /[0-7]/.test(value[i + 1] || ""); j++) {
+        octal += value[++i];
+      }
+      output += String.fromCharCode(parseInt(octal, 8));
+    } else if (next) {
+      output += next;
+    }
+  }
+
+  const bytes = Buffer.from(output, "binary");
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    let utf16 = "";
+    for (let i = 2; i + 1 < bytes.length; i += 2) {
+      utf16 += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+    }
+    return utf16;
+  }
+
+  return output;
+}
+
+function decodePdfHexString(value) {
+  const clean = value.replace(/\s+/g, "");
+  const padded = clean.length % 2 === 0 ? clean : `${clean}0`;
+  const bytes = Buffer.from(padded, "hex");
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    let utf16 = "";
+    for (let i = 2; i + 1 < bytes.length; i += 2) {
+      utf16 += String.fromCharCode((bytes[i] << 8) | bytes[i + 1]);
+    }
+    return utf16;
+  }
+  return bytes.toString("latin1");
+}
+
+function normalizeExtractedPdfText(text) {
+  return text
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function extractPdfTextFallback(pdfBuffer) {
+  const source = pdfBuffer.toString("latin1");
+  const chunks = [];
+  const tokenPattern =
+    /\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]+)>\s*Tj|\[((?:.|\n|\r)*?)\]\s*TJ/g;
+
+  let match;
+  while ((match = tokenPattern.exec(source))) {
+    if (match[1] !== undefined) {
+      chunks.push(decodePdfLiteralString(match[1]));
+      continue;
+    }
+
+    if (match[2] !== undefined) {
+      chunks.push(decodePdfHexString(match[2]));
+      continue;
+    }
+
+    const arrayText = match[3];
+    const arrayStringPattern = /\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f\s]+)>/g;
+    let arrayMatch;
+    while ((arrayMatch = arrayStringPattern.exec(arrayText))) {
+      chunks.push(
+        arrayMatch[1] !== undefined
+          ? decodePdfLiteralString(arrayMatch[1])
+          : decodePdfHexString(arrayMatch[2])
+      );
+    }
+  }
+
+  return normalizeExtractedPdfText(chunks.join(" "));
+}
+
+async function enrichNetsuiteReadFilePdfResult(result) {
+  const textItem = result?.content?.find?.((item) => item?.type === "text");
+  if (!textItem || typeof textItem.text !== "string") return result;
+
+  let payload;
+  try {
+    payload = JSON.parse(textItem.text);
+  } catch {
+    return result;
+  }
+
+  const contentType = String(payload.contentType || "").toLowerCase();
+  const isPdf =
+    contentType.includes("application/pdf") ||
+    /^data:application\/pdf/i.test(String(payload.content || ""));
+  if (!isPdf) return result;
+
+  try {
+    const buffer = pdfDataUrlToBuffer(payload.content);
+    if (!buffer) {
+      throw new Error("PDF payload was not a recognized base64 PDF value");
+    }
+
+    let parsed;
+    let parserError = null;
+    let extractedText = extractPdfTextFallback(buffer);
+
+    if (!extractedText) {
+      try {
+        const pdfParse = require("pdf-parse");
+        parsed = await pdfParse(buffer);
+        extractedText = normalizeExtractedPdfText(parsed?.text || "");
+      } catch (err) {
+        parserError = err;
+      }
+    }
+
+    if (!extractedText) {
+      throw parserError || new Error("PDF contained no extractable text layer");
+    }
+
+    payload.binary = false;
+    payload.extractedPdfText = true;
+    payload.base64Omitted = true;
+    payload.pageCount = parsed?.numpages || undefined;
+    payload.content = extractedText;
+    if (parserError) {
+      payload.pdfExtractionWarning =
+        `Used built-in PDF text extraction; optional parser failed: ${
+          parserError?.message || String(parserError)
+        }`;
+    }
+  } catch (err) {
+    const message = err?.message || String(err);
+    payload.binary = false;
+    payload.extractedPdfText = false;
+    payload.base64Omitted = true;
+    payload.content = `[PDF text extraction failed: ${message}]`;
+    payload.pdfExtractionError = message;
+  }
+
+  textItem.text = JSON.stringify(payload, null, 2);
+  return result;
+}
+
 // -----------------------------------------------
 // MCP STDIO
 // -----------------------------------------------
@@ -829,8 +1004,8 @@ async function handleMcp(req) {
               "Read the actual content of a NetSuite File Cabinet file by its internal ID. " +
               "ALWAYS use this tool when you have a file ID (e.g. from a SuiteQL query result or from netsuite_find_file) and the user wants to see or display the file contents. " +
               "Do NOT use a lead/customer/entity/transaction record ID as fileId. Resolve related files with SuiteQL first. " +
-              "Returns the file name, content type, and full text content (or base64 for binary files). " +
-              "Works with any text-based file: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
+              "Returns the file name, content type, and full text content. PDFs are extracted to text when possible; other binary files may return base64. " +
+              "Works with PDFs and text-based files: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
             inputSchema: {
               type: "object",
               properties: {
@@ -859,6 +1034,7 @@ async function handleMcp(req) {
     // ✅ ONLY HERE we depend on extension
     else if (method === "tools/call") {
       result = await callExtension("tools/call", params);
+      result = await enrichNetsuiteReadFilePdfResult(result);
     } else if (method === "resources/list") {
       result = { resources: [] };
     } else if (method === "prompts/list") {

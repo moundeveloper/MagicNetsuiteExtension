@@ -843,7 +843,7 @@ const toExternalTool = (tool: HarnessTool) => ({
 });
 
 const isWriteLikeToolName = (name: string): boolean =>
-  /(upload|create|delete|remove|run|open|submit|deploy|write|patch|cache_upload|generate_pdf)/i.test(
+  /(upload|create|delete|remove|run|open|submit|deploy|write|patch|cache_upload)/i.test(
     name
   );
 
@@ -1603,7 +1603,7 @@ export const useNetsuiteAgentHarness = (
       const latencyMs = Math.max(0, Math.round(performance.now() - start));
       const content = stringifyResult(
         result,
-        toolName === "generate_pdf" ? 250_000 : 6000
+        6000
       );
       await updateItem(item.id, {
         status,

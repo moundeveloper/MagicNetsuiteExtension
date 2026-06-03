@@ -143,17 +143,6 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     avoidWhen:
       "URL is on *.netsuite.com or /core/media/* — use netsuite_get_file_content",
   },
-  generate_pdf: {
-    purpose: "Generate a PDF document from HTML or template content",
-    costTier: "moderate",
-    expectedLatencyMs: 2000,
-    riskLevel: "low",
-    reversible: true,
-    failureModes: ["invalid HTML", "missing template variables"],
-    preferWhen: "user explicitly asks to generate or preview a PDF",
-    avoidWhen: "user only wants to read or search existing files",
-  },
-
   // ── SuiteQL / query ────────────────────────
   sql_search_tables: {
     purpose: "Discover which NetSuite SuiteQL tables match a keyword",

@@ -171,7 +171,11 @@ onMounted(async () => {
         tabWidth: 2
       });
     } catch (error) {
-      console.warn("[MonacoCodeEditor] Format skipped: invalid code.");
+      console.warn(
+        "%c[MonacoCodeEditor]%c Format skipped: invalid code.",
+        "color: #f59e0b; font-weight: 700;",
+        "color: inherit;"
+      );
       formatted = props.modelValue;
     }
   } else if (props.language === "xml") {

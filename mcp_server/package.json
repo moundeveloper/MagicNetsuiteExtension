@@ -11,5 +11,13 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "type": "commonjs",
+  "pkg": {
+    "assets": [
+      "node_modules/pdf-parse/lib/pdf.js/**/*"
+    ]
+  },
+  "dependencies": {
+    "pdf-parse": "^1.1.1"
+  }
 }

@@ -1321,8 +1321,8 @@ const MCP_TOOL_DEFINITIONS = [
       "Read the actual content of a NetSuite File Cabinet file by its internal ID. " +
       "ALWAYS use this tool when you have a file ID (e.g. from a SuiteQL query result or from netsuite_find_file) and the user wants to see or display the file contents. " +
       "Do NOT use a lead/customer/entity/transaction record ID as fileId. Resolve related files with SuiteQL first. " +
-      "Returns the file name, content type, and full text content (or base64 for binary files). " +
-      "Works with any text-based file: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
+      "Returns the file name, content type, and full text content. PDFs are extracted to text by the MCP bridge when possible; other binary files may return base64. " +
+      "Works with PDFs and text-based files: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
     inputSchema: {
       type: "object",
       properties: {

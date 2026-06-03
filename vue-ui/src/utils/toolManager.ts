@@ -5,7 +5,6 @@ import { RequestRoutes } from "../types/request";
 import { Parser } from "expr-eval";
 import { searchSkills, getSkillContent } from "./skillsDb";
 import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
-import { generateDocument } from "./pdfUtils";
 import { agentCache } from "./agentCacheStore";
 
 type SuiteqlTableRef = {
@@ -1814,86 +1813,6 @@ export const tools: ToolDefinition[] = [
           description: r.description
         }))
       };
-    }
-  },
-
-  // ── PDF generation ──────────────────────────────────────────────────────────
-
-  {
-    name: "generate_pdf",
-    description:
-      "ALWAYS use this tool when the user asks you to create, generate, produce, export, or write any document, report, PDF, summary, or structured content.\n\n" +
-      "DOCUMENT STRUCTURE GUIDANCE — always produce a well-structured, professional document:\n" +
-      "• Use ## for major sections (Introduction, Summary, Findings, Recommendations, etc.)\n" +
-      "• Use ### for subsections within each section\n" +
-      "• Use tables for any comparative, tabular, or multi-column data\n" +
-      "• Use callout boxes for important notes, warnings, or tips (see content syntax below)\n" +
-      "• Use bullet or numbered lists for enumerations — never dump them as a flat paragraph\n" +
-      "• Use code blocks with a language hint for any code, queries, or structured text\n" +
-      "• Use --- horizontal rules to separate major document parts\n" +
-      "• Use blockquotes for citations, quotes, or excerpts\n" +
-      "• Use checkboxes (- [ ] / - [x]) for action items or checklists\n" +
-      "• Always include an introductory paragraph under the title before diving into sections\n\n" +
-      "Do NOT describe the document in text or show markdown in the chat — call this tool and the document appears inline.\n\n" +
-      "IMPORTANT: After this tool succeeds, the UI automatically shows a **Download** button next to the document — do NOT include any download link, 'click here to download', or download instructions anywhere in your text response. Simply confirm the document was created (e.g. 'Done — your report is ready above.').",
-    parameters: {
-      type: "object",
-      properties: {
-        filename: {
-          type: "string",
-          description:
-            "Output filename WITHOUT the .pdf extension, e.g. 'quarterly-report' or 'onboarding-checklist'."
-        },
-        title: {
-          type: "string",
-          description: "Document title shown at the top of the page."
-        },
-        author: {
-          type: "string",
-          description: "Optional author name shown in the document header."
-        },
-        content: {
-          type: "string",
-          description:
-            "The full document body as a markdown string. Full supported syntax:\n" +
-            "  # H1  ## H2  ### H3\n" +
-            "  - bullet   * bullet   1. numbered\n" +
-            "  - [ ] unchecked task   - [x] checked task\n" +
-            "  | col1 | col2 | col3 |  (GFM tables with header + separator row)\n" +
-            "  > plain blockquote\n" +
-            "  > [!NOTE] title     > body text        (callout — on consecutive > lines)\n" +
-            "  > [!TIP]  > [!IMPORTANT]  > [!WARNING]  > [!DANGER]\n" +
-            "  ```lang\\ncode\\n```  (fenced code block, lang = js/ts/sql/python/etc)\n" +
-            "  ---  (horizontal rule)\n" +
-            "  **bold**  *italic*  ~~strikethrough~~  `inline code`  [text](url)\n" +
-            "  Nested lists: indent 2 spaces per level\n\n" +
-            "Be thorough and complete — include all sections, tables, and content the user requested."
-        }
-      },
-      required: ["filename", "title", "content"]
-    },
-    execute: async (input) => {
-      try {
-        const result = generateDocument({
-          filename: String(input.filename ?? "document"),
-          title: String(input.title ?? "Document"),
-          author: input.author ? String(input.author) : undefined,
-          content: String(input.content ?? "")
-        });
-
-        return {
-          __pdf_result__: true,
-          url: result.url,
-          filename: result.filename,
-          bytes: result.bytes,
-          htmlContent: result.html,
-          markdown: String(input.content ?? ""),
-          title: String(input.title ?? "Document"),
-          message: `Document "${result.filename}" generated (${(result.bytes / 1024).toFixed(1)} KB).`
-        };
-      } catch (err) {
-        return { error: `Document generation failed: ${String(err)}` };
-      }
     }
   },
 

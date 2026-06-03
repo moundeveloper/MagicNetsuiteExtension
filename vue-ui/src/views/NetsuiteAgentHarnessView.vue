@@ -367,17 +367,7 @@
                               >
                                 <i class="pi pi-external-link" />
                               </a>
-                              <button
-                                v-if="artifact.kind === 'generated-pdf'"
-                                type="button"
-                                class="artifact-action"
-                                title="Download PDF"
-                                @click="downloadArtifact(artifact)"
-                              >
-                                <i class="pi pi-download" />
-                              </button>
                               <a
-                                v-else
                                 :href="artifact.url"
                                 :download="artifact.filename"
                                 class="artifact-action"
@@ -1164,7 +1154,7 @@ import type {
 } from "../utils/agentHarnessDb";
 import { agentCache, cacheVersion } from "../utils/agentCacheStore";
 import { netsuiteDocsTools } from "../utils/netsuiteDocsTools";
-import { downloadDocumentAsPdf, extractPdfText } from "../utils/pdfUtils";
+import { extractPdfText } from "../utils/pdfUtils";
 import {
   addSkill,
   deleteSkill,
@@ -1180,7 +1170,7 @@ type HarnessItemView = Omit<Readonly<HarnessItemRecord>, "attachments"> & {
   readonly attachments?: readonly HarnessAttachment[];
 };
 
-type HarnessArtifactKind = "generated-pdf" | "pdf" | "image";
+type HarnessArtifactKind = "pdf" | "image";
 
 interface HarnessArtifactView {
   id: string;
@@ -1191,8 +1181,6 @@ interface HarnessArtifactView {
   bytes?: number;
   contentType?: string;
   cacheKey?: string;
-  markdown?: string;
-  htmlContent?: string;
 }
 
 interface HarnessTurnView {
@@ -1538,8 +1526,6 @@ const isCallingAssistantMessage = (item: HarnessItemView): boolean =>
   isAssistantMessage(item) &&
   /^Calling\s+\d+\s+tool/i.test(item.content.trim());
 
-const artifactPreviewUrls = new Map<string, string>();
-
 const parseToolJson = (content: string): Record<string, unknown> | null => {
   try {
     const parsed = JSON.parse(content);
@@ -1566,21 +1552,6 @@ const isPdfContentType = (contentType: string | null | undefined): boolean =>
 
 const isImageContentType = (contentType: string | null | undefined): boolean =>
   Boolean(contentType && contentType.toLowerCase().startsWith("image/"));
-
-const generatedPreviewUrl = (
-  artifactId: string,
-  htmlContent: string,
-  fallbackUrl: string
-): string => {
-  if (!htmlContent) return fallbackUrl;
-  const existing = artifactPreviewUrls.get(artifactId);
-  if (existing) return existing;
-  const url = URL.createObjectURL(
-    new Blob([htmlContent], { type: "text/html;charset=utf-8" })
-  );
-  artifactPreviewUrls.set(artifactId, url);
-  return url;
-};
 
 const cacheArtifact = (
   key: string,
@@ -1620,24 +1591,6 @@ const artifactFromAction = (item: HarnessItemView): HarnessArtifactView | null =
   if (item.kind !== "tool") return null;
   const result = parseToolJson(item.content);
   if (!result) return null;
-
-  if (item.toolName === "generate_pdf" && result.__pdf_result__) {
-    const filename = String(result.filename ?? "document.pdf");
-    const htmlContent = String(result.htmlContent ?? "");
-    const fallbackUrl = String(result.url ?? "");
-    if (!htmlContent && !fallbackUrl) return null;
-    return {
-      id: `${item.id}:generated-pdf`,
-      kind: "generated-pdf",
-      title: String(result.title ?? filename),
-      filename,
-      url: generatedPreviewUrl(item.id, htmlContent, fallbackUrl),
-      bytes: Number(result.bytes ?? 0),
-      markdown: String(result.markdown ?? ""),
-      htmlContent,
-      contentType: "text/html",
-    };
-  }
 
   const cacheKey = typeof result.cacheKey === "string"
     ? result.cacheKey
@@ -2902,15 +2855,6 @@ const artifactIcon = (artifact: HarnessArtifactView): string => {
   return "pi pi-file-pdf";
 };
 
-const downloadArtifact = async (artifact: HarnessArtifactView) => {
-  if (artifact.kind !== "generated-pdf") return;
-  await downloadDocumentAsPdf(
-    artifact.markdown ?? "",
-    artifact.title || artifact.filename,
-    artifact.filename
-  );
-};
-
 const getFileExtension = (name: string): string =>
   name.split(".").pop()?.toLowerCase() ?? "";
 
@@ -3002,10 +2946,6 @@ watch(contextPickerVisible, (visible) => {
 watch(
   () => harness.activeThread.value?.threadId,
   async () => {
-    for (const url of artifactPreviewUrls.values()) {
-      URL.revokeObjectURL(url);
-    }
-    artifactPreviewUrls.clear();
     await primeStreamScrollAtBottom();
   }
 );
@@ -3026,10 +2966,6 @@ onBeforeUnmount(() => {
   }
   document.removeEventListener("keydown", onContextPickerKeydown);
   document.body.style.overflow = "";
-  for (const url of artifactPreviewUrls.values()) {
-    URL.revokeObjectURL(url);
-  }
-  artifactPreviewUrls.clear();
 });
 </script>
 
