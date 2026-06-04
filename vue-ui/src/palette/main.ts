@@ -8,6 +8,7 @@ import PrimeVue from "primevue/config";
 import Aura from "@primeuix/themes/aura";
 import { definePreset } from "@primeuix/themes";
 import { createPinia } from "pinia";
+import { installElementScreenshotPicker } from "../utils/elementScreenshotPicker";
 
 const auraPreset = definePreset(Aura, {
   semantic: {
@@ -60,3 +61,5 @@ app.use(PrimeVue, {
 app.use(createPinia());
 
 app.mount("#palette-app");
+
+installElementScreenshotPicker();

@@ -72,8 +72,8 @@
       zIndex: "2147483646",
       pointerEvents: "none",
       border: "2px solid #22c55e",
-      background: "rgba(34, 197, 94, 0.12)",
-      boxShadow: "0 0 0 99999px rgba(15, 23, 42, 0.18)",
+      background: "transparent",
+      boxShadow: "none",
       display: "none",
       boxSizing: "border-box"
     });
@@ -197,6 +197,11 @@
       image.src = dataUrl;
     });
 
+  const waitForPaint = () =>
+    new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+
   const copyElementScreenshot = async (element) => {
     const rect = getViewportRect(element);
     const response = await chrome.runtime.sendMessage({
@@ -297,6 +302,7 @@
     requestStopSelection();
 
     try {
+      await waitForPaint();
       await copyElementScreenshot(element);
       showToast("Element screenshot copied to clipboard");
     } catch (error) {
@@ -344,6 +350,29 @@
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
     return true;
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT") return;
+
+    const iframe = Array.from(document.querySelectorAll("iframe"))
+      .find((frame) => frame.contentWindow === event.source);
+
+    if (!iframe) return;
+
+    const rect = iframe.getBoundingClientRect();
+    event.source.postMessage({
+      type: "MAGIC_NETSUITE_EXTENSION_FRAME_RECT",
+      requestId: event.data.requestId,
+      rect: {
+        left: Math.max(0, rect.left),
+        top: Math.max(0, rect.top),
+        width: Math.max(1, rect.width),
+        height: Math.max(1, rect.height),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      }
+    }, event.origin);
   });
 
   loadShortcut();

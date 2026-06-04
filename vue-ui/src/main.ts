@@ -15,6 +15,7 @@ import VueCodemirror from "vue-codemirror";
 import { createPinia } from "pinia";
 import Tooltip from "primevue/tooltip";
 import ToastService from "primevue/toastservice";
+import { installElementScreenshotPicker } from "./utils/elementScreenshotPicker";
 
 const auraPreset = definePreset(Aura, {
   semantic: {
@@ -104,3 +105,5 @@ app.use(VueCodemirror, {
 });
 
 app.mount("#app");
+
+installElementScreenshotPicker();
