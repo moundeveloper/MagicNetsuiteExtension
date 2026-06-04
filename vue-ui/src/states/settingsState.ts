@@ -8,6 +8,7 @@ export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
   modulesSearch: string; // configurable, default "ctrl+m"
+  elementScreenshotShortcut: string; // configurable, default "ctrl+shift+s"
   openOnCustomizationPage: boolean;
   preferredFeatures: string[]; // array of route names that are preferred
   // AI provider settings
@@ -46,6 +47,7 @@ const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
   modulesSearch: "ctrl+m",
+  elementScreenshotShortcut: "ctrl+shift+s",
   openOnCustomizationPage: true,
   preferredFeatures: [],
   aiProvider: "openrouter",
@@ -85,6 +87,7 @@ export function useSettings() {
           : [];
         settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
+        settings.elementScreenshotShortcut = stored.elementScreenshotShortcut || defaultSettings.elementScreenshotShortcut;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
         settings.aiProvider = stored.aiProvider === "puter" || !stored.aiProvider
           ? defaultSettings.aiProvider

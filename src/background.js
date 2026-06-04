@@ -179,7 +179,8 @@ chrome.commands.onCommand.addListener((command) => {
   const commandMap = {
     toggle_extension_ui: togglePanel,
     open_panel_scripts: openCommandView,
-    open_panel_custom_records: openCommandView
+    open_panel_custom_records: openCommandView,
+    capture_element_screenshot: startElementScreenshotSelection
   };
 
   const commandHandler = commandMap[command];
@@ -246,7 +247,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     MCP_USAGE_CLEAR: handleMcpUsageClear,
     MCP_GET_TOOLS: handleMcpGetTools,
     MCP_INSTALL_INFO: handleMcpInstallInfo,
-    NETSUITE_PROXY_FETCH: proxyNetsuiteIframeFetch
+    NETSUITE_PROXY_FETCH: proxyNetsuiteIframeFetch,
+    START_ELEMENT_SCREENSHOT_SELECTION: startElementScreenshotSelection,
+    CAPTURE_ELEMENT_SCREENSHOT: captureElementScreenshot
   };
 
   const messageHandler = messageMap[message.type];
@@ -312,6 +315,56 @@ const setUISource = ({ message }) => {
   uiSource = message.source;
 
   return true; // True to allow Asyncronous message
+};
+
+const startElementScreenshotSelection = ({ sendResponse } = {}) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, async ([tab]) => {
+    try {
+      if (!tab?.id || !tab.url?.includes("app.netsuite.com")) {
+        throw new Error("Open a NetSuite tab before starting element screenshot selection.");
+      }
+
+      await chrome.storage.local.set({
+        magic_netsuite_element_screenshot_request: {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          source: "background"
+        }
+      });
+
+      sendResponse?.({ ok: true });
+    } catch (error) {
+      console.error("[ElementScreenshot] Failed to start selection:", error);
+      sendResponse?.({ ok: false, error: error?.message || String(error) });
+    }
+  });
+
+  return true;
+};
+
+const captureElementScreenshot = ({ sender, sendResponse }) => {
+  const tabId = sender?.tab?.id;
+  if (!tabId) {
+    sendResponse({ ok: false, error: "No tab found for screenshot request." });
+    return true;
+  }
+
+  chrome.tabs.captureVisibleTab(
+    sender.tab.windowId,
+    { format: "png" },
+    (dataUrl) => {
+      if (chrome.runtime.lastError || !dataUrl) {
+        sendResponse({
+          ok: false,
+          error: chrome.runtime.lastError?.message || "Unable to capture visible tab."
+        });
+        return;
+      }
+
+      sendResponse({ ok: true, dataUrl });
+    }
+  );
+
+  return true;
 };
 
 // MCP MESSAGE HANDLERS

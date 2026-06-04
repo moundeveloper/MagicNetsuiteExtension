@@ -167,6 +167,12 @@ const resetExtensionUserId = async () => {
   extensionUserId.value = await regenerateExtensionUserId();
 };
 
+const startElementScreenshotSelection = async () => {
+  await chrome.runtime.sendMessage({
+    type: "START_ELEMENT_SCREENSHOT_SELECTION"
+  });
+};
+
 const fetchCopilotModelList = async () => {
   if (!settings.githubToken) return;
   copilotModelsFetchState.value = "loading";
@@ -413,6 +419,22 @@ onMounted(async () => {
         />
         <small>(On NetSuite pages)</small>
       </div>
+      <div class="shortcut-item">
+        <label for="element-screenshot">Element Screenshot:</label>
+        <InputText
+          id="element-screenshot"
+          v-model="settings.elementScreenshotShortcut"
+          placeholder="e.g., ctrl+shift+s"
+        />
+        <Button size="small" severity="secondary" outlined @click="startElementScreenshotSelection">
+          Select element
+        </Button>
+      </div>
+      <p class="provider-hint">
+        Starts a picker on the active NetSuite tab. Click an element, including
+        elements inside same-origin NetSuite iframes, to copy a PNG screenshot
+        to the clipboard.
+      </p>
       <div class="shortcut-item">
         <label for="customization-open">Open On Customization Page:</label>
         <Checkbox
