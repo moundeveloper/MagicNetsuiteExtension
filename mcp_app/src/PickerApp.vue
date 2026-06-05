@@ -707,6 +707,7 @@ async function sendToClaude(): Promise<void> {
         selectedItems,
       },
     });
+    await requestInlineDisplayMode();
     status.value = `Sent ${queued.value.length} item${queued.value.length === 1 ? "" : "s"}`;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -739,6 +740,19 @@ async function requestLargerDisplayMode(): Promise<void> {
     document.documentElement.dataset.displayMode = displayMode.value;
   } catch {
     displayMode.value = hostContext?.displayMode ?? "inline";
+    document.documentElement.dataset.displayMode = displayMode.value;
+  }
+}
+
+async function requestInlineDisplayMode(): Promise<void> {
+  if (displayMode.value !== "fullscreen") return;
+
+  try {
+    const result = await app.requestDisplayMode({ mode: "inline" });
+    displayMode.value = result.mode;
+    document.documentElement.dataset.displayMode = displayMode.value;
+  } catch {
+    displayMode.value = app.getHostContext()?.displayMode ?? displayMode.value;
     document.documentElement.dataset.displayMode = displayMode.value;
   }
 }
