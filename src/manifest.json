@@ -91,19 +91,19 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*.app.netsuite.com/*"],
+      "matches": ["*://*.netsuite.com/*"],
       "js": ["content/elementScreenshotPicker.js"],
       "all_frames": true,
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*.app.netsuite.com/app/site/hosting/scriptlet.nl*"],
+      "matches": ["*://*.netsuite.com/app/site/hosting/scriptlet.nl*"],
       "js": ["content/suiteletIframeBridge.js"],
       "all_frames": true,
       "run_at": "document_start"
     },
     {
-      "matches": ["*://*.app.netsuite.com/app/site/hosting/scriptlet.nl*"],
+      "matches": ["*://*.netsuite.com/app/site/hosting/scriptlet.nl*"],
       "js": ["content/suiteletIframePatch.js"],
       "all_frames": true,
       "run_at": "document_start",

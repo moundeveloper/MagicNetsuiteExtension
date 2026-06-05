@@ -5,6 +5,10 @@
   const OVERLAY_ID = "magic-netsuite-element-screenshot-overlay";
   const LABEL_ID = "magic-netsuite-element-screenshot-label";
   const CAPTURE_OVERLAY_CLASS = "magic-netsuite-element-screenshot-capture";
+  const CLIPBOARD_WRITE_REQUEST = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD";
+  const CLIPBOARD_WRITE_RESPONSE = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD_RESULT";
+  const FRAME_RECT_REQUEST = "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT";
+  const FRAME_RECT_RESPONSE = "MAGIC_NETSUITE_EXTENSION_FRAME_RECT";
 
   let active = false;
   let hoveredElement = null;
@@ -255,58 +259,101 @@
     });
   };
 
-  const getFrameOffsetToTop = () => {
-    let x = 0;
-    let y = 0;
+  const getDirectFrameRect = () => {
+    let left = 0;
+    let top = 0;
     let currentWindow = window;
 
     try {
       while (currentWindow !== currentWindow.top) {
         const frameElement = currentWindow.frameElement;
-        if (!frameElement) break;
+        if (!frameElement) return null;
+
         const rect = frameElement.getBoundingClientRect();
-        x += rect.left;
-        y += rect.top;
+        left += rect.left;
+        top += rect.top;
         currentWindow = currentWindow.parent;
       }
-    } catch {
-      return { x: 0, y: 0 };
-    }
 
-    return { x, y };
-  };
-
-  const getTopViewportSize = () => {
-    try {
       return {
-        width: window.top.innerWidth,
-        height: window.top.innerHeight
-      };
-    } catch {
-      return {
+        left,
+        top,
         width: window.innerWidth,
-        height: window.innerHeight
+        height: window.innerHeight,
+        viewportWidth: currentWindow.innerWidth,
+        viewportHeight: currentWindow.innerHeight
       };
+    } catch {
+      return null;
     }
   };
 
-  const getViewportRect = (element) => {
-    const rect = element.getBoundingClientRect();
-    const offset = getFrameOffsetToTop();
-    const viewport = getTopViewportSize();
+  const getParentFrameRect = () =>
+    new Promise((resolve, reject) => {
+      const directRect = getDirectFrameRect();
+      if (directRect) {
+        resolve(directRect);
+        return;
+      }
 
-    const left = Math.max(0, rect.left + offset.x);
-    const top = Math.max(0, rect.top + offset.y);
-    const right = Math.min(viewport.width, rect.right + offset.x);
-    const bottom = Math.min(viewport.height, rect.bottom + offset.y);
+      if (window.parent === window) {
+        resolve({
+          left: 0,
+          top: 0,
+          width: window.innerWidth,
+          height: window.innerHeight,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight
+        });
+        return;
+      }
+
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(new Error("Unable to locate iframe on the page."));
+      }, 1000);
+
+      function onMessage(event) {
+        if (
+          event.data?.type !== FRAME_RECT_RESPONSE ||
+          event.data.requestId !== requestId
+        ) {
+          return;
+        }
+
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+        if (event.data.error) {
+          reject(new Error(event.data.error));
+          return;
+        }
+        resolve(event.data.rect);
+      }
+
+      window.addEventListener("message", onMessage);
+      window.parent.postMessage({
+        type: FRAME_RECT_REQUEST,
+        requestId
+      }, "*");
+    });
+
+  const getViewportRect = async (element) => {
+    const rect = element.getBoundingClientRect();
+    const frameRect = await getParentFrameRect();
+
+    const left = Math.max(0, frameRect.left + rect.left);
+    const top = Math.max(0, frameRect.top + rect.top);
+    const right = Math.min(frameRect.viewportWidth, frameRect.left + rect.right);
+    const bottom = Math.min(frameRect.viewportHeight, frameRect.top + rect.bottom);
 
     return {
       left,
       top,
       width: Math.max(1, right - left),
       height: Math.max(1, bottom - top),
-      viewportWidth: viewport.width,
-      viewportHeight: viewport.height
+      viewportWidth: frameRect.viewportWidth,
+      viewportHeight: frameRect.viewportHeight
     };
   };
 
@@ -314,6 +361,14 @@
     const response = await fetch(dataUrl);
     return response.blob();
   };
+
+  const blobToDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error || new Error("Unable to read screenshot blob."));
+      reader.readAsDataURL(blob);
+    });
 
   const loadImage = (dataUrl) =>
     new Promise((resolve, reject) => {
@@ -323,13 +378,68 @@
       image.src = dataUrl;
     });
 
+  const writeImageBlobViaParent = async (blob) => {
+    if (window.parent === window) {
+      throw new Error("Clipboard write is blocked in this document.");
+    }
+
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const dataUrl = await blobToDataUrl(blob);
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener("message", onMessage);
+        reject(new Error("Clipboard write was blocked by the current iframe permissions policy."));
+      }, 3000);
+
+      function onMessage(event) {
+        if (
+          event.data?.type !== CLIPBOARD_WRITE_RESPONSE ||
+          event.data.requestId !== requestId
+        ) {
+          return;
+        }
+
+        clearTimeout(timer);
+        window.removeEventListener("message", onMessage);
+
+        if (event.data.ok) {
+          resolve();
+        } else {
+          reject(new Error(event.data.error || "Clipboard write failed."));
+        }
+      }
+
+      window.addEventListener("message", onMessage);
+      window.parent.postMessage({
+        type: CLIPBOARD_WRITE_REQUEST,
+        requestId,
+        dataUrl
+      }, "*");
+    });
+  };
+
+  const writeImageBlobToClipboard = async (blob) => {
+    if (window.parent !== window) {
+      await writeImageBlobViaParent(blob);
+      return;
+    }
+
+    if (navigator.clipboard?.write && window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      return;
+    }
+
+    throw new Error("Image clipboard write is not available in this document.");
+  };
+
   const waitForPaint = () =>
     new Promise((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 50)));
     });
 
   const copyElementScreenshot = async (element) => {
-    const rect = getViewportRect(element);
+    const rect = await getViewportRect(element);
     const response = await chrome.runtime.sendMessage({
       type: "CAPTURE_ELEMENT_SCREENSHOT",
       rect
@@ -366,12 +476,7 @@
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("Unable to render screenshot.");
 
-    if (navigator.clipboard?.write && window.ClipboardItem) {
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      return;
-    }
-
-    await navigator.clipboard.writeText(response.dataUrl);
+    await writeImageBlobToClipboard(blob);
   };
 
   const showToast = (message, tone = "ok") => {
@@ -499,26 +604,65 @@
   });
 
   window.addEventListener("message", (event) => {
-    if (event.data?.type !== "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT") return;
+    if (event.data?.type !== CLIPBOARD_WRITE_REQUEST) return;
 
-    const iframe = Array.from(document.querySelectorAll("iframe"))
-      .find((frame) => frame.contentWindow === event.source);
-
-    if (!iframe) return;
-
-    const rect = iframe.getBoundingClientRect();
-    event.source.postMessage({
-      type: "MAGIC_NETSUITE_EXTENSION_FRAME_RECT",
-      requestId: event.data.requestId,
-      rect: {
-        left: Math.max(0, rect.left),
-        top: Math.max(0, rect.top),
-        width: Math.max(1, rect.width),
-        height: Math.max(1, rect.height),
-        viewportWidth: window.innerWidth,
-        viewportHeight: window.innerHeight
+    (async () => {
+      try {
+        const blob = await dataUrlToBlob(event.data.dataUrl);
+        await writeImageBlobToClipboard(blob);
+        event.source?.postMessage({
+          type: CLIPBOARD_WRITE_RESPONSE,
+          requestId: event.data.requestId,
+          ok: true
+        }, "*");
+      } catch (error) {
+        event.source?.postMessage({
+          type: CLIPBOARD_WRITE_RESPONSE,
+          requestId: event.data.requestId,
+          ok: false,
+          error: error?.message || String(error)
+        }, "*");
       }
-    }, event.origin);
+    })();
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== FRAME_RECT_REQUEST) return;
+
+    (async () => {
+      try {
+        const iframe = Array.from(document.querySelectorAll("iframe"))
+          .find((frame) => frame.contentWindow === event.source);
+
+        if (!iframe) return;
+
+        const rect = iframe.getBoundingClientRect();
+        const parentRect = await getParentFrameRect();
+        const left = Math.max(0, parentRect.left + rect.left);
+        const top = Math.max(0, parentRect.top + rect.top);
+        const right = Math.min(parentRect.viewportWidth, parentRect.left + rect.right);
+        const bottom = Math.min(parentRect.viewportHeight, parentRect.top + rect.bottom);
+
+        event.source.postMessage({
+          type: FRAME_RECT_RESPONSE,
+          requestId: event.data.requestId,
+          rect: {
+            left,
+            top,
+            width: Math.max(1, right - left),
+            height: Math.max(1, bottom - top),
+            viewportWidth: parentRect.viewportWidth,
+            viewportHeight: parentRect.viewportHeight
+          }
+        }, "*");
+      } catch (error) {
+        event.source?.postMessage({
+          type: FRAME_RECT_RESPONSE,
+          requestId: event.data.requestId,
+          error: error?.message || String(error)
+        }, "*");
+      }
+    })();
   });
 
   loadShortcut();

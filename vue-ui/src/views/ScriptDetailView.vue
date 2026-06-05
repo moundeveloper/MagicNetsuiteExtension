@@ -1417,7 +1417,7 @@ onMounted(loadScript);
 .primary-btn:hover:not(:disabled) {
   border-color: var(--p-slate-400);
   background: var(--p-button-primary-hover-background);
-  color: var(--p-slate-800);
+  color: var(--p-slate-100);
 }
 
 .shortcut-kbd {
