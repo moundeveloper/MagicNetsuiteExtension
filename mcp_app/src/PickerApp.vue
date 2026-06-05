@@ -8,6 +8,15 @@
             <span class="status-dot" />
             {{ status }}
           </span>
+          <button
+            v-if="canRequestFullscreen"
+            class="context-modal-close"
+            type="button"
+            title="Fullscreen"
+            @click="requestLargerDisplayMode"
+          >
+            <span class="pi pi-expand" aria-hidden="true" />
+          </button>
           <button class="context-modal-close" type="button" title="Refresh" @click="checkBridge">
             <span class="pi pi-refresh" aria-hidden="true" />
           </button>
@@ -40,6 +49,16 @@
                 <span :class="recordTypesLoading ? 'pi pi-spin pi-spinner' : 'pi pi-angle-down'" aria-hidden="true" />
               </button>
               <div v-if="recordTypeMenuOpen" class="context-select-menu" role="listbox">
+                <label class="context-select-search-row">
+                  <span class="pi pi-search" aria-hidden="true" />
+                  <input
+                    v-model="recordTypeQuery"
+                    class="context-select-search"
+                    type="search"
+                    placeholder="Search record types"
+                    @keydown.escape.stop.prevent="recordTypeMenuOpen = false"
+                  />
+                </label>
                 <button
                   v-for="type in filteredRecordTypes"
                   :key="type.id"
@@ -90,7 +109,7 @@
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="record in records" :key="`${selectedRecordType}:${record.id}`">
+                  <tr v-for="record in paginatedRecords" :key="`${selectedRecordType}:${record.id}`">
                     <td>
                       <div class="context-primary-cell">
                         <span>
@@ -128,6 +147,18 @@
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div v-if="records.length > recordsPerPage" class="context-pagination">
+              <span>{{ records.length }} records</span>
+              <div>
+                <button type="button" class="context-page-btn" :disabled="recordPage <= 1" @click="previousRecordPage">
+                  <span class="pi pi-angle-left" aria-hidden="true" />
+                </button>
+                <span>Page {{ recordPage }} / {{ recordPageCount }}</span>
+                <button type="button" class="context-page-btn" :disabled="recordPage >= recordPageCount" @click="nextRecordPage">
+                  <span class="pi pi-angle-right" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -169,7 +200,7 @@
                       v-model="fileQuery"
                       class="fc-search-input"
                       type="search"
-                      placeholder="Search File Cabinet by file ID or name"
+                      placeholder="Search File Cabinet files and folders"
                       @keydown.enter.prevent="searchFiles"
                     />
                     <button
@@ -240,7 +271,7 @@
                           <td colspan="5">
                             <div class="context-empty context-empty--table">
                               <span class="pi pi-folder-open" aria-hidden="true" />
-                              <span>{{ fileQuery.trim() ? "No matching files." : "This folder is empty." }}</span>
+                              <span>{{ fileQuery.trim() ? "No matching files or folders." : "This folder is empty." }}</span>
                             </div>
                           </td>
                         </tr>
@@ -287,11 +318,6 @@
               <span class="context-toggle-slider" />
               <span>Include record sublists</span>
             </label>
-            <textarea
-              v-model="prompt"
-              class="agent-textarea context-prompt"
-              placeholder="Ask Claude what to do with the selected context"
-            />
             <button class="agent-primary-btn context-send" type="button" :disabled="queued.length === 0 || sending" @click="sendToClaude">
               <span :class="sending ? 'pi pi-spin pi-spinner' : 'pi pi-send'" aria-hidden="true" />
               {{ sending ? "Loading selected context..." : "Load into Claude" }}
@@ -343,22 +369,29 @@ type QueueItem = {
   recordType?: string;
 };
 
-const app = new App({ name: "Magic NetSuite Context Picker", version: "1.0.0" });
+const app = new App(
+  { name: "Magic NetSuite Context Picker", version: "1.0.0" },
+  { availableDisplayModes: ["inline", "fullscreen"] },
+);
 
 const tab = ref<Tab>("records");
 const status = ref("Connecting...");
 const error = ref("");
 const appReady = ref(false);
-const prompt = ref("Use the selected NetSuite context to answer my next question.");
 const includeSublists = ref(false);
+const displayMode = ref<"inline" | "fullscreen" | "pip">("inline");
+const availableDisplayModes = ref<Array<"inline" | "fullscreen" | "pip">>([]);
 
 const recordTypes = ref<RecordType[]>([]);
 const recordTypesLoading = ref(false);
 const selectedRecordType = ref("");
 const recordTypeMenuOpen = ref(false);
+const recordTypeQuery = ref("");
 const recordTypeSelectRef = ref<HTMLElement | null>(null);
 const recordQuery = ref("");
 const records = ref<RecordRow[]>([]);
+const recordPage = ref(1);
+const recordsPerPage = 24;
 const recordsLoading = ref(false);
 
 const fileQuery = ref("");
@@ -372,10 +405,6 @@ const queued = ref<QueueItem[]>([]);
 const sending = ref(false);
 const lastSaved = ref<{ count: number; time: string } | null>(null);
 
-const defaultPrompt = computed(() =>
-  prompt.value.trim() || "Use the selected NetSuite context to answer my next question.",
-);
-
 const selectedRecordTypeLabel = computed(() => {
   const selected = recordTypes.value.find((type) => type.id === selectedRecordType.value);
   if (selected) return `${selected.name} (${selected.id})`;
@@ -383,7 +412,18 @@ const selectedRecordTypeLabel = computed(() => {
 });
 
 const filteredRecordTypes = computed(() => {
-  return recordTypes.value;
+  const query = recordTypeQuery.value.trim().toLowerCase();
+  if (!query) return recordTypes.value;
+  return recordTypes.value.filter((type) =>
+    `${type.name} ${type.id}`.toLowerCase().includes(query),
+  );
+});
+
+const recordPageCount = computed(() => Math.max(1, Math.ceil(records.value.length / recordsPerPage)));
+
+const paginatedRecords = computed(() => {
+  const start = (recordPage.value - 1) * recordsPerPage;
+  return records.value.slice(start, start + recordsPerPage);
 });
 
 const fileCabinetItems = computed<CabinetItem[]>(() => {
@@ -401,6 +441,10 @@ const connectionClass = computed(() => {
   }
   return "status-pill--checking";
 });
+
+const canRequestFullscreen = computed(() =>
+  availableDisplayModes.value.includes("fullscreen") && displayMode.value !== "fullscreen",
+);
 
 function readStructured<T>(result: unknown, key: string, fallback: T): T {
   const direct = result as {
@@ -470,6 +514,8 @@ async function toggleRecordTypeMenu(): Promise<void> {
 async function selectRecordType(recordType: string): Promise<void> {
   selectedRecordType.value = recordType;
   recordTypeMenuOpen.value = false;
+  recordTypeQuery.value = "";
+  recordPage.value = 1;
   await searchRecords();
 }
 
@@ -480,6 +526,14 @@ function handleDocumentPointerDown(event: PointerEvent): void {
   recordTypeMenuOpen.value = false;
 }
 
+function previousRecordPage(): void {
+  recordPage.value = Math.max(1, recordPage.value - 1);
+}
+
+function nextRecordPage(): void {
+  recordPage.value = Math.min(recordPageCount.value, recordPage.value + 1);
+}
+
 async function searchRecords(): Promise<void> {
   if (!selectedRecordType.value) return;
   recordsLoading.value = true;
@@ -488,9 +542,10 @@ async function searchRecords(): Promise<void> {
     const result = await callTool("magic_netsuite_search_records", {
       recordType: selectedRecordType.value,
       query: recordQuery.value,
-      limit: 50,
+      limit: 100,
     });
     records.value = readStructured<RecordRow[]>(result, "records", []);
+    recordPage.value = 1;
   } catch (err) {
     records.value = [];
     error.value = err instanceof Error ? err.message : String(err);
@@ -509,8 +564,9 @@ async function searchFiles(): Promise<void> {
   error.value = "";
   try {
     const result = await callTool("magic_netsuite_search_files", { query, limit: 50 });
-    folders.value = [];
+    folders.value = readStructured<FolderRow[]>(result, "folders", []);
     fileBreadcrumbs.value = [];
+    currentFolderId.value = null;
     files.value = readStructured<FileRow[]>(result, "files", []);
   } catch (err) {
     folders.value = [];
@@ -651,13 +707,6 @@ async function sendToClaude(): Promise<void> {
         selectedItems,
       },
     });
-    await app.sendMessage({
-      role: "user",
-      content: [{
-        type: "text",
-        text: `${defaultPrompt.value}\n\nThe selected NetSuite context has also been saved in this MCP server. If the context is not visible in the conversation, call magic_netsuite_get_selected_context before answering.`,
-      }],
-    });
     status.value = `Sent ${queued.value.length} item${queued.value.length === 1 ? "" : "s"}`;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -667,14 +716,32 @@ async function sendToClaude(): Promise<void> {
 }
 
 app.ontoolresult = (result) => {
-  const structured = (result as { structuredContent?: { initialTab?: Tab; prompt?: string } })?.structuredContent;
+  const structured = (result as { structuredContent?: { initialTab?: Tab } })?.structuredContent;
   if (structured?.initialTab) tab.value = structured.initialTab;
-  if (structured?.prompt) prompt.value = structured.prompt;
 };
 
 app.onhostcontextchanged = (ctx) => {
   document.documentElement.dataset.theme = ctx.theme ?? "light";
+  const hostContext = app.getHostContext();
+  displayMode.value = ctx.displayMode ?? hostContext?.displayMode ?? displayMode.value;
+  availableDisplayModes.value = ctx.availableDisplayModes ?? hostContext?.availableDisplayModes ?? availableDisplayModes.value;
+  document.documentElement.dataset.displayMode = displayMode.value;
 };
+
+async function requestLargerDisplayMode(): Promise<void> {
+  const hostContext = app.getHostContext();
+  const modes = hostContext?.availableDisplayModes ?? availableDisplayModes.value;
+  if (!modes.includes("fullscreen") || displayMode.value === "fullscreen") return;
+
+  try {
+    const result = await app.requestDisplayMode({ mode: "fullscreen" });
+    displayMode.value = result.mode;
+    document.documentElement.dataset.displayMode = displayMode.value;
+  } catch {
+    displayMode.value = hostContext?.displayMode ?? "inline";
+    document.documentElement.dataset.displayMode = displayMode.value;
+  }
+}
 
 onMounted(async () => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
@@ -682,6 +749,11 @@ onMounted(async () => {
     await app.connect();
     appReady.value = true;
     status.value = "Connected";
+    const hostContext = app.getHostContext();
+    displayMode.value = hostContext?.displayMode ?? "inline";
+    availableDisplayModes.value = hostContext?.availableDisplayModes ?? [];
+    document.documentElement.dataset.displayMode = displayMode.value;
+    void requestLargerDisplayMode();
 
     window.setTimeout(() => {
       void checkBridge();

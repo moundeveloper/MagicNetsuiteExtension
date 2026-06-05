@@ -302,10 +302,9 @@ export function createServer() {
         description: "Open an interactive picker for NetSuite records and File Cabinet files, then load the selected context into Claude chat.",
         inputSchema: {
             initialTab: z.enum(["records", "files"]).optional().describe("Which picker tab to open first."),
-            prompt: z.string().optional().describe("Optional instruction to send after selected context is loaded."),
         },
         _meta: { ui: { resourceUri } },
-    }, async ({ initialTab = "records", prompt = "" }) => toolResult({ initialTab, prompt }, "Use the picker below to select NetSuite context for Claude."));
+    }, async ({ initialTab = "records" }) => toolResult({ initialTab }, "Use the picker below to select NetSuite context for Claude."));
     server.registerTool("magic_netsuite_bridge_status", {
         title: "Magic NetSuite Bridge Status",
         description: "Check whether the Magic NetSuite extension native bridge is reachable.",
@@ -483,17 +482,38 @@ export function createServer() {
         }, "File Cabinet folder loaded.");
     });
     server.registerTool("magic_netsuite_search_files", {
-        title: "Search NetSuite Files",
-        description: "Search the NetSuite File Cabinet by file ID or name.",
+        title: "Search NetSuite File Cabinet",
+        description: "Search the NetSuite File Cabinet by file/folder ID or name.",
         inputSchema: {
             query: z.string(),
             limit: z.number().int().min(1).max(100).optional(),
         },
     }, async ({ query, limit = 50 }) => {
-        const args = isNumeric(query) ? { id: query } : { name: query };
-        const data = parseToolJson(await callExtensionTool("netsuite_find_file", args));
-        const files = rowsFrom(data)
-            .slice(0, limit)
+        const cleanQuery = query.trim();
+        const escaped = cleanQuery.replace(/'/g, "''");
+        const numeric = isNumeric(cleanQuery);
+        const rowLimit = Math.max(1, Math.min(100, limit));
+        const folderSql = numeric
+            ? `
+        SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
+        FROM MediaItemFolder
+        WHERE id = ${Number(cleanQuery)}
+        ORDER BY name
+      `
+            : `
+        SELECT id, name, parent, foldertype, numFolderFiles, folderSize, lastModifiedDate, description
+        FROM MediaItemFolder
+        WHERE LOWER(name) LIKE LOWER('%${escaped}%')
+          AND ROWNUM <= ${rowLimit}
+        ORDER BY name
+      `;
+        const [folderRows, fileData] = await Promise.all([
+            runSuiteQLRows(folderSql),
+            callExtensionTool("netsuite_find_file", numeric ? { id: cleanQuery } : { name: cleanQuery }).then(parseToolJson),
+        ]);
+        const folders = folderRows.slice(0, rowLimit).map(mapFolderRow);
+        const files = rowsFrom(fileData)
+            .slice(0, rowLimit)
             .map((row) => ({
             id: Number(row.id ?? row.ID),
             name: String(row.name ?? row.Name ?? row.id ?? ""),
@@ -503,7 +523,7 @@ export function createServer() {
             url: row.url ? String(row.url) : undefined,
         }))
             .filter((file) => Number.isFinite(file.id) && file.name);
-        return toolResult({ files }, `Found ${files.length} files.`);
+        return toolResult({ folders, files, breadcrumbs: [], folderId: null }, `Found ${folders.length} folders and ${files.length} files.`);
     });
     server.registerTool("magic_netsuite_read_file_context", {
         title: "Read NetSuite File Context",

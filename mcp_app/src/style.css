@@ -47,7 +47,8 @@ html,
 body,
 #app {
   width: 100%;
-  min-height: 640px;
+  height: 100%;
+  min-height: 520px;
   margin: 0;
 }
 
@@ -77,6 +78,12 @@ textarea {
   content: "R";
 }
 
+.pi-expand::before {
+  content: "[]";
+  font-size: 0.78em;
+  font-weight: 800;
+}
+
 .pi-database::before {
   content: "D";
 }
@@ -92,6 +99,10 @@ textarea {
 
 .pi-angle-right::before {
   content: ">";
+}
+
+.pi-angle-left::before {
+  content: "<";
 }
 
 .pi-angle-down::before {
@@ -148,7 +159,8 @@ textarea {
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 640px;
+  height: 100%;
+  min-height: 520px;
   padding: 8px;
   background: rgba(15, 23, 42, 0.45);
 }
@@ -156,14 +168,30 @@ textarea {
 .context-modal {
   display: flex;
   flex-direction: column;
-  width: min(920px, 96vw);
-  height: 620px;
-  min-height: 540px;
+  width: min(1120px, 98vw);
+  height: min(820px, calc(100vh - 16px));
+  min-height: min(620px, calc(100vh - 16px));
   max-height: none;
   overflow: hidden;
   border-radius: 10px;
   background: #ffffff;
   box-shadow: 0 24px 48px rgba(15, 23, 42, 0.22);
+}
+
+:root[data-display-mode="fullscreen"] .context-modal-overlay {
+  padding: 0;
+}
+
+:root[data-display-mode="fullscreen"] .context-modal {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root[data-display-mode="fullscreen"] .context-modal-body {
+  grid-template-columns: minmax(0, 1fr) 292px;
 }
 
 .context-modal-header {
@@ -172,8 +200,8 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 44px;
-  padding: 6px 10px;
+  min-height: 38px;
+  padding: 4px 9px;
   border-bottom: 1px solid var(--p-slate-200);
   background: #f8fafc;
 }
@@ -189,7 +217,7 @@ textarea {
 .context-header-actions {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .context-modal-close {
@@ -197,7 +225,7 @@ textarea {
   align-items: center;
   justify-content: center;
   width: 26px;
-  height: 26px;
+  height: 24px;
   border: 1px solid var(--p-slate-200);
   border-radius: 6px;
   background: #ffffff;
@@ -219,7 +247,7 @@ textarea {
   min-height: 22px;
   border: 1px solid var(--p-slate-200);
   border-radius: 999px;
-  padding: 0 7px;
+  padding: 0 6px;
   background: #ffffff;
   color: var(--p-slate-500);
   font-size: 0.64rem;
@@ -252,9 +280,9 @@ textarea {
   grid-template-rows: auto minmax(0, 1fr) auto;
   flex: 1;
   min-height: 0;
-  gap: 6px;
+  gap: 5px;
   overflow: hidden;
-  padding: 6px 8px 8px;
+  padding: 5px 7px 7px;
 }
 
 .context-tabs {
@@ -265,7 +293,7 @@ textarea {
   justify-self: flex-start;
   flex-shrink: 0;
   gap: 2px;
-  padding: 2px;
+  padding: 1px;
   border: 1px solid var(--p-slate-200);
   border-radius: 7px;
   background: #f8fafc;
@@ -277,14 +305,14 @@ textarea {
   justify-content: center;
   gap: 6px;
   min-width: 150px;
-  min-height: 25px;
+  min-height: 22px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--p-slate-500);
   cursor: pointer;
   font: inherit;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
   font-weight: 750;
 }
 
@@ -408,6 +436,37 @@ textarea {
   padding: 4px;
 }
 
+.context-select-search-row {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 29px;
+  margin-bottom: 3px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--p-slate-400);
+  padding: 3px 6px;
+}
+
+.context-select-search {
+  width: 100%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-700);
+  font: inherit;
+  font-size: 0.68rem;
+  outline: none;
+}
+
+.context-select-search::placeholder {
+  color: var(--p-slate-400);
+}
+
 .context-select-option {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -487,8 +546,54 @@ textarea {
   height: 0;
   overflow: auto;
   border: 1px solid var(--p-slate-200);
-  border-radius: 8px;
+  border-radius: 8px 8px 0 0;
   background: var(--p-slate-50);
+}
+
+.context-pagination {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 25px;
+  border: 1px solid var(--p-slate-200);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #f8fafc;
+  color: var(--p-slate-500);
+  font-size: 0.62rem;
+  font-weight: 750;
+  padding: 2px 7px;
+}
+
+.context-pagination > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 5px;
+  background: #ffffff;
+  color: var(--p-slate-600);
+  cursor: pointer;
+}
+
+.context-page-btn:hover:not(:disabled) {
+  border-color: #c4b5fd;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
+}
+
+.context-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .context-data-table table {
@@ -1000,15 +1105,6 @@ textarea {
   transform: translateX(11px);
 }
 
-.agent-textarea {
-  width: 100%;
-  resize: vertical;
-  min-height: 48px;
-  padding: 6px 7px;
-  font-size: 0.68rem;
-  line-height: 1.3;
-}
-
 .agent-primary-btn,
 .agent-secondary-btn {
   display: inline-flex;
@@ -1081,20 +1177,21 @@ textarea {
 @media (max-width: 760px) {
   .context-modal {
     width: 100vw;
-    height: 640px;
+    height: 100vh;
+    min-height: 520px;
     max-height: none;
     border-radius: 0;
   }
 
   .context-modal-overlay {
-    min-height: 640px;
+    min-height: 520px;
     padding: 0;
   }
 
   .context-modal-body {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr) auto auto;
-    padding: 10px;
+    padding: 7px;
   }
 
   .context-tabs,
@@ -1110,7 +1207,7 @@ textarea {
 
   .context-rail {
     grid-row: 3;
-    max-height: 185px;
+    max-height: 128px;
   }
 
   .context-tabs {
@@ -1124,6 +1221,6 @@ textarea {
 
 @media (max-width: 760px) and (min-height: 620px) {
   .context-modal-body {
-    grid-template-rows: auto minmax(340px, 1fr) minmax(132px, 175px) auto;
+    grid-template-rows: auto minmax(390px, 1fr) minmax(92px, 124px) auto;
   }
 }
