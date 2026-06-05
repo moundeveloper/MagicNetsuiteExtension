@@ -360,6 +360,13 @@ function toolResult(data: unknown, message = "Done."): CallToolResult {
   };
 }
 
+function markdownToolResult(data: Record<string, unknown> & { markdown: string }, fallbackMessage: string): CallToolResult {
+  return {
+    content: [{ type: "text", text: data.markdown || fallbackMessage }],
+    structuredContent: data,
+  };
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "Magic NetSuite MCP App",
@@ -367,6 +374,24 @@ export function createServer(): McpServer {
   });
 
   const resourceUri = "ui://magic-netsuite/context-picker.html";
+
+  server.registerPrompt("open_context_picker", {
+    title: "Open Magic NetSuite Context Picker",
+    description: "Open the Magic NetSuite context picker MCP App for selecting records and File Cabinet files.",
+    argsSchema: {
+      initialTab: z.enum(["records", "files"]).optional(),
+    },
+  }, ({ initialTab = "records" }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `Open the Magic NetSuite context picker using magic_netsuite_context_picker with initialTab "${initialTab}".`,
+        },
+      },
+    ],
+  }));
 
   registerAppTool(
     server,
@@ -525,7 +550,7 @@ export function createServer(): McpServer {
       summarizeJson(includeSublists ? { body, sublists } : body),
       "```",
     ].join("\n");
-    return toolResult({ markdown, body, sublists }, `Loaded ${recordType} #${recordId}.`);
+    return markdownToolResult({ markdown, body, sublists }, `Loaded ${recordType} #${recordId}.`);
   });
 
   server.registerTool("magic_netsuite_list_file_cabinet_folder", {
@@ -620,7 +645,7 @@ export function createServer(): McpServer {
       summarizeJson(file),
       "```",
     ].join("\n");
-    return toolResult({ markdown, file }, `Loaded file #${fileId}.`);
+    return markdownToolResult({ markdown, file }, `Loaded file #${fileId}.`);
   });
 
   registerAppResource(

@@ -28,18 +28,34 @@
 
         <section v-if="tab === 'records'" class="context-panel context-panel--records">
           <div class="context-toolbar">
-            <select
-              v-model="selectedRecordType"
-              class="context-select"
-              :disabled="recordTypesLoading"
-              @focus="ensureRecordTypes"
-              @change="searchRecords"
-            >
-              <option value="" disabled>Record type</option>
-              <option v-for="type in recordTypes" :key="type.id" :value="type.id">
-                {{ type.name }} ({{ type.id }})
-              </option>
-            </select>
+            <div ref="recordTypeSelectRef" class="context-select-shell">
+              <button
+                type="button"
+                class="context-select-trigger"
+                :class="{ open: recordTypeMenuOpen }"
+                :disabled="recordTypesLoading"
+                @click="toggleRecordTypeMenu"
+              >
+                <span>{{ selectedRecordTypeLabel }}</span>
+                <span :class="recordTypesLoading ? 'pi pi-spin pi-spinner' : 'pi pi-angle-down'" aria-hidden="true" />
+              </button>
+              <div v-if="recordTypeMenuOpen" class="context-select-menu" role="listbox">
+                <button
+                  v-for="type in filteredRecordTypes"
+                  :key="type.id"
+                  type="button"
+                  class="context-select-option"
+                  :class="{ active: selectedRecordType === type.id }"
+                  role="option"
+                  :aria-selected="selectedRecordType === type.id"
+                  @click="selectRecordType(type.id)"
+                >
+                  <strong>{{ type.name }}</strong>
+                  <small>{{ type.id }}</small>
+                </button>
+                <p v-if="filteredRecordTypes.length === 0" class="context-select-empty">No record types loaded.</p>
+              </div>
+            </div>
             <input
               v-model="recordQuery"
               class="context-search"
@@ -294,7 +310,7 @@
 
 <script setup lang="ts">
 import { App } from "@modelcontextprotocol/ext-apps";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 type Tab = "records" | "files";
 type RecordType = { id: string; name: string };
@@ -339,6 +355,8 @@ const includeSublists = ref(false);
 const recordTypes = ref<RecordType[]>([]);
 const recordTypesLoading = ref(false);
 const selectedRecordType = ref("");
+const recordTypeMenuOpen = ref(false);
+const recordTypeSelectRef = ref<HTMLElement | null>(null);
 const recordQuery = ref("");
 const records = ref<RecordRow[]>([]);
 const recordsLoading = ref(false);
@@ -358,6 +376,16 @@ const defaultPrompt = computed(() =>
   prompt.value.trim() || "Use the selected NetSuite context to answer my next question.",
 );
 
+const selectedRecordTypeLabel = computed(() => {
+  const selected = recordTypes.value.find((type) => type.id === selectedRecordType.value);
+  if (selected) return `${selected.name} (${selected.id})`;
+  return recordTypesLoading.value ? "Loading record types..." : "Record type";
+});
+
+const filteredRecordTypes = computed(() => {
+  return recordTypes.value;
+});
+
 const fileCabinetItems = computed<CabinetItem[]>(() => {
   const folderItems: CabinetItem[] = folders.value.map((folder) => ({ ...folder, type: "folder" }));
   const fileItems: CabinetItem[] = files.value.map((file) => ({ ...file, type: "file" }));
@@ -375,8 +403,23 @@ const connectionClass = computed(() => {
 });
 
 function readStructured<T>(result: unknown, key: string, fallback: T): T {
-  const structured = (result as { structuredContent?: Record<string, unknown> })?.structuredContent;
-  return (structured?.[key] as T | undefined) ?? fallback;
+  const direct = result as {
+    structuredContent?: Record<string, unknown>;
+    result?: { structuredContent?: Record<string, unknown>; content?: Array<{ type: string; text?: string }> };
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const structured = direct?.structuredContent ?? direct?.result?.structuredContent;
+  if (structured?.[key] !== undefined) return structured[key] as T;
+
+  const text = (direct?.content ?? direct?.result?.content)?.find((item) => item.type === "text")?.text;
+  if (!text) return fallback;
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (parsed?.[key] !== undefined) return parsed[key] as T;
+  } catch {
+    if (key === "markdown") return text as T;
+  }
+  return fallback;
 }
 
 async function callTool(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
@@ -417,6 +460,24 @@ async function loadRecordTypes(): Promise<void> {
 
 async function ensureRecordTypes(): Promise<void> {
   if (recordTypes.value.length === 0) await loadRecordTypes();
+}
+
+async function toggleRecordTypeMenu(): Promise<void> {
+  await ensureRecordTypes();
+  recordTypeMenuOpen.value = !recordTypeMenuOpen.value;
+}
+
+async function selectRecordType(recordType: string): Promise<void> {
+  selectedRecordType.value = recordType;
+  recordTypeMenuOpen.value = false;
+  await searchRecords();
+}
+
+function handleDocumentPointerDown(event: PointerEvent): void {
+  if (!recordTypeMenuOpen.value) return;
+  const target = event.target instanceof Node ? event.target : null;
+  if (target && recordTypeSelectRef.value?.contains(target)) return;
+  recordTypeMenuOpen.value = false;
 }
 
 async function searchRecords(): Promise<void> {
@@ -616,6 +677,7 @@ app.onhostcontextchanged = (ctx) => {
 };
 
 onMounted(async () => {
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
   try {
     await app.connect();
     appReady.value = true;
@@ -629,5 +691,9 @@ onMounted(async () => {
     status.value = "Connection failed";
     error.value = err instanceof Error ? err.message : String(err);
   }
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", handleDocumentPointerDown);
 });
 </script>

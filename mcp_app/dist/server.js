@@ -268,12 +268,35 @@ function toolResult(data, message = "Done.") {
         structuredContent: isRecord(data) ? data : { value: data },
     };
 }
+function markdownToolResult(data, fallbackMessage) {
+    return {
+        content: [{ type: "text", text: data.markdown || fallbackMessage }],
+        structuredContent: data,
+    };
+}
 export function createServer() {
     const server = new McpServer({
         name: "Magic NetSuite MCP App",
         version: "1.0.0",
     });
     const resourceUri = "ui://magic-netsuite/context-picker.html";
+    server.registerPrompt("open_context_picker", {
+        title: "Open Magic NetSuite Context Picker",
+        description: "Open the Magic NetSuite context picker MCP App for selecting records and File Cabinet files.",
+        argsSchema: {
+            initialTab: z.enum(["records", "files"]).optional(),
+        },
+    }, ({ initialTab = "records" }) => ({
+        messages: [
+            {
+                role: "user",
+                content: {
+                    type: "text",
+                    text: `Open the Magic NetSuite context picker using magic_netsuite_context_picker with initialTab "${initialTab}".`,
+                },
+            },
+        ],
+    }));
     registerAppTool(server, "magic_netsuite_context_picker", {
         title: "Magic NetSuite Context Picker",
         description: "Open an interactive picker for NetSuite records and File Cabinet files, then load the selected context into Claude chat.",
@@ -410,7 +433,7 @@ export function createServer() {
             summarizeJson(includeSublists ? { body, sublists } : body),
             "```",
         ].join("\n");
-        return toolResult({ markdown, body, sublists }, `Loaded ${recordType} #${recordId}.`);
+        return markdownToolResult({ markdown, body, sublists }, `Loaded ${recordType} #${recordId}.`);
     });
     server.registerTool("magic_netsuite_list_file_cabinet_folder", {
         title: "List NetSuite File Cabinet Folder",
@@ -498,7 +521,7 @@ export function createServer() {
             summarizeJson(file),
             "```",
         ].join("\n");
-        return toolResult({ markdown, file }, `Loaded file #${fileId}.`);
+        return markdownToolResult({ markdown, file }, `Loaded file #${fileId}.`);
     });
     registerAppResource(server, resourceUri, resourceUri, { mimeType: RESOURCE_MIME_TYPE }, async () => {
         const html = await fs.readFile(path.join(DIST_DIR, "mcp-app.html"), "utf8");
