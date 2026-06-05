@@ -320,9 +320,21 @@ const setUISource = ({ message }) => {
 const startElementScreenshotSelection = ({ sendResponse } = {}) => {
   chrome.tabs.query({ active: true, currentWindow: true }, async ([tab]) => {
     try {
-      if (!tab?.id || !tab.url?.includes("app.netsuite.com")) {
-        throw new Error("Open a NetSuite tab before starting element screenshot selection.");
+      if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) {
+        throw new Error("Open a regular web page before starting element screenshot selection.");
       }
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content/elementScreenshotPicker.js"]
+      });
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["content/elementScreenshotPicker.js"]
+      }).catch((error) => {
+        console.warn("[ElementScreenshot] Some frames could not receive the picker:", error);
+      });
 
       await chrome.storage.local.set({
         magic_netsuite_element_screenshot_request: {

@@ -1,4 +1,7 @@
 (() => {
+  if (window.__magicNetsuiteElementScreenshotPickerInstalled) return;
+  window.__magicNetsuiteElementScreenshotPickerInstalled = true;
+
   const START_KEY = "magic_netsuite_element_screenshot_request";
   const STOP_KEY = "magic_netsuite_element_screenshot_stop";
   const DEFAULT_SHORTCUT = "ctrl+shift+s";
@@ -18,6 +21,7 @@
   let captureOverlays = [];
   let captureOverlaySyncQueued = false;
   let captureOverlaySync = null;
+  let documentCaptureListenersActive = false;
 
   const parseShortcut = (value) => {
     const parts = String(value || DEFAULT_SHORTCUT)
@@ -231,6 +235,22 @@
     captureOverlaySyncQueued = false;
     captureOverlays.forEach((element) => element.remove());
     captureOverlays = [];
+  };
+
+  const startDocumentCaptureListeners = () => {
+    if (documentCaptureListenersActive) return;
+    documentCaptureListenersActive = true;
+    document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("pointermove", onMouseMove, true);
+    document.addEventListener("click", onClick, true);
+  };
+
+  const stopDocumentCaptureListeners = () => {
+    if (!documentCaptureListenersActive) return;
+    documentCaptureListenersActive = false;
+    document.removeEventListener("mousemove", onMouseMove, true);
+    document.removeEventListener("pointermove", onMouseMove, true);
+    document.removeEventListener("click", onClick, true);
   };
 
   const updateOverlay = (element) => {
@@ -501,6 +521,7 @@
   const stopListeners = () => {
     active = false;
     hoveredElement = null;
+    stopDocumentCaptureListeners();
     hideOverlay();
     document.removeEventListener("keydown", onPickerKeyDown, true);
   };
@@ -515,6 +536,7 @@
     active = true;
     ensureOverlay();
     startCaptureOverlays();
+    startDocumentCaptureListeners();
     document.addEventListener("keydown", onPickerKeyDown, true);
     showToast("Element screenshot picker enabled");
   };

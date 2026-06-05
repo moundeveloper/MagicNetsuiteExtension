@@ -91,7 +91,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["*://*.netsuite.com/*"],
+      "matches": ["<all_urls>"],
       "js": ["content/elementScreenshotPicker.js"],
       "all_frames": true,
       "run_at": "document_idle"
