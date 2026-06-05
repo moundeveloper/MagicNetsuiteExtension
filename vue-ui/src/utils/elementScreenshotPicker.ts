@@ -1,6 +1,9 @@
 const START_KEY = "magic_netsuite_element_screenshot_request";
 const STOP_KEY = "magic_netsuite_element_screenshot_stop";
 const DEFAULT_SHORTCUT = "ctrl+shift+s";
+const OVERLAY_ID = "magic-netsuite-element-screenshot-overlay";
+const LABEL_ID = "magic-netsuite-element-screenshot-label";
+const CAPTURE_OVERLAY_CLASS = "magic-netsuite-element-screenshot-capture";
 
 let installed = false;
 let active = false;
@@ -8,6 +11,9 @@ let hoveredElement: Element | null = null;
 let shortcut = DEFAULT_SHORTCUT;
 let overlay: HTMLDivElement | null = null;
 let label: HTMLDivElement | null = null;
+let captureOverlays: HTMLDivElement[] = [];
+let captureOverlaySyncQueued = false;
+let captureOverlaySync: (() => void) | null = null;
 
 const parseShortcut = (value: string) => {
   const parts = String(value || DEFAULT_SHORTCUT)
@@ -49,7 +55,7 @@ const requestSelection = async () => {
 };
 
 const requestStopSelection = () => {
-  chrome.storage.local
+  return chrome.storage.local
     .set({
       [STOP_KEY]: {
         id: `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -62,6 +68,7 @@ const ensureOverlay = () => {
   if (overlay && label) return;
 
   overlay = document.createElement("div");
+  overlay.id = OVERLAY_ID;
   Object.assign(overlay.style, {
     position: "fixed",
     zIndex: "2147483646",
@@ -74,6 +81,7 @@ const ensureOverlay = () => {
   });
 
   label = document.createElement("div");
+  label.id = LABEL_ID;
   label.textContent = "Click to copy element screenshot · Esc to cancel";
   Object.assign(label.style, {
     position: "fixed",
@@ -93,8 +101,147 @@ const ensureOverlay = () => {
 };
 
 const hideOverlay = () => {
-  if (overlay) overlay.style.display = "none";
-  if (label) label.style.display = "none";
+  if (overlay) {
+    overlay.remove();
+    overlay = null;
+  }
+  if (label) {
+    label.remove();
+    label = null;
+  }
+};
+
+const createCaptureOverlay = (rect: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}) => {
+  const element = document.createElement("div");
+  element.className = CAPTURE_OVERLAY_CLASS;
+  Object.assign(element.style, {
+    position: "fixed",
+    left: `${Math.max(0, rect.left)}px`,
+    top: `${Math.max(0, rect.top)}px`,
+    width: `${Math.max(0, rect.width)}px`,
+    height: `${Math.max(0, rect.height)}px`,
+    zIndex: "2147483644",
+    background: "transparent",
+    cursor: "crosshair",
+    pointerEvents: "auto"
+  });
+
+  element.addEventListener("mousemove", onMouseMove, true);
+  element.addEventListener("click", onClick, true);
+  document.documentElement.appendChild(element);
+  return element;
+};
+
+const getVisibleIframeRects = () =>
+  Array.from(document.querySelectorAll("iframe"))
+    .map((iframe) => iframe.getBoundingClientRect())
+    .map((rect) => ({
+      left: Math.max(0, rect.left),
+      top: Math.max(0, rect.top),
+      right: Math.min(window.innerWidth, rect.right),
+      bottom: Math.min(window.innerHeight, rect.bottom)
+    }))
+    .filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
+
+const rebuildCaptureOverlays = () => {
+  captureOverlays.forEach((element) => element.remove());
+  captureOverlays = [];
+
+  const iframeRects = getVisibleIframeRects().sort((a, b) => a.top - b.top);
+  let bands = [
+    { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+  ];
+
+  iframeRects.forEach((hole) => {
+    const nextBands: typeof bands = [];
+    bands.forEach((band) => {
+      const intersects =
+        hole.left < band.right &&
+        hole.right > band.left &&
+        hole.top < band.bottom &&
+        hole.bottom > band.top;
+
+      if (!intersects) {
+        nextBands.push(band);
+        return;
+      }
+
+      if (hole.top > band.top) {
+        nextBands.push({
+          left: band.left,
+          top: band.top,
+          right: band.right,
+          bottom: hole.top
+        });
+      }
+      if (hole.bottom < band.bottom) {
+        nextBands.push({
+          left: band.left,
+          top: hole.bottom,
+          right: band.right,
+          bottom: band.bottom
+        });
+      }
+      if (hole.left > band.left) {
+        nextBands.push({
+          left: band.left,
+          top: Math.max(band.top, hole.top),
+          right: hole.left,
+          bottom: Math.min(band.bottom, hole.bottom)
+        });
+      }
+      if (hole.right < band.right) {
+        nextBands.push({
+          left: hole.right,
+          top: Math.max(band.top, hole.top),
+          right: band.right,
+          bottom: Math.min(band.bottom, hole.bottom)
+        });
+      }
+    });
+    bands = nextBands.filter((band) => band.right > band.left && band.bottom > band.top);
+  });
+
+  captureOverlays = bands.map((band) =>
+    createCaptureOverlay({
+      left: band.left,
+      top: band.top,
+      width: band.right - band.left,
+      height: band.bottom - band.top
+    })
+  );
+};
+
+const startCaptureOverlays = () => {
+  captureOverlaySync = () => {
+    if (!active || captureOverlaySyncQueued) return;
+    captureOverlaySyncQueued = true;
+    requestAnimationFrame(() => {
+      captureOverlaySyncQueued = false;
+      if (!active) return;
+      rebuildCaptureOverlays();
+    });
+  };
+
+  rebuildCaptureOverlays();
+  window.addEventListener("resize", captureOverlaySync, true);
+  window.addEventListener("scroll", captureOverlaySync, true);
+};
+
+const stopCaptureOverlays = () => {
+  if (captureOverlaySync) {
+    window.removeEventListener("resize", captureOverlaySync, true);
+    window.removeEventListener("scroll", captureOverlaySync, true);
+    captureOverlaySync = null;
+  }
+  captureOverlaySyncQueued = false;
+  captureOverlays.forEach((element) => element.remove());
+  captureOverlays = [];
 };
 
 const updateOverlay = (element: Element | null) => {
@@ -133,7 +280,7 @@ const loadImage = (dataUrl: string) =>
 
 const waitForPaint = () =>
   new Promise<void>((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    requestAnimationFrame(() => requestAnimationFrame(() => window.setTimeout(resolve, 50)));
   });
 
 const getParentFrameRect = () =>
@@ -266,27 +413,45 @@ const showToast = (message: string, tone: "ok" | "error" = "ok") => {
   window.setTimeout(() => toast.remove(), 2200);
 };
 
-const stopSelection = () => {
+const stopListeners = () => {
   active = false;
   hoveredElement = null;
   hideOverlay();
-  document.removeEventListener("mousemove", onMouseMove, true);
-  document.removeEventListener("click", onClick, true);
   document.removeEventListener("keydown", onPickerKeyDown, true);
+};
+
+const stopSelection = () => {
+  stopListeners();
+  stopCaptureOverlays();
 };
 
 const startSelection = () => {
   stopSelection();
   active = true;
   ensureOverlay();
-  document.addEventListener("mousemove", onMouseMove, true);
-  document.addEventListener("click", onClick, true);
+  startCaptureOverlays();
   document.addEventListener("keydown", onPickerKeyDown, true);
   showToast("Element screenshot picker enabled");
 };
 
+function getElementUnderCursor(x: number, y: number): Element | null {
+  captureOverlays.forEach((element) => {
+    element.style.pointerEvents = "none";
+  });
+  const elements = document.elementsFromPoint(x, y);
+  captureOverlays.forEach((element) => {
+    element.style.pointerEvents = "auto";
+  });
+
+  return elements.find((el) =>
+    el !== overlay &&
+    el !== label &&
+    !el.classList?.contains(CAPTURE_OVERLAY_CLASS)
+  ) ?? null;
+}
+
 function onMouseMove(event: MouseEvent) {
-  hoveredElement = event.target instanceof Element ? event.target : null;
+  hoveredElement = getElementUnderCursor(event.clientX, event.clientY);
   updateOverlay(hoveredElement);
 }
 
@@ -296,9 +461,9 @@ async function onClick(event: MouseEvent) {
   event.stopPropagation();
   event.stopImmediatePropagation();
 
-  const element = event.target instanceof Element ? event.target : null;
+  const element = getElementUnderCursor(event.clientX, event.clientY);
   stopSelection();
-  requestStopSelection();
+  await requestStopSelection();
 
   if (!element) return;
 

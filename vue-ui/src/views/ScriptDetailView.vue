@@ -1410,7 +1410,7 @@ onMounted(loadScript);
   min-height: 32px;
   border: 1px solid var(--p-slate-300);
   background: var(--p-button-primary-background);
-  color: var(--p-slate-600);
+  color: var(--p-slate-100);
   padding: 6px 10px;
 }
 
