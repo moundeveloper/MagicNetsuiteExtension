@@ -4,6 +4,10 @@ const DEFAULT_SHORTCUT = "ctrl+shift+s";
 const OVERLAY_ID = "magic-netsuite-element-screenshot-overlay";
 const LABEL_ID = "magic-netsuite-element-screenshot-label";
 const CAPTURE_OVERLAY_CLASS = "magic-netsuite-element-screenshot-capture";
+const CLIPBOARD_WRITE_REQUEST = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD";
+const CLIPBOARD_WRITE_RESPONSE = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD_RESULT";
+const FRAME_RECT_REQUEST = "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT";
+const FRAME_RECT_RESPONSE = "MAGIC_NETSUITE_EXTENSION_FRAME_RECT";
 
 let installed = false;
 let active = false;
@@ -278,10 +282,112 @@ const loadImage = (dataUrl: string) =>
     image.src = dataUrl;
   });
 
+const blobToDataUrl = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read screenshot blob."));
+    reader.readAsDataURL(blob);
+  });
+
+const dataUrlToBlob = async (dataUrl: string) => {
+  const response = await fetch(dataUrl);
+  return response.blob();
+};
+
+const postToSourceWindow = (source: MessageEventSource | null, message: unknown) => {
+  if (!source) return;
+  (source as Window).postMessage(message, "*");
+};
+
+const writeImageBlobViaParent = async (blob: Blob) => {
+  if (window.parent === window) {
+    throw new Error("Clipboard write is blocked in this document.");
+  }
+
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const dataUrl = await blobToDataUrl(blob);
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("Clipboard write was blocked by the current iframe permissions policy."));
+    }, 3000);
+
+    function onMessage(event: MessageEvent) {
+      if (
+        event.data?.type !== CLIPBOARD_WRITE_RESPONSE ||
+        event.data.requestId !== requestId
+      ) {
+        return;
+      }
+
+      window.clearTimeout(timer);
+      window.removeEventListener("message", onMessage);
+
+      if (event.data.ok) {
+        resolve();
+      } else {
+        reject(new Error(event.data.error || "Clipboard write failed."));
+      }
+    }
+
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage({
+      type: CLIPBOARD_WRITE_REQUEST,
+      requestId,
+      dataUrl
+    }, "*");
+  });
+};
+
+const writeImageBlobToClipboard = async (blob: Blob, allowParentFallback = true) => {
+  if (allowParentFallback && window.parent !== window) {
+    await writeImageBlobViaParent(blob);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  } catch (error) {
+    if (!allowParentFallback) throw error;
+    await writeImageBlobViaParent(blob);
+  }
+};
+
 const waitForPaint = () =>
   new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => window.setTimeout(resolve, 50)));
   });
+
+const getDirectFrameRect = () => {
+  let left = 0;
+  let top = 0;
+  let currentWindow: Window = window;
+
+  try {
+    while (currentWindow !== currentWindow.top) {
+      const frameElement = currentWindow.frameElement;
+      if (!frameElement) return null;
+
+      const rect = frameElement.getBoundingClientRect();
+      left += rect.left;
+      top += rect.top;
+      currentWindow = currentWindow.parent;
+    }
+
+    return {
+      left,
+      top,
+      width: window.innerWidth,
+      height: window.innerHeight,
+      viewportWidth: currentWindow.innerWidth,
+      viewportHeight: currentWindow.innerHeight
+    };
+  } catch {
+    return null;
+  }
+};
 
 const getParentFrameRect = () =>
   new Promise<{
@@ -292,6 +398,12 @@ const getParentFrameRect = () =>
     viewportWidth: number;
     viewportHeight: number;
   }>((resolve, reject) => {
+    const directRect = getDirectFrameRect();
+    if (directRect) {
+      resolve(directRect);
+      return;
+    }
+
     if (window.parent === window) {
       resolve({
         left: 0,
@@ -312,7 +424,7 @@ const getParentFrameRect = () =>
 
     function onMessage(event: MessageEvent) {
       if (
-        event.data?.type !== "MAGIC_NETSUITE_EXTENSION_FRAME_RECT" ||
+        event.data?.type !== FRAME_RECT_RESPONSE ||
         event.data.requestId !== requestId
       ) {
         return;
@@ -320,12 +432,16 @@ const getParentFrameRect = () =>
 
       window.clearTimeout(timer);
       window.removeEventListener("message", onMessage);
+      if (event.data.error) {
+        reject(new Error(event.data.error));
+        return;
+      }
       resolve(event.data.rect);
     }
 
     window.addEventListener("message", onMessage);
     window.parent.postMessage({
-      type: "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT",
+      type: FRAME_RECT_REQUEST,
       requestId
     }, "*");
   });
@@ -391,7 +507,7 @@ const copyElementScreenshot = async (element: Element) => {
   );
   if (!blob) throw new Error("Unable to render screenshot.");
 
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  await writeImageBlobToClipboard(blob);
 };
 
 const showToast = (message: string, tone: "ok" | "error" = "ok") => {
@@ -490,6 +606,68 @@ function onPickerKeyDown(event: KeyboardEvent) {
 export const installElementScreenshotPicker = async () => {
   if (installed) return;
   installed = true;
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== CLIPBOARD_WRITE_REQUEST) return;
+
+    (async () => {
+      try {
+        const blob = await dataUrlToBlob(event.data.dataUrl);
+        await writeImageBlobToClipboard(blob);
+        postToSourceWindow(event.source, {
+          type: CLIPBOARD_WRITE_RESPONSE,
+          requestId: event.data.requestId,
+          ok: true
+        });
+      } catch (error) {
+        postToSourceWindow(event.source, {
+          type: CLIPBOARD_WRITE_RESPONSE,
+          requestId: event.data.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    })();
+  });
+
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== FRAME_RECT_REQUEST) return;
+
+    (async () => {
+      try {
+        const iframe = Array.from(document.querySelectorAll("iframe"))
+          .find((frame) => frame.contentWindow === event.source);
+
+        if (!iframe) return;
+
+        const rect = iframe.getBoundingClientRect();
+        const parentRect = await getParentFrameRect();
+        const left = Math.max(0, parentRect.left + rect.left);
+        const top = Math.max(0, parentRect.top + rect.top);
+        const right = Math.min(parentRect.viewportWidth, parentRect.left + rect.right);
+        const bottom = Math.min(parentRect.viewportHeight, parentRect.top + rect.bottom);
+
+        postToSourceWindow(event.source, {
+          type: FRAME_RECT_RESPONSE,
+          requestId: event.data.requestId,
+          rect: {
+            left,
+            top,
+            width: Math.max(1, right - left),
+            height: Math.max(1, bottom - top),
+            viewportWidth: parentRect.viewportWidth,
+            viewportHeight: parentRect.viewportHeight
+          }
+        });
+      } catch (error) {
+        postToSourceWindow(event.source, {
+          type: FRAME_RECT_RESPONSE,
+          requestId: event.data.requestId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    })();
+  });
 
   try {
     const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
