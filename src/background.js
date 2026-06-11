@@ -2951,21 +2951,119 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
     ? `try { if (!window.location.hash) window.location.hash = ${JSON.stringify(originalHash)}; } catch (e) {}`
     : "";
 
+  let nsOrigin = "";
+  try { nsOrigin = new URL(String(originalUrl)).origin; } catch {}
+
   return `
 <script>
 (function magicNetsuiteSuiteletProxy() {
   ${hashScript}
   var BASELINE_PARAMS = ${JSON.stringify(baselineParams)};
+  var NS_BASE = ${JSON.stringify(String(originalUrl))};
+  var NS_ORIGIN = ${JSON.stringify(nsOrigin)};
   var EMBED_PARAMS = { ifrmcntnr: "T", popup: "T", whence: "" };
   var REQUEST_TYPE = "MAGIC_NS_SRC_PROXY_FETCH";
   var RESPONSE_TYPE = "MAGIC_NS_SRC_PROXY_FETCH_RESPONSE";
+  var LOG_TYPE = "MAGIC_NS_SRC_PROXY_LOG";
   var nextId = 0;
   var pending = {};
 
-  function absoluteUrl(value) {
-    try { return new URL(String(value), document.baseURI || location.href).href; }
-    catch (e) { return String(value || ""); }
+  function proxyLog(level, message) {
+    try {
+      window.parent.postMessage({ type: LOG_TYPE, level: level, message: String(message) }, "*");
+    } catch (e) {}
+    try { (level === "error" ? console.error : level === "warn" ? console.warn : console.log)("[magic-ns] " + message); } catch (e) {}
   }
+
+  proxyLog("info", "Suitelet proxy bootstrap installed. baseURI=" + (document.baseURI || location.href) + " hash=" + (location.hash || "(none)"));
+
+  // In a srcdoc iframe, window.location and the document origin are the MCP host
+  // (e.g. claudemcpcontent.com), NOT NetSuite — and the host strips our <base>.
+  // So both the SPA (which builds URLs from location.pathname/search) and
+  // NetSuite's own framework (absolute "/app/..." paths) target the wrong host
+  // and 404. mapToNetsuite() rewrites any host-origin / location-derived request
+  // back onto the real NetSuite origin so it can be proxied with credentials.
+  // The embedder URL (what document.baseURI points at, e.g.
+  // claudemcpcontent.com/mcp_apps). In a srcdoc frame window.location is
+  // about:srcdoc, so we MUST key off baseURI, not location.
+  var EMBEDDER_ORIGIN = "";
+  var EMBEDDER_PATH = "";
+  var EMBEDDER_PARAM_KEYS = {};
+  try {
+    var embedder = new URL(document.baseURI);
+    EMBEDDER_ORIGIN = embedder.origin;
+    EMBEDDER_PATH = embedder.pathname;
+    embedder.searchParams.forEach(function(_v, k) { EMBEDDER_PARAM_KEYS[k] = true; });
+  } catch (e) {}
+
+  // NetSuite asset/handler paths that should keep their path and just swap origin.
+  function looksLikeNetsuitePath(pathname) {
+    return /^\\/(app|assets|javascript|core|services|rest|c\\.|site)\\b/i.test(pathname) ||
+      /\\.(nl|jsp|js|css|png|jpe?g|gif|svg|woff2?|ttf|json|map)$/i.test(pathname);
+  }
+
+  function mapToNetsuite(value) {
+    var raw = String(value || "");
+    var abs;
+    try { abs = new URL(raw, document.baseURI || location.href); }
+    catch (e) { return raw; }
+
+    // Non-http schemes (data:, blob:, javascript:, about:) pass through untouched.
+    if (abs.protocol !== "http:" && abs.protocol !== "https:") return abs.href;
+    // Already pointed at NetSuite.
+    if (/\\.netsuite\\.com$/i.test(abs.hostname)) return abs.href;
+    if (!NS_ORIGIN || !NS_BASE) return abs.href;
+
+    var sameAsEmbedder = EMBEDDER_ORIGIN && abs.origin === EMBEDDER_ORIGIN;
+
+    // SPA api calls are built from location.pathname/search + "&action=<x>". Because
+    // the srcdoc location is about:srcdoc, that base is garbage — but the tell-tale
+    // "action=" survives. Rebuild the call on the real Suitelet URL, carrying the
+    // action (and any other params the SPA appended that aren't embedder params).
+    var actionMatch = raw.match(/[?&]action=([^&#]*)/i);
+    var isAssetPath = looksLikeNetsuitePath(abs.pathname);
+    if (actionMatch && (sameAsEmbedder || !isAssetPath)) {
+      try {
+        var spaUrl = new URL(NS_BASE);
+        abs.searchParams.forEach(function(val, key) {
+          if (!EMBEDDER_PARAM_KEYS[key]) spaUrl.searchParams.set(key, val);
+        });
+        spaUrl.searchParams.set("action", decodeURIComponent(actionMatch[1]));
+        return spaUrl.href;
+      } catch (e) {}
+    }
+
+    // Absolute-path NetSuite resources aimed at the embedder origin: swap origin.
+    if (sameAsEmbedder) {
+      try {
+        var resourceUrl = new URL(NS_ORIGIN);
+        resourceUrl.pathname = abs.pathname;
+        resourceUrl.search = abs.search;
+        resourceUrl.hash = abs.hash;
+        return resourceUrl.href;
+      } catch (e) {}
+    }
+    return abs.href;
+  }
+
+  // Back-compat alias: every caller now resolves through the NetSuite mapper.
+  function absoluteUrl(value) {
+    return mapToNetsuite(value);
+  }
+
+  window.addEventListener("error", function(event) {
+    proxyLog("error", "Page error: " + (event && event.message ? event.message : "unknown") + (event && event.filename ? " @ " + event.filename + ":" + event.lineno : ""));
+  });
+  window.addEventListener("unhandledrejection", function(event) {
+    var reason = event && event.reason ? (event.reason.message || event.reason) : "unknown";
+    proxyLog("error", "Unhandled promise rejection: " + reason);
+  });
+  window.addEventListener("hashchange", function() {
+    proxyLog("info", "hashchange → " + (location.hash || "(none)"));
+  });
+  window.addEventListener("beforeunload", function() {
+    proxyLog("warn", "Page is navigating/unloading (href=" + location.href + "). A full navigation leaves the proxied srcdoc document and usually causes a blank panel.");
+  });
 
   function shouldProxy(value) {
     try {
@@ -3075,12 +3173,20 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
   if (typeof nativeFetch === "function") {
     window.fetch = function(input, init) {
       var inputUrl = input && input.url ? input.url : input;
-      if (!shouldProxy(inputUrl)) return nativeFetch.apply(this, arguments);
+      var fetchMethod = (init && init.method) || (input && input.method) || "GET";
+      if (!shouldProxy(inputUrl)) {
+        proxyLog("info", "fetch passthrough (not NetSuite): " + fetchMethod + " " + absoluteUrl(inputUrl));
+        return nativeFetch.apply(this, arguments);
+      }
       init = init || {};
       var headers = {};
       try { new Headers(init.headers || (input && input.headers)).forEach(function(value, key) { headers[key] = value; }); } catch (e) {}
       var normalized = normalizeBodyAndHeaders(init.body == null ? null : init.body, headers);
-      if (normalized.unsupported) return nativeFetch.apply(this, arguments);
+      if (normalized.unsupported) {
+        proxyLog("warn", "fetch passthrough (unsupported body type, cannot proxy): " + fetchMethod + " " + absoluteUrl(inputUrl));
+        return nativeFetch.apply(this, arguments);
+      }
+      proxyLog("info", "fetch intercepted: " + fetchMethod + " " + withEmbedParams(inputUrl));
       return proxyRequest({
         url: withEmbedParams(inputUrl),
         originalUrl: absoluteUrl(inputUrl),
@@ -3089,11 +3195,18 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
         headers: normalized.headers,
         body: normalized.body
       }).then(function(response) {
+        proxyLog(
+          (response.status || 0) >= 400 ? "warn" : "info",
+          "fetch result " + (response.status || "?") + " " + (response.statusText || "") + " (" + ((response.body || "").length) + " bytes) " + (response.url || withEmbedParams(inputUrl))
+        );
         return new Response(response.body || "", {
           status: response.status || 200,
           statusText: response.statusText || "OK",
           headers: response.headers || {}
         });
+      }).catch(function(error) {
+        proxyLog("error", "fetch proxy failed: " + (error && error.message ? error.message : error) + " for " + withEmbedParams(inputUrl));
+        throw error;
       });
     };
   }
@@ -3116,10 +3229,12 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
     this._url = withEmbedParams(url);
     this._proxy = shouldProxy(this._url);
     if (!this._proxy) {
+      proxyLog("info", "XHR passthrough (not NetSuite): " + this._method + " " + this._url);
       this._native = new NativeXHR();
       wireNative(this);
       return this._native.open.apply(this._native, arguments);
     }
+    proxyLog("info", "XHR intercepted: " + this._method + " " + this._url);
     this.readyState = 1;
     this._emit("readystatechange");
   };
@@ -3145,9 +3260,17 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
         self.status = response.status || 200;
         self.statusText = response.statusText || "OK";
         self.responseText = response.body || "";
-        self.response = self.responseType === "json" ? JSON.parse(self.responseText || "null") : self.responseText;
+        try {
+          self.response = self.responseType === "json" ? JSON.parse(self.responseText || "null") : self.responseText;
+        } catch (e) {
+          self.response = self.responseText;
+        }
         self.responseURL = response.url || self._url;
         self.readyState = 4;
+        proxyLog(
+          self.status >= 400 ? "warn" : "info",
+          "XHR result " + self.status + " " + self.statusText + " (" + self.responseText.length + " bytes) " + self.responseURL
+        );
         self._emit("readystatechange");
         self._emit("load");
         self._emit("loadend");
@@ -3156,6 +3279,7 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
         self.status = 0;
         self.statusText = error.message || "Suitelet proxy request failed.";
         self.readyState = 4;
+        proxyLog("error", "XHR proxy failed: " + self.statusText + " for " + self._url);
         self._emit("readystatechange");
         self._emit("error");
         self._emit("loadend");

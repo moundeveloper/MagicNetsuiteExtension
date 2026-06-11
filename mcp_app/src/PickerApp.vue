@@ -78,6 +78,10 @@
                   <span :class="suiteletFetchingHtml ? 'pi pi-spin pi-spinner' : 'pi pi-file'" aria-hidden="true" />
                   Render fetched
                 </button>
+                <button class="agent-secondary-btn" type="button" @click="openSuiteletDirectIframe">
+                  <span class="pi pi-external-link" aria-hidden="true" />
+                  Direct iframe
+                </button>
                 <button class="agent-secondary-btn" type="button" :disabled="suiteletStarting" @click="startSuiteletStream">
                   <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-window'" aria-hidden="true" />
                   Stream fallback
@@ -971,6 +975,28 @@ function openSuiteletInline(): void {
     addSuiteletLog("warn", "Open requested without a Suitelet URL.");
     return;
   }
+  // The instrumented srcdoc proxy is the only path we can actually log and
+  // repair (cross-origin direct iframes block injection AND network visibility,
+  // and NetSuite usually refuses framing via X-Frame-Options anyway).
+  clearSuiteletIframeTimer();
+  clearSuiteletSrcdocFallbackTimer();
+  stopSuiteletPolling();
+  suiteletStreaming.value = false;
+  suiteletFrame.value = "";
+  suiteletIframeUrl.value = "";
+  suiteletCurrentUrl.value = url;
+  status.value = "Opening Suitelet";
+  addSuiteletLog("info", `Opening via instrumented srcdoc proxy: ${url}`);
+  void probeSuiteletUrl(url);
+  void renderSuiteletFetchedHtml();
+}
+
+function openSuiteletDirectIframe(): void {
+  const url = suiteletEmbedUrl(suiteletUrl.value);
+  if (!url) {
+    addSuiteletLog("warn", "Open requested without a Suitelet URL.");
+    return;
+  }
   clearSuiteletIframeTimer();
   clearSuiteletSrcdocFallbackTimer();
   stopSuiteletPolling();
@@ -980,7 +1006,7 @@ function openSuiteletInline(): void {
   suiteletIframeUrl.value = url;
   suiteletCurrentUrl.value = url;
   status.value = "Suitelet opened";
-  addSuiteletLog("info", `Opening iframe: ${url}`);
+  addSuiteletLog("warn", `Opening DIRECT cross-origin iframe (no network logging possible): ${url}`);
   void logSuiteletSurfaceState("Direct iframe render scheduled");
   void probeSuiteletUrl(url);
   suiteletIframeLoadTimer = window.setTimeout(() => {
@@ -1042,8 +1068,17 @@ async function handleSuiteletProxyMessage(event: MessageEvent): Promise<void> {
   const data = event.data as {
     type?: string;
     id?: string;
+    level?: string;
+    message?: string;
     payload?: Record<string, unknown>;
   };
+
+  if (data?.type === "MAGIC_NS_SRC_PROXY_LOG") {
+    const level = data.level === "error" || data.level === "warn" ? data.level : "info";
+    addSuiteletLog(level, `[iframe] ${String(data.message ?? "")}`);
+    return;
+  }
+
   if (data?.type !== "MAGIC_NS_SRC_PROXY_FETCH" || !data.id) return;
 
   const source = event.source;
