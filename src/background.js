@@ -3315,6 +3315,31 @@ function suiteletProxyBootstrapScript(originalUrl = "") {
     });
   }
   window.XMLHttpRequest = ProxyXHR;
+
+  // Fragment anchors (<a href="#/providers">) resolve against document.baseURI,
+  // which in a srcdoc frame is the embedder URL — so a click triggers a FULL
+  // navigation to claudemcpcontent.com/...#/providers and blanks the panel.
+  // Intercept them and perform a same-document hash change instead, which is
+  // what the SPA's hashchange router actually listens for.
+  document.addEventListener("click", function(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    if (!anchor) return;
+    var href = anchor.getAttribute("href");
+    if (!href || href.charAt(0) !== "#") return;
+    event.preventDefault();
+    try {
+      if (("#" + location.hash.replace(/^#/, "")) === href || location.hash === href) {
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } else {
+        location.hash = href;
+      }
+      proxyLog("info", "Hash nav → " + href);
+    } catch (e) {
+      proxyLog("error", "Hash nav failed for " + href + ": " + (e && e.message ? e.message : e));
+    }
+  }, true);
+
   document.addEventListener("submit", function(event) {
     if (!event || !event.target) return;
     var form = event.target;

@@ -38,13 +38,12 @@
                   v-model="suiteletQuery"
                   class="context-search"
                   type="search"
-                  placeholder="Search"
-                  @keydown.enter.prevent="loadSuitelets"
+                  placeholder="Quick search"
                 />
               </div>
               <div class="suitelet-list">
                 <button
-                  v-for="suitelet in suitelets"
+                  v-for="suitelet in visibleSuitelets"
                   :key="`${suitelet.scriptInternalId}:${suitelet.deploymentId}`"
                   type="button"
                   class="suitelet-option"
@@ -57,6 +56,9 @@
                 </button>
                 <p v-if="!suiteletsLoading && suitelets.length === 0" class="suitelet-empty">
                   No deployed Suitelets loaded.
+                </p>
+                <p v-else-if="!suiteletsLoading && visibleSuitelets.length === 0" class="suitelet-empty">
+                  No Suitelets match "{{ suiteletQuery.trim() }}".
                 </p>
               </div>
             </aside>
@@ -630,6 +632,23 @@ const connectionClass = computed(() => {
 const canRequestFullscreen = computed(() =>
   availableDisplayModes.value.includes("fullscreen") && displayMode.value !== "fullscreen",
 );
+
+const visibleSuitelets = computed<SuiteletOption[]>(() => {
+  const query = suiteletQuery.value.trim().toLowerCase();
+  if (!query) return suitelets.value;
+  return suitelets.value.filter((suitelet) =>
+    [
+      suitelet.scriptName,
+      suitelet.scriptId,
+      suitelet.scriptInternalId,
+      suitelet.deploymentId,
+      suitelet.deploymentScriptId,
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query),
+  );
+});
 
 function readStructured<T>(result: unknown, key: string, fallback: T): T {
   const direct = result as {
@@ -1228,9 +1247,10 @@ async function loadSuitelets(): Promise<void> {
   if (!appReady.value || suiteletsLoading.value) return;
   suiteletsLoading.value = true;
   error.value = "";
-  addSuiteletLog("info", `Loading Suitelets${suiteletQuery.value.trim() ? ` matching "${suiteletQuery.value.trim()}"` : ""}.`);
+  addSuiteletLog("info", "Loading deployed Suitelets.");
   try {
-    const result = await callTool("magic_netsuite_suitelet_stream_list", { query: suiteletQuery.value.trim() });
+    // Always fetch the full deployed list; the sidebar search filters it client-side.
+    const result = await callTool("magic_netsuite_suitelet_stream_list", { query: "" });
     suitelets.value = readStructured<SuiteletOption[]>(result, "suitelets", []);
     addSuiteletLog("info", `Loaded ${suitelets.value.length} Suitelet option${suitelets.value.length === 1 ? "" : "s"}.`);
   } catch (err) {
