@@ -1556,6 +1556,58 @@ const MCP_TOOL_DEFINITIONS = [
       },
       required: ["fileId"]
     }
+  },
+  {
+    name: "netsuite_suitelet_stream_start",
+    description:
+      "Start an interactive Suitelet viewer session for the MCP App. Opens the provided NetSuite Suitelet URL, or uses the preferred NetSuite tab when no URL is provided.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Optional Suitelet URL to open and stream. If omitted, the current/preferred NetSuite tab is used."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_list",
+    description:
+      "List deployed Suitelets available in the preferred NetSuite account so the MCP App can open one in a hidden viewer tab.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Optional search text for Suitelet script name, script ID, or deployment ID."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_frame",
+    description:
+      "Capture the latest screenshot frame for the active Suitelet viewer session.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_input",
+    description:
+      "Send mouse, wheel, or keyboard input to the active Suitelet viewer session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: {
+          type: "object",
+          description: "Input event with type click, mousemove, wheel, keydown, or keyup. Mouse coordinates are normalized 0..1."
+        }
+      },
+      required: ["event"]
+    }
   }
 ];
 
@@ -1638,6 +1690,14 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteGetDeployedScripts(args);
         } else if (name === "netsuite_get_logs") {
           result = await handleNetsuiteGetLogs(args);
+        } else if (name === "netsuite_suitelet_stream_start") {
+          result = await handleSuiteletStreamStart(args);
+        } else if (name === "netsuite_suitelet_stream_list") {
+          result = await handleSuiteletStreamList(args);
+        } else if (name === "netsuite_suitelet_stream_frame") {
+          result = await handleSuiteletStreamFrame();
+        } else if (name === "netsuite_suitelet_stream_input") {
+          result = await handleSuiteletStreamInput(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -1646,9 +1706,11 @@ async function handleRequest({ requestId, method, params }) {
         // After a successful tool call, check governance on the dedicated tab
         // and refresh it if needed for the next call.
         // Fire-and-forget — don't block the response.
-        checkAndRefreshDedicatedTabGovernance().catch((err) => {
-          console.debug(`[MCP] Post-call governance check failed: ${err.message}`);
-        });
+        if (!name.startsWith("netsuite_suitelet_stream_")) {
+          checkAndRefreshDedicatedTabGovernance().catch((err) => {
+            console.debug(`[MCP] Post-call governance check failed: ${err.message}`);
+          });
+        }
       } catch (toolErr) {
         recordMcpUsage(name, false, toolErr.message);
         throw toolErr;
@@ -2510,6 +2572,392 @@ async function handleNetsuiteGetLogs(args) {
   }
 
   return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+}
+
+// -----------------------------
+// Suitelet Viewer Stream Tools
+// -----------------------------
+let suiteletStreamSession = null;
+let suiteletDebuggerAttached = false;
+const SUITELET_DEBUGGER_PROTOCOL_VERSION = "1.3";
+
+function normalizeSuiteletViewerUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return "";
+
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Suitelet viewer URL must be http or https.");
+  }
+  if (!/\.netsuite\.com$/i.test(url.hostname)) {
+    throw new Error("Suitelet viewer only supports NetSuite URLs.");
+  }
+  return url.href;
+}
+
+function waitForTabLoaded(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Timed out waiting for Suitelet tab to load."));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(tab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || done) return;
+      if (tab?.status === "complete") {
+        done = true;
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(tab);
+      }
+    });
+  });
+}
+
+async function focusSuiteletStreamTab(tab) {
+  if (!tab?.id || !tab.windowId) throw new Error("Suitelet stream tab is unavailable.");
+  await chrome.windows.update(tab.windowId, { focused: true });
+  await chrome.tabs.update(tab.id, { active: true });
+}
+
+function getTabOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
+async function getSuiteletViewport(tabId) {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        title: document.title || ""
+      })
+    });
+    return result?.result || { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
+  } catch {
+    return { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
+  }
+}
+
+async function ensureSuiteletDebugger(tabId) {
+  if (suiteletDebuggerAttached && suiteletStreamSession?.tabId === tabId) return;
+  await chrome.debugger.attach({ tabId }, SUITELET_DEBUGGER_PROTOCOL_VERSION);
+  suiteletDebuggerAttached = true;
+  await chrome.debugger.sendCommand({ tabId }, "Page.enable", {}).catch(() => null);
+}
+
+async function sendSuiteletDebuggerCommand(tabId, method, params) {
+  await ensureSuiteletDebugger(tabId);
+  return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (suiteletStreamSession?.tabId === tabId) {
+    suiteletStreamSession = null;
+    suiteletDebuggerAttached = false;
+  }
+});
+
+chrome.debugger.onDetach.addListener((source) => {
+  if (suiteletStreamSession?.tabId === source.tabId) {
+    suiteletDebuggerAttached = false;
+  }
+});
+
+async function handleSuiteletStreamStart(args) {
+  const requestedUrl = normalizeSuiteletViewerUrl(args?.url);
+  const previousTabId = suiteletStreamSession?.tabId || null;
+  let tab;
+
+  if (requestedUrl) {
+    tab = await chrome.tabs.create({ url: requestedUrl, active: false });
+    await waitForTabLoaded(tab.id).catch(() => null);
+  } else {
+    tab = await getPreferredNetsuiteTab();
+    if (!tab) throw new Error("No suitable NetSuite tab found. Open a Suitelet or pass a Suitelet URL.");
+  }
+
+  if (!tab?.id || !tab.windowId) {
+    throw new Error("Could not start Suitelet stream: no tab was available.");
+  }
+
+  const freshTab = await chrome.tabs.get(tab.id);
+  if (previousTabId && previousTabId !== tab.id && suiteletDebuggerAttached) {
+    await chrome.debugger.detach({ tabId: previousTabId }).catch(() => null);
+  }
+  suiteletStreamSession = {
+    tabId: tab.id,
+    windowId: tab.windowId,
+    url: freshTab.url || requestedUrl,
+    startedAt: new Date().toISOString()
+  };
+  suiteletDebuggerAttached = previousTabId === tab.id && suiteletDebuggerAttached;
+
+  const viewport = await getSuiteletViewport(tab.id);
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        session: suiteletStreamSession,
+        viewport
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletStreamList(args) {
+  const query = String(args?.query || "").trim().toLowerCase();
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "SCRIPTS",
+    data: { scriptType: "SCRIPTLET" },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelets");
+  }
+
+  const scripts = Array.isArray(response.message) ? response.message : [];
+  const scriptIds = scripts
+    .map((script) => Number(script.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  let deployments = [];
+  if (scriptIds.length) {
+    const deploymentsResp = await sendMessageToTab(tab.id, {
+      action: "SCRIPT_DEPLOYMENTS",
+      data: { scriptIds },
+      mode: "normal"
+    });
+    if (!deploymentsResp || deploymentsResp.status === "error") {
+      const rawMsg = deploymentsResp?.message;
+      throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelet deployments");
+    }
+    deployments = Array.isArray(deploymentsResp.message) ? deploymentsResp.message : [];
+  }
+
+  const origin = getTabOrigin(tab.url);
+  const scriptById = new Map(scripts.map((script) => [String(script.id), script]));
+  const suitelets = deployments
+    .filter((deployment) => String(deployment.isdeployed || "").toUpperCase() === "T")
+    .map((deployment) => {
+      const script = scriptById.get(String(deployment.id)) || {};
+      const scriptId = String(deployment.id || script.id || "");
+      const deployId = String(deployment.deploymentid || deployment.primarykey || "").trim();
+      const scriptName = String(deployment.scriptname || script.name || "Suitelet");
+      const deploymentScriptId = String(deployment.scriptid || "");
+      const scriptScriptId = String(script.scriptid || "");
+      return {
+        scriptInternalId: scriptId,
+        scriptId: scriptScriptId,
+        scriptName,
+        deploymentId: deployId,
+        deploymentScriptId,
+        status: String(deployment.status || ""),
+        url: origin && scriptId && deployId
+          ? `${origin}/app/site/hosting/scriptlet.nl?script=${encodeURIComponent(scriptId)}&deploy=${encodeURIComponent(deployId)}`
+          : ""
+      };
+    })
+    .filter((suitelet) => suitelet.url)
+    .filter((suitelet) => {
+      if (!query) return true;
+      return [
+        suitelet.scriptName,
+        suitelet.scriptId,
+        suitelet.deploymentId,
+        suitelet.deploymentScriptId
+      ].join(" ").toLowerCase().includes(query);
+    })
+    .slice(0, 100);
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletStreamFrame() {
+  if (!suiteletStreamSession?.tabId || !suiteletStreamSession.windowId) {
+    throw new Error("No Suitelet stream session is active. Start one from the MCP app first.");
+  }
+
+  const tab = await chrome.tabs.get(suiteletStreamSession.tabId);
+  const viewport = await getSuiteletViewport(suiteletStreamSession.tabId);
+  const screenshot = await sendSuiteletDebuggerCommand(
+    suiteletStreamSession.tabId,
+    "Page.captureScreenshot",
+    {
+      format: "jpeg",
+      quality: 60,
+      optimizeForSpeed: true,
+      fromSurface: true,
+      captureBeyondViewport: false
+    }
+  );
+  const dataUrl = `data:image/jpeg;base64,${screenshot?.data || ""}`;
+  suiteletStreamSession.url = tab.url || suiteletStreamSession.url;
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        dataUrl,
+        url: tab.url || suiteletStreamSession.url,
+        title: tab.title || viewport.title || "Suitelet",
+        capturedAt: new Date().toISOString(),
+        viewport
+      }, null, 2)
+    }]
+  };
+}
+
+async function dispatchSuiteletSyntheticInput(tabId, event, x, y) {
+  return chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: ({ event, x, y }) => {
+      const target = document.elementFromPoint(x, y) || document.body || document.documentElement;
+      if (!target) return false;
+
+      if (event.type === "wheel") {
+        target.dispatchEvent(new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          deltaX: Number(event.deltaX || 0),
+          deltaY: Number(event.deltaY || 0)
+        }));
+        return true;
+      }
+
+      if (event.type === "mousemove") {
+        target.dispatchEvent(new MouseEvent("mousemove", {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y
+        }));
+        return true;
+      }
+
+      target.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0
+      }));
+      target.dispatchEvent(new MouseEvent("mouseup", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0
+      }));
+      if (typeof target.click === "function") target.click();
+      return true;
+    },
+    args: [{ event, x, y }]
+  });
+}
+
+async function handleSuiteletStreamInput(args) {
+  if (!suiteletStreamSession?.tabId) {
+    throw new Error("No Suitelet stream session is active. Start one from the MCP app first.");
+  }
+
+  const event = args?.event || {};
+  const type = String(event.type || "");
+  const tabId = suiteletStreamSession.tabId;
+  const viewport = await getSuiteletViewport(tabId);
+  const x = Math.max(0, Math.min(1, Number(event.x ?? 0))) * Number(viewport.width || 1280);
+  const y = Math.max(0, Math.min(1, Number(event.y ?? 0))) * Number(viewport.height || 720);
+
+  try {
+    if (type === "click") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1
+      });
+    } else if (type === "mousemove") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x,
+        y
+      });
+    } else if (type === "wheel") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX: Number(event.deltaX || 0),
+        deltaY: Number(event.deltaY || 0)
+      });
+    } else if (type === "keydown" || type === "keyup") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+        type: type === "keydown" ? "keyDown" : "keyUp",
+        key: String(event.key || ""),
+        code: String(event.code || ""),
+        text: type === "keydown" && String(event.key || "").length === 1 ? String(event.key) : undefined,
+        windowsVirtualKeyCode: Number(event.keyCode || 0)
+      });
+    } else {
+      throw new Error(`Unsupported Suitelet input event: ${type}`);
+    }
+  } catch (error) {
+    if (type === "click" || type === "wheel" || type === "mousemove") {
+      await dispatchSuiteletSyntheticInput(tabId, event, x, y);
+    } else {
+      throw error;
+    }
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ ok: true, type, x, y }, null, 2)
+    }]
+  };
 }
 
 // -----------------------------

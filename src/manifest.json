@@ -117,6 +117,7 @@
     "scripting",
     "storage",
     "activeTab",
+    "debugger",
     "declarativeNetRequest",
     "*://*.app.netsuite.com/*",
     "https://*.supabase.co/*",

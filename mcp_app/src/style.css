@@ -133,6 +133,18 @@ textarea {
   content: ">";
 }
 
+.pi-play::before {
+  content: "▶";
+}
+
+.pi-pause::before {
+  content: "Ⅱ";
+}
+
+.pi-window::before {
+  content: "□";
+}
+
 .pi-spinner::before {
   content: "";
   width: 0.8em;
@@ -1174,6 +1186,198 @@ textarea {
   font-size: 0.78rem;
 }
 
+.suitelet-viewer-panel {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.suitelet-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid var(--p-slate-200);
+  background: #fbfdff;
+}
+
+.suitelet-sidebar-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+}
+
+.suitelet-sidebar-header strong {
+  color: var(--p-slate-800);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.suitelet-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.suitelet-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 5px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+}
+
+.suitelet-picker-search {
+  display: flex;
+  flex-shrink: 0;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-bottom: 1px solid var(--p-slate-100);
+}
+
+.suitelet-list {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.suitelet-option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  width: 100%;
+  min-height: 46px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--p-slate-700);
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 7px;
+  text-align: left;
+}
+
+.suitelet-option:hover,
+.suitelet-option.active {
+  border-color: #c4b5fd;
+  background: var(--harness-accent-softer);
+  color: var(--harness-accent-strong);
+}
+
+.suitelet-option strong,
+.suitelet-option span,
+.suitelet-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suitelet-option strong {
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.suitelet-option span,
+.suitelet-option small,
+.suitelet-empty {
+  color: var(--p-slate-400);
+  font-size: 0.62rem;
+}
+
+.suitelet-empty {
+  display: inline-flex;
+  align-items: flex-start;
+  min-height: 46px;
+  margin: 0;
+  padding: 6px 4px;
+}
+
+.suitelet-url-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.suitelet-surface {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #0f172a;
+  outline: none;
+}
+
+.suitelet-surface:focus {
+  box-shadow: inset 0 0 0 3px rgba(99, 102, 241, 0.52);
+}
+
+.suitelet-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+}
+
+.suitelet-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #e2e8f0;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.suitelet-status-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  color: var(--p-slate-500);
+  font-size: 0.64rem;
+  font-weight: 750;
+}
+
+.suitelet-status-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .context-modal {
     width: 100vw;
@@ -1216,6 +1420,20 @@ textarea {
 
   .context-tabs button {
     min-width: 0;
+  }
+
+  .suitelet-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .suitelet-viewer-panel {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(140px, 34vh) minmax(0, 1fr);
+  }
+
+  .suitelet-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--p-slate-200);
   }
 }
 

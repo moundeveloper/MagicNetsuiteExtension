@@ -393,6 +393,24 @@ export function createServer(): McpServer {
     ],
   }));
 
+  server.registerPrompt("open_suitelet_viewer", {
+    title: "Open Magic NetSuite Suitelet Viewer",
+    description: "Open the Magic NetSuite MCP App Suitelet viewer for interactive Suitelet streaming.",
+    argsSchema: {
+      url: z.string().optional(),
+    },
+  }, ({ url = "" }) => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `Open the Magic NetSuite Suitelet viewer using magic_netsuite_suitelet_viewer${url ? ` with url "${url}"` : ""}.`,
+        },
+      },
+    ],
+  }));
+
   registerAppTool(
     server,
     "magic_netsuite_context_picker",
@@ -408,6 +426,21 @@ export function createServer(): McpServer {
       toolResult({ initialTab }, "Use the picker below to select NetSuite context for Claude."),
   );
 
+  registerAppTool(
+    server,
+    "magic_netsuite_suitelet_viewer",
+    {
+      title: "Magic NetSuite Suitelet Viewer",
+      description: "Open an interactive MCP App viewer that streams a NetSuite Suitelet tab and forwards clicks, wheel events, and keyboard input back to Chrome.",
+      inputSchema: {
+        url: z.string().optional().describe("Optional Suitelet URL to open. If omitted, the viewer uses the preferred/current NetSuite tab."),
+      },
+      _meta: { ui: { resourceUri } },
+    },
+    async ({ url = "" }) =>
+      toolResult({ mode: "suitelet", url }, "Use the viewer below to stream and interact with a NetSuite Suitelet."),
+  );
+
   server.registerTool("magic_netsuite_bridge_status", {
     title: "Magic NetSuite Bridge Status",
     description: "Check whether the Magic NetSuite extension native bridge is reachable.",
@@ -415,6 +448,48 @@ export function createServer(): McpServer {
   }, async () => {
     await connectNativeBridge();
     return toolResult({ connected: true, pipe: BRIDGE_PIPE_PATH }, "Magic NetSuite bridge is connected.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_stream_start", {
+    title: "Start Suitelet Stream",
+    description: "Start a Suitelet stream session in the Chrome extension. Intended for the Magic NetSuite Suitelet Viewer MCP App.",
+    inputSchema: {
+      url: z.string().optional(),
+    },
+  }, async ({ url = "" }) => {
+    const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_start", { url }));
+    return toolResult(isRecord(data) ? data : { value: data }, "Suitelet stream started.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_stream_list", {
+    title: "List Suitelets",
+    description: "List deployed Suitelets available for the Magic NetSuite Suitelet Viewer MCP App.",
+    inputSchema: {
+      query: z.string().optional(),
+    },
+  }, async ({ query = "" }) => {
+    const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_list", { query }));
+    return toolResult(isRecord(data) ? data : { value: data }, "Suitelets loaded.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_stream_frame", {
+    title: "Get Suitelet Stream Frame",
+    description: "Get the latest image frame for the active Suitelet stream session.",
+    inputSchema: {},
+  }, async () => {
+    const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_frame"));
+    return toolResult(isRecord(data) ? data : { value: data }, "Suitelet frame captured.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_stream_input", {
+    title: "Send Suitelet Stream Input",
+    description: "Forward a mouse, wheel, or keyboard event from the Suitelet viewer to Chrome.",
+    inputSchema: {
+      event: z.record(z.string(), z.unknown()),
+    },
+  }, async ({ event }) => {
+    const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_input", { event }));
+    return toolResult(isRecord(data) ? data : { value: data }, "Suitelet input sent.");
   });
 
   server.registerTool("magic_netsuite_save_selected_context", {

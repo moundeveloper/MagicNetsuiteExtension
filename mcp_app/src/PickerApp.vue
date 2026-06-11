@@ -2,7 +2,7 @@
   <div class="context-modal-overlay">
     <section class="context-modal">
       <header class="context-modal-header">
-        <h2>NetSuite Context Picker</h2>
+        <h2>{{ mode === "suitelet" ? "Suitelet Viewer" : "NetSuite Context Picker" }}</h2>
         <div class="context-header-actions">
           <span class="status-pill" :class="connectionClass">
             <span class="status-dot" />
@@ -24,6 +24,95 @@
       </header>
 
       <div class="context-modal-body">
+        <template v-if="mode === 'suitelet'">
+          <section class="suitelet-viewer-panel">
+            <aside class="suitelet-sidebar">
+              <div class="suitelet-sidebar-header">
+                <strong>Suitelets</strong>
+                <button class="context-modal-close" type="button" title="Refresh Suitelets" @click="loadSuitelets">
+                  <span :class="suiteletsLoading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" aria-hidden="true" />
+                </button>
+              </div>
+              <div class="suitelet-picker-search">
+                <input
+                  v-model="suiteletQuery"
+                  class="context-search"
+                  type="search"
+                  placeholder="Search"
+                  @keydown.enter.prevent="loadSuitelets"
+                />
+              </div>
+              <div class="suitelet-list">
+                <button
+                  v-for="suitelet in suitelets"
+                  :key="`${suitelet.scriptInternalId}:${suitelet.deploymentId}`"
+                  type="button"
+                  class="suitelet-option"
+                  :class="{ active: suitelet.url === suiteletUrl }"
+                  @click="selectSuitelet(suitelet)"
+                >
+                  <strong>{{ suitelet.scriptName }}</strong>
+                  <span>{{ suitelet.scriptId || suitelet.scriptInternalId }}</span>
+                  <small>{{ suitelet.deploymentScriptId || `deploy ${suitelet.deploymentId}` }}</small>
+                </button>
+                <p v-if="!suiteletsLoading && suitelets.length === 0" class="suitelet-empty">
+                  No deployed Suitelets loaded.
+                </p>
+              </div>
+            </aside>
+
+            <main class="suitelet-main">
+              <div class="suitelet-toolbar">
+                <input
+                  v-model="suiteletUrl"
+                  class="context-search suitelet-url-input"
+                  type="url"
+                  placeholder="Suitelet URL, or leave empty to use the active/preferred NetSuite tab"
+                  @keydown.enter.prevent="startSuiteletStream"
+                />
+                <button class="agent-primary-btn" type="button" :disabled="suiteletStarting" @click="startSuiteletStream">
+                  <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-play'" aria-hidden="true" />
+                  {{ suiteletStarting ? "Starting..." : "Start" }}
+                </button>
+                <button class="agent-secondary-btn" type="button" :disabled="!suiteletStreaming" @click="toggleSuiteletStreaming">
+                  <span :class="suiteletStreaming ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true" />
+                  {{ suiteletStreaming ? "Pause" : "Resume" }}
+                </button>
+              </div>
+
+              <div
+                ref="suiteletSurfaceRef"
+                class="suitelet-surface"
+                tabindex="0"
+                @click="handleSuiteletClick"
+                @wheel.prevent="handleSuiteletWheel"
+                @keydown="handleSuiteletKey"
+                @keyup="handleSuiteletKey"
+              >
+                <img
+                  v-if="suiteletFrame"
+                  ref="suiteletFrameRef"
+                  class="suitelet-frame"
+                  :src="suiteletFrame"
+                  :alt="suiteletTitle"
+                  draggable="false"
+                />
+                <div v-else class="suitelet-placeholder">
+                  <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-window'" aria-hidden="true" />
+                  <span>{{ suiteletStarting ? "Opening Suitelet stream..." : "Choose a Suitelet or start a URL stream." }}</span>
+                </div>
+              </div>
+
+              <div class="suitelet-status-bar">
+                <span>{{ suiteletTitle || "No Suitelet stream" }}</span>
+                <span v-if="suiteletCurrentUrl">{{ suiteletCurrentUrl }}</span>
+                <span v-if="suiteletCapturedAt">Updated {{ suiteletCapturedAt }}</span>
+              </div>
+            </main>
+          </section>
+        </template>
+
+        <template v-else>
         <div class="context-tabs">
           <button type="button" :class="{ active: tab === 'records' }" @click="activateTab('records')">
             <span class="pi pi-database" aria-hidden="true" />
@@ -328,6 +417,8 @@
           </div>
         </aside>
 
+        </template>
+
         <p v-if="error" class="context-error">{{ error }}</p>
       </div>
     </section>
@@ -339,6 +430,7 @@ import { App } from "@modelcontextprotocol/ext-apps";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 type Tab = "records" | "files";
+type AppMode = "picker" | "suitelet";
 type RecordType = { id: string; name: string };
 type RecordRow = { id: string; label: string; meta: string; raw?: Record<string, unknown> };
 type FolderRow = {
@@ -361,6 +453,15 @@ type FileRow = {
   url?: string;
 };
 type CabinetItem = FolderRow | (FileRow & { type: "file" });
+type SuiteletOption = {
+  scriptInternalId: string;
+  scriptId: string;
+  scriptName: string;
+  deploymentId: string;
+  deploymentScriptId: string;
+  status: string;
+  url: string;
+};
 type QueueItem = {
   key: string;
   kind: "record" | "file";
@@ -374,6 +475,7 @@ const app = new App(
   { availableDisplayModes: ["inline", "fullscreen"] },
 );
 
+const mode = ref<AppMode>("picker");
 const tab = ref<Tab>("records");
 const status = ref("Connecting...");
 const error = ref("");
@@ -404,6 +506,20 @@ const filesLoading = ref(false);
 const queued = ref<QueueItem[]>([]);
 const sending = ref(false);
 const lastSaved = ref<{ count: number; time: string } | null>(null);
+const suiteletUrl = ref("");
+const suiteletCurrentUrl = ref("");
+const suiteletFrame = ref("");
+const suiteletTitle = ref("");
+const suiteletCapturedAt = ref("");
+const suiteletStreaming = ref(false);
+const suiteletStarting = ref(false);
+const suiteletSurfaceRef = ref<HTMLElement | null>(null);
+const suiteletFrameRef = ref<HTMLImageElement | null>(null);
+const suiteletQuery = ref("");
+const suitelets = ref<SuiteletOption[]>([]);
+const suiteletsLoading = ref(false);
+let suiteletFrameTimer: number | undefined;
+let suiteletFrameInFlight = false;
 
 const selectedRecordTypeLabel = computed(() => {
   const selected = recordTypes.value.find((type) => type.id === selectedRecordType.value);
@@ -716,8 +832,197 @@ async function sendToClaude(): Promise<void> {
   }
 }
 
+function readStructuredObject(result: unknown): Record<string, unknown> {
+  const direct = result as {
+    structuredContent?: Record<string, unknown>;
+    result?: { structuredContent?: Record<string, unknown>; content?: Array<{ type: string; text?: string }> };
+    content?: Array<{ type: string; text?: string }>;
+  };
+  const structured = direct?.structuredContent ?? direct?.result?.structuredContent;
+  if (structured) return structured;
+  const text = (direct?.content ?? direct?.result?.content)?.find((item) => item.type === "text")?.text;
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function stopSuiteletPolling(): void {
+  if (suiteletFrameTimer !== undefined) {
+    window.clearTimeout(suiteletFrameTimer);
+    suiteletFrameTimer = undefined;
+  }
+}
+
+function scheduleSuiteletFrame(delay = 520): void {
+  stopSuiteletPolling();
+  if (!suiteletStreaming.value) return;
+  suiteletFrameTimer = window.setTimeout(() => {
+    void loadSuiteletFrame();
+  }, delay);
+}
+
+async function startSuiteletStream(): Promise<void> {
+  if (!appReady.value || suiteletStarting.value) return;
+  suiteletStarting.value = true;
+  error.value = "";
+  status.value = "Starting stream...";
+  try {
+    await callTool("magic_netsuite_suitelet_stream_start", { url: suiteletUrl.value.trim() });
+    suiteletStreaming.value = true;
+    suiteletSurfaceRef.value?.focus();
+    status.value = "Suitelet stream connected";
+    await loadSuiteletFrame();
+  } catch (err) {
+    suiteletStreaming.value = false;
+    status.value = "Stream unavailable";
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    suiteletStarting.value = false;
+  }
+}
+
+async function loadSuitelets(): Promise<void> {
+  if (!appReady.value || suiteletsLoading.value) return;
+  suiteletsLoading.value = true;
+  error.value = "";
+  try {
+    const result = await callTool("magic_netsuite_suitelet_stream_list", { query: suiteletQuery.value.trim() });
+    suitelets.value = readStructured<SuiteletOption[]>(result, "suitelets", []);
+  } catch (err) {
+    suitelets.value = [];
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    suiteletsLoading.value = false;
+  }
+}
+
+function selectSuitelet(suitelet: SuiteletOption): void {
+  suiteletUrl.value = suitelet.url;
+  suiteletTitle.value = suitelet.scriptName;
+  void startSuiteletStream();
+}
+
+async function loadSuiteletFrame(): Promise<void> {
+  if (!suiteletStreaming.value || !appReady.value || suiteletFrameInFlight) return;
+  suiteletFrameInFlight = true;
+  try {
+    const result = await callTool("magic_netsuite_suitelet_stream_frame");
+    const frame = readStructuredObject(result);
+    const nextFrame = String(frame.dataUrl || "");
+    if (nextFrame) suiteletFrame.value = nextFrame;
+    suiteletTitle.value = String(frame.title || frame.url || "Suitelet");
+    suiteletCurrentUrl.value = String(frame.url || "");
+    suiteletCapturedAt.value = new Date(String(frame.capturedAt || Date.now())).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    status.value = "Suitelet stream connected";
+    scheduleSuiteletFrame();
+  } catch (err) {
+    suiteletStreaming.value = false;
+    error.value = err instanceof Error ? err.message : String(err);
+    status.value = "Stream unavailable";
+  } finally {
+    suiteletFrameInFlight = false;
+  }
+}
+
+function toggleSuiteletStreaming(): void {
+  suiteletStreaming.value = !suiteletStreaming.value;
+  if (suiteletStreaming.value) {
+    void loadSuiteletFrame();
+  } else {
+    stopSuiteletPolling();
+  }
+}
+
+function normalizedPointer(event: MouseEvent | WheelEvent): { x: number; y: number } | null {
+  const target = suiteletSurfaceRef.value;
+  if (!target) return null;
+  const rect = target.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return null;
+
+  const frame = suiteletFrameRef.value;
+  const naturalWidth = frame?.naturalWidth || 0;
+  const naturalHeight = frame?.naturalHeight || 0;
+  if (naturalWidth > 0 && naturalHeight > 0) {
+    const imageRatio = naturalWidth / naturalHeight;
+    const surfaceRatio = rect.width / rect.height;
+    const renderedWidth = surfaceRatio > imageRatio ? rect.height * imageRatio : rect.width;
+    const renderedHeight = surfaceRatio > imageRatio ? rect.height : rect.width / imageRatio;
+    const offsetX = (rect.width - renderedWidth) / 2;
+    const offsetY = (rect.height - renderedHeight) / 2;
+    const localX = event.clientX - rect.left - offsetX;
+    const localY = event.clientY - rect.top - offsetY;
+    if (localX < 0 || localY < 0 || localX > renderedWidth || localY > renderedHeight) return null;
+    return {
+      x: Math.max(0, Math.min(1, localX / renderedWidth)),
+      y: Math.max(0, Math.min(1, localY / renderedHeight)),
+    };
+  }
+
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+  };
+}
+
+async function sendSuiteletInput(event: Record<string, unknown>): Promise<void> {
+  if (!suiteletStreaming.value || !appReady.value) return;
+  try {
+    await callTool("magic_netsuite_suitelet_stream_input", { event });
+    scheduleSuiteletFrame(70);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function handleSuiteletClick(event: MouseEvent): void {
+  suiteletSurfaceRef.value?.focus();
+  const point = normalizedPointer(event);
+  if (!point) return;
+  void sendSuiteletInput({ type: "click", ...point });
+}
+
+function handleSuiteletWheel(event: WheelEvent): void {
+  const point = normalizedPointer(event);
+  if (!point) return;
+  void sendSuiteletInput({
+    type: "wheel",
+    ...point,
+    deltaX: event.deltaX,
+    deltaY: event.deltaY,
+  });
+}
+
+function handleSuiteletKey(event: KeyboardEvent): void {
+  if (!suiteletStreaming.value) return;
+  void sendSuiteletInput({
+    type: event.type,
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode,
+  });
+}
+
 app.ontoolresult = (result) => {
-  const structured = (result as { structuredContent?: { initialTab?: Tab } })?.structuredContent;
+  const structured = (result as { structuredContent?: { initialTab?: Tab; mode?: AppMode; url?: string } })?.structuredContent;
+  if (structured?.mode === "suitelet") {
+    mode.value = "suitelet";
+    suiteletUrl.value = structured.url ?? "";
+    void requestLargerDisplayMode();
+    window.setTimeout(() => {
+      if (!appReady.value) return;
+      if (suiteletUrl.value.trim()) void startSuiteletStream();
+      void loadSuitelets();
+    }, 350);
+    return;
+  }
   if (structured?.initialTab) tab.value = structured.initialTab;
 };
 
@@ -771,7 +1076,12 @@ onMounted(async () => {
 
     window.setTimeout(() => {
       void checkBridge();
-      if (tab.value === "records") void loadRecordTypes();
+      if (mode.value === "suitelet") {
+        if (suiteletUrl.value.trim()) void startSuiteletStream();
+        void loadSuitelets();
+      } else if (tab.value === "records") {
+        void loadRecordTypes();
+      }
     }, 300);
   } catch (err) {
     status.value = "Connection failed";
@@ -781,5 +1091,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  stopSuiteletPolling();
 });
 </script>
