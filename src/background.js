@@ -1681,6 +1681,33 @@ const MCP_TOOL_DEFINITIONS = [
     inputSchema: { type: "object", properties: {} }
   },
   {
+    name: "netsuite_suitelet_hover",
+    description:
+      "Hover the mouse over an element in the controlled Suitelet (by CSS selector, or x/y viewport coordinates) and return a screenshot. Triggers native CSS :hover plus pointer/mouseover events, so tooltips, dropdown menus, and hover-reveal UI appear.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the element to hover over." },
+        x: { type: "number", description: "Viewport X coordinate (CSS px) to hover, if no selector." },
+        y: { type: "number", description: "Viewport Y coordinate (CSS px) to hover, if no selector." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_scroll",
+    description:
+      "Scroll the controlled Suitelet (window, or a specific scrollable element by selector) and return a screenshot of the new view. Use to reveal content below the fold such as a results table. Omit args to page down; use to:\"bottom\"/\"top\", a dy pixel delta, or a selector to scroll an element into view.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector to scroll into view, or the scrollable container to scroll." },
+        to: { type: "string", description: "\"top\" or \"bottom\" to jump to an edge." },
+        dy: { type: "number", description: "Vertical pixels to scroll by (positive = down). Defaults to ~600 for window." },
+        dx: { type: "number", description: "Horizontal pixels to scroll by." }
+      }
+    }
+  },
+  {
     name: "netsuite_suitelet_fill",
     description:
       "Set the value of an input/textarea/select in the controlled Suitelet by CSS selector, firing input/change events (works with framework-bound fields).",
@@ -1830,6 +1857,10 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleSuiteletInspect(args);
         } else if (name === "netsuite_suitelet_screenshot") {
           result = await handleSuiteletScreenshot(args);
+        } else if (name === "netsuite_suitelet_scroll") {
+          result = await handleSuiteletScroll(args);
+        } else if (name === "netsuite_suitelet_hover") {
+          result = await handleSuiteletHover(args);
         } else if (name === "netsuite_suitelet_fill") {
           result = await handleSuiteletFill(args);
         } else if (name === "netsuite_suitelet_click") {
@@ -4018,21 +4049,165 @@ async function handleSuiteletInspect() {
   return { content: [{ type: "text", text: JSON.stringify({ ok: true, ...snapshot }, null, 2) }] };
 }
 
+async function captureSuiteletScreenshotData(tabId) {
+  try {
+    const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 60,
+      fromSurface: true,
+      captureBeyondViewport: false
+    });
+    return shot?.data || "";
+  } catch (e) {
+    return "";
+  }
+}
+
 async function handleSuiteletScreenshot() {
   const tabId = requireSuiteletControlTab();
   await ensureSuiteletDebugger(tabId);
-  const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
-    format: "jpeg",
-    quality: 60,
-    fromSurface: true,
-    captureBeyondViewport: false
-  });
+  const data = await captureSuiteletScreenshotData(tabId);
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   const content = [{
     type: "text",
     text: JSON.stringify({ ok: true, url: tab?.url || "", title: tab?.title || "" }, null, 2)
   }];
-  if (shot?.data) content.push({ type: "image", data: shot.data, mimeType: "image/jpeg" });
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletHover(args) {
+  const tabId = requireSuiteletControlTab();
+  await focusSuiteletControlTab();
+  const selector = String(args?.selector || "").trim();
+  let x = Number(args?.x);
+  let y = Number(args?.y);
+  let resolved = null;
+
+  if (selector) {
+    resolved = await evalInSuiteletTab(`(function () {
+      var el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return { ok: false };
+      el.scrollIntoView({ block: "center", inline: "center" });
+      var r = el.getBoundingClientRect();
+      return { ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label: (el.innerText || el.value || el.getAttribute("title") || "").trim().slice(0, 100) };
+    })()`);
+    if (!resolved || !resolved.ok) throw new Error(`Element not found: ${selector}`);
+    x = resolved.x;
+    y = resolved.y;
+  }
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error("Provide a selector, or x and y viewport coordinates, to hover.");
+  }
+
+  // Native :hover requires a real pointer move through CDP.
+  try {
+    await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 });
+  } catch (e) { /* fall back to synthetic events below */ }
+
+  // Synthetic pointer/mouse events for JS-driven tooltips/menus.
+  await evalInSuiteletTab(`(function () {
+    var el = document.elementFromPoint(${x}, ${y});
+    if (!el) return { ok: false };
+    ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"].forEach(function (type) {
+      try {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: type.indexOf("enter") === -1, cancelable: true, clientX: ${x}, clientY: ${y} }));
+      } catch (e) {}
+    });
+    return { ok: true };
+  })()`).catch(() => null);
+
+  const data = await captureSuiteletScreenshotData(tabId);
+  const content = [{
+    type: "text",
+    text: JSON.stringify({ ok: true, target: selector || `${x},${y}`, x, y, label: resolved?.label || "" }, null, 2)
+  }];
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletScroll(args) {
+  const tabId = requireSuiteletControlTab();
+  await focusSuiteletControlTab();
+  const selector = String(args?.selector || "").trim();
+  const to = String(args?.to || "").trim().toLowerCase(); // "top" | "bottom" | ""
+  const dy = Number(args?.dy);
+  const dx = Number(args?.dx);
+  const expression = `(function () {
+    var selector = ${JSON.stringify(selector)};
+    var to = ${JSON.stringify(to)};
+    var dy = ${Number.isFinite(dy) ? dy : "null"};
+    var dx = ${Number.isFinite(dx) ? dx : "null"};
+
+    // Find the most relevant scrollable element on the page (e.g. a DataTables
+    // results body with overflow:auto and a fixed height), preferring the tallest.
+    function findScrollable() {
+      var best = null, bestScore = -1;
+      var all = document.querySelectorAll("*");
+      for (var i = 0; i < all.length; i++) {
+        var node = all[i];
+        var overflowable = node.scrollHeight - node.clientHeight > 40;
+        if (!overflowable) continue;
+        var oy = getComputedStyle(node).overflowY;
+        if (oy !== "auto" && oy !== "scroll") continue;
+        var score = (node.scrollHeight - node.clientHeight) * Math.max(1, node.clientHeight);
+        if (score > bestScore) { bestScore = score; best = node; }
+      }
+      return best;
+    }
+
+    var el = selector ? document.querySelector(selector) : null;
+    if (selector && !el) return { ok: false, error: "Element not found: " + selector };
+
+    // Pure "scroll into view" when a selector is given with no movement args.
+    if (el && dy == null && dx == null && !to) {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+      var r0 = el.getBoundingClientRect();
+      return { ok: true, target: selector, scrolledIntoView: true };
+    }
+
+    // Choose what to scroll: explicit selector, else the detected inner container,
+    // else the document. Scroll both the chosen element AND the window so we move
+    // regardless of which one actually overflows.
+    var inner = el || findScrollable();
+    var docEl = document.scrollingElement || document.documentElement;
+    var pageEl = (inner === docEl || inner === document.body || inner == null) ? null : inner;
+
+    function curTop(node) { return node === docEl ? (window.scrollY || docEl.scrollTop || 0) : node.scrollTop; }
+    var beforePage = pageEl ? curTop(pageEl) : null;
+    var beforeWin = window.scrollY || docEl.scrollTop || 0;
+
+    function applyTo(node, isWindow) {
+      if (to === "bottom") { if (isWindow) window.scrollTo(0, docEl.scrollHeight); else node.scrollTop = node.scrollHeight; }
+      else if (to === "top") { if (isWindow) window.scrollTo(0, 0); else node.scrollTop = 0; }
+      else { var ddy = (dy == null ? 600 : dy); if (isWindow) window.scrollBy(dx || 0, ddy); else { node.scrollTop += ddy; node.scrollLeft += (dx || 0); } }
+    }
+    if (pageEl) applyTo(pageEl, false);
+    applyTo(docEl, true);
+
+    var afterPage = pageEl ? curTop(pageEl) : null;
+    var afterWin = window.scrollY || docEl.scrollTop || 0;
+    var movedContainer = pageEl ? (afterPage - beforePage) : 0;
+    var movedWindow = afterWin - beforeWin;
+    var ref = pageEl || docEl;
+    var refTop = pageEl ? afterPage : afterWin;
+    return {
+      ok: true,
+      target: selector || (pageEl ? "auto-detected scroll container" : "window"),
+      movedContainerPx: movedContainer,
+      movedWindowPx: movedWindow,
+      moved: Math.abs(movedContainer) + Math.abs(movedWindow) > 0,
+      scrollTop: refTop,
+      scrollHeight: ref.scrollHeight,
+      clientHeight: ref.clientHeight || window.innerHeight,
+      atBottom: refTop + (ref.clientHeight || window.innerHeight) >= (ref.scrollHeight || 0) - 2
+    };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  const data = await captureSuiteletScreenshotData(tabId);
+  const content = [{ type: "text", text: JSON.stringify(value, null, 2) }];
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
   return { content };
 }
 

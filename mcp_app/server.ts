@@ -452,7 +452,7 @@ export function createServer(): McpServer {
 
   server.registerTool("magic_netsuite_suitelet_stream_start", {
     title: "Start Suitelet Stream",
-    description: "Start a Suitelet stream session in the Chrome extension. Intended for the Magic NetSuite Suitelet Viewer MCP App.",
+    description: "INTERNAL viewer transport for the MCP App UI — agents should NOT use this. To open and drive a Suitelet, use magic_netsuite_suitelet_control_open instead.",
     inputSchema: {
       url: z.string().optional(),
     },
@@ -474,7 +474,7 @@ export function createServer(): McpServer {
 
   server.registerTool("magic_netsuite_suitelet_stream_frame", {
     title: "Get Suitelet Stream Frame",
-    description: "Get the latest image frame for the active Suitelet stream session.",
+    description: "INTERNAL viewer transport for the MCP App UI — agents should NOT use this. To see the controlled Suitelet, use magic_netsuite_suitelet_screenshot (or scroll/hover, which also return a screenshot).",
     inputSchema: {},
   }, async () => {
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_frame"));
@@ -483,7 +483,7 @@ export function createServer(): McpServer {
 
   server.registerTool("magic_netsuite_suitelet_stream_input", {
     title: "Send Suitelet Stream Input",
-    description: "Forward a mouse, wheel, or keyboard event from the Suitelet viewer to Chrome.",
+    description: "INTERNAL viewer transport for the MCP App UI (forwards raw coordinate mouse/wheel/key events) — agents should NOT use this; coordinate input is unreliable. Use the dedicated tools instead: magic_netsuite_suitelet_scroll, _hover, _click, _fill.",
     inputSchema: {
       event: z.record(z.string(), z.unknown()),
     },
@@ -581,6 +581,45 @@ export function createServer(): McpServer {
     const raw = await callExtensionTool("netsuite_suitelet_screenshot");
     const data = parseToolJson(raw);
     const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet screenshot captured.");
+    const image = raw.content?.find((item) => item.type === "image" && item.data);
+    if (image?.data) {
+      result.content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
+    }
+    return result;
+  });
+
+  server.registerTool("magic_netsuite_suitelet_hover", {
+    title: "Hover in Suitelet",
+    description: "Hover the mouse over an element (by CSS selector or x/y viewport coordinates) and return a screenshot. Triggers native :hover plus pointer/mouseover events so tooltips and hover menus appear.",
+    inputSchema: {
+      selector: z.string().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+    },
+  }, async ({ selector, x, y }) => {
+    const raw = await callExtensionTool("netsuite_suitelet_hover", { selector, x, y });
+    const data = parseToolJson(raw);
+    const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet hovered.");
+    const image = raw.content?.find((item) => item.type === "image" && item.data);
+    if (image?.data) {
+      result.content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
+    }
+    return result;
+  });
+
+  server.registerTool("magic_netsuite_suitelet_scroll", {
+    title: "Scroll Suitelet",
+    description: "Scroll the controlled Suitelet (window or a scrollable element by selector) and return a screenshot of the new view. Use to reveal a results table below the fold. Omit args to page down; or pass to:\"bottom\"/\"top\", a dy delta, or a selector.",
+    inputSchema: {
+      selector: z.string().optional(),
+      to: z.string().optional(),
+      dy: z.number().optional(),
+      dx: z.number().optional(),
+    },
+  }, async ({ selector, to, dy, dx }) => {
+    const raw = await callExtensionTool("netsuite_suitelet_scroll", { selector, to, dy, dx });
+    const data = parseToolJson(raw);
+    const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet scrolled.");
     const image = raw.content?.find((item) => item.type === "image" && item.data);
     if (image?.data) {
       result.content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
