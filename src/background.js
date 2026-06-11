@@ -1653,6 +1653,81 @@ const MCP_TOOL_DEFINITIONS = [
       },
       required: ["url"]
     }
+  },
+  {
+    name: "netsuite_suitelet_control_open",
+    description:
+      "START HERE to drive a Suitelet. Opens it in a real NetSuite browser tab (foreground) and attaches the controller. This toolset is fully self-contained — do NOT use Claude-in-Chrome, tab-context, navigate, or any other browser/screenshot tools; use this family (inspect/fill/click/read/eval/screenshot) for everything. PREFERRED: pass { query: \"<suitelet name>\" } (e.g. \"CTK SuiteQL\") and the correct account URL is resolved automatically — never invent or guess a URL. Alternatively pass { scriptId, deployId } from netsuite_suitelet_stream_list, or a full scriptlet.nl url. Omit all to control the already-active NetSuite tab. Returns the controlled url+title, the matched Suitelet, alternatives, a screenshot, and a snapshot of visible interactive elements for fill/click/read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Suitelet name or keyword to look up and open (recommended, e.g. \"CTK SuiteQL\")." },
+        scriptId: { type: "string", description: "Script internal id (use with deployId)." },
+        deployId: { type: "string", description: "Deployment id (use with scriptId)." },
+        url: { type: "string", description: "Full scriptlet.nl URL (only if you already have the exact account URL)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_inspect",
+    description:
+      "List the visible interactive elements (inputs, textareas, selects, buttons, links) of the controlled Suitelet with stable CSS selectors and labels. Call before fill/click to discover targets.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "netsuite_suitelet_screenshot",
+    description:
+      "Capture a screenshot (image) of the controlled Suitelet tab. Use THIS to visually see the page — never use Claude-in-Chrome or other browser screenshot tools.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "netsuite_suitelet_fill",
+    description:
+      "Set the value of an input/textarea/select in the controlled Suitelet by CSS selector, firing input/change events (works with framework-bound fields).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the field to fill." },
+        value: { type: "string", description: "Value to set." }
+      },
+      required: ["selector"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_click",
+    description:
+      "Click an element in the controlled Suitelet, either by CSS selector or by visible button/link text (e.g. \"Run Query\").",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the element to click." },
+        text: { type: "string", description: "Visible text of the button/link to click (used when selector is omitted)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_read",
+    description:
+      "Read text/value from the controlled Suitelet — a specific element by CSS selector, or the whole page body when no selector is given. Use to read query results, messages, or rendered output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector to read. Omit to read the page body text." },
+        maxLength: { type: "number", description: "Max characters to return (default 8000)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_eval",
+    description:
+      "Run a JavaScript expression or snippet in the controlled Suitelet tab and return the (JSON-serializable) result. The most flexible control primitive; prefer fill/click/read for common actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expression: { type: "string", description: "JavaScript expression or statements to evaluate in the page." }
+      },
+      required: ["expression"]
+    }
   }
 ];
 
@@ -1749,6 +1824,20 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleSuiteletFetchHtml(args);
         } else if (name === "netsuite_suitelet_proxy_request") {
           result = await handleSuiteletProxyRequest(args);
+        } else if (name === "netsuite_suitelet_control_open") {
+          result = await handleSuiteletControlOpen(args);
+        } else if (name === "netsuite_suitelet_inspect") {
+          result = await handleSuiteletInspect(args);
+        } else if (name === "netsuite_suitelet_screenshot") {
+          result = await handleSuiteletScreenshot(args);
+        } else if (name === "netsuite_suitelet_fill") {
+          result = await handleSuiteletFill(args);
+        } else if (name === "netsuite_suitelet_click") {
+          result = await handleSuiteletClick(args);
+        } else if (name === "netsuite_suitelet_read") {
+          result = await handleSuiteletRead(args);
+        } else if (name === "netsuite_suitelet_eval") {
+          result = await handleSuiteletEval(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -1757,7 +1846,7 @@ async function handleRequest({ requestId, method, params }) {
         // After a successful tool call, check governance on the dedicated tab
         // and refresh it if needed for the next call.
         // Fire-and-forget — don't block the response.
-        if (!name.startsWith("netsuite_suitelet_stream_")) {
+        if (!name.startsWith("netsuite_suitelet_")) {
           checkAndRefreshDedicatedTabGovernance().catch((err) => {
             console.debug(`[MCP] Post-call governance check failed: ${err.message}`);
           });
@@ -2739,10 +2828,11 @@ chrome.debugger.onDetach.addListener((source) => {
 async function handleSuiteletStreamStart(args) {
   const requestedUrl = normalizeSuiteletViewerUrl(args?.url);
   const previousTabId = suiteletStreamSession?.tabId || null;
+  const openActive = args?.active === true;
   let tab;
 
   if (requestedUrl) {
-    tab = await chrome.tabs.create({ url: requestedUrl, active: false });
+    tab = await chrome.tabs.create({ url: requestedUrl, active: openActive });
     await waitForTabLoaded(tab.id).catch(() => null);
   } else {
     tab = await getPreferredNetsuiteTab();
@@ -2779,8 +2869,10 @@ async function handleSuiteletStreamStart(args) {
   };
 }
 
-async function handleSuiteletStreamList(args) {
-  const query = String(args?.query || "").trim().toLowerCase();
+// Shared deployed-Suitelet lookup. Returns { origin, suitelets } where each
+// suitelet carries a real, account-correct scriptlet.nl URL.
+async function querySuitelets(query) {
+  const normalized = String(query || "").trim().toLowerCase();
   const tab = await getPreferredNetsuiteTab();
   if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
 
@@ -2789,17 +2881,17 @@ async function handleSuiteletStreamList(args) {
     "scriptdeployment.isdeployed = 'T'"
   ];
 
-  if (query) {
-    const escaped = query.replace(/'/g, "''");
+  if (normalized) {
+    const escaped = normalized.replace(/'/g, "''");
     const searchParts = [
       `LOWER(script.name) LIKE LOWER('%${escaped}%')`,
       `LOWER(script.scriptid) LIKE LOWER('%${escaped}%')`,
       `LOWER(scriptdeployment.scriptid) LIKE LOWER('%${escaped}%')`
     ];
 
-    if (/^\d+$/.test(query)) {
-      searchParts.push(`script.id = ${Number(query)}`);
-      searchParts.push(`scriptdeployment.deploymentid = ${Number(query)}`);
+    if (/^\d+$/.test(normalized)) {
+      searchParts.push(`script.id = ${Number(normalized)}`);
+      searchParts.push(`scriptdeployment.deploymentid = ${Number(normalized)}`);
     }
 
     conditions.push(`(
@@ -2807,25 +2899,28 @@ async function handleSuiteletStreamList(args) {
     )`);
   }
 
+  // ROWNUM is assigned BEFORE ORDER BY in SuiteQL/Oracle, so ordering + capping in
+  // the same SELECT returns an arbitrary slice. Order in a subquery, cap outside.
   const sql = `
-    SELECT
-      script.id AS scriptinternalid,
-      script.scriptid AS scriptscriptid,
-      script.name AS scriptname,
-      scriptdeployment.deploymentid,
-      scriptdeployment.scriptid AS deploymentscriptid,
-      scriptdeployment.status,
-      scriptdeployment.isdeployed
-    FROM scriptdeployment
-    INNER JOIN script ON scriptdeployment.script = script.id
-    WHERE ${conditions.join(" AND ")}
-      AND ROWNUM <= 100
-    ORDER BY script.name, scriptdeployment.deploymentid
+    SELECT * FROM (
+      SELECT
+        script.id AS scriptinternalid,
+        script.scriptid AS scriptscriptid,
+        script.name AS scriptname,
+        scriptdeployment.deploymentid,
+        scriptdeployment.scriptid AS deploymentscriptid,
+        scriptdeployment.status,
+        scriptdeployment.isdeployed
+      FROM scriptdeployment
+      INNER JOIN script ON scriptdeployment.script = script.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY script.name, scriptdeployment.deploymentid
+    ) WHERE ROWNUM <= 1000
   `;
 
   const response = await sendMessageToTab(tab.id, {
     action: "RUN_SUITEQL_QUERY",
-    data: { sql, limit: 100 },
+    data: { sql, limit: 1000 },
     mode: "normal"
   });
 
@@ -2856,14 +2951,58 @@ async function handleSuiteletStreamList(args) {
       };
     })
     .filter((suitelet) => suitelet.url)
-    .slice(0, 100);
+    .slice(0, 1000);
 
+  return { origin, suitelets };
+}
+
+async function handleSuiteletStreamList(args) {
+  const { suitelets } = await querySuitelets(args?.query);
   return {
     content: [{
       type: "text",
       text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
     }]
   };
+}
+
+// Resolve what to open for control: an explicit scriptlet URL, a scriptId+deployId,
+// or a name/query lookup. Never lets the caller invent a host.
+async function resolveSuiteletTarget(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (rawUrl) {
+    let parsed;
+    try { parsed = new URL(rawUrl); } catch { throw new Error(`Invalid Suitelet URL: ${rawUrl}`); }
+    if (!/\.app\.netsuite\.com$/i.test(parsed.hostname) || parsed.pathname !== "/app/site/hosting/scriptlet.nl") {
+      throw new Error(
+        `Refusing to open "${rawUrl}" — not a Suitelet (expected an <account>.app.netsuite.com/app/site/hosting/scriptlet.nl URL). ` +
+        `Pass { query: "<name>" } or { scriptId, deployId } instead and the URL will be resolved for you.`
+      );
+    }
+    return { url: parsed.href, matched: null, alternatives: [] };
+  }
+
+  const scriptId = String(args?.scriptId ?? args?.scriptInternalId ?? "").trim();
+  const deployId = String(args?.deployId ?? args?.deploymentId ?? "").trim();
+  if (/^\d+$/.test(scriptId) && /^\d+$/.test(deployId)) {
+    const tab = await getPreferredNetsuiteTab();
+    const origin = tab ? getTabOrigin(tab.url) : "";
+    if (!origin) throw new Error("No NetSuite tab open to resolve the account URL. Open a NetSuite page first.");
+    return { url: `${origin}/app/site/hosting/scriptlet.nl?script=${scriptId}&deploy=${deployId}`, matched: null, alternatives: [] };
+  }
+
+  const query = String(args?.query ?? args?.name ?? "").trim();
+  if (query) {
+    const { suitelets } = await querySuitelets(query);
+    if (!suitelets.length) throw new Error(`No deployed Suitelet matches "${query}".`);
+    return {
+      url: suitelets[0].url,
+      matched: suitelets[0],
+      alternatives: suitelets.slice(1, 6).map((s) => ({ scriptName: s.scriptName, scriptInternalId: s.scriptInternalId, deploymentId: s.deploymentId, url: s.url }))
+    };
+  }
+
+  return { url: "", matched: null, alternatives: [] }; // fall back to active tab
 }
 
 async function handleSuiteletProbeUrl(args) {
@@ -3745,6 +3884,235 @@ async function handleSuiteletStreamInput(args) {
       text: JSON.stringify({ ok: true, type, x, y }, null, 2)
     }]
   };
+}
+
+// -----------------------------
+// Suitelet programmatic control (CDP Runtime.evaluate on the real NetSuite tab)
+// -----------------------------
+
+function requireSuiteletControlTab() {
+  if (!suiteletStreamSession?.tabId) {
+    throw new Error("No Suitelet control session is active. Open one first with magic_netsuite_suitelet_control_open.");
+  }
+  return suiteletStreamSession.tabId;
+}
+
+// Runs a JS expression in the controlled Suitelet tab and returns its value.
+async function evalInSuiteletTab(expression, { awaitPromise = true } = {}) {
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  await chrome.debugger.sendCommand({ tabId }, "Runtime.enable", {}).catch(() => null);
+  const result = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise,
+    userGesture: true,
+    allowUnsafeEvalBlockedByCSP: true
+  });
+  if (result?.exceptionDetails) {
+    const ex = result.exceptionDetails;
+    throw new Error(ex.exception?.description || ex.text || "Suitelet evaluation error");
+  }
+  return result?.result?.value;
+}
+
+const SUITELET_INSPECT_EXPRESSION = `(function () {
+  function visible(el) {
+    var rect = el.getBoundingClientRect();
+    var style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  }
+  function selectorFor(el) {
+    if (el.id) return "#" + CSS.escape(el.id);
+    if (el.getAttribute("name")) return el.tagName.toLowerCase() + "[name=\\"" + el.getAttribute("name") + "\\"]";
+    var path = [];
+    var node = el;
+    while (node && node.nodeType === 1 && path.length < 5) {
+      var part = node.tagName.toLowerCase();
+      var parent = node.parentNode;
+      if (parent && parent.children) {
+        var idx = Array.prototype.indexOf.call(parent.children, node) + 1;
+        part += ":nth-child(" + idx + ")";
+      }
+      path.unshift(part);
+      if (node.id) { path[0] = "#" + CSS.escape(node.id); break; }
+      node = node.parentNode;
+    }
+    return path.join(" > ");
+  }
+  var nodes = Array.prototype.slice.call(
+    document.querySelectorAll("input, textarea, select, button, a[href], [role=button], [onclick]")
+  );
+  var out = [];
+  for (var i = 0; i < nodes.length && out.length < 120; i++) {
+    var el = nodes[i];
+    if (!visible(el)) continue;
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute("type") || "",
+      id: el.id || "",
+      name: el.getAttribute("name") || "",
+      selector: selectorFor(el),
+      label: (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || el.getAttribute("title") || "").trim().slice(0, 100)
+    });
+  }
+  return { title: document.title, url: location.href, count: out.length, elements: out };
+})()`;
+
+// Bring the controlled Suitelet tab to the foreground so the user can watch.
+async function focusSuiteletControlTab() {
+  const tabId = suiteletStreamSession?.tabId;
+  if (!tabId) return;
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    const tab = await chrome.tabs.get(tabId);
+    if (tab?.windowId) await chrome.windows.update(tab.windowId, { focused: true });
+  } catch (e) { /* tab may have closed; ignore */ }
+}
+
+async function handleSuiteletControlOpen(args) {
+  // Resolve the real account-correct URL — never trust a caller-invented host.
+  const target = await resolveSuiteletTarget(args);
+  // Open in the foreground so the execution is visible to the user.
+  await handleSuiteletStreamStart({ url: target.url, active: true });
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  await chrome.debugger.sendCommand({ tabId }, "Runtime.enable", {}).catch(() => null);
+  await focusSuiteletControlTab();
+
+  let snapshot = null;
+  try { snapshot = await evalInSuiteletTab(SUITELET_INSPECT_EXPRESSION); } catch (e) { snapshot = { error: String(e?.message || e) }; }
+
+  let screenshotData = "";
+  try {
+    const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 60,
+      fromSurface: true,
+      captureBeyondViewport: false
+    });
+    screenshotData = shot?.data || "";
+  } catch (e) { /* screenshot is best-effort */ }
+
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const content = [{
+    type: "text",
+    text: JSON.stringify({
+      ok: true,
+      session: suiteletStreamSession,
+      controlledUrl: tab?.url || suiteletStreamSession?.url || "",
+      controlledTitle: tab?.title || "",
+      matched: target.matched,
+      alternatives: target.alternatives,
+      snapshot
+    }, null, 2)
+  }];
+  if (screenshotData) {
+    content.push({ type: "image", data: screenshotData, mimeType: "image/jpeg" });
+  }
+  return { content };
+}
+
+async function handleSuiteletInspect() {
+  const snapshot = await evalInSuiteletTab(SUITELET_INSPECT_EXPRESSION);
+  return { content: [{ type: "text", text: JSON.stringify({ ok: true, ...snapshot }, null, 2) }] };
+}
+
+async function handleSuiteletScreenshot() {
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
+    format: "jpeg",
+    quality: 60,
+    fromSurface: true,
+    captureBeyondViewport: false
+  });
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const content = [{
+    type: "text",
+    text: JSON.stringify({ ok: true, url: tab?.url || "", title: tab?.title || "" }, null, 2)
+  }];
+  if (shot?.data) content.push({ type: "image", data: shot.data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletFill(args) {
+  const selector = String(args?.selector || "").trim();
+  if (!selector) throw new Error("selector is required.");
+  const value = args?.value == null ? "" : String(args.value);
+  await focusSuiteletControlTab();
+  const expression = `(function () {
+    var el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return { ok: false, error: "Element not found: " + ${JSON.stringify(selector)} };
+    el.focus();
+    var value = ${JSON.stringify(value)};
+    try {
+      var proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) descriptor.set.call(el, value);
+      else el.value = value;
+    } catch (e) { el.value = value; }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, selector: ${JSON.stringify(selector)}, value: el.value };
+  })()`;
+  const value2 = await evalInSuiteletTab(expression);
+  return { content: [{ type: "text", text: JSON.stringify(value2, null, 2) }] };
+}
+
+async function handleSuiteletClick(args) {
+  const selector = String(args?.selector || "").trim();
+  const text = String(args?.text || "").trim();
+  if (!selector && !text) throw new Error("Provide a selector or visible text to click.");
+  await focusSuiteletControlTab();
+  const expression = `(function () {
+    var el = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : "null"};
+    if (!el && ${JSON.stringify(text)}) {
+      var needle = ${JSON.stringify(text.toLowerCase())};
+      var cands = Array.prototype.slice.call(
+        document.querySelectorAll("button, a, input[type=button], input[type=submit], [role=button], .uir-button, span.bntxt, td.bntxt")
+      );
+      el = cands.filter(function (c) {
+        var label = (c.innerText || c.value || c.getAttribute("title") || "").trim().toLowerCase();
+        return label === needle;
+      })[0] || cands.filter(function (c) {
+        var label = (c.innerText || c.value || c.getAttribute("title") || "").trim().toLowerCase();
+        return label.indexOf(needle) !== -1;
+      })[0];
+    }
+    if (!el) return { ok: false, error: "Clickable element not found." };
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center" });
+    el.click();
+    return { ok: true, clicked: (el.innerText || el.value || el.id || el.tagName || "").toString().trim().slice(0, 100) };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+async function handleSuiteletRead(args) {
+  const selector = String(args?.selector || "").trim();
+  const maxLength = Math.max(100, Math.min(40000, Number(args?.maxLength) || 8000));
+  const expression = `(function () {
+    var target = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : "document.body"};
+    if (!target) return { ok: false, error: "Element not found." };
+    var text = (target.value != null && target.value !== "") ? target.value : (target.innerText || target.textContent || "");
+    return { ok: true, selector: ${JSON.stringify(selector || "body")}, length: text.length, text: text.slice(0, ${maxLength}) };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+async function handleSuiteletEval(args) {
+  const expression = String(args?.expression || "").trim();
+  if (!expression) throw new Error("expression is required.");
+  const value = await evalInSuiteletTab(`(function () { return (${expression}); })()`).catch(async (err) => {
+    // Allow statement-style snippets too (not just expressions).
+    if (/SyntaxError|Unexpected/i.test(String(err?.message || err))) {
+      return evalInSuiteletTab(`(function () { ${expression} })()`);
+    }
+    throw err;
+  });
+  return { content: [{ type: "text", text: JSON.stringify({ ok: true, value }, null, 2) }] };
 }
 
 // -----------------------------

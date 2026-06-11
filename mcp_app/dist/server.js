@@ -418,6 +418,101 @@ export function createServer() {
         }));
         return toolResult(isRecord(data) ? data : { value: data }, "Suitelet request proxied.");
     });
+    server.registerTool("magic_netsuite_suitelet_control_open", {
+        title: "Open & Control Suitelet",
+        description: "Open a Suitelet in a real NetSuite tab and attach the controller so Claude can inspect and drive it. PREFERRED: pass { query: \"<name>\" } (e.g. \"CTK SuiteQL\") — the correct account URL is resolved automatically; never guess a URL. Or pass { scriptId, deployId }, or a full scriptlet.nl url. Returns the matched Suitelet, a screenshot, and a snapshot of interactive elements.",
+        inputSchema: {
+            query: z.string().optional(),
+            scriptId: z.string().optional(),
+            deployId: z.string().optional(),
+            url: z.string().optional(),
+        },
+    }, async ({ query, scriptId, deployId, url }) => {
+        const openArgs = {};
+        if (query)
+            openArgs.query = query;
+        if (scriptId)
+            openArgs.scriptId = scriptId;
+        if (deployId)
+            openArgs.deployId = deployId;
+        if (url)
+            openArgs.url = url;
+        const raw = await callExtensionTool("netsuite_suitelet_control_open", openArgs);
+        const data = parseToolJson(raw);
+        const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet opened for control.");
+        // Forward the screenshot so Claude can SEE the opened Suitelet without reaching
+        // for any other browser extension.
+        const image = raw.content?.find((item) => item.type === "image" && item.data);
+        if (image?.data) {
+            result.content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
+        }
+        return result;
+    });
+    server.registerTool("magic_netsuite_suitelet_inspect", {
+        title: "Inspect Suitelet",
+        description: "List visible interactive elements (inputs, textareas, selects, buttons, links) of the controlled Suitelet with CSS selectors and labels.",
+        inputSchema: {},
+    }, async () => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_inspect"));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet inspected.");
+    });
+    server.registerTool("magic_netsuite_suitelet_screenshot", {
+        title: "Screenshot Suitelet",
+        description: "Capture a screenshot of the controlled Suitelet tab so Claude can see it. Use this instead of any external/Claude-in-Chrome browser screenshot tool.",
+        inputSchema: {},
+    }, async () => {
+        const raw = await callExtensionTool("netsuite_suitelet_screenshot");
+        const data = parseToolJson(raw);
+        const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet screenshot captured.");
+        const image = raw.content?.find((item) => item.type === "image" && item.data);
+        if (image?.data) {
+            result.content.push({ type: "image", data: image.data, mimeType: image.mimeType || "image/jpeg" });
+        }
+        return result;
+    });
+    server.registerTool("magic_netsuite_suitelet_fill", {
+        title: "Fill Suitelet Field",
+        description: "Set the value of an input/textarea/select in the controlled Suitelet by CSS selector (fires input/change events).",
+        inputSchema: {
+            selector: z.string(),
+            value: z.string().optional(),
+        },
+    }, async ({ selector, value = "" }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_fill", { selector, value }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet field filled.");
+    });
+    server.registerTool("magic_netsuite_suitelet_click", {
+        title: "Click Suitelet Element",
+        description: "Click an element in the controlled Suitelet by CSS selector or by visible button/link text (e.g. \"Run Query\").",
+        inputSchema: {
+            selector: z.string().optional(),
+            text: z.string().optional(),
+        },
+    }, async ({ selector, text }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_click", { selector, text }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet element clicked.");
+    });
+    server.registerTool("magic_netsuite_suitelet_read", {
+        title: "Read Suitelet Content",
+        description: "Read text/value from the controlled Suitelet by CSS selector, or the whole page body when no selector is given.",
+        inputSchema: {
+            selector: z.string().optional(),
+            maxLength: z.number().optional(),
+        },
+    }, async ({ selector, maxLength }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_read", { selector, maxLength }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet content read.");
+    });
+    server.registerTool("magic_netsuite_suitelet_eval", {
+        title: "Eval in Suitelet",
+        description: "Run a JavaScript expression/snippet in the controlled Suitelet tab and return the result. Flexible control primitive; prefer fill/click/read for common actions.",
+        inputSchema: {
+            expression: z.string(),
+        },
+    }, async ({ expression }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_eval", { expression }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet eval complete.");
+    });
     server.registerTool("magic_netsuite_save_selected_context", {
         title: "Save Selected NetSuite Context",
         description: "Save the context selected in the interactive picker so Claude can retrieve it with magic_netsuite_get_selected_context.",
