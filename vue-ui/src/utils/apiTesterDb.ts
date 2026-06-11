@@ -89,6 +89,17 @@ export interface RequestHistoryRecord {
   scriptName: string | null;
 }
 
+/** Persisted NetSuite internal API tester history entry */
+export interface NetsuiteApiHistoryRecord {
+  id: string;
+  route: string;
+  params: Record<string, any>;
+  status: "ok" | "error";
+  duration: number;
+  message: any;
+  timestamp: number;
+}
+
 // ─────────────────────────────────────────────
 // Database
 // ─────────────────────────────────────────────
@@ -97,6 +108,7 @@ const db = new Dexie("MagicNetsuiteApiTester") as Dexie & {
   requests: EntityTable<ApiRequestRecord, "requestId">;
   uiState: EntityTable<ApiTesterUiStateRecord, "key">;
   requestHistory: EntityTable<RequestHistoryRecord, "id">;
+  netsuiteApiHistory: EntityTable<NetsuiteApiHistoryRecord, "id">;
 };
 
 db.version(1).stores({
@@ -108,6 +120,13 @@ db.version(2).stores({
   requests: "&requestId, name, createdAt, updatedAt",
   uiState: "&key",
   requestHistory: "&id, timestamp"
+});
+
+db.version(3).stores({
+  requests: "&requestId, name, createdAt, updatedAt",
+  uiState: "&key",
+  requestHistory: "&id, timestamp",
+  netsuiteApiHistory: "&id, timestamp, route"
 });
 
 // ─────────────────────────────────────────────
@@ -194,4 +213,35 @@ export const updateRequestHistoryLogs = async (
   logs: RequestHistoryRecord["logs"]
 ): Promise<void> => {
   await db.requestHistory.where("id").equals(id).modify({ logs });
+};
+
+// ─────────────────────────────────────────────
+// NetSuite API Tester History CRUD
+// ─────────────────────────────────────────────
+
+export const addNetsuiteApiHistoryEntry = async (
+  entry: NetsuiteApiHistoryRecord
+): Promise<void> => {
+  await db.netsuiteApiHistory.put(entry);
+  const count = await db.netsuiteApiHistory.count();
+  if (count > MAX_HISTORY_ENTRIES) {
+    const overflow = count - MAX_HISTORY_ENTRIES;
+    const oldest = await db.netsuiteApiHistory
+      .orderBy("timestamp")
+      .limit(overflow)
+      .toArray();
+    await db.netsuiteApiHistory.bulkDelete(oldest.map((e) => e.id));
+  }
+};
+
+export const getAllNetsuiteApiHistory = async (): Promise<NetsuiteApiHistoryRecord[]> => {
+  return db.netsuiteApiHistory.orderBy("timestamp").reverse().toArray();
+};
+
+export const deleteNetsuiteApiHistoryEntry = async (id: string): Promise<void> => {
+  await db.netsuiteApiHistory.delete(id);
+};
+
+export const clearNetsuiteApiHistory = async (): Promise<void> => {
+  await db.netsuiteApiHistory.clear();
 };

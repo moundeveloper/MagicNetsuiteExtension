@@ -77,27 +77,35 @@
               v-if="callHistory.length > 0"
               class="sb-clear-btn"
               title="Clear history"
-              @click="callHistory = []"
+              @click="clearHistory"
             >
               <i class="pi pi-trash" />
             </button>
           </div>
           <div class="sb-history-list">
-            <button
+            <div
               v-for="entry in callHistory"
               :key="entry.id"
               class="sb-history-item"
               :class="{ 'sb-history-item--error': entry.status === 'error' }"
               :title="`${entry.route} — ${entry.status}`"
-              @click="replayHistory(entry)"
             >
-              <span
-                class="sb-history-status"
-                :class="entry.status === 'ok' ? 'status-ok' : 'status-error'"
-              >{{ entry.status === 'ok' ? '✓' : '✗' }}</span>
-              <span class="sb-history-route">{{ entry.route }}</span>
-              <span class="sb-history-dur">{{ entry.duration }}ms</span>
-            </button>
+              <button class="sb-history-replay" @click="replayHistory(entry)">
+                <span
+                  class="sb-history-status"
+                  :class="entry.status === 'ok' ? 'status-ok' : 'status-error'"
+                >{{ entry.status === 'ok' ? '✓' : '✗' }}</span>
+                <span class="sb-history-route">{{ entry.route }}</span>
+                <span class="sb-history-dur">{{ entry.duration }}ms</span>
+              </button>
+              <button
+                class="sb-history-delete"
+                title="Delete history item"
+                @click.stop="deleteHistoryEntry(entry.id)"
+              >
+                <i class="pi pi-times" />
+              </button>
+            </div>
             <div v-if="callHistory.length === 0" class="sb-empty">No calls yet</div>
           </div>
         </div>
@@ -338,7 +346,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, reactive, onBeforeUnmount } from "vue";
+import { ref, computed, watch, onBeforeUnmount, onMounted } from "vue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
@@ -346,6 +354,12 @@ import { callApi, ApiRequestType } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { generateId } from "../utils/utilities";
 import { useToast } from "primevue";
+import {
+  addNetsuiteApiHistoryEntry,
+  clearNetsuiteApiHistory,
+  deleteNetsuiteApiHistoryEntry,
+  getAllNetsuiteApiHistory
+} from "../utils/apiTesterDb";
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 defineProps<{ vhOffset: number }>();
@@ -525,6 +539,56 @@ const ENDPOINTS: EndpointDef[] = [
     fields: [
       f("type", "string", true, "Record type e.g. salesorder, customer"),
       f("fieldIds", "array", false, "Comma-separated field IDs, e.g. trandate,createddate")
+    ]
+  },
+  {
+    route: RequestRoutes.CREATE_CUSTOM_RECORD_TYPE,
+    description: "Finds or creates a NetSuite custom record type metadata record using customrecordtype.",
+    destructive: true,
+    fields: [
+      f("name", "string", true, "Record type name, mapped to recordname"),
+      f("scriptId", "string", true, "Script ID, e.g. customrecord_my_type or my_type"),
+      f("description", "string", false, "Optional description"),
+      f("recordFields", "json", false, "Additional customrecordtype fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
+    route: RequestRoutes.GET_CUSTOM_RECORD_FIELD_TYPES,
+    description: "Returns live fieldtype select options for customrecordcustomfield.",
+    fields: [
+      f("filter", "string", false, "Optional text filter for field type options")
+    ]
+  },
+  {
+    route: RequestRoutes.GET_CUSTOM_RECORD_SELECT_RECORD_TYPES,
+    description: "Returns live selectrecordtype options for custom record SELECT and MULTISELECT fields.",
+    fields: [
+      f("filter", "string", false, "Optional text filter, e.g. Employee, Custom List, Agent Provider")
+    ]
+  },
+  {
+    route: RequestRoutes.INSPECT_CUSTOM_RECORD_FIELD,
+    description: "Loads an existing customrecordcustomfield and returns its actual field IDs, values, text, metadata, and select options.",
+    fields: [
+      f("customFieldId", "number", false, "Internal ID of a custom record field metadata record"),
+      f("customRecordTypeId", "number", false, "Internal ID of the custom record type; used to find the first matching field"),
+      f("scriptId", "string", false, "Optional field script ID to find on the custom record type")
+    ]
+  },
+  {
+    route: RequestRoutes.CREATE_CUSTOM_RECORD_FIELD,
+    description: "Finds or creates a custom record field using the native custreccustfield.nl form POST.",
+    destructive: true,
+    fields: [
+      f("customRecordTypeId", "number", true, "Internal ID of the custom record type metadata record"),
+      f("label", "string", true, "Field label, mapped to label"),
+      f("scriptId", "string", true, "Script ID, e.g. custrecord_my_field or my_field"),
+      f("fieldType", "string", true, "Value from GET_CUSTOM_RECORD_FIELD_TYPES, e.g. FREEFORMTEXT"),
+      f("selectRecordType", "string", false, "For SELECT/MULTISELECT: internal ID, customrecord_my_type, or -my_type"),
+      f("description", "string", false, "Optional description"),
+      f("storeValue", "boolean", false, "Whether to store values"),
+      f("showInList", "boolean", false, "Whether to show in list"),
+      f("fieldValues", "json", false, "Additional customrecordcustomfield fieldId/value pairs", true, "{}")
     ]
   },
   {
@@ -847,6 +911,11 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.LOAD_RECORD,
       RequestRoutes.GET_RECORD_FIELDS,
       RequestRoutes.GET_RECORD_FIELD_TYPES,
+      RequestRoutes.CREATE_CUSTOM_RECORD_TYPE,
+      RequestRoutes.GET_CUSTOM_RECORD_FIELD_TYPES,
+      RequestRoutes.GET_CUSTOM_RECORD_SELECT_RECORD_TYPES,
+      RequestRoutes.INSPECT_CUSTOM_RECORD_FIELD,
+      RequestRoutes.CREATE_CUSTOM_RECORD_FIELD,
       RequestRoutes.LOAD_RECORD_SUBLISTS,
       RequestRoutes.GET_ALL_RECORD_TYPES,
       RequestRoutes.CUSTOM_RECORDS,
@@ -931,6 +1000,7 @@ const isSending = ref(false);
 const lastResponse = ref<{ status: "ok" | "error"; message: any; duration: number } | null>(null);
 const responseFormat = ref<"pretty" | "raw">("pretty");
 
+const NETSUITE_HISTORY_LIMIT = 100;
 const callHistory = ref<HistoryEntry[]>([]);
 
 const splitRef = ref<HTMLElement | null>(null);
@@ -975,6 +1045,18 @@ const formattedResponse = computed<string>(() => {
 watch(paramsMode, (mode) => {
   if (mode === "json") {
     rawJsonParams.value = JSON.stringify(buildPayloadFromForm(), null, 2);
+  }
+});
+
+onMounted(async () => {
+  try {
+    const stored = await getAllNetsuiteApiHistory();
+    callHistory.value = stored.map((entry) => ({
+      ...entry,
+      route: entry.route as RequestRoutes
+    }));
+  } catch (err) {
+    console.error("[NetsuiteApiTester] History restore failed:", err);
   }
 });
 
@@ -1117,7 +1199,7 @@ const sendCall = async () => {
       duration
     };
 
-    callHistory.value.unshift({
+    const historyEntry: HistoryEntry = {
       id: generateId(),
       route: selectedEndpoint.value.route,
       params: payload,
@@ -1125,16 +1207,21 @@ const sendCall = async () => {
       duration,
       message: res.message,
       timestamp: Date.now()
-    });
+    };
+    callHistory.value.unshift(historyEntry);
+    addNetsuiteApiHistoryEntry(historyEntry).catch((err) =>
+      console.error("[NetsuiteApiTester] History persist failed:", err)
+    );
 
-    // Keep history at 50 entries
-    if (callHistory.value.length > 50) callHistory.value.length = 50;
+    if (callHistory.value.length > NETSUITE_HISTORY_LIMIT) {
+      callHistory.value.length = NETSUITE_HISTORY_LIMIT;
+    }
   } catch (err) {
     const duration = Math.round(performance.now() - start);
     const message = err instanceof Error ? err.message : String(err);
     lastResponse.value = { status: "error", message, duration };
 
-    callHistory.value.unshift({
+    const historyEntry: HistoryEntry = {
       id: generateId(),
       route: selectedEndpoint.value.route,
       params: payload,
@@ -1142,9 +1229,36 @@ const sendCall = async () => {
       duration,
       message,
       timestamp: Date.now()
-    });
+    };
+    callHistory.value.unshift(historyEntry);
+    addNetsuiteApiHistoryEntry(historyEntry).catch((persistErr) =>
+      console.error("[NetsuiteApiTester] History persist failed:", persistErr)
+    );
+    if (callHistory.value.length > NETSUITE_HISTORY_LIMIT) {
+      callHistory.value.length = NETSUITE_HISTORY_LIMIT;
+    }
   } finally {
     isSending.value = false;
+  }
+};
+
+const clearHistory = async () => {
+  callHistory.value = [];
+  try {
+    await clearNetsuiteApiHistory();
+  } catch (err) {
+    console.error("[NetsuiteApiTester] History clear failed:", err);
+    toast.add({ severity: "error", summary: "Clear Failed", detail: "Could not clear history", life: 3000 });
+  }
+};
+
+const deleteHistoryEntry = async (id: string) => {
+  callHistory.value = callHistory.value.filter((entry) => entry.id !== id);
+  try {
+    await deleteNetsuiteApiHistoryEntry(id);
+  } catch (err) {
+    console.error("[NetsuiteApiTester] History delete failed:", err);
+    toast.add({ severity: "error", summary: "Delete Failed", detail: "Could not delete history item", life: 3000 });
   }
 };
 
@@ -1406,16 +1520,39 @@ onBeforeUnmount(() => {
 .sb-history-item {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
   width: 100%;
-  padding: 0.28rem 0.75rem;
+  padding: 0;
+  background: transparent;
+}
+.sb-history-replay {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  flex: 1;
+  padding: 0.28rem 0.25rem 0.28rem 0.75rem;
   border: none;
   background: transparent;
   cursor: pointer;
   text-align: left;
   font-size: 0.7rem;
 }
-.sb-history-item:hover { background: var(--p-slate-100); }
+.sb-history-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  min-width: 1.45rem;
+  border: none;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  font-size: 0.65rem;
+}
+.sb-history-item:hover,
+.sb-history-replay:hover,
+.sb-history-delete:hover { background: var(--p-slate-100); }
+.sb-history-delete:hover { color: var(--p-red-500); }
 .sb-history-status { font-weight: 700; font-size: 0.65rem; flex-shrink: 0; }
 .status-ok { color: var(--p-green-500); }
 .status-error { color: var(--p-red-500); }

@@ -905,6 +905,162 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_create_custom_record_type",
+            description:
+              "Find or create a NetSuite custom record type metadata record using customrecordtype. " +
+              "If an existing custom record type matches the normalized scriptId or recordname, returns that internal ID instead of creating a duplicate. " +
+              "Set body fields with recordFields or convenience keys. The name key maps to recordname. " +
+              "The scriptId key accepts either 'customrecord_my_type' or 'my_type' and is normalized so NetSuite saves CUSTOMRECORD_MY_TYPE. " +
+              "Create fields afterward with netsuite_create_custom_record_field to avoid orphaned record types if a field save fails.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  description: "Convenience value for the custom record type recordname field."
+                },
+                scriptId: {
+                  type: "string",
+                  description: "Convenience value for the custom record type scriptid field. Accepts 'customrecord_my_type', 'my_type', or '_my_type'."
+                },
+                description: {
+                  type: "string",
+                  description: "Convenience value for the description field."
+                },
+                recordFields: {
+                  type: "object",
+                  description: "Additional raw fieldId-to-value pairs to set on the customrecordtype before save(). These override convenience keys."
+                },
+                customFields: {
+                  type: "array",
+                  description: "Deprecated and rejected by this tool. Create fields with netsuite_create_custom_record_field after the record type is saved."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_get_custom_record_field_types",
+            description:
+              "Return the available custom record field type select options from the live NetSuite account. " +
+              "Internally creates an unsaved customrecordcustomfield record and reads record.getField({ fieldId: 'fieldtype' }).getSelectOptions(...). " +
+              "Use the returned option values as the fieldType for netsuite_create_custom_record_field.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filter: {
+                  type: "string",
+                  description: "Optional text filter passed to getSelectOptions. Leave empty to list available field types."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_create_custom_record_field",
+            description:
+              "Find or create a NetSuite custom record field metadata record using customrecordcustomfield. " +
+              "If an existing field with the normalized scriptId is already attached to the custom record type, returns that internal ID instead of creating a duplicate. " +
+              "Creation uses the native NetSuite custreccustfield.nl form POST because client-side SuiteScript cannot reliably save customrecordcustomfield records. " +
+              "Call netsuite_get_custom_record_field_types first when you need valid fieldType values.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                customRecordTypeId: {
+                  type: "string",
+                  description: "Internal ID of the custom record type metadata record; posted as rectype."
+                },
+                customRecordTypeInternalId: {
+                  type: "string",
+                  description: "Alias for customRecordTypeId."
+                },
+                label: { type: "string" },
+                scriptId: {
+                  type: "string",
+                  description: "Convenience value for the custom field scriptid field. The form POST sends NetSuite's metadata suffix format only, e.g. '_my_field'. Passing 'custrecord_my_field' or 'my_field' is normalized to '_my_field'."
+                },
+                fieldType: {
+                  type: "string",
+                  examples: [
+                    "CHECKBOX",
+                    "CURRENCY",
+                    "DATE",
+                    "DATETIME",
+                    "DECIMAL",
+                    "DOCUMENT",
+                    "EMAIL",
+                    "FREEFORMTEXT",
+                    "HELP",
+                    "HYPERLINK",
+                    "INLINEHTML",
+                    "INTEGER",
+                    "LIST",
+                    "LONGTEXT",
+                    "MULTISELECT",
+                    "PASSWORD",
+                    "PERCENT",
+                    "PHONE",
+                    "RICHTEXT",
+                    "TEXTAREA",
+                    "TIMEOFDAY"
+                  ],
+                  description: "Convenience value for the fieldtype field. If these hints do not match your account, call netsuite_get_custom_record_field_types and use a returned value."
+                },
+                selectRecordType: {
+                  type: "string",
+                  description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT. Use an internal numeric ID such as a custom record type ID. Custom record script IDs like 'customrecord_my_type' are resolved to internal IDs. Negative built-in IDs are validated against netsuite_get_custom_record_select_record_types. If creating a SELECT/MULTISELECT for a custom list or record list and no valid list/record is specified, use TEXT instead; the tool defaults missing selectRecordType SELECT/MULTISELECT requests to TEXT."
+                },
+                description: { type: "string" },
+                storeValue: { type: "boolean" },
+                showInList: { type: "boolean" },
+                fieldValues: {
+                  type: "object",
+                  description: "Additional raw form fieldId-to-value pairs to include in the custreccustfield.nl POST. rectype is always set by the tool."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_get_custom_record_select_record_types",
+            description:
+              "Return the available List/Record selectrecordtype options for custom record SELECT and MULTISELECT fields from the live NetSuite account. " +
+              "Use one returned option value as selectRecordType for netsuite_create_custom_record_field. Do not guess negative built-in IDs. If no valid custom list or record list exists, create the field as TEXT.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filter: {
+                  type: "string",
+                  description: "Optional text filter passed to getSelectOptions. Examples: Employee, Custom List, Agent Provider."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_inspect_custom_record_field",
+            description:
+              "Load an existing NetSuite customrecordcustomfield metadata record and return its actual body field IDs, values, display text, field metadata, and fieldtype/selectrecordtype select options. " +
+              "Use this to verify how custom record fields are structured in the current account before creating or debugging fields.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                customFieldId: {
+                  type: "string",
+                  description: "Internal ID of a custom record field metadata record to load directly."
+                },
+                customRecordTypeId: {
+                  type: "string",
+                  description: "Internal ID of a custom record type. If customFieldId is omitted, the tool loads the first field on this record type or the field matching scriptId."
+                },
+                customRecordTypeInternalId: {
+                  type: "string",
+                  description: "Alias for customRecordTypeId."
+                },
+                scriptId: {
+                  type: "string",
+                  description: "Optional custom field script ID to find on customRecordTypeId, e.g. custrecord_my_field or my_field."
+                }
+              }
+            }
+          },
+          {
             name: "netsuite_list_bundles",
             description:
               "List SuiteApp bundles in the current NetSuite account. Returns each bundle's name, ID, version, app ID, abstract, creator, dates, and a `type` field ('installed' or 'created'). Use the `filter` parameter to narrow results: 'installed' returns only marketplace/3rd-party bundles, 'created' returns only bundles built and published in-house, 'all' (default) returns both.",
