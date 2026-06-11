@@ -65,18 +65,30 @@
               <div class="suitelet-toolbar">
                 <input
                   v-model="suiteletUrl"
-                  class="context-search suitelet-url-input"
-                  type="url"
-                  placeholder="Suitelet URL, or leave empty to use the active/preferred NetSuite tab"
-                  @keydown.enter.prevent="startSuiteletStream"
-                />
-                <button class="agent-primary-btn" type="button" :disabled="suiteletStarting" @click="startSuiteletStream">
-                  <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-play'" aria-hidden="true" />
-                  {{ suiteletStarting ? "Starting..." : "Start" }}
+                class="context-search suitelet-url-input"
+                type="url"
+                placeholder="Suitelet URL, or leave empty to use the active/preferred NetSuite tab"
+                @keydown.enter.prevent="openSuiteletInline"
+              />
+                <button class="agent-primary-btn" type="button" @click="openSuiteletInline">
+                  <span class="pi pi-play" aria-hidden="true" />
+                  Open
                 </button>
-                <button class="agent-secondary-btn" type="button" :disabled="!suiteletStreaming" @click="toggleSuiteletStreaming">
-                  <span :class="suiteletStreaming ? 'pi pi-pause' : 'pi pi-play'" aria-hidden="true" />
-                  {{ suiteletStreaming ? "Pause" : "Resume" }}
+                <button class="agent-secondary-btn" type="button" :disabled="suiteletFetchingHtml" @click="renderSuiteletFetchedHtml">
+                  <span :class="suiteletFetchingHtml ? 'pi pi-spin pi-spinner' : 'pi pi-file'" aria-hidden="true" />
+                  Render fetched
+                </button>
+                <button class="agent-secondary-btn" type="button" :disabled="suiteletStarting" @click="startSuiteletStream">
+                  <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-window'" aria-hidden="true" />
+                  Stream fallback
+                </button>
+                <button class="agent-secondary-btn" type="button" :disabled="!suiteletCurrentUrl && !suiteletIframeUrl" @click="openSuiteletInTab">
+                  <span class="pi pi-expand" aria-hidden="true" />
+                  Open tab
+                </button>
+                <button class="agent-secondary-btn" type="button" @click="suiteletLogsOpen = !suiteletLogsOpen">
+                  <span class="pi pi-file" aria-hidden="true" />
+                  Logs
                 </button>
               </div>
 
@@ -89,8 +101,25 @@
                 @keydown="handleSuiteletKey"
                 @keyup="handleSuiteletKey"
               >
+                <iframe
+                  v-if="suiteletIframeUrl"
+                  key="remote"
+                  class="suitelet-iframe"
+                  :src="suiteletIframeUrl"
+                  referrerpolicy="no-referrer-when-downgrade"
+                  @load="handleSuiteletIframeLoad"
+                  @error="handleSuiteletIframeError"
+                />
+                <iframe
+                  v-else-if="suiteletSrcdoc"
+                  key="srcdoc"
+                  class="suitelet-iframe"
+                  :srcdoc="suiteletSrcdoc"
+                  sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-scripts allow-same-origin allow-downloads"
+                  @load="handleSuiteletSrcdocLoad"
+                />
                 <img
-                  v-if="suiteletFrame"
+                  v-else-if="suiteletFrame"
                   ref="suiteletFrameRef"
                   class="suitelet-frame"
                   :src="suiteletFrame"
@@ -99,7 +128,7 @@
                 />
                 <div v-else class="suitelet-placeholder">
                   <span :class="suiteletStarting ? 'pi pi-spin pi-spinner' : 'pi pi-window'" aria-hidden="true" />
-                  <span>{{ suiteletStarting ? "Opening Suitelet stream..." : "Choose a Suitelet or start a URL stream." }}</span>
+                  <span>{{ suiteletStarting ? "Opening Suitelet stream..." : "Choose a Suitelet or open a URL." }}</span>
                 </div>
               </div>
 
@@ -108,6 +137,21 @@
                 <span v-if="suiteletCurrentUrl">{{ suiteletCurrentUrl }}</span>
                 <span v-if="suiteletCapturedAt">Updated {{ suiteletCapturedAt }}</span>
               </div>
+
+              <section v-if="suiteletLogsOpen" class="suitelet-log-panel">
+                <div class="suitelet-log-header">
+                  <strong>Diagnostics</strong>
+                  <button type="button" class="agent-secondary-btn" @click="suiteletLogs = []">Clear</button>
+                </div>
+                <div class="suitelet-log-list">
+                  <p v-for="entry in suiteletLogs" :key="entry.id" :class="`suitelet-log-entry suitelet-log-entry--${entry.level}`">
+                    <span>{{ entry.time }}</span>
+                    <strong>{{ entry.level }}</strong>
+                    <span>{{ entry.message }}</span>
+                  </p>
+                  <p v-if="suiteletLogs.length === 0" class="suitelet-log-empty">No diagnostics yet.</p>
+                </div>
+              </section>
             </main>
           </section>
         </template>
@@ -427,7 +471,7 @@
 
 <script setup lang="ts">
 import { App } from "@modelcontextprotocol/ext-apps";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 type Tab = "records" | "files";
 type AppMode = "picker" | "suitelet";
@@ -461,6 +505,12 @@ type SuiteletOption = {
   deploymentScriptId: string;
   status: string;
   url: string;
+};
+type SuiteletLogEntry = {
+  id: number;
+  time: string;
+  level: "info" | "warn" | "error";
+  message: string;
 };
 type QueueItem = {
   key: string;
@@ -507,19 +557,34 @@ const queued = ref<QueueItem[]>([]);
 const sending = ref(false);
 const lastSaved = ref<{ count: number; time: string } | null>(null);
 const suiteletUrl = ref("");
+const suiteletIframeUrl = ref("");
+const suiteletSrcdoc = ref("");
 const suiteletCurrentUrl = ref("");
 const suiteletFrame = ref("");
 const suiteletTitle = ref("");
 const suiteletCapturedAt = ref("");
 const suiteletStreaming = ref(false);
 const suiteletStarting = ref(false);
+const suiteletFetchingHtml = ref(false);
 const suiteletSurfaceRef = ref<HTMLElement | null>(null);
 const suiteletFrameRef = ref<HTMLImageElement | null>(null);
 const suiteletQuery = ref("");
 const suitelets = ref<SuiteletOption[]>([]);
 const suiteletsLoading = ref(false);
+const suiteletLogsOpen = ref(true);
+const suiteletLogs = ref<SuiteletLogEntry[]>([]);
 let suiteletFrameTimer: number | undefined;
 let suiteletFrameInFlight = false;
+let suiteletLogId = 0;
+let suiteletIframeLoadTimer: number | undefined;
+let suiteletSrcdocFallbackTimer: number | undefined;
+
+async function logSuiteletSurfaceState(label: string): Promise<void> {
+  await nextTick();
+  const iframes = suiteletSurfaceRef.value?.querySelectorAll("iframe").length ?? 0;
+  const images = suiteletSurfaceRef.value?.querySelectorAll("img").length ?? 0;
+  addSuiteletLog("info", `${label}: surface has ${iframes} iframe(s), ${images} image(s).`);
+}
 
 const selectedRecordTypeLabel = computed(() => {
   const selected = recordTypes.value.find((type) => type.id === selectedRecordType.value);
@@ -587,6 +652,30 @@ async function callTool(name: string, args: Record<string, unknown> = {}): Promi
     throw new Error("The Claude app bridge is still connecting. Try again in a moment.");
   }
   return app.callServerTool({ name, arguments: args });
+}
+
+function addSuiteletLog(level: SuiteletLogEntry["level"], message: string): void {
+  suiteletLogs.value.unshift({
+    id: ++suiteletLogId,
+    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    level,
+    message,
+  });
+  suiteletLogs.value = suiteletLogs.value.slice(0, 80);
+}
+
+function clearSuiteletIframeTimer(): void {
+  if (suiteletIframeLoadTimer !== undefined) {
+    window.clearTimeout(suiteletIframeLoadTimer);
+    suiteletIframeLoadTimer = undefined;
+  }
+}
+
+function clearSuiteletSrcdocFallbackTimer(): void {
+  if (suiteletSrcdocFallbackTimer !== undefined) {
+    window.clearTimeout(suiteletSrcdocFallbackTimer);
+    suiteletSrcdocFallbackTimer = undefined;
+  }
 }
 
 async function checkBridge(): Promise<void> {
@@ -857,7 +946,217 @@ function stopSuiteletPolling(): void {
   }
 }
 
-function scheduleSuiteletFrame(delay = 520): void {
+function suiteletEmbedUrl(rawUrl: string): string {
+  const value = rawUrl.trim();
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    const before = url.href;
+    if (url.pathname.endsWith("/app/site/hosting/scriptlet.nl")) {
+      if (!url.searchParams.has("ifrmcntnr")) url.searchParams.set("ifrmcntnr", "T");
+      if (!url.searchParams.has("popup")) url.searchParams.set("popup", "T");
+      if (!url.searchParams.has("whence")) url.searchParams.set("whence", "");
+    }
+    if (before !== url.href) addSuiteletLog("info", `Added NetSuite iframe params: ${url.href}`);
+    return url.href;
+  } catch {
+    addSuiteletLog("warn", `Could not parse URL; using raw value: ${value}`);
+    return value;
+  }
+}
+
+function openSuiteletInline(): void {
+  const url = suiteletEmbedUrl(suiteletUrl.value);
+  if (!url) {
+    addSuiteletLog("warn", "Open requested without a Suitelet URL.");
+    return;
+  }
+  clearSuiteletIframeTimer();
+  clearSuiteletSrcdocFallbackTimer();
+  stopSuiteletPolling();
+  suiteletStreaming.value = false;
+  suiteletFrame.value = "";
+  suiteletSrcdoc.value = "";
+  suiteletIframeUrl.value = url;
+  suiteletCurrentUrl.value = url;
+  status.value = "Suitelet opened";
+  addSuiteletLog("info", `Opening iframe: ${url}`);
+  void logSuiteletSurfaceState("Direct iframe render scheduled");
+  void probeSuiteletUrl(url);
+  suiteletIframeLoadTimer = window.setTimeout(() => {
+    addSuiteletLog(
+      "warn",
+      "Iframe has not reported load after 8 seconds. If the surface is blank, NetSuite or the MCP host may be blocking cross-origin framing.",
+    );
+  }, 8000);
+}
+
+async function renderSuiteletFetchedHtml(): Promise<void> {
+  const url = suiteletCurrentUrl.value || suiteletIframeUrl.value || suiteletEmbedUrl(suiteletUrl.value);
+  if (!url || !appReady.value || suiteletFetchingHtml.value) {
+    if (!url) addSuiteletLog("warn", "Render fetched requested without a Suitelet URL.");
+    return;
+  }
+
+  suiteletFetchingHtml.value = true;
+  addSuiteletLog("info", `Fetching Suitelet HTML for srcdoc render: ${url}`);
+  try {
+    const result = await callTool("magic_netsuite_suitelet_fetch_html", { url });
+    const payload = readStructuredObject(result);
+    const html = String(payload.html || "");
+    if (!html) throw new Error(`No HTML returned; status ${String(payload.status || "?")}`);
+
+    clearSuiteletIframeTimer();
+    stopSuiteletPolling();
+    suiteletStreaming.value = false;
+    suiteletIframeUrl.value = "";
+    suiteletFrame.value = "";
+    suiteletSrcdoc.value = html;
+    suiteletCurrentUrl.value = String(payload.finalUrl || url);
+    status.value = "Suitelet fetched";
+    addSuiteletLog("info", `Loaded fetched HTML into srcdoc (${String(payload.htmlLength || html.length)} bytes).`);
+    const assetStats = payload.assetStats as Record<string, unknown> | undefined;
+    if (assetStats) {
+      addSuiteletLog(
+        "info",
+        `Asset inline stats: styles ${String(assetStats.stylesheetsInlined || 0)}/${String(assetStats.stylesheetsFound || 0)}, scripts ${String(assetStats.scriptsInlined || 0)}/${String(assetStats.scriptsFound || 0)}.`,
+      );
+      const failures = Array.isArray(assetStats.failures) ? assetStats.failures : [];
+      failures.slice(0, 8).forEach((failure) => {
+        addSuiteletLog("warn", `Asset inline failed: ${JSON.stringify(failure)}`);
+      });
+    }
+    void logSuiteletSurfaceState("Srcdoc render scheduled");
+  } catch (err) {
+    addSuiteletLog("error", `Fetched HTML render failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    suiteletFetchingHtml.value = false;
+  }
+}
+
+function handleSuiteletSrcdocLoad(): void {
+  addSuiteletLog("info", "Srcdoc iframe load event fired.");
+}
+
+async function handleSuiteletProxyMessage(event: MessageEvent): Promise<void> {
+  const data = event.data as {
+    type?: string;
+    id?: string;
+    payload?: Record<string, unknown>;
+  };
+  if (data?.type !== "MAGIC_NS_SRC_PROXY_FETCH" || !data.id) return;
+
+  const source = event.source;
+  if (!source || typeof source.postMessage !== "function") return;
+
+  try {
+    const payload = data.payload || {};
+    addSuiteletLog(
+      "info",
+      `Proxy → ${String(payload.source || "req")} ${String(payload.method || "GET")} ${String(payload.url || "")}`,
+    );
+    if (payload.originalUrl && payload.originalUrl !== payload.url) {
+      addSuiteletLog("info", `Proxy ↳ SPA originally requested: ${String(payload.originalUrl)}`);
+    }
+    const result = await callTool("magic_netsuite_suitelet_proxy_request", payload);
+    const response = readStructuredObject(result);
+    addSuiteletLog(
+      Number(response.status || 0) >= 400 ? "warn" : "info",
+      `Proxy ← ${String(response.status || "?")} ${String(response.statusText || "")} (${String(response.bodyLength || 0)} bytes ${String(response.contentType || "")}): ${String(response.url || payload.url || "")}`,
+    );
+    addSuiteletLog(
+      "info",
+      `Proxy details: ${String(response.source || payload.source || "req")} ${String(response.requestMethod || payload.method || "GET")}, body=${String(response.requestBodyLength || 0)} bytes${response.rewritten ? ", url rewritten from SPA original" : ""}`,
+    );
+    if (Number(response.status || 0) >= 400) {
+      addSuiteletLog("warn", `Proxy 4xx/5xx requested URL: ${String(response.requestedUrl || payload.url || "")}`);
+      if (response.originalUrl) addSuiteletLog("warn", `Proxy 4xx/5xx SPA original URL: ${String(response.originalUrl)}`);
+      const preview = String(response.bodyPreview || "").slice(0, 700);
+      if (preview) addSuiteletLog("warn", `Proxy error body preview: ${preview}`);
+    }
+    source.postMessage({
+      type: "MAGIC_NS_SRC_PROXY_FETCH_RESPONSE",
+      id: data.id,
+      response: {
+        ok: true,
+        ...response,
+      },
+    }, "*");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    addSuiteletLog("error", `Proxy request failed: ${message}`);
+    source.postMessage({
+      type: "MAGIC_NS_SRC_PROXY_FETCH_RESPONSE",
+      id: data.id,
+      response: {
+        ok: false,
+        error: message,
+      },
+    }, "*");
+  }
+}
+
+async function probeSuiteletUrl(url: string): Promise<void> {
+  if (!appReady.value) return;
+  addSuiteletLog("info", `Probing Suitelet network response: ${url}`);
+  try {
+    const result = await callTool("magic_netsuite_suitelet_probe_url", { url });
+    const probe = readStructuredObject(result);
+    const hints = (probe.hints && typeof probe.hints === "object" ? probe.hints : {}) as Record<string, unknown>;
+    addSuiteletLog(
+      probe.ok ? "info" : "warn",
+      `Probe status ${String(probe.status || "?")} ${String(probe.statusText || "")}; final URL: ${String(probe.finalUrl || "")}`,
+    );
+    if (probe.redirected) addSuiteletLog("warn", "Probe was redirected. A login/session redirect can produce a blank embedded view.");
+    if (probe.title) addSuiteletLog("info", `Probe title: ${String(probe.title)}`);
+    addSuiteletLog("info", `Probe body length: ${String(probe.bodyLength || 0)} bytes.`);
+    if (hints.frameBlockedByHeaders) {
+      addSuiteletLog(
+        "error",
+        `Frame-blocking headers detected. X-Frame-Options=${String(hints.xFrameOptions || "none")}; frame-ancestors=${String(hints.frameAncestors || "none")}`,
+      );
+    }
+    if (hints.looksLikeLogin) addSuiteletLog("warn", "Probe response looks like a login/session page.");
+    if (hints.looksEmpty) addSuiteletLog("warn", "Probe response body is very small/empty.");
+    const preview = String(probe.bodyPreview || "");
+    if (preview) addSuiteletLog("info", `Probe body preview: ${preview}`);
+  } catch (err) {
+    addSuiteletLog("error", `Suitelet probe failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+function handleSuiteletIframeLoad(): void {
+  clearSuiteletIframeTimer();
+  addSuiteletLog("info", `Iframe load event fired: ${suiteletIframeUrl.value}`);
+  addSuiteletLog(
+    "warn",
+    "A load event only means the frame navigation completed. If the panel is still blank, the loaded NetSuite document may be blocked by frame policy, sandboxing, or third-party cookie/session rules.",
+  );
+  clearSuiteletSrcdocFallbackTimer();
+  suiteletSrcdocFallbackTimer = window.setTimeout(() => {
+    if (!suiteletIframeUrl.value || suiteletSrcdoc.value) return;
+    addSuiteletLog("warn", "Attempting fetched HTML render because direct iframe may be blank.");
+    void renderSuiteletFetchedHtml();
+  }, 1400);
+}
+
+function handleSuiteletIframeError(): void {
+    clearSuiteletIframeTimer();
+    clearSuiteletSrcdocFallbackTimer();
+  addSuiteletLog("error", `Iframe error event fired: ${suiteletIframeUrl.value}`);
+}
+
+function openSuiteletInTab(): void {
+  const url = suiteletCurrentUrl.value || suiteletIframeUrl.value || suiteletUrl.value;
+  if (!url) {
+    addSuiteletLog("warn", "Open tab requested without a Suitelet URL.");
+    return;
+  }
+  addSuiteletLog("info", `Opening Suitelet in a browser tab: ${url}`);
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function scheduleSuiteletFrame(delay = 240): void {
   stopSuiteletPolling();
   if (!suiteletStreaming.value) return;
   suiteletFrameTimer = window.setTimeout(() => {
@@ -867,6 +1166,10 @@ function scheduleSuiteletFrame(delay = 520): void {
 
 async function startSuiteletStream(): Promise<void> {
   if (!appReady.value || suiteletStarting.value) return;
+  addSuiteletLog("info", `Starting stream fallback: ${suiteletUrl.value.trim() || "(preferred/current NetSuite tab)"}`);
+  clearSuiteletIframeTimer();
+  suiteletIframeUrl.value = "";
+  suiteletSrcdoc.value = "";
   suiteletStarting.value = true;
   error.value = "";
   status.value = "Starting stream...";
@@ -880,6 +1183,7 @@ async function startSuiteletStream(): Promise<void> {
     suiteletStreaming.value = false;
     status.value = "Stream unavailable";
     error.value = err instanceof Error ? err.message : String(err);
+    addSuiteletLog("error", `Stream fallback failed: ${error.value}`);
   } finally {
     suiteletStarting.value = false;
   }
@@ -889,12 +1193,15 @@ async function loadSuitelets(): Promise<void> {
   if (!appReady.value || suiteletsLoading.value) return;
   suiteletsLoading.value = true;
   error.value = "";
+  addSuiteletLog("info", `Loading Suitelets${suiteletQuery.value.trim() ? ` matching "${suiteletQuery.value.trim()}"` : ""}.`);
   try {
     const result = await callTool("magic_netsuite_suitelet_stream_list", { query: suiteletQuery.value.trim() });
     suitelets.value = readStructured<SuiteletOption[]>(result, "suitelets", []);
+    addSuiteletLog("info", `Loaded ${suitelets.value.length} Suitelet option${suitelets.value.length === 1 ? "" : "s"}.`);
   } catch (err) {
     suitelets.value = [];
     error.value = err instanceof Error ? err.message : String(err);
+    addSuiteletLog("error", `Suitelet list failed: ${error.value}`);
   } finally {
     suiteletsLoading.value = false;
   }
@@ -903,7 +1210,8 @@ async function loadSuitelets(): Promise<void> {
 function selectSuitelet(suitelet: SuiteletOption): void {
   suiteletUrl.value = suitelet.url;
   suiteletTitle.value = suitelet.scriptName;
-  void startSuiteletStream();
+  addSuiteletLog("info", `Selected Suitelet: ${suitelet.scriptName} (${suitelet.scriptInternalId}/${suitelet.deploymentId}).`);
+  openSuiteletInline();
 }
 
 async function loadSuiteletFrame(): Promise<void> {
@@ -913,7 +1221,7 @@ async function loadSuiteletFrame(): Promise<void> {
     const result = await callTool("magic_netsuite_suitelet_stream_frame");
     const frame = readStructuredObject(result);
     const nextFrame = String(frame.dataUrl || "");
-    if (nextFrame) suiteletFrame.value = nextFrame;
+    if (nextFrame && nextFrame !== suiteletFrame.value) suiteletFrame.value = nextFrame;
     suiteletTitle.value = String(frame.title || frame.url || "Suitelet");
     suiteletCurrentUrl.value = String(frame.url || "");
     suiteletCapturedAt.value = new Date(String(frame.capturedAt || Date.now())).toLocaleTimeString([], {
@@ -922,11 +1230,13 @@ async function loadSuiteletFrame(): Promise<void> {
       second: "2-digit",
     });
     status.value = "Suitelet stream connected";
+    addSuiteletLog("info", `Fallback frame updated via ${String(frame.transport || "unknown transport")}.`);
     scheduleSuiteletFrame();
   } catch (err) {
     suiteletStreaming.value = false;
     error.value = err instanceof Error ? err.message : String(err);
     status.value = "Stream unavailable";
+    addSuiteletLog("error", `Fallback frame failed: ${error.value}`);
   } finally {
     suiteletFrameInFlight = false;
   }
@@ -976,7 +1286,7 @@ async function sendSuiteletInput(event: Record<string, unknown>): Promise<void> 
   if (!suiteletStreaming.value || !appReady.value) return;
   try {
     await callTool("magic_netsuite_suitelet_stream_input", { event });
-    scheduleSuiteletFrame(70);
+    scheduleSuiteletFrame(35);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -1018,7 +1328,7 @@ app.ontoolresult = (result) => {
     void requestLargerDisplayMode();
     window.setTimeout(() => {
       if (!appReady.value) return;
-      if (suiteletUrl.value.trim()) void startSuiteletStream();
+      if (suiteletUrl.value.trim()) openSuiteletInline();
       void loadSuitelets();
     }, 350);
     return;
@@ -1064,6 +1374,7 @@ async function requestInlineDisplayMode(): Promise<void> {
 
 onMounted(async () => {
   document.addEventListener("pointerdown", handleDocumentPointerDown);
+  window.addEventListener("message", handleSuiteletProxyMessage);
   try {
     await app.connect();
     appReady.value = true;
@@ -1077,7 +1388,7 @@ onMounted(async () => {
     window.setTimeout(() => {
       void checkBridge();
       if (mode.value === "suitelet") {
-        if (suiteletUrl.value.trim()) void startSuiteletStream();
+        if (suiteletUrl.value.trim()) openSuiteletInline();
         void loadSuitelets();
       } else if (tab.value === "records") {
         void loadRecordTypes();
@@ -1091,6 +1402,9 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  window.removeEventListener("message", handleSuiteletProxyMessage);
   stopSuiteletPolling();
+  clearSuiteletIframeTimer();
+  clearSuiteletSrcdocFallbackTimer();
 });
 </script>

@@ -376,6 +376,48 @@ export function createServer() {
         const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_input", { event }));
         return toolResult(isRecord(data) ? data : { value: data }, "Suitelet input sent.");
     });
+    server.registerTool("magic_netsuite_suitelet_probe_url", {
+        title: "Probe Suitelet URL",
+        description: "Fetch a Suitelet URL from the Chrome extension and return diagnostics for blank iframe troubleshooting.",
+        inputSchema: {
+            url: z.string(),
+        },
+    }, async ({ url }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_probe_url", { url }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet URL probed.");
+    });
+    server.registerTool("magic_netsuite_suitelet_fetch_html", {
+        title: "Fetch Suitelet HTML",
+        description: "Fetch Suitelet HTML through the Chrome extension for srcdoc rendering in the MCP App.",
+        inputSchema: {
+            url: z.string(),
+        },
+    }, async ({ url }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_fetch_html", { url }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet HTML fetched.");
+    });
+    server.registerTool("magic_netsuite_suitelet_proxy_request", {
+        title: "Proxy Suitelet Request",
+        description: "Proxy a runtime Suitelet fetch/XHR request through the Chrome extension.",
+        inputSchema: {
+            url: z.string(),
+            originalUrl: z.string().optional(),
+            source: z.string().optional(),
+            method: z.string().optional(),
+            headers: z.record(z.string(), z.unknown()).optional(),
+            body: z.string().nullable().optional(),
+        },
+    }, async ({ url, originalUrl, source, method = "GET", headers = {}, body = null }) => {
+        const data = parseToolJson(await callExtensionTool("netsuite_suitelet_proxy_request", {
+            url,
+            originalUrl,
+            source,
+            method,
+            headers,
+            body,
+        }));
+        return toolResult(isRecord(data) ? data : { value: data }, "Suitelet request proxied.");
+    });
     server.registerTool("magic_netsuite_save_selected_context", {
         title: "Save Selected NetSuite Context",
         description: "Save the context selected in the interactive picker so Claude can retrieve it with magic_netsuite_get_selected_context.",

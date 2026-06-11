@@ -1608,6 +1608,51 @@ const MCP_TOOL_DEFINITIONS = [
       },
       required: ["event"]
     }
+  },
+  {
+    name: "netsuite_suitelet_probe_url",
+    description:
+      "Fetch a Suitelet URL from the extension with NetSuite credentials and return diagnostics such as status, final URL, frame-blocking headers, and response hints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Suitelet URL to diagnose."
+        }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_fetch_html",
+    description:
+      "Fetch Suitelet HTML with NetSuite credentials so the MCP App can render it with srcdoc when direct iframe embedding is blank.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Suitelet URL to fetch."
+        }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_proxy_request",
+    description:
+      "Proxy a Suitelet runtime fetch/XHR request through the Chrome extension with NetSuite credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        method: { type: "string" },
+        headers: { type: "object" },
+        body: { type: "string" }
+      },
+      required: ["url"]
+    }
   }
 ];
 
@@ -1698,6 +1743,12 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleSuiteletStreamFrame();
         } else if (name === "netsuite_suitelet_stream_input") {
           result = await handleSuiteletStreamInput(args);
+        } else if (name === "netsuite_suitelet_probe_url") {
+          result = await handleSuiteletProbeUrl(args);
+        } else if (name === "netsuite_suitelet_fetch_html") {
+          result = await handleSuiteletFetchHtml(args);
+        } else if (name === "netsuite_suitelet_proxy_request") {
+          result = await handleSuiteletProxyRequest(args);
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -2710,7 +2761,8 @@ async function handleSuiteletStreamStart(args) {
     tabId: tab.id,
     windowId: tab.windowId,
     url: freshTab.url || requestedUrl,
-    startedAt: new Date().toISOString()
+    startedAt: new Date().toISOString(),
+    latestFrame: null
   };
   suiteletDebuggerAttached = previousTabId === tab.id && suiteletDebuggerAttached;
 
@@ -2732,9 +2784,48 @@ async function handleSuiteletStreamList(args) {
   const tab = await getPreferredNetsuiteTab();
   if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
 
+  const conditions = [
+    "UPPER(script.scripttype) = UPPER('SCRIPTLET')",
+    "scriptdeployment.isdeployed = 'T'"
+  ];
+
+  if (query) {
+    const escaped = query.replace(/'/g, "''");
+    const searchParts = [
+      `LOWER(script.name) LIKE LOWER('%${escaped}%')`,
+      `LOWER(script.scriptid) LIKE LOWER('%${escaped}%')`,
+      `LOWER(scriptdeployment.scriptid) LIKE LOWER('%${escaped}%')`
+    ];
+
+    if (/^\d+$/.test(query)) {
+      searchParts.push(`script.id = ${Number(query)}`);
+      searchParts.push(`scriptdeployment.deploymentid = ${Number(query)}`);
+    }
+
+    conditions.push(`(
+      ${searchParts.join("\n      OR ")}
+    )`);
+  }
+
+  const sql = `
+    SELECT
+      script.id AS scriptinternalid,
+      script.scriptid AS scriptscriptid,
+      script.name AS scriptname,
+      scriptdeployment.deploymentid,
+      scriptdeployment.scriptid AS deploymentscriptid,
+      scriptdeployment.status,
+      scriptdeployment.isdeployed
+    FROM scriptdeployment
+    INNER JOIN script ON scriptdeployment.script = script.id
+    WHERE ${conditions.join(" AND ")}
+      AND ROWNUM <= 100
+    ORDER BY script.name, scriptdeployment.deploymentid
+  `;
+
   const response = await sendMessageToTab(tab.id, {
-    action: "SCRIPTS",
-    data: { scriptType: "SCRIPTLET" },
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 100 },
     mode: "normal"
   });
 
@@ -2743,64 +2834,610 @@ async function handleSuiteletStreamList(args) {
     throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelets");
   }
 
-  const scripts = Array.isArray(response.message) ? response.message : [];
-  const scriptIds = scripts
-    .map((script) => Number(script.id))
-    .filter((id) => Number.isInteger(id) && id > 0);
-
-  let deployments = [];
-  if (scriptIds.length) {
-    const deploymentsResp = await sendMessageToTab(tab.id, {
-      action: "SCRIPT_DEPLOYMENTS",
-      data: { scriptIds },
-      mode: "normal"
-    });
-    if (!deploymentsResp || deploymentsResp.status === "error") {
-      const rawMsg = deploymentsResp?.message;
-      throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelet deployments");
-    }
-    deployments = Array.isArray(deploymentsResp.message) ? deploymentsResp.message : [];
-  }
-
   const origin = getTabOrigin(tab.url);
-  const scriptById = new Map(scripts.map((script) => [String(script.id), script]));
-  const suitelets = deployments
-    .filter((deployment) => String(deployment.isdeployed || "").toUpperCase() === "T")
-    .map((deployment) => {
-      const script = scriptById.get(String(deployment.id)) || {};
-      const scriptId = String(deployment.id || script.id || "");
-      const deployId = String(deployment.deploymentid || deployment.primarykey || "").trim();
-      const scriptName = String(deployment.scriptname || script.name || "Suitelet");
-      const deploymentScriptId = String(deployment.scriptid || "");
-      const scriptScriptId = String(script.scriptid || "");
+  const rows = Array.isArray(response.message) ? response.message : (response.message?.results ?? []);
+  const suitelets = rows
+    .map((row) => {
+      const scriptId = String(row.scriptinternalid || row.scriptInternalId || row.id || "");
+      const deployId = String(row.deploymentid || row.deploymentId || "").trim();
+      const scriptName = String(row.scriptname || row.scriptName || "Suitelet");
+      const deploymentScriptId = String(row.deploymentscriptid || row.deploymentScriptId || "");
+      const scriptScriptId = String(row.scriptscriptid || row.scriptScriptId || row.scriptid || "");
       return {
         scriptInternalId: scriptId,
         scriptId: scriptScriptId,
         scriptName,
         deploymentId: deployId,
         deploymentScriptId,
-        status: String(deployment.status || ""),
+        status: String(row.status || ""),
         url: origin && scriptId && deployId
           ? `${origin}/app/site/hosting/scriptlet.nl?script=${encodeURIComponent(scriptId)}&deploy=${encodeURIComponent(deployId)}`
           : ""
       };
     })
     .filter((suitelet) => suitelet.url)
-    .filter((suitelet) => {
-      if (!query) return true;
-      return [
-        suitelet.scriptName,
-        suitelet.scriptId,
-        suitelet.deploymentId,
-        suitelet.deploymentScriptId
-      ].join(" ").toLowerCase().includes(query);
-    })
     .slice(0, 100);
 
   return {
     content: [{
       type: "text",
       text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletProbeUrl(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet probe only supports NetSuite URLs.");
+  }
+
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+
+  const headers = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  const body = await response.text();
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(body)?.[1]
+    ?.replace(/\s+/g, " ")
+    .trim() || "";
+  const bodyText = body
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+
+  const csp = headers["content-security-policy"] || "";
+  const xFrameOptions = headers["x-frame-options"] || "";
+  const frameBlockedByHeaders = Boolean(
+    xFrameOptions ||
+    /frame-ancestors/i.test(csp)
+  );
+  const looksLikeLogin = /login|system\.netsuite|email address|password|compid/i.test(`${title} ${bodyText}`);
+  const looksEmpty = body.trim().length < 200;
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        requestedUrl: targetUrl.href,
+        finalUrl: response.url,
+        redirected: response.redirected,
+        headers,
+        title,
+        bodyLength: body.length,
+        bodyPreview: bodyText,
+        hints: {
+          frameBlockedByHeaders,
+          xFrameOptions: xFrameOptions || null,
+          frameAncestors: /frame-ancestors([^;]+)/i.exec(csp)?.[0] || null,
+          looksLikeLogin,
+          looksEmpty
+        }
+      }, null, 2)
+    }]
+  };
+}
+
+function suiteletProxyBootstrapScript(originalUrl = "") {
+  let originalHash = "";
+  const baselineParams = {};
+  try {
+    const parsed = new URL(String(originalUrl));
+    originalHash = parsed.hash || "";
+    // Preserve the Suitelet identity params so that relative runtime requests
+    // (e.g. fetch("?action=x")) that resolve against the <base> URL and would
+    // otherwise drop script/deploy/compid don't 404.
+    ["script", "deploy", "compid"].forEach((key) => {
+      const value = parsed.searchParams.get(key);
+      if (value != null && value !== "") baselineParams[key] = value;
+    });
+  } catch {}
+  const hashScript = originalHash
+    ? `try { if (!window.location.hash) window.location.hash = ${JSON.stringify(originalHash)}; } catch (e) {}`
+    : "";
+
+  return `
+<script>
+(function magicNetsuiteSuiteletProxy() {
+  ${hashScript}
+  var BASELINE_PARAMS = ${JSON.stringify(baselineParams)};
+  var EMBED_PARAMS = { ifrmcntnr: "T", popup: "T", whence: "" };
+  var REQUEST_TYPE = "MAGIC_NS_SRC_PROXY_FETCH";
+  var RESPONSE_TYPE = "MAGIC_NS_SRC_PROXY_FETCH_RESPONSE";
+  var nextId = 0;
+  var pending = {};
+
+  function absoluteUrl(value) {
+    try { return new URL(String(value), document.baseURI || location.href).href; }
+    catch (e) { return String(value || ""); }
+  }
+
+  function shouldProxy(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      return /\.netsuite\.com$/i.test(url.hostname);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function shouldPatchUrl(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      return (
+        /\.netsuite\.com$/i.test(url.hostname) &&
+        (
+          url.pathname === "/app/site/hosting/scriptlet.nl" ||
+          url.pathname === "/app/common/scripting/nlapijsonhandler.nl"
+        )
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function withEmbedParams(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      if (!shouldPatchUrl(url.href)) return url.href;
+      // Only scriptlet.nl needs the identity params re-applied; the JSON handler
+      // carries its own routing in the body.
+      if (url.pathname === "/app/site/hosting/scriptlet.nl") {
+        Object.keys(BASELINE_PARAMS).forEach(function(key) {
+          if (!url.searchParams.has(key) || url.searchParams.get(key) === "") {
+            url.searchParams.set(key, BASELINE_PARAMS[key]);
+          }
+        });
+      }
+      Object.keys(EMBED_PARAMS).forEach(function(key) {
+        if (!url.searchParams.has(key)) url.searchParams.set(key, EMBED_PARAMS[key]);
+      });
+      return url.href;
+    } catch (e) {
+      return absoluteUrl(value);
+    }
+  }
+
+  function hasHeader(headers, name) {
+    name = String(name).toLowerCase();
+    return Object.keys(headers || {}).some(function(key) { return key.toLowerCase() === name; });
+  }
+
+  function normalizeBodyAndHeaders(body, headers) {
+    headers = headers || {};
+    if (body == null) return { body: null, headers: headers };
+    if (typeof body === "string") return { body: body, headers: headers };
+    if (body instanceof URLSearchParams) {
+      if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/x-www-form-urlencoded;charset=UTF-8";
+      return { body: body.toString(), headers: headers };
+    }
+    if (body instanceof FormData) {
+      var params = new URLSearchParams();
+      body.forEach(function(value, key) {
+        params.append(key, value instanceof File ? value.name : String(value));
+      });
+      if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/x-www-form-urlencoded;charset=UTF-8";
+      return { body: params.toString(), headers: headers };
+    }
+    if (body instanceof Blob || body instanceof ArrayBuffer) {
+      return { unsupported: true, body: null, headers: headers };
+    }
+    return { body: String(body), headers: headers };
+  }
+
+  function patchForms() {
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll("form"), function(form) {
+        var action = form.getAttribute("action") || location.href;
+        if (shouldPatchUrl(action)) form.setAttribute("action", withEmbedParams(action));
+      });
+    } catch (e) {}
+  }
+
+  function proxyRequest(payload) {
+    return new Promise(function(resolve, reject) {
+      var id = "src-proxy-" + Date.now() + "-" + (++nextId);
+      var timer = setTimeout(function() {
+        delete pending[id];
+        reject(new Error("Suitelet proxy request timed out."));
+      }, 45000);
+      pending[id] = { resolve: resolve, reject: reject, timer: timer };
+      window.parent.postMessage({ type: REQUEST_TYPE, id: id, payload: payload }, "*");
+    });
+  }
+
+  window.addEventListener("message", function(event) {
+    var data = event.data || {};
+    if (data.type !== RESPONSE_TYPE || !pending[data.id]) return;
+    var entry = pending[data.id];
+    clearTimeout(entry.timer);
+    delete pending[data.id];
+    if (data.response && data.response.ok) entry.resolve(data.response);
+    else entry.reject(new Error((data.response && data.response.error) || "Suitelet proxy request failed."));
+  });
+
+  var nativeFetch = window.fetch;
+  if (typeof nativeFetch === "function") {
+    window.fetch = function(input, init) {
+      var inputUrl = input && input.url ? input.url : input;
+      if (!shouldProxy(inputUrl)) return nativeFetch.apply(this, arguments);
+      init = init || {};
+      var headers = {};
+      try { new Headers(init.headers || (input && input.headers)).forEach(function(value, key) { headers[key] = value; }); } catch (e) {}
+      var normalized = normalizeBodyAndHeaders(init.body == null ? null : init.body, headers);
+      if (normalized.unsupported) return nativeFetch.apply(this, arguments);
+      return proxyRequest({
+        url: withEmbedParams(inputUrl),
+        originalUrl: absoluteUrl(inputUrl),
+        source: "fetch",
+        method: init.method || (input && input.method) || "GET",
+        headers: normalized.headers,
+        body: normalized.body
+      }).then(function(response) {
+        return new Response(response.body || "", {
+          status: response.status || 200,
+          statusText: response.statusText || "OK",
+          headers: response.headers || {}
+        });
+      });
+    };
+  }
+
+  var NativeXHR = window.XMLHttpRequest;
+  function ProxyXHR() {
+    this._listeners = {};
+    this._headers = {};
+    this.readyState = 0;
+    this.status = 0;
+    this.statusText = "";
+    this.responseText = "";
+    this.response = "";
+    this.responseURL = "";
+  }
+  ProxyXHR.UNSENT = 0; ProxyXHR.OPENED = 1; ProxyXHR.HEADERS_RECEIVED = 2; ProxyXHR.LOADING = 3; ProxyXHR.DONE = 4;
+  ProxyXHR.prototype.open = function(method, url, async) {
+    this._method = method || "GET";
+    this._originalUrl = absoluteUrl(url);
+    this._url = withEmbedParams(url);
+    this._proxy = shouldProxy(this._url);
+    if (!this._proxy) {
+      this._native = new NativeXHR();
+      wireNative(this);
+      return this._native.open.apply(this._native, arguments);
+    }
+    this.readyState = 1;
+    this._emit("readystatechange");
+  };
+  ProxyXHR.prototype.setRequestHeader = function(name, value) {
+    if (this._native) return this._native.setRequestHeader(name, value);
+    this._headers[name] = value;
+  };
+  ProxyXHR.prototype.send = function(body) {
+    var self = this;
+    if (this._native) return this._native.send(body);
+    var normalized = normalizeBodyAndHeaders(body, this._headers);
+    if (normalized.unsupported) {
+      self.status = 0;
+      self.statusText = "Unsupported Suitelet proxy request body.";
+      self.readyState = 4;
+      self._emit("readystatechange");
+      self._emit("error");
+      self._emit("loadend");
+      return;
+    }
+    proxyRequest({ url: this._url, originalUrl: this._originalUrl, source: "xhr", method: this._method, headers: normalized.headers, body: normalized.body })
+      .then(function(response) {
+        self.status = response.status || 200;
+        self.statusText = response.statusText || "OK";
+        self.responseText = response.body || "";
+        self.response = self.responseType === "json" ? JSON.parse(self.responseText || "null") : self.responseText;
+        self.responseURL = response.url || self._url;
+        self.readyState = 4;
+        self._emit("readystatechange");
+        self._emit("load");
+        self._emit("loadend");
+      })
+      .catch(function(error) {
+        self.status = 0;
+        self.statusText = error.message || "Suitelet proxy request failed.";
+        self.readyState = 4;
+        self._emit("readystatechange");
+        self._emit("error");
+        self._emit("loadend");
+      });
+  };
+  ProxyXHR.prototype.addEventListener = function(type, listener) {
+    (this._listeners[type] || (this._listeners[type] = [])).push(listener);
+    if (this._native) this._native.addEventListener(type, listener);
+  };
+  ProxyXHR.prototype.removeEventListener = function(type, listener) {
+    this._listeners[type] = (this._listeners[type] || []).filter(function(item) { return item !== listener; });
+    if (this._native) this._native.removeEventListener(type, listener);
+  };
+  ProxyXHR.prototype.abort = function() { if (this._native) return this._native.abort(); this._emit("abort"); };
+  ProxyXHR.prototype.getResponseHeader = function() { return this._native ? this._native.getResponseHeader.apply(this._native, arguments) : null; };
+  ProxyXHR.prototype.getAllResponseHeaders = function() { return this._native ? this._native.getAllResponseHeaders.apply(this._native, arguments) : ""; };
+  ProxyXHR.prototype._emit = function(type) {
+    var event = new Event(type);
+    if (typeof this["on" + type] === "function") this["on" + type](event);
+    (this._listeners[type] || []).forEach(function(listener) { listener.call(this, event); }, this);
+  };
+  function wireNative(proxy) {
+    ["readystatechange", "load", "error", "abort", "loadend"].forEach(function(type) {
+      proxy._native.addEventListener(type, function(event) {
+        proxy.readyState = proxy._native.readyState;
+        proxy.status = proxy._native.status;
+        proxy.statusText = proxy._native.statusText;
+        proxy.responseText = proxy._native.responseText;
+        proxy.response = proxy._native.response;
+        proxy.responseURL = proxy._native.responseURL;
+        proxy._emit(type, event);
+      });
+    });
+  }
+  window.XMLHttpRequest = ProxyXHR;
+  document.addEventListener("submit", function(event) {
+    if (!event || !event.target) return;
+    var form = event.target;
+    var action = form.getAttribute && (form.getAttribute("action") || location.href);
+    if (action && shouldPatchUrl(action)) form.setAttribute("action", withEmbedParams(action));
+  }, true);
+  patchForms();
+  try {
+    new MutationObserver(patchForms).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+})();
+</script>`;
+}
+
+function absolutizeSuiteletUrl(value, baseUrl) {
+  try {
+    return new URL(decodeHtmlAttribute(String(value)), baseUrl).href;
+  } catch {
+    return String(value || "");
+  }
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function rewriteCssUrls(css, cssUrl) {
+  return String(css || "").replace(/url\((['"]?)(?!data:|https?:|#)([^'")]+)\1\)/gi, (_match, quote, value) => {
+    return `url(${quote}${absolutizeSuiteletUrl(value, cssUrl)}${quote})`;
+  });
+}
+
+async function fetchTextForSuiteletRender(resourceUrl) {
+  const targetUrl = new URL(resourceUrl);
+  const allowedAssetHosts = new Set([
+    "cdn.datatables.net",
+    "maxcdn.bootstrapcdn.com",
+    "stackpath.bootstrapcdn.com",
+    "code.jquery.com",
+    "cdnjs.cloudflare.com"
+  ]);
+  const allowed =
+    /\.netsuite\.com$/i.test(targetUrl.hostname) ||
+    allowedAssetHosts.has(targetUrl.hostname.toLowerCase());
+  if (!allowed) {
+    throw new Error(`Blocked render resource host: ${targetUrl.hostname}`);
+  }
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return {
+    url: response.url || targetUrl.href,
+    text: await response.text()
+  };
+}
+
+async function inlineSuiteletAssets(html, finalUrl) {
+  let output = String(html || "");
+  const stats = {
+    stylesheetsFound: 0,
+    stylesheetsInlined: 0,
+    scriptsFound: 0,
+    scriptsInlined: 0,
+    failures: []
+  };
+
+  const stylesheetPattern = /<link\b([^>]*?rel=["'][^"']*stylesheet[^"']*["'][^>]*?)>/gi;
+  output = await replaceAsync(output, stylesheetPattern, async (match, attrs) => {
+    stats.stylesheetsFound += 1;
+    const href = /href=["']([^"']+)["']/i.exec(attrs)?.[1];
+    if (!href) return match;
+    const resourceUrl = absolutizeSuiteletUrl(href, finalUrl);
+    try {
+      const fetched = await fetchTextForSuiteletRender(resourceUrl);
+      stats.stylesheetsInlined += 1;
+      return `<style data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">${rewriteCssUrls(fetched.text, fetched.url)}</style>`;
+    } catch (error) {
+      stats.failures.push({ type: "stylesheet", url: resourceUrl, error: String(error?.message || error) });
+      return `<!-- Magic NetSuite failed to inline stylesheet ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+    }
+  });
+
+  const scriptPattern = /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>\s*<\/script>/gi;
+  output = await replaceAsync(output, scriptPattern, async (match, before, src, after) => {
+    stats.scriptsFound += 1;
+    const resourceUrl = absolutizeSuiteletUrl(src, finalUrl);
+    try {
+      const fetched = await fetchTextForSuiteletRender(resourceUrl);
+      stats.scriptsInlined += 1;
+      return `<script${before}${after} data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">\n${fetched.text}\n//# sourceURL=${fetched.url}\n</script>`;
+    } catch (error) {
+      stats.failures.push({ type: "script", url: resourceUrl, error: String(error?.message || error) });
+      return `<!-- Magic NetSuite failed to inline script ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+    }
+  });
+
+  return { html: output, stats };
+}
+
+async function replaceAsync(source, pattern, replacer) {
+  const parts = [];
+  let lastIndex = 0;
+  for (const match of source.matchAll(pattern)) {
+    parts.push(source.slice(lastIndex, match.index));
+    parts.push(await replacer(...match));
+    lastIndex = match.index + match[0].length;
+  }
+  parts.push(source.slice(lastIndex));
+  return parts.join("");
+}
+
+async function prepareSuiteletHtmlForSrcdoc(html, finalUrl, originalUrl = finalUrl) {
+  const baseTag = `<base href="${String(finalUrl).replace(/"/g, "&quot;")}">`;
+  const inlined = await inlineSuiteletAssets(html, finalUrl);
+  let output = inlined.html;
+
+  // CSP delivered inside the HTML can block srcdoc rendering in the MCP app even
+  // when the network response itself is valid.
+  output = output.replace(/<meta[^>]+http-equiv=["']content-security-policy["'][^>]*>/gi, "");
+  output = output.replace(/<meta[^>]+http-equiv=["']x-frame-options["'][^>]*>/gi, "");
+
+  if (/<head[^>]*>/i.test(output)) {
+    return {
+      html: output.replace(/<head([^>]*)>/i, `<head$1>${baseTag}${suiteletProxyBootstrapScript(originalUrl)}`),
+      stats: inlined.stats
+    };
+  }
+  return {
+    html: `${baseTag}${suiteletProxyBootstrapScript(originalUrl)}${output}`,
+    stats: inlined.stats
+  };
+}
+
+async function handleSuiteletFetchHtml(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet HTML fetch only supports NetSuite URLs.");
+  }
+
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+  const html = await response.text();
+  const prepared = await prepareSuiteletHtmlForSrcdoc(html, response.url || targetUrl.href, targetUrl.href);
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        requestedUrl: targetUrl.href,
+        finalUrl: response.url,
+        html: prepared.html,
+        htmlLength: prepared.html.length,
+        assetStats: prepared.stats
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletProxyRequest(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet proxy only supports NetSuite URLs.");
+  }
+
+  const cleanHeaders = {};
+  const forbiddenHeaders = new Set([
+    "accept-encoding",
+    "connection",
+    "content-length",
+    "cookie",
+    "host",
+    "origin",
+    "referer",
+    "sec-fetch-dest",
+    "sec-fetch-mode",
+    "sec-fetch-site"
+  ]);
+
+  Object.entries(args?.headers || {}).forEach(([key, value]) => {
+    if (!key || value == null) return;
+    if (forbiddenHeaders.has(String(key).toLowerCase())) return;
+    cleanHeaders[key] = String(value);
+  });
+
+  const response = await fetch(targetUrl.href, {
+    method: String(args?.method || "GET"),
+    headers: cleanHeaders,
+    body: args?.body == null ? undefined : String(args.body),
+    credentials: "include",
+    redirect: "follow"
+  });
+
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+  const responseBody = await response.text();
+  const responsePreview = responseBody
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700);
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        requestedUrl: targetUrl.href,
+        originalUrl: String(args?.originalUrl || ""),
+        source: String(args?.source || ""),
+        rewritten: Boolean(args?.originalUrl && String(args.originalUrl) !== targetUrl.href),
+        requestMethod: String(args?.method || "GET"),
+        requestBodyLength: args?.body == null ? 0 : String(args.body).length,
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url,
+        contentType: responseHeaders["content-type"] || "",
+        headers: responseHeaders,
+        bodyLength: responseBody.length,
+        bodyPreview: response.status >= 400 ? responsePreview : "",
+        body: responseBody
+      }, null, 2)
     }]
   };
 }
@@ -2812,29 +3449,30 @@ async function handleSuiteletStreamFrame() {
 
   const tab = await chrome.tabs.get(suiteletStreamSession.tabId);
   const viewport = await getSuiteletViewport(suiteletStreamSession.tabId);
+  suiteletStreamSession.url = tab.url || suiteletStreamSession.url;
   const screenshot = await sendSuiteletDebuggerCommand(
     suiteletStreamSession.tabId,
     "Page.captureScreenshot",
     {
       format: "jpeg",
-      quality: 60,
+      quality: 58,
       optimizeForSpeed: true,
       fromSurface: true,
       captureBeyondViewport: false
     }
   );
-  const dataUrl = `data:image/jpeg;base64,${screenshot?.data || ""}`;
-  suiteletStreamSession.url = tab.url || suiteletStreamSession.url;
+  const capturedAt = new Date().toISOString();
 
   return {
     content: [{
       type: "text",
       text: JSON.stringify({
         ok: true,
-        dataUrl,
+        dataUrl: `data:image/jpeg;base64,${screenshot?.data || ""}`,
         url: tab.url || suiteletStreamSession.url,
         title: tab.title || viewport.title || "Suitelet",
-        capturedAt: new Date().toISOString(),
+        capturedAt,
+        transport: "cdp-screenshot-fallback",
         viewport
       }, null, 2)
     }]
