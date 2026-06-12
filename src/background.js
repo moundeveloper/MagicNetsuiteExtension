@@ -1288,6 +1288,115 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_lists",
+    description:
+      "List NetSuite custom lists from the current account. Returns metadata only: name, internalId, and inactive status. " +
+      "Use this to discover the listId to pass to netsuite_list_items. Optional query filters by list name or internal ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Optional partial list name or internal ID filter."
+        },
+        includeInactive: {
+          type: "boolean",
+          description: "Include inactive custom lists. Defaults to false."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_list_items",
+    description:
+      "Load a NetSuite custom list and return its values from the customvalue sublist. " +
+      "Pass listId from netsuite_lists. Returns each value's internalId, display value, line number, and inactive status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        listId: {
+          type: "string",
+          description: "The custom list internal ID returned by netsuite_lists, or a valid customlist script ID when supported by NetSuite record.load."
+        },
+        includeInactive: {
+          type: "boolean",
+          description: "Include inactive list values. Defaults to false."
+        }
+      },
+      required: ["listId"]
+    }
+  },
+  {
+    name: "netsuite_create_record",
+    description:
+      "Create a NetSuite standard or custom record using SuiteScript record.create, Record.setValue, and Record.save. " +
+      "Destructive: this creates data in the account. Pass recordType and a values object mapping body field IDs to values. " +
+      "For custom records, recordType is the custom record script ID such as customrecord_my_type. This tool does not create sublist lines or subrecords.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID, e.g. customer, task, customrecord_my_type."
+        },
+        values: {
+          type: "object",
+          description: "Body field values keyed by field ID, e.g. { \"companyname\": \"Acme\" }."
+        },
+        defaultValues: {
+          type: "object",
+          description: "Optional defaultValues passed to record.create for record types that require creation defaults."
+        },
+        isDynamic: {
+          type: "boolean",
+          description: "Create the record in dynamic mode. Defaults to false."
+        },
+        enableSourcing: {
+          type: "boolean",
+          description: "Record.save enableSourcing option. Defaults to true."
+        },
+        ignoreMandatoryFields: {
+          type: "boolean",
+          description: "Record.save ignoreMandatoryFields option. Defaults to false."
+        }
+      },
+      required: ["recordType", "values"]
+    }
+  },
+  {
+    name: "netsuite_update_record_fields",
+    description:
+      "Update body fields on an existing NetSuite record using SuiteScript record.submitFields. " +
+      "Destructive: this modifies data in the account. This is for body fields only; NetSuite does not allow submitFields to update sublist line fields or subrecords. " +
+      "Pass recordType, recordId, and a values object mapping field IDs to values.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID, e.g. customer, salesorder, customrecord_my_type."
+        },
+        recordId: {
+          type: "string",
+          description: "Internal ID of the record to update."
+        },
+        values: {
+          type: "object",
+          description: "Body field values keyed by field ID, e.g. { \"memo\": \"Updated by MCP\" }."
+        },
+        enableSourcing: {
+          type: "boolean",
+          description: "record.submitFields enableSourcing option. Defaults to true."
+        },
+        ignoreMandatoryFields: {
+          type: "boolean",
+          description: "record.submitFields ignoreMandatoryFields option. Defaults to false."
+        }
+      },
+      required: ["recordType", "recordId", "values"]
+    }
+  },
+  {
     name: "netsuite_get_record_fields",
     description:
       "Get the list of available body fields and sublist fields for a record type, WITHOUT loading a real record. " +
@@ -1805,6 +1914,14 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteGetBundleComponents(args);
         } else if (name === "netsuite_list_record_types") {
           result = await handleNetsuiteListRecordTypes();
+        } else if (name === "netsuite_lists") {
+          result = await handleNetsuiteLists(args);
+        } else if (name === "netsuite_list_items") {
+          result = await handleNetsuiteListItems(args);
+        } else if (name === "netsuite_create_record") {
+          result = await handleNetsuiteCreateRecord(args);
+        } else if (name === "netsuite_update_record_fields") {
+          result = await handleNetsuiteUpdateRecordFields(args);
         } else if (name === "netsuite_load_record") {
           result = await handleNetsuiteLoadRecord(args);
         } else if (name === "netsuite_get_record_sublists") {
@@ -2325,6 +2442,90 @@ async function handleNetsuiteListRecordTypes() {
     content: [{
       type: "text",
       text: JSON.stringify({ count: records.length, recordTypes: records }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteLists(args) {
+  const result = await callNetsuiteRoute(
+    "GET_CUSTOM_LISTS",
+    {
+      query: args?.query ?? "",
+      includeInactive: args?.includeInactive === true
+    },
+    "Failed to get custom lists."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListItems(args) {
+  const listId = String(args?.listId ?? "").trim();
+  if (!listId) throw new Error("listId is required.");
+
+  const result = await callNetsuiteRoute(
+    "GET_CUSTOM_LIST_ITEMS",
+    {
+      listId,
+      includeInactive: args?.includeInactive === true
+    },
+    `Failed to get custom list items for ${listId}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteCreateRecord(args) {
+  const recordType = String(args?.recordType ?? args?.type ?? "").trim();
+  if (!recordType) throw new Error("recordType is required.");
+
+  const result = await callNetsuiteRoute(
+    "CREATE_RECORD",
+    {
+      ...args,
+      recordType
+    },
+    `Failed to create record ${recordType}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateRecordFields(args) {
+  const recordType = String(args?.recordType ?? args?.type ?? "").trim();
+  const recordId = String(args?.recordId ?? args?.id ?? "").trim();
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_RECORD_FIELDS",
+    {
+      ...args,
+      recordType,
+      recordId
+    },
+    `Failed to update record ${recordType}/${recordId}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
     }]
   };
 }

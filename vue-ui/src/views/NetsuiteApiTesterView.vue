@@ -542,6 +542,47 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.GET_CUSTOM_LISTS,
+    description: "Returns NetSuite custom list metadata: name, internal ID, and inactive status.",
+    fields: [
+      f("query", "string", false, "Optional partial custom list name or internal ID filter"),
+      f("includeInactive", "boolean", false, "Include inactive custom lists")
+    ]
+  },
+  {
+    route: RequestRoutes.GET_CUSTOM_LIST_ITEMS,
+    description: "Loads a NetSuite custom list and returns its customvalue rows.",
+    fields: [
+      f("listId", "string", true, "Custom list internal ID from GET_CUSTOM_LISTS, or a supported customlist script ID"),
+      f("includeInactive", "boolean", false, "Include inactive list values")
+    ]
+  },
+  {
+    route: RequestRoutes.CREATE_RECORD,
+    description: "Creates a NetSuite standard or custom record using record.create, setValue, and save.",
+    destructive: true,
+    fields: [
+      f("recordType", "string", true, "Record type e.g. customer, task, customrecord_my_type"),
+      f("values", "json", true, "Body field values keyed by field ID", true, "{}"),
+      f("defaultValues", "json", false, "Optional record.create defaultValues", true, "{}"),
+      f("isDynamic", "boolean", false, "Create in dynamic mode"),
+      f("enableSourcing", "boolean", false, "Record.save enableSourcing option. Defaults to true."),
+      f("ignoreMandatoryFields", "boolean", false, "Record.save ignoreMandatoryFields option")
+    ]
+  },
+  {
+    route: RequestRoutes.UPDATE_RECORD_FIELDS,
+    description: "Updates body fields on an existing record using record.submitFields. Does not update sublists or subrecords.",
+    destructive: true,
+    fields: [
+      f("recordType", "string", true, "Record type e.g. customer, salesorder, customrecord_my_type"),
+      f("recordId", "number", true, "Internal ID of the record to update"),
+      f("values", "json", true, "Body field values keyed by field ID", true, "{}"),
+      f("enableSourcing", "boolean", false, "record.submitFields enableSourcing option. Defaults to true."),
+      f("ignoreMandatoryFields", "boolean", false, "record.submitFields ignoreMandatoryFields option")
+    ]
+  },
+  {
     route: RequestRoutes.CREATE_CUSTOM_RECORD_TYPE,
     description: "Finds or creates a NetSuite custom record type metadata record using customrecordtype.",
     destructive: true,
@@ -911,6 +952,10 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.LOAD_RECORD,
       RequestRoutes.GET_RECORD_FIELDS,
       RequestRoutes.GET_RECORD_FIELD_TYPES,
+      RequestRoutes.GET_CUSTOM_LISTS,
+      RequestRoutes.GET_CUSTOM_LIST_ITEMS,
+      RequestRoutes.CREATE_RECORD,
+      RequestRoutes.UPDATE_RECORD_FIELDS,
       RequestRoutes.CREATE_CUSTOM_RECORD_TYPE,
       RequestRoutes.GET_CUSTOM_RECORD_FIELD_TYPES,
       RequestRoutes.GET_CUSTOM_RECORD_SELECT_RECORD_TYPES,

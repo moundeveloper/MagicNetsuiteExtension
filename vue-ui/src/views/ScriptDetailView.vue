@@ -7,6 +7,7 @@ import MultiSelect from "primevue/multiselect";
 import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
 import FileCodeEditor from "../components/FileCodeEditor.vue";
+import FileCabinetPane from "../components/FileCabinetPane.vue";
 import DiffViewer from "../components/DiffViewer.vue";
 import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 import { callApi, type ApiResponse } from "../utils/api";
@@ -50,6 +51,30 @@ interface LogItem {
   deploymentName: string;
 }
 
+interface RelatedFileTab {
+  id: number;
+  name: string;
+  folder: number | null;
+  filetype: string;
+  filesize?: number;
+  url?: string;
+  content: string;
+  savedContent: string;
+  contentType?: string;
+  binary?: boolean;
+  loading?: boolean;
+  error?: string;
+}
+
+interface FileSearchResult {
+  id: number;
+  name: string;
+  folder: number | null;
+  filetype: string;
+  filesize?: number;
+  url?: string;
+}
+
 const props = defineProps<{ vhOffset: number }>();
 const route = useRoute();
 const router = useRouter();
@@ -64,7 +89,16 @@ const code = ref("");
 const savedCode = ref("");
 const fileId = ref<number | null>(null);
 const fileFolderId = ref<number | null>(null);
+const fileType = ref("JAVASCRIPT");
 const loadError = ref("");
+const activeEditorTabId = ref("script");
+const relatedFiles = ref<RelatedFileTab[]>([]);
+const relatedFilesLoading = ref(false);
+const showFilePicker = ref(false);
+const filePickerQuery = ref("");
+const filePickerResults = ref<FileSearchResult[]>([]);
+const filePickerLoading = ref(false);
+const filePickerError = ref("");
 
 const versions = ref<FileVersion[]>([]);
 const selectedVersion = ref<FileVersion | null>(null);
@@ -95,7 +129,69 @@ const LOG_LEVELS = [
   { id: "EMERGENCY", label: "Emergency" }
 ];
 
-const dirty = computed(() => code.value !== savedCode.value);
+const SCRIPTABLE_FILE_TYPES = new Set([
+  "JAVASCRIPT",
+  "TYPESCRIPT",
+  "PLAINTEXT",
+  "CSV",
+  "XMLDOC",
+  "HTMLDOC",
+  "JSON",
+  "STYLESHEET",
+  "FREEMARKER",
+  "SVGIMAGE",
+  "CONFIG"
+]);
+const emptyIdSet = new Set<number>();
+
+const relatedStorageKey = computed(() => `script-detail-related-files:${scriptId.value}`);
+
+const activeRelatedFile = computed(
+  () =>
+    relatedFiles.value.find(
+      (file) => activeEditorTabId.value === `related-${file.id}`
+    ) ?? null
+);
+
+const activeFileId = computed(() =>
+  activeRelatedFile.value ? activeRelatedFile.value.id : fileId.value
+);
+
+const activeFileName = computed(() =>
+  activeRelatedFile.value
+    ? activeRelatedFile.value.name
+    : script.value?.scriptfile || `${script.value?.scriptid || "script"}.js`
+);
+
+const activeFileFolderId = computed(() =>
+  activeRelatedFile.value ? activeRelatedFile.value.folder : fileFolderId.value
+);
+
+const activeFileType = computed(() =>
+  activeRelatedFile.value ? activeRelatedFile.value.filetype : fileType.value
+);
+
+const activeEditorContent = computed({
+  get: () => activeRelatedFile.value?.content ?? code.value,
+  set: (value: string) => {
+    if (activeRelatedFile.value) {
+      activeRelatedFile.value.content = value;
+    } else {
+      code.value = value;
+    }
+  }
+});
+
+const activeSavedContent = computed(
+  () => activeRelatedFile.value?.savedContent ?? savedCode.value
+);
+
+const activeEditorKey = computed(
+  () =>
+    `${activeEditorTabId.value}:${activeFileId.value ?? "none"}:${activeRelatedFile.value?.savedContent.length ?? savedCode.value.length}`
+);
+
+const dirty = computed(() => activeEditorContent.value !== activeSavedContent.value);
 const isSuiteletScript = computed(() => {
   const type = script.value?.scriptType?.toLowerCase() ?? "";
   return type === "scriptlet" || type.includes("suitelet");
@@ -136,6 +232,31 @@ const deploymentOptions = computed(() =>
     label: `${deployment.scriptid}${deployment.deploymentid ? ` · #${deployment.deploymentid}` : ""}${deployment.recordtype ? ` · ${deployment.recordtype}` : ""}`
   }))
 );
+
+const editorTabs = computed(() => [
+  {
+    id: "script",
+    label: script.value?.scriptfile || "Script file",
+    subtitle: script.value?.scriptid || "Primary",
+    dirty: code.value !== savedCode.value,
+    loading: false,
+    error: ""
+  },
+  ...relatedFiles.value.map((file) => ({
+    id: `related-${file.id}`,
+    label: file.name,
+    subtitle: file.folder ? `Folder ${file.folder}` : "Related",
+    dirty: file.content !== file.savedContent,
+    loading: Boolean(file.loading),
+    error: file.error || ""
+  }))
+]);
+
+const attachedRelatedFileIds = computed(() => {
+  const ids = new Set(relatedFiles.value.map((file) => file.id));
+  if (fileId.value) ids.add(fileId.value);
+  return ids;
+});
 
 const deploymentsTargetedForLogClear = computed(() => {
   if (selectedDeploymentIds.value.length === 0) return deployments.value;
@@ -183,7 +304,121 @@ const normalizeScript = (row: any): ScriptItem => ({
 });
 
 const loadVersions = async () => {
-  versions.value = fileId.value ? await getVersionsForFile(fileId.value) : [];
+  versions.value = activeFileId.value
+    ? await getVersionsForFile(activeFileId.value)
+    : [];
+};
+
+const persistRelatedFileRefs = () => {
+  const refs = relatedFiles.value.map((file) => ({
+    id: file.id,
+    name: file.name,
+    folder: file.folder,
+    filetype: file.filetype,
+    filesize: file.filesize,
+    url: file.url
+  }));
+  localStorage.setItem(relatedStorageKey.value, JSON.stringify(refs));
+};
+
+const restoreRelatedFileRefs = (): FileSearchResult[] => {
+  try {
+    const raw = localStorage.getItem(relatedStorageKey.value);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed
+          .map(normalizeFileSearchRow)
+          .filter((file): file is FileSearchResult => Boolean(file))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const getFileContent = async (file: Pick<FileSearchResult, "url">) => {
+  if (!file.url) throw new Error("This file has no accessible URL.");
+  const response = await callApi(RequestRoutes.FETCH_FILE_CONTENT, {
+    fileUrl: file.url
+  });
+  const result = response.message ?? response;
+  if (result?.error) throw new Error(result.error);
+  return result;
+};
+
+const updateRelatedFile = (
+  fileIdToUpdate: number,
+  patch: Partial<RelatedFileTab>
+) => {
+  relatedFiles.value = relatedFiles.value.map((file) =>
+    file.id === fileIdToUpdate ? { ...file, ...patch } : file
+  );
+};
+
+const refreshActiveVersions = () => {
+  void loadVersions().catch((err) => {
+    console.warn("[ScriptDetail] Failed to load version history", err);
+  });
+};
+
+const loadRelatedFile = async (file: FileSearchResult) => {
+  const existing = relatedFiles.value.find((item) => item.id === file.id);
+  if (existing) {
+    activeEditorTabId.value = `related-${existing.id}`;
+    refreshActiveVersions();
+    return;
+  }
+
+  const tab: RelatedFileTab = {
+    id: file.id,
+    name: file.name,
+    folder: file.folder,
+    filetype: file.filetype || "JAVASCRIPT",
+    filesize: file.filesize,
+    url: file.url,
+    content: "",
+    savedContent: "",
+    loading: true
+  };
+  relatedFiles.value.push(tab);
+  activeEditorTabId.value = `related-${tab.id}`;
+  try {
+    const result = await getFileContent(file);
+    const content = String(result?.content ?? "");
+    const patch: Partial<RelatedFileTab> = {
+      content,
+      savedContent: content,
+      contentType: result?.contentType,
+      loading: false
+    };
+    if (result?.binary) {
+      patch.binary = true;
+      patch.error = "Binary files cannot be edited here.";
+    }
+    updateRelatedFile(tab.id, patch);
+  } catch (err) {
+    updateRelatedFile(tab.id, {
+      error: err instanceof Error ? err.message : String(err),
+      loading: false
+    });
+  } finally {
+    persistRelatedFileRefs();
+    refreshActiveVersions();
+  }
+};
+
+const loadPersistedRelatedFiles = async () => {
+  const refs = restoreRelatedFileRefs();
+  if (refs.length === 0) return;
+  relatedFilesLoading.value = true;
+  try {
+    for (const refItem of refs) {
+      await loadRelatedFile(refItem);
+    }
+    activeEditorTabId.value = "script";
+    await loadVersions();
+  } finally {
+    relatedFilesLoading.value = false;
+  }
 };
 
 const loadScript = async () => {
@@ -208,6 +443,7 @@ const loadScript = async () => {
     fileId.value = file?.fileId != null ? Number(file.fileId) : null;
     fileFolderId.value =
       file?.fileFolderId != null ? Number(file.fileFolderId) : null;
+    fileType.value = String(file?.filetype ?? "JAVASCRIPT");
     deployments.value = (deploymentsResponse as ApiResponse).message ?? [];
     selectedSuiteletDeploymentId.value = deployments.value[0]?.primarykey ?? "";
     if (isSuiteletScript.value && selectedSuiteletDeployment.value) {
@@ -216,6 +452,9 @@ const loadScript = async () => {
       suiteletUrl.value = "";
       suiteletUrlError.value = "";
     }
+    relatedFiles.value = [];
+    activeEditorTabId.value = "script";
+    await loadPersistedRelatedFiles();
     await loadVersions();
     await fetchLogs();
   } catch (err) {
@@ -225,37 +464,145 @@ const loadScript = async () => {
   }
 };
 
-const saveScript = async () => {
-  if (!fileId.value || !dirty.value || saving.value) return;
+const saveActiveFile = async () => {
+  if (!activeFileId.value || !dirty.value || saving.value) return;
   saving.value = true;
   try {
     await saveVersion(
-      fileId.value,
-      script.value?.scriptfile || script.value?.name || "script.js",
-      savedCode.value
+      activeFileId.value,
+      activeFileName.value,
+      activeSavedContent.value
     );
     const response = await callApi(RequestRoutes.UPDATE_FILE_CONTENT, {
-      fileId: fileId.value,
-      fileContent: code.value,
-      fileName:
-        script.value?.scriptfile || `${script.value?.scriptid || "script"}.js`,
-      folderId: fileFolderId.value,
-      mediaType: "JAVASCRIPT"
+      fileId: activeFileId.value,
+      fileContent: activeEditorContent.value,
+      fileName: activeFileName.value,
+      folderId: activeFileFolderId.value,
+      mediaType: activeFileType.value || "JAVASCRIPT"
     });
     const result = response.message ?? response;
     if (result?.isUpdated === false)
       throw new Error("NetSuite returned a save failure.");
-    savedCode.value = code.value;
+    if (activeRelatedFile.value) {
+      activeRelatedFile.value.savedContent = activeRelatedFile.value.content;
+    } else {
+      savedCode.value = code.value;
+    }
     selectedVersion.value = null;
     await loadVersions();
+    toast.add({
+      severity: "success",
+      summary: "Saved",
+      detail: `${activeFileName.value} saved to NetSuite`,
+      life: 2600
+    });
   } finally {
     saving.value = false;
   }
 };
 
+const saveScript = saveActiveFile;
+
 const restoreVersion = (version: FileVersion) => {
-  code.value = version.content;
+  activeEditorContent.value = version.content;
   selectedVersion.value = null;
+};
+
+const selectEditorTab = async (tabId: string) => {
+  activeEditorTabId.value = tabId;
+  selectedVersion.value = null;
+  showHistory.value = false;
+  refreshActiveVersions();
+};
+
+const closeRelatedFile = async (file: RelatedFileTab) => {
+  relatedFiles.value = relatedFiles.value.filter((item) => item.id !== file.id);
+  if (activeEditorTabId.value === `related-${file.id}`) {
+    activeEditorTabId.value = "script";
+    selectedVersion.value = null;
+    await loadVersions();
+  }
+  persistRelatedFileRefs();
+};
+
+const closeRelatedFileByTabId = async (tabId: string) => {
+  const file = relatedFiles.value.find((item) => `related-${item.id}` === tabId);
+  if (file) await closeRelatedFile(file);
+};
+
+const normalizeFileSearchRow = (row: any): FileSearchResult | null => {
+  if (!row?.id) return null;
+  return {
+    id: Number(row.id),
+    name: String(row.name ?? `File ${row.id}`),
+    folder:
+      row.folder != null && row.folder !== "" ? Number(row.folder) : null,
+    filetype: String(row.filetype ?? row.fileType ?? "JAVASCRIPT"),
+    filesize:
+      row.filesize != null || row.fileSize != null
+        ? Number(row.filesize ?? row.fileSize)
+        : undefined,
+    url: row.url ? String(row.url) : undefined
+  };
+};
+
+const searchRelatedFiles = async () => {
+  const query = filePickerQuery.value.trim();
+  if (!query) return;
+  filePickerLoading.value = true;
+  filePickerError.value = "";
+  try {
+    const numericQuery = Number(query);
+    const response = await callApi(RequestRoutes.FIND_FILE, {
+      id: Number.isFinite(numericQuery) ? numericQuery : undefined,
+      name: Number.isFinite(numericQuery) ? undefined : query
+    });
+    const payload = response.message ?? response;
+    const rawFiles: any[] = Array.isArray(payload?.files)
+      ? payload.files
+      : Array.isArray(payload?.files?.results)
+        ? payload.files.results
+        : Array.isArray(payload?.results)
+          ? payload.results
+          : [];
+    filePickerResults.value = rawFiles
+      .map(normalizeFileSearchRow)
+      .filter((file): file is FileSearchResult => Boolean(file));
+    if (filePickerResults.value.length === 0) {
+      filePickerError.value = payload?.hint || "No matching files found.";
+    }
+  } catch (err) {
+    filePickerError.value = err instanceof Error ? err.message : String(err);
+    filePickerResults.value = [];
+  } finally {
+    filePickerLoading.value = false;
+  }
+};
+
+const addRelatedFile = async (file: FileSearchResult) => {
+  showFilePicker.value = false;
+  filePickerQuery.value = "";
+  filePickerResults.value = [];
+  await loadRelatedFile(file);
+};
+
+const addRelatedFileFromCabinet = async (file: {
+  id: number;
+  name: string;
+  filetype: string;
+  filesize: number;
+  folder: number;
+  url?: string;
+}) => {
+  showFilePicker.value = false;
+  await loadRelatedFile({
+    id: file.id,
+    name: file.name,
+    folder: file.folder,
+    filetype: file.filetype || "JAVASCRIPT",
+    filesize: file.filesize,
+    url: file.url
+  });
 };
 
 const removeVersion = async (version: FileVersion) => {
@@ -599,8 +946,8 @@ onMounted(loadScript);
             <button
               type="button"
               class="primary-btn"
-              :disabled="!dirty || saving || !fileId"
-              @click="saveScript"
+              :disabled="!dirty || saving || !activeFileId || activeRelatedFile?.binary"
+              @click="saveActiveFile"
             >
               <i :class="saving ? 'pi pi-spin pi-spinner' : 'pi pi-save'" />
               <span>{{ saving ? "Saving" : "Save" }}</span>
@@ -617,10 +964,68 @@ onMounted(loadScript);
 
         <div v-else class="script-detail-body">
           <section class="editor-column">
+            <div class="editor-tabs">
+              <button
+                v-for="tab in editorTabs"
+                :key="tab.id"
+                type="button"
+                class="editor-tab"
+                :class="{
+                  active: activeEditorTabId === tab.id,
+                  dirty: tab.dirty,
+                  error: tab.error
+                }"
+                :title="tab.subtitle"
+                @click="selectEditorTab(tab.id)"
+              >
+                <i
+                  :class="
+                    tab.loading
+                      ? 'pi pi-spin pi-spinner'
+                      : tab.id === 'script'
+                        ? 'pi pi-code'
+                        : 'pi pi-file'
+                  "
+                />
+                <span>{{ tab.label }}</span>
+                <b v-if="tab.dirty" />
+                <button
+                  v-if="tab.id !== 'script'"
+                  type="button"
+                  class="editor-tab-close"
+                  title="Remove related file"
+                  @click.stop="closeRelatedFileByTabId(tab.id)"
+                >
+                  <i class="pi pi-times" />
+                </button>
+              </button>
+              <button
+                type="button"
+                class="editor-tab-add"
+                title="Add related file"
+                @click="showFilePicker = true"
+              >
+                <i class="pi pi-plus" />
+              </button>
+              <span v-if="relatedFilesLoading" class="tabs-loading">
+                <i class="pi pi-spin pi-spinner" />
+                Loading related files
+              </span>
+            </div>
             <div class="editor-toolbar">
               <div class="editor-status">
                 <span v-if="dirty" class="dirty-dot" />
-                <span>{{ dirty ? "Unsaved changes" : "Saved" }}</span>
+                <span>{{
+                  activeRelatedFile?.binary
+                    ? "Read-only binary file"
+                    : dirty
+                      ? "Unsaved changes"
+                      : "Saved"
+                }}</span>
+              </div>
+              <div class="active-file-meta">
+                <i class="pi pi-folder" />
+                <span>{{ activeFileName }}</span>
               </div>
               <button
                 type="button"
@@ -692,16 +1097,25 @@ onMounted(loadScript);
               </div>
               <DiffViewer
                 :original="selectedVersion.content"
-                :modified="code"
+                :modified="activeEditorContent"
                 language="javascript"
               />
             </div>
+            <div v-else-if="activeRelatedFile?.loading" class="loading-state">
+              <i class="pi pi-spin pi-spinner" />
+              <span>Loading {{ activeRelatedFile.name }}...</span>
+            </div>
+            <div v-else-if="activeRelatedFile?.error" class="error-state">
+              <i class="pi pi-exclamation-triangle" />
+              <span>{{ activeRelatedFile.error }}</span>
+            </div>
             <FileCodeEditor
               v-else
-              v-model="code"
+              :key="activeEditorKey"
+              v-model="activeEditorContent"
               language="javascript"
-              :readonly="!fileId"
-              @ctrl-s="saveScript"
+              :readonly="!activeFileId || activeRelatedFile?.binary"
+              @ctrl-s="saveActiveFile"
             />
           </section>
 
@@ -952,6 +1366,41 @@ onMounted(loadScript);
             </div>
           </aside>
         </div>
+
+        <div
+          v-if="showFilePicker"
+          class="modal-backdrop"
+          @click.self="showFilePicker = false"
+        >
+          <section class="file-picker-modal">
+            <header class="file-picker-header">
+              <div>
+                <strong>Add Related File</strong>
+                <span>Browse scriptable and text files in the File Cabinet.</span>
+              </div>
+              <button
+                type="button"
+                class="icon-btn"
+                title="Close"
+                @click="showFilePicker = false"
+              >
+                <i class="pi pi-times" />
+              </button>
+            </header>
+            <div class="file-picker-pane">
+              <FileCabinetPane
+                :bookmarked-ids="emptyIdSet"
+                current-environment="Script Detail"
+                :initial-folder-id="fileFolderId"
+                context-picker
+                :attached-file-ids="attachedRelatedFileIds"
+                :attaching-file-ids="emptyIdSet"
+                :allowed-file-types="SCRIPTABLE_FILE_TYPES"
+                @add-to-context="addRelatedFileFromCabinet"
+              />
+            </div>
+          </section>
+        </div>
       </div>
     </template>
   </MCard>
@@ -1043,6 +1492,152 @@ onMounted(loadScript);
 .editor-column {
   flex: 1;
   min-width: 0;
+}
+
+.editor-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 37px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: #f6f8fb;
+  padding: 6px 8px 0;
+  overflow-x: auto;
+}
+
+.editor-tab,
+.editor-tab-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  height: 30px;
+  box-sizing: border-box;
+}
+
+.editor-tab {
+  gap: 6px;
+  max-width: 220px;
+  border-radius: 6px 6px 0 0;
+  padding: 0 8px;
+  font-size: 0.74rem;
+  font-weight: 750;
+  position: relative;
+}
+
+.editor-tab:hover {
+  background: #eef2f7;
+  color: var(--p-slate-700);
+}
+
+.editor-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-tab i,
+.editor-tab-add i {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+}
+
+.editor-tab.active {
+  border-color: var(--p-slate-200);
+  border-bottom-color: white;
+  background: white;
+  color: var(--p-slate-800);
+  box-shadow: 0 -1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.editor-tab.active::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  background: white;
+  content: "";
+}
+
+.editor-tab.dirty {
+  color: #92400e;
+}
+
+.editor-tab.error {
+  color: var(--p-red-600);
+}
+
+.editor-tab b {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+.editor-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--p-slate-300);
+  cursor: pointer;
+  margin-left: 1px;
+}
+
+.editor-tab-close:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-700);
+}
+
+.editor-tab-add {
+  width: 30px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+}
+
+.editor-tab-add:hover {
+  border-color: var(--p-indigo-200);
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-700);
+}
+
+.tabs-loading,
+.active-file-meta {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+  color: var(--p-slate-400);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.tabs-loading {
+  padding: 0 6px;
+}
+
+.active-file-meta {
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.active-file-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-toolbar {
@@ -1495,7 +2090,8 @@ onMounted(loadScript);
 
 .loading-state,
 .empty-state,
-.error-strip {
+.error-strip,
+.error-state {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1508,6 +2104,13 @@ onMounted(loadScript);
   min-height: 80px;
 }
 
+.error-state {
+  flex: 1;
+  color: var(--p-red-600);
+  padding: 18px;
+  text-align: center;
+}
+
 .error-strip {
   min-height: 34px;
   justify-content: flex-start;
@@ -1515,6 +2118,74 @@ onMounted(loadScript);
   background: var(--p-red-50);
   color: var(--p-red-700);
   padding: 6px 10px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.42);
+  padding: 18px;
+}
+
+.file-picker-modal {
+  display: flex;
+  width: min(1040px, 96vw);
+  height: min(760px, 92vh);
+  min-height: 520px;
+  flex-direction: column;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.file-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--p-slate-200);
+  padding: 12px;
+}
+
+.file-picker-header div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-picker-header strong {
+  color: var(--p-slate-800);
+  font-size: 0.92rem;
+}
+
+.file-picker-header span {
+  color: var(--p-slate-400);
+  font-size: 0.74rem;
+}
+
+.file-picker-pane {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.file-picker-pane :deep(.fc-pane-wrapper) {
+  height: 100%;
+}
+
+.file-picker-pane :deep(.fc-pane-main) {
+  height: 100%;
+}
+
+.file-picker-pane :deep(.fc-filter-input) {
+  max-width: 220px;
 }
 
 @media (max-width: 980px) {
@@ -1525,6 +2196,10 @@ onMounted(loadScript);
   .script-side,
   .script-side-resize-handle,
   .suitelet-preview-panel {
+    display: none;
+  }
+
+  .active-file-meta {
     display: none;
   }
 }

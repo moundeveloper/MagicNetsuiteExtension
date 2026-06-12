@@ -248,6 +248,78 @@ const setRecordValues = (rec, values, skipFieldIds = new Set()) => {
   });
 };
 
+const assertFieldValueMap = (values, name = "values") => {
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
+    throw new Error(`${name} must be an object mapping field IDs to values.`);
+  }
+
+  const entries = Object.entries(values).filter(
+    ([fieldId, value]) => fieldId && value !== undefined
+  );
+  if (entries.length === 0) {
+    throw new Error(`${name} must contain at least one field value.`);
+  }
+
+  return Object.fromEntries(entries);
+};
+
+const createRecord = (N, args = {}) => {
+  const { record } = N;
+  const type = String(args.recordType ?? args.type ?? "").trim();
+  if (!type) throw new Error("recordType is required.");
+
+  const values = assertFieldValueMap(args.values ?? args.fieldValues);
+  const rec = record.create({
+    type,
+    isDynamic: args.isDynamic === true,
+    ...(args.defaultValues && typeof args.defaultValues === "object"
+      ? { defaultValues: args.defaultValues }
+      : {})
+  });
+
+  setRecordValues(rec, values);
+
+  const id = rec.save({
+    enableSourcing: args.enableSourcing !== false,
+    ignoreMandatoryFields: args.ignoreMandatoryFields === true
+  });
+
+  return {
+    success: true,
+    recordType: type,
+    recordId: String(id),
+    id,
+    valuesSet: Object.keys(values)
+  };
+};
+
+const updateRecordFields = (N, args = {}) => {
+  const { record } = N;
+  const type = String(args.recordType ?? args.type ?? "").trim();
+  const id = String(args.recordId ?? args.id ?? "").trim();
+  if (!type) throw new Error("recordType is required.");
+  if (!id) throw new Error("recordId is required.");
+
+  const values = assertFieldValueMap(args.values ?? args.fieldValues);
+  const updatedId = record.submitFields({
+    type,
+    id,
+    values,
+    options: {
+      enableSourcing: args.enableSourcing !== false,
+      ignoreMandatoryFields: args.ignoreMandatoryFields === true
+    }
+  });
+
+  return {
+    success: true,
+    recordType: type,
+    recordId: String(updatedId ?? id),
+    id: updatedId ?? id,
+    valuesSet: Object.keys(values)
+  };
+};
+
 const getSelectOptions = (rec, fieldId, filter = "") => {
   try {
     const field = rec.getField({ fieldId });
@@ -1642,6 +1714,22 @@ const handlers = {
   GET_RECORD_FIELD_TYPES: async ({ modules, payload: { type, fieldIds } }) => {
     console.log("Get Record Field Types action received", { type, fieldIds });
     return window.getRecordFieldTypes(modules, { type, fieldIds });
+  },
+  GET_CUSTOM_LISTS: async ({ modules, payload }) => {
+    console.log("Get Custom Lists action received", payload);
+    return window.getCustomLists(modules, payload);
+  },
+  GET_CUSTOM_LIST_ITEMS: async ({ modules, payload }) => {
+    console.log("Get Custom List Items action received", payload);
+    return window.getCustomListItems(modules, payload);
+  },
+  CREATE_RECORD: async ({ modules, payload }) => {
+    console.log("Create Record action received", payload);
+    return createRecord(modules, payload);
+  },
+  UPDATE_RECORD_FIELDS: async ({ modules, payload }) => {
+    console.log("Update Record Fields action received", payload);
+    return updateRecordFields(modules, payload);
   },
   CREATE_CUSTOM_RECORD_TYPE: async ({ modules, payload }) => {
     console.log("Create Custom Record Type action received");

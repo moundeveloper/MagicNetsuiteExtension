@@ -888,6 +888,115 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_lists",
+            description:
+              "List NetSuite custom lists from the current account. Returns metadata only: name, internalId, and inactive status. " +
+              "Use this to discover the listId to pass to netsuite_list_items. Optional query filters by list name or internal ID.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: {
+                  type: "string",
+                  description: "Optional partial list name or internal ID filter."
+                },
+                includeInactive: {
+                  type: "boolean",
+                  description: "Include inactive custom lists. Defaults to false."
+                }
+              }
+            }
+          },
+          {
+            name: "netsuite_list_items",
+            description:
+              "Load a NetSuite custom list and return its values from the customvalue sublist. " +
+              "Pass listId from netsuite_lists. Returns each value's internalId, display value, line number, and inactive status.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                listId: {
+                  type: "string",
+                  description: "The custom list internal ID returned by netsuite_lists, or a valid customlist script ID when supported by NetSuite record.load."
+                },
+                includeInactive: {
+                  type: "boolean",
+                  description: "Include inactive list values. Defaults to false."
+                }
+              },
+              required: ["listId"]
+            }
+          },
+          {
+            name: "netsuite_create_record",
+            description:
+              "Create a NetSuite standard or custom record using SuiteScript record.create, Record.setValue, and Record.save. " +
+              "Destructive: this creates data in the account. Pass recordType and a values object mapping body field IDs to values. " +
+              "For custom records, recordType is the custom record script ID such as customrecord_my_type. This tool does not create sublist lines or subrecords.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The SuiteScript record type ID, e.g. customer, task, customrecord_my_type."
+                },
+                values: {
+                  type: "object",
+                  description: "Body field values keyed by field ID, e.g. { \"companyname\": \"Acme\" }."
+                },
+                defaultValues: {
+                  type: "object",
+                  description: "Optional defaultValues passed to record.create for record types that require creation defaults."
+                },
+                isDynamic: {
+                  type: "boolean",
+                  description: "Create the record in dynamic mode. Defaults to false."
+                },
+                enableSourcing: {
+                  type: "boolean",
+                  description: "Record.save enableSourcing option. Defaults to true."
+                },
+                ignoreMandatoryFields: {
+                  type: "boolean",
+                  description: "Record.save ignoreMandatoryFields option. Defaults to false."
+                }
+              },
+              required: ["recordType", "values"]
+            }
+          },
+          {
+            name: "netsuite_update_record_fields",
+            description:
+              "Update body fields on an existing NetSuite record using SuiteScript record.submitFields. " +
+              "Destructive: this modifies data in the account. This is for body fields only; NetSuite does not allow submitFields to update sublist line fields or subrecords. " +
+              "Pass recordType, recordId, and a values object mapping field IDs to values.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                recordType: {
+                  type: "string",
+                  description: "The SuiteScript record type ID, e.g. customer, salesorder, customrecord_my_type."
+                },
+                recordId: {
+                  type: "string",
+                  description: "Internal ID of the record to update."
+                },
+                values: {
+                  type: "object",
+                  description: "Body field values keyed by field ID, e.g. { \"memo\": \"Updated by MCP\" }."
+                },
+                enableSourcing: {
+                  type: "boolean",
+                  description: "record.submitFields enableSourcing option. Defaults to true."
+                },
+                ignoreMandatoryFields: {
+                  type: "boolean",
+                  description: "record.submitFields ignoreMandatoryFields option. Defaults to false."
+                }
+              },
+              required: ["recordType", "recordId", "values"]
+            }
+          },
+          {
             name: "netsuite_get_record_fields",
             description:
               "Get the list of available body fields and sublist fields for a record type, WITHOUT loading a real record. " +

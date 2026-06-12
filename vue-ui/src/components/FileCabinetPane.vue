@@ -1353,6 +1353,8 @@ const props = defineProps<{
   attachedFileIds?: Set<number>;
   /** File IDs currently being fetched for context attachment. */
   attachingFileIds?: Set<number>;
+  /** Optional file type allowlist; folders remain visible for navigation. */
+  allowedFileTypes?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -1580,6 +1582,13 @@ const allItems = computed<CabinetItem[]>(() => {
 
 const filteredItems = computed(() => {
   let items = allItems.value;
+  if (props.allowedFileTypes?.size) {
+    items = items.filter(
+      (item) =>
+        item.type === "folder" ||
+        props.allowedFileTypes!.has((item as FileItem).filetype)
+    );
+  }
   if (contentSearch.value) {
     const q = contentSearch.value.toLowerCase();
     items = items.filter((item) => item.name.toLowerCase().includes(q));
@@ -2892,6 +2901,9 @@ const executeGlobalSearch = async (query: string) => {
     }
     for (const file of fileRows) {
       if (!file?.id) continue;
+      const filetype = file.filetype || undefined;
+      if (props.allowedFileTypes?.size && !props.allowedFileTypes.has(filetype || ""))
+        continue;
       results.push({
         id: Number(file.id),
         name: file.name || "Unnamed",
@@ -2901,7 +2913,7 @@ const executeGlobalSearch = async (query: string) => {
         type: "file",
         url: file.url || undefined,
         folder: file.folder ? Number(file.folder) : undefined,
-        filetype: file.filetype || undefined,
+        filetype,
         filesize: file.filesize ? Number(file.filesize) : undefined
       });
     }
