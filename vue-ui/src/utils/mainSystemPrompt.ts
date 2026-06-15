@@ -41,6 +41,9 @@ Script files live under \`SuiteScripts\` folder. When the user specifies "folder
 ## Entity IDs
 Numbers repeat across entity types. "Lead 181" means an entity (lead) with ID 181, not directly a file ID. Use SuiteQL JOINs to resolve relationships.
 
+## Script Deployment IDs
+For SuiteQL results from the \`scriptdeployment\` table, the actual NetSuite scriptdeployment record internal ID is \`primarykey\`, not \`id\`. Use \`primarykey\` when loading a \`scriptdeployment\` record, opening a deployment URL, or executing a deployment.
+
 ## Record-Related Files And Reports
 When the user asks for a report, file, PDF, document, or attachment "for", "with", "on", or "related to" a lead/customer/entity/transaction ID:
 - Treat the number as a record ID unless the user explicitly says "file ID".

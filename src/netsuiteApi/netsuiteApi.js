@@ -1407,19 +1407,22 @@ const handlers = {
     console.log("Run Quick Script action received", { mode });
     try {
       // Pass mode to runQuickScript
-      await window.runQuickScript(modules, { code, requestId, mode });
+      const result = await window.runQuickScript(modules, { code, requestId, mode });
 
       // For streaming, don't return anything here - data flows through postMessage
       if (mode === "stream") {
         return null;
       }
 
-      // For normal mode, return initial log
-      return { type: "log", values: ["Script execution started"] };
+      return result;
     } catch (err) {
-      return [
-        { type: "error", values: ["Script execution error: " + err.message] }
-      ];
+      return {
+        result: null,
+        error: err?.message || String(err),
+        logs: [
+          { type: "error", values: ["Script execution error: " + (err?.message || String(err))] }
+        ]
+      };
     }
   },
   RUN_QUICK_SCRIPT_SERVER: async ({

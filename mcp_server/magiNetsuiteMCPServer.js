@@ -658,6 +658,16 @@ Custom records:
   contact             Contact records
   customrecord_*      Custom record types — discover with suiteql_search_tables
 
+## SCRIPT DEPLOYMENT IDS
+The SuiteQL scriptdeployment table is unusual:
+  - scriptdeployment.id is NOT the deployment record internal ID used by the NetSuite record API or deployment URL tools.
+  - scriptdeployment.primarykey IS the actual scriptdeployment record internal ID.
+  - When a SuiteQL query result for scriptdeployment will be used with netsuite_load_record(recordType: "scriptdeployment"), netsuite_get_script_deployment_url, execute/deployment tools, or a NetSuite deployment URL, use primarykey.
+  - Select it explicitly and alias it clearly:
+      SELECT sd.primarykey AS deployment_record_id, sd.scriptid, sd.deploymentid
+      FROM scriptdeployment sd
+      WHERE ROWNUM <= 25
+
 ## RECORD-RELATED FILES AND REPORTS
 When the user asks for a report/file/document/PDF "for", "with", or "related to" a lead/customer/entity/transaction ID:
   - Treat the number as the record ID unless the user explicitly says "file ID".
@@ -794,13 +804,14 @@ async function handleMcp(req) {
           {
             name: "suiteql_execute_query",
             description:
-              "Step 4 of discovery workflow. Execute a SuiteQL query. IMPORTANT: NEVER use LIMIT — SuiteQL does not support it and it will error. Use ROWNUM in a WHERE clause instead: WHERE ROWNUM <= 25",
+              "Step 4 of discovery workflow. Execute a SuiteQL query. IMPORTANT: NEVER use LIMIT — SuiteQL does not support it and it will error. Use ROWNUM in a WHERE clause instead: WHERE ROWNUM <= 25. When querying scriptdeployment, select primarykey; it is the actual deployment record internal ID. scriptdeployment.id is not.",
             inputSchema: {
               type: "object",
               properties: {
                 sql: {
                   type: "string",
-                  description: "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT."
+                  description:
+                    "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT. For scriptdeployment, select primarykey when you need the deployment record internal ID."
                 }
               },
               required: ["sql"]
@@ -1670,6 +1681,24 @@ async function handleMcp(req) {
                 }
               },
               required: ["name", "scriptId", "fileId"]
+            }
+          },
+          {
+            name: "netsuite_run_quick_script",
+            description:
+              "Run a small SuiteScript/JavaScript snippet in the authenticated NetSuite page context. " +
+              "Use this to quickly test N/* module calls or JavaScript expressions. Return values and console/N.log output are returned as { result, logs }. " +
+              "The snippet runs inside an async function with N modules destructured, so you can use await and modules such as record, search, query, runtime, file, log.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                code: {
+                  type: "string",
+                  description:
+                    "SuiteScript/JavaScript body to execute, e.g. \"console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;\""
+                }
+              },
+              required: ["code"]
             }
           }
         ]

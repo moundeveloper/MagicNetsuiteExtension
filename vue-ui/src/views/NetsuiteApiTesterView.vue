@@ -307,7 +307,7 @@
             </div>
 
             <!-- Loading -->
-            <div v-if="isSending" class="response-loading">
+            <div v-if="isSending && !lastResponse" class="response-loading">
               <i class="pi pi-spin pi-spinner" />
               <span>Calling {{ selectedEndpoint.route }}…</span>
             </div>
@@ -328,6 +328,10 @@
             </div>
 
             <!-- Success -->
+            <div v-else-if="responseLogText" class="response-log-view">
+              <pre>{{ responseLogText }}</pre>
+            </div>
+
             <div v-else class="response-ok">
               <MonacoCodeEditor
                 :model-value="formattedResponse"
@@ -1102,6 +1106,35 @@ const formattedResponse = computed<string>(() => {
   }
 });
 
+const formatLogEntry = (entry: any): string => {
+  const type = String(entry?.type ?? entry?.event ?? "log").toUpperCase();
+  const values = Array.isArray(entry?.values)
+    ? entry.values
+    : entry?.value !== undefined
+      ? [entry.value]
+      : entry?.data !== undefined
+        ? [entry.data]
+        : [entry];
+  return `[${type}] ${values.map((value: any) => typeof value === "string" ? value : JSON.stringify(value, null, 2)).join(" ")}`;
+};
+
+const responseLogText = computed<string>(() => {
+  if (!lastResponse.value || lastResponse.value.status !== "ok") return "";
+  const msg = lastResponse.value.message;
+  const logs = Array.isArray(msg?.logs)
+    ? msg.logs
+    : Array.isArray(msg)
+      ? msg
+      : [];
+  if (!logs.length) return "";
+
+  const result =
+    msg && !Array.isArray(msg) && Object.prototype.hasOwnProperty.call(msg, "result")
+      ? `\n\n[RESULT] ${typeof msg.result === "string" ? msg.result : JSON.stringify(msg.result, null, 2)}`
+      : "";
+  return logs.map(formatLogEntry).join("\n") + result;
+});
+
 // ── Watchers ──────────────────────────────────────────────────────────────────
 // Sync form → JSON when switching to JSON mode
 watch(paramsMode, (mode) => {
@@ -1231,19 +1264,26 @@ const sendCall = async () => {
     if (isStreamMode) {
       // Collect streamed log entries in real-time
       const streamLogs: unknown[] = [];
-      lastResponse.value = { status: "ok", message: streamLogs, duration: 0 };
+      lastResponse.value = { status: "ok", message: { logs: streamLogs }, duration: 0 };
 
       res = await callApi(
         selectedEndpoint.value.route,
         payload,
         ApiRequestType.STREAM,
         (message: any) => {
-          if (message.event === "log" || message.event === "streamChunk") {
+          if (message.event === "log" || message.event === "chunk" || message.event === "streamChunk") {
             streamLogs.push(message.data ?? message);
             // Trigger reactivity — replace array reference
             lastResponse.value = {
               status: "ok",
-              message: [...streamLogs],
+              message: { logs: [...streamLogs] },
+              duration: Math.round(performance.now() - start)
+            };
+          } else if (message.event === "progress") {
+            streamLogs.push({ type: "progress", values: [message.data] });
+            lastResponse.value = {
+              status: "ok",
+              message: { logs: [...streamLogs] },
               duration: Math.round(performance.now() - start)
             };
           }
@@ -1255,9 +1295,19 @@ const sendCall = async () => {
 
     const duration = Math.round(performance.now() - start);
 
+    const finalStatus = (res.status === "error" ? "error" : "ok") as "ok" | "error";
+    const finalMessage = isStreamMode
+      ? {
+          result: (res as any).result,
+          logs: Array.isArray((res as any).logs) && (res as any).logs.length
+            ? (res as any).logs
+            : (lastResponse.value?.message as any)?.logs ?? []
+        }
+      : res.message;
+
     lastResponse.value = {
-      status: res.status as "ok" | "error",
-      message: res.message,
+      status: finalStatus,
+      message: finalMessage,
       duration
     };
 
@@ -1265,9 +1315,9 @@ const sendCall = async () => {
       id: generateId(),
       route: selectedEndpoint.value.route,
       params: payload,
-      status: res.status as "ok" | "error",
+      status: finalStatus,
       duration,
-      message: res.message,
+      message: finalMessage,
       timestamp: Date.now()
     };
     callHistory.value.unshift(historyEntry);
@@ -2079,5 +2129,24 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: hidden;
 }
+
+.response-log-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "JetBrains Mono", "Consolas", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.response-log-view pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .response-editor { flex: 1; min-height: 0; }
 </style>

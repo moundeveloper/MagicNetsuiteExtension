@@ -569,7 +569,7 @@ export const tools: ToolDefinition[] = [
   {
     name: "netsuite_get_script_deployments",
     description:
-      "Get deployment records for one or more scripts. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts), NOT the string scriptid. Returns an array of objects with: scriptid (deployment string ID like 'customdeploy_xxx'), recordtype, isdeployed ('T'/'F'), status, loglevel, primarykey (deployment internal ID), id (script internal ID), scriptname. Use 'search' to filter results by keyword.",
+      "Get deployment records for one or more scripts. Requires the script's internal numeric ID (the 'id' field from netsuite_get_scripts), NOT the string scriptid. Returns an array of objects with: scriptid (deployment string ID like 'customdeploy_xxx'), recordtype, isdeployed ('T'/'F'), status, loglevel, primarykey (deployment record internal ID), id (script internal ID), scriptname. IMPORTANT: for SuiteQL scriptdeployment rows, primarykey is the actual scriptdeployment record internal ID; scriptdeployment.id is not. Use primarykey with deployment URL, load, and execute tools. Use 'search' to filter results by keyword.",
     parameters: {
       type: "object",
       properties: {
@@ -619,13 +619,15 @@ export const tools: ToolDefinition[] = [
 
   {
     name: "netsuite_get_script_deployment_url",
-    description: "Get the URL to open a script deployment in NetSuite.",
+    description:
+      "Get the URL to open a script deployment in NetSuite. If the deployment came from a SuiteQL scriptdeployment query, pass scriptdeployment.primarykey, not scriptdeployment.id.",
     parameters: {
       type: "object",
       properties: {
         deployment: {
           type: "string",
-          description: "The deployment ID"
+          description:
+            "The scriptdeployment record internal ID. From SuiteQL scriptdeployment results this is primarykey, not id."
         }
       },
       required: ["deployment"]

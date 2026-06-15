@@ -79,6 +79,16 @@ Text search (slow — use only when necessary):
   contact             Contact records
   customrecord_*      Custom record types — discover with suiteql_search_tables
 
+## SCRIPT DEPLOYMENT IDS
+The SuiteQL scriptdeployment table is unusual:
+  - scriptdeployment.id is NOT the deployment record internal ID used by the NetSuite record API or deployment URL tools.
+  - scriptdeployment.primarykey IS the actual scriptdeployment record internal ID.
+  - When a SuiteQL query result for scriptdeployment will be used with netsuite_load_record(recordType: "scriptdeployment"), netsuite_get_script_deployment_url, execute/deployment tools, or a NetSuite deployment URL, use primarykey.
+  - Select it explicitly and alias it clearly:
+      SELECT sd.primarykey AS deployment_record_id, sd.scriptid, sd.deploymentid
+      FROM scriptdeployment sd
+      WHERE ROWNUM <= 25
+
 ## RECORD-RELATED FILES AND REPORTS
 When the user asks for a report/file/document/PDF "for", "with", or "related to" a lead/customer/entity/transaction ID:
   - Treat the number as the record ID unless the user explicitly says "file ID".
@@ -1064,13 +1074,15 @@ const MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "suiteql_execute_query",
-    description: "Execute a SuiteQL query. NEVER use LIMIT — it is not valid SuiteQL syntax and will error. Use ROWNUM in a WHERE clause to limit rows: WHERE ROWNUM <= 25",
+    description:
+      "Execute a SuiteQL query. NEVER use LIMIT — it is not valid SuiteQL syntax and will error. Use ROWNUM in a WHERE clause to limit rows: WHERE ROWNUM <= 25. IMPORTANT: when querying scriptdeployment, select primarykey; it is the actual deployment record internal ID. scriptdeployment.id is not.",
     inputSchema: {
       type: "object",
       properties: {
         sql: {
           type: "string",
-          description: "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT."
+          description:
+            "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT. For scriptdeployment, select primarykey when you need the deployment record internal ID."
         }
       },
       required: ["sql"]
@@ -1935,6 +1947,24 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_run_quick_script",
+    description:
+      "Run a small SuiteScript/JavaScript snippet in the authenticated NetSuite page context. " +
+      "Use this to quickly test N/* module calls or JavaScript expressions. Return values and console/N.log output are returned as { result, logs }. " +
+      "The snippet runs inside an async function with N modules destructured, so you can use await and modules such as record, search, query, runtime, file, log.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description:
+            "SuiteScript/JavaScript body to execute, e.g. \"console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;\""
+        }
+      },
+      required: ["code"]
+    }
+  },
+  {
     name: "netsuite_suitelet_stream_start",
     description:
       "Start an interactive Suitelet viewer session for the MCP App. Opens the provided NetSuite Suitelet URL, or uses the preferred NetSuite tab when no URL is provided.",
@@ -2238,6 +2268,8 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteGetDeployedScripts(args);
         } else if (name === "netsuite_create_script_record") {
           result = await handleNetsuiteCreateScriptRecord(args);
+        } else if (name === "netsuite_run_quick_script") {
+          result = await handleNetsuiteRunQuickScript(args);
         } else if (name === "netsuite_get_logs") {
           result = await handleNetsuiteGetLogs(args);
         } else if (name === "netsuite_suitelet_stream_start") {
@@ -3391,6 +3423,27 @@ async function handleNetsuiteGetScriptFiles(args) {
   return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
 }
 
+async function handleNetsuiteRunQuickScript(args) {
+  const code = String(args?.code ?? "").trim();
+  if (!code) throw new Error("code is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_QUICK_SCRIPT",
+    data: { code, mode: "normal" },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to run quick script");
+  }
+
+  return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
+}
+
 async function handleNetsuiteGetDeployedScripts(args) {
   const recordType = String(args.recordType ?? "").trim();
   if (!recordType) throw new Error("recordType is required.");
@@ -3655,6 +3708,7 @@ async function querySuitelets(query) {
         script.id AS scriptinternalid,
         script.scriptid AS scriptscriptid,
         script.name AS scriptname,
+        scriptdeployment.primarykey AS deploymentrecordid,
         scriptdeployment.deploymentid,
         scriptdeployment.scriptid AS deploymentscriptid,
         scriptdeployment.status,
@@ -3683,6 +3737,7 @@ async function querySuitelets(query) {
     .map((row) => {
       const scriptId = String(row.scriptinternalid || row.scriptInternalId || row.id || "");
       const deployId = String(row.deploymentid || row.deploymentId || "").trim();
+      const deploymentRecordId = String(row.deploymentrecordid || row.deploymentRecordId || row.primarykey || "").trim();
       const scriptName = String(row.scriptname || row.scriptName || "Suitelet");
       const deploymentScriptId = String(row.deploymentscriptid || row.deploymentScriptId || "");
       const scriptScriptId = String(row.scriptscriptid || row.scriptScriptId || row.scriptid || "");
@@ -3691,6 +3746,7 @@ async function querySuitelets(query) {
         scriptId: scriptScriptId,
         scriptName,
         deploymentId: deployId,
+        deploymentRecordId,
         deploymentScriptId,
         status: String(row.status || ""),
         url: origin && scriptId && deployId

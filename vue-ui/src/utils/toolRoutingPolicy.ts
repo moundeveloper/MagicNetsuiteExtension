@@ -177,7 +177,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
       "you need to relate two tables (e.g. transaction → transactionline)",
   },
   sql_execute_query: {
-    purpose: "Execute a SuiteQL SELECT query against the live NetSuite database",
+    purpose:
+      "Execute a SuiteQL SELECT query against the live NetSuite database. For scriptdeployment, primarykey is the actual deployment record internal ID; id is not.",
     costTier: "moderate",
     expectedLatencyMs: 2000,
     riskLevel: "low",
@@ -350,7 +351,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     preferWhen: "user asks what scripts run on a record type or wants code analysis for a record page",
   },
   netsuite_get_script_deployments: {
-    purpose: "Get deployment records including status and parameters",
+    purpose:
+      "Get deployment records including status and parameters. Use primarykey as the deployment record internal ID for URL/load/execute actions.",
     costTier: "cheap",
     expectedLatencyMs: 800,
     riskLevel: "none",

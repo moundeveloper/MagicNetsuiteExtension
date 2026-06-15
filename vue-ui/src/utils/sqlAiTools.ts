@@ -187,17 +187,18 @@ export const createSqlAiTools = (): ToolDefinition[] => [
     }
   },
 
-  // ── Execute SuiteQL Query (with LIMIT 5 for preview) ──
+  // ── Execute SuiteQL Query (preview-limited by the API) ──
   {
     name: "sql_execute_query",
     description:
-      "Execute a SuiteQL query and return the results. The query is automatically limited to 5 rows for preview purposes. Use this to test and validate queries you build. Returns column names and row data so you can verify the data structure.",
+      "Execute a SuiteQL query and return the results. The query is automatically limited to 5 rows for preview purposes. Use this to test and validate queries you build. Returns column names and row data so you can verify the data structure. IMPORTANT: when querying scriptdeployment, select primarykey; it is the actual deployment record internal ID. Do not use scriptdeployment.id as a deployment record ID.",
     parameters: {
       type: "object",
       properties: {
         sql: {
           type: "string",
-          description: "The SuiteQL query to execute."
+          description:
+            "The SuiteQL query to execute. For scriptdeployment, select primarykey when you need the deployment record internal ID."
         }
       },
       required: ["sql"]
