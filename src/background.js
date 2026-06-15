@@ -4157,6 +4157,7 @@ const SUITELET_INSPECT_EXPRESSION = `(function () {
   function selectorFor(el) {
     if (el.id) return "#" + CSS.escape(el.id);
     if (el.getAttribute("name")) return el.tagName.toLowerCase() + "[name=\\"" + el.getAttribute("name") + "\\"]";
+    if (el.getAttribute("data-input-id")) return el.tagName.toLowerCase() + "[data-input-id=\\"" + el.getAttribute("data-input-id") + "\\"]";
     var path = [];
     var node = el;
     while (node && node.nodeType === 1 && path.length < 5) {
@@ -4173,19 +4174,21 @@ const SUITELET_INSPECT_EXPRESSION = `(function () {
     return path.join(" > ");
   }
   var nodes = Array.prototype.slice.call(
-    document.querySelectorAll("input, textarea, select, button, a[href], [role=button], [onclick]")
+    document.querySelectorAll("input, textarea, select, button, a[href], [role=button], [onclick], .ddarrowSpan, .uir-field-dropdown-arrow, [data-input-id], .uir-field-wrapper[data-nsps-label]")
   );
   var out = [];
   for (var i = 0; i < nodes.length && out.length < 120; i++) {
     var el = nodes[i];
     if (!visible(el)) continue;
+    var labelledBy = el.getAttribute("aria-labelledby") ? document.getElementById(el.getAttribute("aria-labelledby")) : null;
+    var fieldWrapper = el.closest ? el.closest(".uir-field-wrapper[data-nsps-label]") : null;
     out.push({
       tag: el.tagName.toLowerCase(),
       type: el.getAttribute("type") || "",
       id: el.id || "",
       name: el.getAttribute("name") || "",
       selector: selectorFor(el),
-      label: (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || el.getAttribute("title") || "").trim().slice(0, 100)
+      label: (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || (labelledBy && labelledBy.innerText) || el.getAttribute("title") || el.getAttribute("data-nsps-label") || (fieldWrapper && fieldWrapper.getAttribute("data-nsps-label")) || "").trim().slice(0, 100)
     });
   }
   return { title: document.title, url: location.href, count: out.length, elements: out };
@@ -4420,13 +4423,86 @@ async function handleSuiteletFill(args) {
   const expression = `(function () {
     var el = document.querySelector(${JSON.stringify(selector)});
     if (!el) return { ok: false, error: "Element not found: " + ${JSON.stringify(selector)} };
-    el.focus();
     var value = ${JSON.stringify(value)};
+
+    function findNetsuiteDropdownParts(node) {
+      var input = null;
+      if (node && node.matches && node.matches("input.dropdownInput, input.nldropdown")) input = node;
+      if (!input && node && node.getAttribute && node.getAttribute("data-input-id")) {
+        input = document.getElementById(node.getAttribute("data-input-id"));
+      }
+      if (!input && node && node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) input = wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      if (!input) return null;
+
+      var fieldName = "";
+      if (input.name && input.name.indexOf("inpt_") === 0) fieldName = input.name.slice(5);
+      if (!fieldName) {
+        var fieldWrapper = input.closest && input.closest(".uir-field-wrapper[data-field-name]");
+        fieldName = fieldWrapper ? fieldWrapper.getAttribute("data-field-name") : "";
+      }
+      if (!fieldName) return null;
+
+      var dropdown = document.querySelector(".ns-dropdown[data-name='" + CSS.escape(fieldName) + "']");
+      var hidden = document.querySelector("input[type='hidden'][name='" + CSS.escape(fieldName) + "']");
+      var index = hidden && hidden.id ? document.getElementById(hidden.id.replace(/^hddn_/, "indx_")) : null;
+      return { input: input, fieldName: fieldName, dropdown: dropdown, hidden: hidden, index: index };
+    }
+
+    function setNativeValue(node, nextValue) {
+      try {
+        var proto = node.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+        if (descriptor && descriptor.set) descriptor.set.call(node, nextValue);
+        else node.value = nextValue;
+      } catch (e) { node.value = nextValue; }
+    }
+
+    var dropdownParts = findNetsuiteDropdownParts(el);
+    if (dropdownParts && dropdownParts.dropdown && dropdownParts.hidden) {
+      var options = [];
+      try { options = JSON.parse(dropdownParts.dropdown.getAttribute("data-options") || "[]"); } catch (e) {}
+      var needle = value.trim().toLowerCase();
+      var option = options.filter(function (opt) {
+        return String(opt.value) === value || String(opt.text).trim().toLowerCase() === needle;
+      })[0] || options.filter(function (opt) {
+        return String(opt.text).trim().toLowerCase().indexOf(needle) !== -1;
+      })[0];
+      if (!option) {
+        return {
+          ok: false,
+          error: "No NetSuite dropdown option matched: " + value,
+          selector: ${JSON.stringify(selector)},
+          fieldName: dropdownParts.fieldName,
+          options: options.slice(0, 20)
+        };
+      }
+
+      setNativeValue(dropdownParts.input, String(option.text || " "));
+      setNativeValue(dropdownParts.hidden, String(option.value || ""));
+      if (dropdownParts.index) {
+        var idx = options.indexOf(option);
+        setNativeValue(dropdownParts.index, idx >= 0 ? String(idx) : "");
+      }
+      dropdownParts.input.dispatchEvent(new Event("input", { bubbles: true }));
+      dropdownParts.input.dispatchEvent(new Event("change", { bubbles: true }));
+      dropdownParts.hidden.dispatchEvent(new Event("input", { bubbles: true }));
+      dropdownParts.hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      return {
+        ok: true,
+        selector: ${JSON.stringify(selector)},
+        fieldName: dropdownParts.fieldName,
+        value: String(option.value || ""),
+        text: String(option.text || ""),
+        mode: "netsuite-dropdown"
+      };
+    }
+
+    el.focus();
     try {
-      var proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-      if (descriptor && descriptor.set) descriptor.set.call(el, value);
-      else el.value = value;
+      setNativeValue(el, value);
     } catch (e) { el.value = value; }
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -4441,27 +4517,276 @@ async function handleSuiteletClick(args) {
   const text = String(args?.text || "").trim();
   if (!selector && !text) throw new Error("Provide a selector or visible text to click.");
   await focusSuiteletControlTab();
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
   const expression = `(function () {
+    function isVisible(node) {
+      if (!node) return false;
+      var r = node.getBoundingClientRect();
+      var s = window.getComputedStyle(node);
+      return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+    }
+
+    function bestNetsuiteDropdownClickTarget(node) {
+      var input = null;
+      if (node && node.matches && node.matches("input.dropdownInput, input.nldropdown")) input = node;
+      if (!input && node && node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) input = wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      if (!input) return node;
+
+      var arrow = null;
+      if (input.id) {
+        arrow = document.querySelector(".ddarrowSpan[data-input-id='" + CSS.escape(input.id) + "'], .uir-field-dropdown-arrow[data-input-id='" + CSS.escape(input.id) + "']");
+      }
+      if (!arrow) {
+        var container = input.closest(".uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        arrow = container && container.querySelector(".ddarrowSpan, .uir-field-dropdown-arrow");
+      }
+      return arrow || input;
+    }
+
+    function findNetsuiteDropdownInput(node) {
+      if (!node) return null;
+      if (node.matches && node.matches("input.dropdownInput, input.nldropdown")) return node;
+      if (node.getAttribute && node.getAttribute("data-input-id")) {
+        var byId = document.getElementById(node.getAttribute("data-input-id"));
+        if (byId) return byId;
+      }
+      if (node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) return wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      return null;
+    }
+
+    function dropdownVisibleForInput(input) {
+      if (!input) return false;
+      var name = input.name || "";
+      if (name.indexOf("inpt_") === 0) name = name.slice(5);
+      var wrappers = Array.prototype.slice.call(document.querySelectorAll(".ns-dropdown"));
+      return wrappers.some(function (node) {
+        if (name && node.getAttribute("data-name") !== name) return false;
+        var r = node.getBoundingClientRect();
+        var s = getComputedStyle(node);
+        return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden";
+      });
+    }
+
+    function makeDropdownEvent(type, input) {
+      return {
+        type: type,
+        target: input,
+        currentTarget: input,
+        srcElement: input,
+        key: "ArrowDown",
+        code: "ArrowDown",
+        keyCode: 40,
+        which: 40,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        preventDefault: function () {},
+        stopPropagation: function () {},
+        stopImmediatePropagation: function () {}
+      };
+    }
+
+    function openNetsuiteDropdown(input) {
+      var attempts = [];
+      if (!input) return { attempted: false, open: false, attempts: attempts };
+      try { input.focus(); attempts.push("input.focus"); } catch (e) { attempts.push("input.focus:" + e.message); }
+
+      var controller = null;
+      try {
+        if (typeof window.getDropdown === "function") {
+          controller = window.getDropdown(input);
+          attempts.push("getDropdown");
+        }
+      } catch (e) { attempts.push("getDropdown:" + e.message); }
+
+      if (controller) {
+        [
+          ["handleOnFocus", makeDropdownEvent("focus", input)],
+          ["handleKeydown", makeDropdownEvent("keydown", input)],
+          ["handleKeypress", makeDropdownEvent("keypress", input)]
+        ].forEach(function (entry) {
+          try {
+            if (typeof controller[entry[0]] === "function") {
+              controller[entry[0]](entry[1]);
+              attempts.push(entry[0]);
+            }
+          } catch (e) { attempts.push(entry[0] + ":" + e.message); }
+        });
+
+        var methodNames = [];
+        try {
+          methodNames = Object.keys(controller);
+          var proto = Object.getPrototypeOf(controller);
+          if (proto) methodNames = methodNames.concat(Object.getOwnPropertyNames(proto));
+        } catch (e) {}
+        methodNames = methodNames.filter(function (name, idx, arr) {
+          return arr.indexOf(name) === idx && /^(open|show|expand|toggle|display)|dropdown|popup/i.test(name) && typeof controller[name] === "function";
+        });
+        methodNames.slice(0, 12).forEach(function (name) {
+          if (dropdownVisibleForInput(input)) return;
+          try {
+            controller[name]();
+            attempts.push(name);
+          } catch (e) { attempts.push(name + ":" + e.message); }
+        });
+      }
+
+      if (!dropdownVisibleForInput(input)) {
+        ["keydown", "keyup"].forEach(function (type) {
+          try {
+            input.dispatchEvent(new KeyboardEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              key: "ArrowDown",
+              code: "ArrowDown",
+              keyCode: 40,
+              which: 40,
+              altKey: true
+            }));
+            attempts.push(type + ":AltArrowDown");
+          } catch (e) { attempts.push(type + ":" + e.message); }
+        });
+      }
+
+      return { attempted: true, open: dropdownVisibleForInput(input), attempts: attempts };
+    }
+
+    function dispatchJsClick(node, x, y) {
+      ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (type) {
+        try {
+          var EventCtor = type.indexOf("pointer") === 0 && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent;
+          node.dispatchEvent(new EventCtor(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+            buttons: type === "pointerdown" || type === "mousedown" ? 1 : 0,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true
+          }));
+        } catch (e) {
+          try {
+            node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+          } catch (ignored) {}
+        }
+      });
+    }
+
+    function fireNetsuiteArrowClick(input, arrow) {
+      if (!input || !arrow) return false;
+      try { input.focus(); } catch (e) {}
+      ["mouseover", "mousedown", "mouseup", "click"].forEach(function (type) {
+        try {
+          arrow.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0
+          }));
+        } catch (e) {}
+      });
+      return true;
+    }
+
     var el = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : "null"};
     if (!el && ${JSON.stringify(text)}) {
       var needle = ${JSON.stringify(text.toLowerCase())};
       var cands = Array.prototype.slice.call(
-        document.querySelectorAll("button, a, input[type=button], input[type=submit], [role=button], .uir-button, span.bntxt, td.bntxt")
+        document.querySelectorAll("button, a, input[type=button], input[type=submit], [role=button], .uir-button, span.bntxt, td.bntxt, .ddarrowSpan, .uir-field-dropdown-arrow, input.dropdownInput, .uir-label-span, .uir-field-wrapper[data-nsps-label]")
       );
       el = cands.filter(function (c) {
-        var label = (c.innerText || c.value || c.getAttribute("title") || "").trim().toLowerCase();
+        var labelledBy = c.getAttribute("aria-labelledby") ? document.getElementById(c.getAttribute("aria-labelledby")) : null;
+        var wrapper = c.closest ? c.closest(".uir-field-wrapper[data-nsps-label]") : null;
+        var label = (c.innerText || c.value || c.getAttribute("title") || c.getAttribute("data-nsps-label") || (labelledBy && labelledBy.innerText) || (wrapper && wrapper.getAttribute("data-nsps-label")) || "").trim().toLowerCase();
         return label === needle;
       })[0] || cands.filter(function (c) {
-        var label = (c.innerText || c.value || c.getAttribute("title") || "").trim().toLowerCase();
+        var labelledBy = c.getAttribute("aria-labelledby") ? document.getElementById(c.getAttribute("aria-labelledby")) : null;
+        var wrapper = c.closest ? c.closest(".uir-field-wrapper[data-nsps-label]") : null;
+        var label = (c.innerText || c.value || c.getAttribute("title") || c.getAttribute("data-nsps-label") || (labelledBy && labelledBy.innerText) || (wrapper && wrapper.getAttribute("data-nsps-label")) || "").trim().toLowerCase();
         return label.indexOf(needle) !== -1;
       })[0];
     }
     if (!el) return { ok: false, error: "Clickable element not found." };
-    if (el.scrollIntoView) el.scrollIntoView({ block: "center" });
-    el.click();
-    return { ok: true, clicked: (el.innerText || el.value || el.id || el.tagName || "").toString().trim().slice(0, 100) };
+    var dropdownInput = findNetsuiteDropdownInput(el);
+    el = bestNetsuiteDropdownClickTarget(el);
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center" });
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = r.top + r.height / 2;
+    if (!isVisible(el)) return { ok: false, error: "Clickable element is not visible." };
+    try { el.focus && el.focus(); } catch (e) {}
+    var usedNetsuiteArrowSequence = dropdownInput ? fireNetsuiteArrowClick(dropdownInput, el) : false;
+    dispatchJsClick(el, x, y);
+    var dropdownOpen = openNetsuiteDropdown(dropdownInput);
+    return {
+      ok: true,
+      clicked: (el.innerText || el.value || el.id || el.getAttribute("title") || el.tagName || "").toString().trim().slice(0, 100),
+      x: x,
+      y: y,
+      tag: el.tagName,
+      id: el.id || "",
+      className: String(el.className || ""),
+      usedNetsuiteArrowSequence: usedNetsuiteArrowSequence,
+      netsuiteDropdown: dropdownOpen
+    };
   })()`;
   const value = await evalInSuiteletTab(expression);
+  if (value?.ok && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))) {
+    try {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: Number(value.x),
+        y: Number(value.y),
+        buttons: 0
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: Number(value.x),
+        y: Number(value.y),
+        button: "left",
+        buttons: 1,
+        clickCount: 1
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: Number(value.x),
+        y: Number(value.y),
+        button: "left",
+        buttons: 0,
+        clickCount: 1
+      });
+      if (value.netsuiteDropdown?.attempted && !value.netsuiteDropdown?.open) {
+        await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key: "ArrowDown",
+          code: "ArrowDown",
+          windowsVirtualKeyCode: 40,
+          nativeVirtualKeyCode: 40,
+          modifiers: 1
+        });
+        await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "ArrowDown",
+          code: "ArrowDown",
+          windowsVirtualKeyCode: 40,
+          nativeVirtualKeyCode: 40,
+          modifiers: 1
+        });
+      }
+    } catch (e) {
+      value.nativeClickError = String(e?.message || e);
+    }
+  }
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
 
