@@ -1440,6 +1440,41 @@ const handlers = {
     console.log("Script Deployment URL action received");
     return window.getScriptDeploymentUrl(modules, { deployment });
   },
+  EXECUTE_SCRIPT_DEPLOYMENT: async ({
+    modules,
+    payload: {
+      scriptId,
+      scriptName,
+      scriptType,
+      scriptInternalId,
+      deploymentScriptId,
+      deploymentNumber,
+      status,
+      logLevel,
+      isDeployed,
+      deploymentRecordId
+    }
+  }) => {
+    console.log("Execute Script Deployment action received", {
+      scriptId,
+      scriptType,
+      scriptInternalId,
+      deploymentScriptId,
+      deploymentRecordId
+    });
+    return window.executeScriptDeployment(modules, {
+      scriptId,
+      scriptName,
+      scriptType,
+      scriptInternalId,
+      deploymentScriptId,
+      deploymentNumber,
+      status,
+      logLevel,
+      isDeployed,
+      deploymentRecordId
+    });
+  },
   SUITELET_URL: async ({
     modules,
     payload: { script, deployment, returnExternalUrl = false, iframe = false }

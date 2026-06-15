@@ -1667,6 +1667,272 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_create_folder",
+    description:
+      "Create a new folder in the NetSuite File Cabinet. Destructive: creates data. " +
+      "If no parentFolderId is provided, the tool uses -15 (SuiteScripts root). Returns the new folder ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Folder name to create."
+        },
+        parentFolderId: {
+          type: "number",
+          description: "Parent folder internal ID. Defaults to -15 (SuiteScripts root)."
+        }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "netsuite_upload_file",
+    description:
+      "Upload a file to the NetSuite File Cabinet. Destructive: creates a file. " +
+      "When called through the local MCP server, prefer localPath/localPaths/files so the MCP server reads and encodes local files for you. " +
+      "Use fileContent for generated text files or fileContentBase64 plus mimeType for already encoded binary files. " +
+      "If no folderId is provided, the tool uses -15 (SuiteScripts root).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        localPath: {
+          type: "string",
+          description: "Local filesystem path to upload. Supported by the local MCP server."
+        },
+        localPaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Multiple local filesystem paths to upload. Supported by the local MCP server."
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              localPath: {
+                type: "string",
+                description: "Local filesystem path to upload."
+              },
+              fileName: {
+                type: "string",
+                description: "Optional NetSuite file name override."
+              },
+              folderId: {
+                type: "number",
+                description: "Optional target folder override for this file."
+              },
+              mimeType: {
+                type: "string",
+                description: "Optional MIME type override."
+              }
+            },
+            required: ["localPath"]
+          },
+          description: "Batch upload specs. Supported by the local MCP server."
+        },
+        fileName: {
+          type: "string",
+          description: "Name of the file to upload, e.g. my_script.js. Required only for fileContent/fileContentBase64 mode."
+        },
+        fileContent: {
+          type: "string",
+          description: "Raw text content to upload."
+        },
+        fileContentBase64: {
+          type: "string",
+          description: "Base64 content for binary files. Use instead of fileContent."
+        },
+        mimeType: {
+          type: "string",
+          description: "Optional MIME type for base64 uploads."
+        },
+        folderId: {
+          type: "number",
+          description: "Target folder internal ID. Defaults to -15 (SuiteScripts root)."
+        }
+      },
+      required: ["fileName"]
+    }
+  },
+  {
+    name: "netsuite_update_file_content",
+    description:
+      "Replace the content of an existing NetSuite File Cabinet file. Destructive: modifies a file. " +
+      "For text/script files, pass fileId and fileContent. fileName, folderId, and mediaType are optional and will be looked up when omitted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the File Cabinet file to update."
+        },
+        fileContent: {
+          type: "string",
+          description: "New raw text content for the file."
+        },
+        fileName: {
+          type: "string",
+          description: "Optional current file name. Looked up if omitted."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional parent folder ID. Looked up if omitted."
+        },
+        mediaType: {
+          type: "string",
+          description: "Optional NetSuite media/file type such as JAVASCRIPT, PLAINTEXT, HTMLDOC, XMLDOC, JSON."
+        }
+      },
+      required: ["fileId", "fileContent"]
+    }
+  },
+  {
+    name: "netsuite_rename_file",
+    description:
+      "Rename an existing File Cabinet file without changing content. Destructive: modifies file metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the file to rename."
+        },
+        newName: {
+          type: "string",
+          description: "New file name."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional current parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["fileId", "newName"]
+    }
+  },
+  {
+    name: "netsuite_rename_folder",
+    description:
+      "Rename an existing File Cabinet folder. Destructive: modifies folder metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "number",
+          description: "Internal ID of the folder to rename."
+        },
+        newName: {
+          type: "string",
+          description: "New folder name."
+        },
+        parentFolderId: {
+          type: "number",
+          description: "Optional parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["folderId", "newName"]
+    }
+  },
+  {
+    name: "netsuite_delete_file",
+    description:
+      "Delete a File Cabinet file. Destructive and irreversible unless NetSuite recovery applies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the file to delete."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional current parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["fileId"]
+    }
+  },
+  {
+    name: "netsuite_delete_folder",
+    description:
+      "Delete a File Cabinet folder. Destructive. The folder must be deletable in NetSuite.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "number",
+          description: "Internal ID of the folder to delete."
+        }
+      },
+      required: ["folderId"]
+    }
+  },
+  {
+    name: "netsuite_move_items",
+    description:
+      "Move File Cabinet files and/or folders from one folder to another. Destructive: changes file/folder locations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        srcFolderId: {
+          type: "number",
+          description: "Source folder internal ID."
+        },
+        dstFolderId: {
+          type: "number",
+          description: "Destination folder internal ID."
+        },
+        fileIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "File IDs to move."
+        },
+        folderIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "Folder IDs to move."
+        }
+      },
+      required: ["srcFolderId", "dstFolderId"]
+    }
+  },
+  {
+    name: "netsuite_create_script_record",
+    description:
+      "Create a NetSuite Script record for an already-uploaded script file. Destructive: creates a script record. " +
+      "Common scriptType values: SCRIPTLET (Suitelet), RESTLET, USEREVENT, SCHEDULED, MAPREDUCE, CLIENT, PORTLET, WORKFLOWACTION.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Human-readable script name."
+        },
+        scriptId: {
+          type: "string",
+          description: "Script ID, e.g. customscript_my_script."
+        },
+        fileId: {
+          type: "number",
+          description: "Internal ID of the uploaded script file."
+        },
+        scriptType: {
+          type: "string",
+          description: "NetSuite script type constant. Defaults to SCRIPTLET."
+        },
+        description: {
+          type: "string",
+          description: "Optional script description."
+        },
+        apiVersion: {
+          type: "string",
+          description: "SuiteScript API version. Defaults to 2.1."
+        }
+      },
+      required: ["name", "scriptId", "fileId"]
+    }
+  },
+  {
     name: "netsuite_suitelet_stream_start",
     description:
       "Start an interactive Suitelet viewer session for the MCP App. Opens the provided NetSuite Suitelet URL, or uses the preferred NetSuite tab when no URL is provided.",
@@ -1946,12 +2212,30 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteFindFolder(args);
         } else if (name === "netsuite_list_folder") {
           result = await handleNetsuiteListFolder(args);
+        } else if (name === "netsuite_create_folder") {
+          result = await handleNetsuiteCreateFolder(args);
+        } else if (name === "netsuite_upload_file") {
+          result = await handleNetsuiteUploadFile(args);
+        } else if (name === "netsuite_update_file_content") {
+          result = await handleNetsuiteUpdateFileContent(args);
+        } else if (name === "netsuite_rename_file") {
+          result = await handleNetsuiteRenameFile(args);
+        } else if (name === "netsuite_rename_folder") {
+          result = await handleNetsuiteRenameFolder(args);
+        } else if (name === "netsuite_delete_file") {
+          result = await handleNetsuiteDeleteFile(args);
+        } else if (name === "netsuite_delete_folder") {
+          result = await handleNetsuiteDeleteFolder(args);
+        } else if (name === "netsuite_move_items") {
+          result = await handleNetsuiteMoveItems(args);
         } else if (name === "netsuite_get_scripts") {
           result = await handleNetsuiteGetScripts(args);
         } else if (name === "netsuite_get_script_files") {
           result = await handleNetsuiteGetScriptFiles(args);
         } else if (name === "netsuite_get_deployed_scripts") {
           result = await handleNetsuiteGetDeployedScripts(args);
+        } else if (name === "netsuite_create_script_record") {
+          result = await handleNetsuiteCreateScriptRecord(args);
         } else if (name === "netsuite_get_logs") {
           result = await handleNetsuiteGetLogs(args);
         } else if (name === "netsuite_suitelet_stream_start") {
@@ -2817,6 +3101,236 @@ async function handleNetsuiteReadFile(args) {
       }, null, 2)
     }]
   };
+}
+
+async function lookupFileCabinetFile(fileId) {
+  const idNum = parseInt(String(fileId ?? ""), 10);
+  if (isNaN(idNum)) throw new Error("fileId must be a numeric file ID.");
+
+  const result = await callNetsuiteRoute(
+    "RUN_SUITEQL_QUERY",
+    {
+      sql: `SELECT id, name, folder, filetype, filesize, url FROM file WHERE id = ${idNum} AND ROWNUM <= 1`,
+      limit: 1
+    },
+    `Failed to look up file ${fileId}.`
+  );
+  const rows = Array.isArray(result) ? result : (result?.results ?? []);
+  const file = rows[0];
+  if (!file) throw new Error(`File with ID ${fileId} not found.`);
+  return file;
+}
+
+async function lookupFileCabinetFolder(folderId) {
+  const idNum = parseInt(String(folderId ?? ""), 10);
+  if (isNaN(idNum)) throw new Error("folderId must be a numeric folder ID.");
+
+  const result = await callNetsuiteRoute(
+    "RUN_SUITEQL_QUERY",
+    {
+      sql: `SELECT id, name, parent FROM MediaItemFolder WHERE id = ${idNum} AND ROWNUM <= 1`,
+      limit: 1
+    },
+    `Failed to look up folder ${folderId}.`
+  );
+  const rows = Array.isArray(result) ? result : (result?.results ?? []);
+  const folder = rows[0];
+  if (!folder) throw new Error(`Folder with ID ${folderId} not found.`);
+  return folder;
+}
+
+function asMcpTextResult(result) {
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteCreateFolder(args) {
+  const name = String(args?.name ?? "").trim();
+  if (!name) throw new Error("name is required.");
+
+  const result = await callNetsuiteRoute(
+    "CREATE_FOLDER",
+    {
+      name,
+      parentFolder: args?.parentFolderId ?? -15
+    },
+    "Failed to create folder."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteUploadFile(args) {
+  if (
+    (args?.localPath || args?.path || args?.localPaths || args?.files) &&
+    args?.fileContent === undefined &&
+    args?.fileContentBase64 === undefined
+  ) {
+    throw new Error(
+      "localPath uploads must be sent through the local MCP server. The Chrome extension cannot read local filesystem paths directly."
+    );
+  }
+
+  const fileName = String(args?.fileName ?? "").trim();
+  if (!fileName) throw new Error("fileName is required.");
+  if (args?.fileContent === undefined && args?.fileContentBase64 === undefined) {
+    throw new Error("Either fileContent or fileContentBase64 is required.");
+  }
+
+  const result = await callNetsuiteRoute(
+    "UPLOAD_FILE",
+    {
+      fileName,
+      fileContent: args.fileContent,
+      fileContentBase64: args.fileContentBase64,
+      mimeType: args.mimeType,
+      folderId: args.folderId ?? -15
+    },
+    "Failed to upload file."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteUpdateFileContent(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  if (args?.fileContent === undefined) throw new Error("fileContent is required.");
+
+  const file = (!args.fileName || !args.folderId || !args.mediaType)
+    ? await lookupFileCabinetFile(fileId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_FILE_CONTENT",
+    {
+      fileId,
+      fileContent: args.fileContent,
+      fileName: args.fileName ?? file?.name ?? `file_${fileId}`,
+      folderId: args.folderId ?? file?.folder,
+      mediaType: args.mediaType ?? file?.filetype ?? "JAVASCRIPT"
+    },
+    `Failed to update file ${fileId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteRenameFile(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  const newName = String(args?.newName ?? "").trim();
+  if (!newName) throw new Error("newName is required.");
+
+  const file = (!args.folderId || !args.filetype || !args.filesize)
+    ? await lookupFileCabinetFile(fileId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "RENAME_FILE",
+    {
+      fileId,
+      newName,
+      folderId: args.folderId ?? file?.folder,
+      filetype: args.filetype ?? file?.filetype,
+      filesize: args.filesize ?? file?.filesize
+    },
+    `Failed to rename file ${fileId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteRenameFolder(args) {
+  const folderId = parseInt(String(args?.folderId ?? ""), 10);
+  if (isNaN(folderId)) throw new Error("folderId must be a numeric folder ID.");
+  const newName = String(args?.newName ?? "").trim();
+  if (!newName) throw new Error("newName is required.");
+
+  const folder = args.parentFolderId === undefined
+    ? await lookupFileCabinetFolder(folderId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "RENAME_FOLDER",
+    {
+      folderId,
+      newName,
+      parentFolderId: args.parentFolderId ?? folder?.parent ?? -15
+    },
+    `Failed to rename folder ${folderId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteDeleteFile(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  const file = args.folderId === undefined ? await lookupFileCabinetFile(fileId) : null;
+
+  const result = await callNetsuiteRoute(
+    "DELETE_FILE",
+    {
+      fileId,
+      folderId: args.folderId ?? file?.folder
+    },
+    `Failed to delete file ${fileId}.`
+  );
+  return asMcpTextResult({ fileId, result });
+}
+
+async function handleNetsuiteDeleteFolder(args) {
+  const folderId = parseInt(String(args?.folderId ?? ""), 10);
+  if (isNaN(folderId)) throw new Error("folderId must be a numeric folder ID.");
+
+  const result = await callNetsuiteRoute(
+    "DELETE_FOLDER",
+    { folderId },
+    `Failed to delete folder ${folderId}.`
+  );
+  return asMcpTextResult({ folderId, result: result ?? "success" });
+}
+
+async function handleNetsuiteMoveItems(args) {
+  const srcFolderId = parseInt(String(args?.srcFolderId ?? ""), 10);
+  const dstFolderId = parseInt(String(args?.dstFolderId ?? ""), 10);
+  if (isNaN(srcFolderId)) throw new Error("srcFolderId must be numeric.");
+  if (isNaN(dstFolderId)) throw new Error("dstFolderId must be numeric.");
+
+  const result = await callNetsuiteRoute(
+    "MOVE_ITEMS",
+    {
+      srcFolderId,
+      dstFolderId,
+      fileIds: Array.isArray(args?.fileIds) ? args.fileIds : [],
+      folderIds: Array.isArray(args?.folderIds) ? args.folderIds : []
+    },
+    "Failed to move File Cabinet items."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteCreateScriptRecord(args) {
+  const name = String(args?.name ?? "").trim();
+  const scriptId = String(args?.scriptId ?? "").trim();
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (!name) throw new Error("name is required.");
+  if (!scriptId) throw new Error("scriptId is required.");
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+
+  const result = await callNetsuiteRoute(
+    "CREATE_SCRIPT",
+    {
+      name,
+      scriptId,
+      fileId,
+      scriptType: args?.scriptType ?? "SCRIPTLET",
+      description: args?.description ?? "",
+      apiVersion: args?.apiVersion ?? "2.1"
+    },
+    "Failed to create script record."
+  );
+  return asMcpTextResult(result);
 }
 
 // -----------------------------

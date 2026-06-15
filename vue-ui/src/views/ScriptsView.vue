@@ -217,6 +217,18 @@ onMounted(async () => {
         filterable
         search-placeholder="Search scripts..."
       >
+        <template #search-actions>
+          <button
+            type="button"
+            class="refresh-btn"
+            title="Refresh scripts"
+            :disabled="loading"
+            @click="getScripts"
+          >
+            <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+          </button>
+        </template>
+
         <template #toolbar>
           <MultiSelect
             v-model="scriptTypesSelected"
@@ -421,5 +433,28 @@ onMounted(async () => {
 
 .script-external-link:hover {
   color: var(--p-purple-600);
+}
+
+.refresh-btn {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  border-color: var(--p-purple-300);
+  color: var(--p-purple-600);
+}
+
+.refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 </style>

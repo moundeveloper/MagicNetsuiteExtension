@@ -107,6 +107,7 @@ const showHistory = ref(false);
 const logs = ref<LogItem[]>([]);
 const logsLoading = ref(false);
 const clearingLogs = ref(false);
+const runningDeploymentIds = ref<Set<string>>(new Set());
 const logSearch = ref("");
 const selectedDeploymentIds = ref<number[]>([]);
 const selectedSuiteletDeploymentId = ref<string>("");
@@ -195,6 +196,16 @@ const dirty = computed(() => activeEditorContent.value !== activeSavedContent.va
 const isSuiteletScript = computed(() => {
   const type = script.value?.scriptType?.toLowerCase() ?? "";
   return type === "scriptlet" || type.includes("suitelet");
+});
+
+const isRunnableScript = computed(() => {
+  const type = (script.value?.scriptType ?? "").toLowerCase();
+  const compactType = type.replace(/[\s_-]/g, "");
+  return (
+    compactType.includes("scheduled") ||
+    compactType.includes("mapreduce") ||
+    compactType.includes("mapreducescript")
+  );
 });
 
 const selectedSuiteletDeployment = computed(
@@ -676,6 +687,68 @@ const openDeployment = async (deploymentId: string) => {
     deployment: deploymentId
   });
   if (response.message) window.open(response.message, "_blank");
+};
+
+const setDeploymentRunning = (deploymentId: string, running: boolean) => {
+  const next = new Set(runningDeploymentIds.value);
+  if (running) {
+    next.add(deploymentId);
+  } else {
+    next.delete(deploymentId);
+  }
+  runningDeploymentIds.value = next;
+};
+
+const isDeploymentRunning = (deploymentId: string) =>
+  runningDeploymentIds.value.has(String(deploymentId));
+
+const runDeployment = async (deployment: DeploymentItem) => {
+  const deploymentId = String(deployment.primarykey ?? "");
+  if (!script.value || !deploymentId || isDeploymentRunning(deploymentId)) {
+    return;
+  }
+
+  if (!deployment.isdeployed) {
+    toast.add({
+      severity: "warn",
+      summary: "Deployment is off",
+      detail: "Turn the deployment on in NetSuite before running it.",
+      life: 3500
+    });
+    return;
+  }
+
+  setDeploymentRunning(deploymentId, true);
+  try {
+    await callApi(RequestRoutes.EXECUTE_SCRIPT_DEPLOYMENT, {
+      scriptId: script.value.scriptid,
+      scriptName: script.value.name,
+      scriptType: script.value.scriptType,
+      scriptInternalId: scriptId.value,
+      deploymentScriptId: deployment.scriptid,
+      deploymentNumber: deployment.deploymentid,
+      status: deployment.status,
+      logLevel: deployment.loglevel,
+      isDeployed: deployment.isdeployed,
+      deploymentRecordId: deploymentId
+    });
+    toast.add({
+      severity: "success",
+      summary: "Script started",
+      detail: `${deployment.scriptid || script.value.scriptid} was submitted to NetSuite.`,
+      life: 3200
+    });
+    await fetchLogs();
+  } catch (err) {
+    toast.add({
+      severity: "error",
+      summary: "Run failed",
+      detail: err instanceof Error ? err.message : String(err),
+      life: 6500
+    });
+  } finally {
+    setDeploymentRunning(deploymentId, false);
+  }
 };
 
 const loadSuiteletPreviewUrl = async () => {
@@ -1169,6 +1242,25 @@ onMounted(loadScript);
                     >
                       {{ deployment.isdeployed ? "Deployed" : "Off" }}
                     </span>
+                    <button
+                      v-if="isRunnableScript"
+                      type="button"
+                      class="deployment-open-btn deployment-run-btn"
+                      title="Run deployment"
+                      :disabled="
+                        !deployment.isdeployed ||
+                        isDeploymentRunning(deployment.primarykey)
+                      "
+                      @click.stop="runDeployment(deployment)"
+                    >
+                      <i
+                        :class="
+                          isDeploymentRunning(deployment.primarykey)
+                            ? 'pi pi-spin pi-spinner'
+                            : 'pi pi-play'
+                        "
+                      />
+                    </button>
                     <button
                       type="button"
                       class="deployment-open-btn"
@@ -1825,6 +1917,21 @@ onMounted(loadScript);
   border-color: var(--p-slate-200);
   background: white;
   color: var(--p-slate-700);
+}
+
+.deployment-run-btn {
+  color: var(--p-emerald-600);
+}
+
+.deployment-open-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.deployment-open-btn:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--p-slate-400);
 }
 
 .deployment-open-btn i,

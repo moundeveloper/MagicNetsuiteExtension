@@ -91,6 +91,18 @@ onMounted(async () => {
         filterable
         search-placeholder="Search records..."
       >
+        <template #search-actions>
+          <button
+            type="button"
+            class="refresh-btn"
+            title="Refresh custom records"
+            :disabled="loading"
+            @click="getCustomRecords"
+          >
+            <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+          </button>
+        </template>
+
         <MTableColumn
           label="Name"
           field="name"
@@ -168,3 +180,28 @@ onMounted(async () => {
     </template>
   </MCard>
 </template>
+
+<style scoped>
+.refresh-btn {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  border-color: var(--p-purple-300);
+  color: var(--p-purple-600);
+}
+
+.refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+</style>

@@ -474,6 +474,22 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.EXECUTE_SCRIPT_DEPLOYMENT,
+    description: "Submits Save and Execute for a scheduled or map/reduce deployment record.",
+    destructive: true,
+    fields: [
+      f("scriptId", "string", true, "Script ID, e.g. customscript_my_scheduled"),
+      f("scriptName", "string", false, "Display name for toast/debug context"),
+      f("scriptType", "string", false, "Script type, e.g. Scheduled Script or Map/Reduce"),
+      f("scriptInternalId", "number", true, "Internal numeric ID of the script record"),
+      f("deploymentScriptId", "string", true, "Deployment script ID, e.g. customdeploy_my_scheduled"),
+      f("deploymentNumber", "number", false, "Deployment number, usually 1"),
+      f("status", "string", false, "Deployment status, e.g. NOTSCHEDULED"),
+      f("logLevel", "string", false, "Log level, e.g. DEBUG"),
+      f("deploymentRecordId", "number", true, "Internal numeric ID of the deployment record")
+    ]
+  },
+  {
     route: RequestRoutes.SCRIPTS_DEPLOYED,
     description: "Returns all script files deployed on a given record type.",
     fields: [
@@ -938,6 +954,7 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.SCRIPT_TYPES,
       RequestRoutes.SCRIPT_DEPLOYMENTS,
       RequestRoutes.SCRIPT_DEPLOYMENT_URL,
+      RequestRoutes.EXECUTE_SCRIPT_DEPLOYMENT,
       RequestRoutes.SCRIPTS_DEPLOYED,
       RequestRoutes.SCRIPT_FILES,
       RequestRoutes.SUITELET_URL,

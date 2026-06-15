@@ -2,7 +2,7 @@
   <div class="m-table" :style="{ height: height }">
     <!-- Header Toolbar -->
     <div
-      v-if="$slots.toolbar || searchable || collapsible"
+      v-if="$slots.toolbar || $slots['search-actions'] || searchable || collapsible"
       class="m-table-header-toolbar"
     >
       <!-- Default Items Row -->
@@ -23,6 +23,10 @@
           >
             <i class="pi pi-times"></i>
           </button>
+        </div>
+
+        <div v-if="$slots['search-actions']" class="m-table-search-actions">
+          <slot name="search-actions" />
         </div>
 
         <!-- Column Visibility Toggle -->
@@ -853,6 +857,13 @@ onUnmounted(() => {
   position: relative;
   flex: 1;
   max-width: 400px;
+}
+
+.m-table-search-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .search-icon {
