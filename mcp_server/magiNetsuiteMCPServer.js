@@ -1056,6 +1056,7 @@ async function handleMcp(req) {
             description:
               "Create a NetSuite standard or custom record using SuiteScript record.create, Record.setValue, and Record.save. " +
               "Destructive: this creates data in the account. Pass recordType and a values object mapping body field IDs to values. " +
+              "Date fields are normalized automatically: DATE, DATETIME, and DATETIMETZ fields receive SuiteScript Date objects. " +
               "For custom records, recordType is the custom record script ID such as customrecord_my_type. This tool does not create sublist lines or subrecords.",
             inputSchema: {
               type: "object",
@@ -1093,6 +1094,7 @@ async function handleMcp(req) {
             description:
               "Update body fields on an existing NetSuite record using SuiteScript record.submitFields. " +
               "Destructive: this modifies data in the account. This is for body fields only; NetSuite does not allow submitFields to update sublist line fields or subrecords. " +
+              "Date fields are normalized automatically: DATE, DATETIME, and DATETIMETZ fields receive SuiteScript Date objects. " +
               "Pass recordType, recordId, and a values object mapping field IDs to values.",
             inputSchema: {
               type: "object",

@@ -6,6 +6,7 @@ import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
 import GridPattern from "./components/universal/patterns/GridPattern.vue";
+import ViewTabsWorkspace from "./components/ViewTabsWorkspace.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -67,7 +68,11 @@ onBeforeUnmount(() => {
   <GridPattern v-if="!isProcessingRoute" class="app-background-decoration" />
   <AppHeader v-if="!isProcessingRoute" />
 
-  <RouterView v-slot="{ Component, route }">
+  <main v-if="!isProcessingRoute" ref="container" class="tabbed-shell">
+    <ViewTabsWorkspace data-ignore :vhOffset="vhOffset" />
+  </main>
+
+  <RouterView v-else v-slot="{ Component, route }">
     <transition name="subtle-fade" mode="out-in">
       <main
         ref="container"
@@ -109,6 +114,11 @@ main {
 
 main.full-screen {
   padding: 0;
+}
+
+main.tabbed-shell {
+  padding: 0;
+  gap: 0;
 }
 
 .subtle-fade-enter-active {

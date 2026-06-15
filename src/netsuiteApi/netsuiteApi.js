@@ -239,11 +239,64 @@ const firstSuiteQLRow = async (N, sql) => {
   return rows[0] ?? null;
 };
 
-const setRecordValues = (rec, values, skipFieldIds = new Set()) => {
+const getNormalizedFieldType = (rec, fieldId) => {
+  try {
+    const field = rec.getField({ fieldId });
+    return String(field?.type ?? "").toLowerCase();
+  } catch {
+    return "";
+  }
+};
+
+const coerceDateValue = (value) => {
+  if (value instanceof Date) return value;
+  if (value === true || value === "" || value === null || value === undefined) {
+    return new Date();
+  }
+
+  const raw = String(value).trim();
+  const date =
+    !raw || raw.toLowerCase() === "now" || raw.toLowerCase() === "today"
+      ? new Date()
+      : new Date(value);
+
+  return Number.isNaN(date.getTime()) ? value : date;
+};
+
+const normalizeRecordFieldValue = (N, rec, fieldId, value) => {
+  const fieldType = getNormalizedFieldType(rec, fieldId);
+  if (!fieldType) return value;
+
+  const isDateTime =
+    fieldType === "datetime" ||
+    fieldType === "datetimetz" ||
+    fieldType.includes("datetime");
+  const isDate = fieldType === "date";
+
+  if (!isDateTime && !isDate) return value;
+
+  const date = coerceDateValue(value);
+  if (!(date instanceof Date)) return value;
+
+  return date;
+};
+
+const normalizeRecordValues = (N, rec, values) =>
+  Object.fromEntries(
+    Object.entries(values || {}).map(([fieldId, value]) => [
+      fieldId,
+      normalizeRecordFieldValue(N, rec, fieldId, value)
+    ])
+  );
+
+const setRecordValues = (N, rec, values, skipFieldIds = new Set()) => {
   Object.keys(values || {}).forEach((fieldId) => {
     const value = values[fieldId];
     if (value !== undefined && !skipFieldIds.has(fieldId)) {
-      rec.setValue({ fieldId, value });
+      rec.setValue({
+        fieldId,
+        value: normalizeRecordFieldValue(N, rec, fieldId, value)
+      });
     }
   });
 };
@@ -277,7 +330,7 @@ const createRecord = (N, args = {}) => {
       : {})
   });
 
-  setRecordValues(rec, values);
+  setRecordValues(N, rec, values);
 
   const id = rec.save({
     enableSourcing: args.enableSourcing !== false,
@@ -301,10 +354,17 @@ const updateRecordFields = (N, args = {}) => {
   if (!id) throw new Error("recordId is required.");
 
   const values = assertFieldValueMap(args.values ?? args.fieldValues);
+  const rec = record.load({
+    type,
+    id,
+    isDynamic: false
+  });
+  const normalizedValues = normalizeRecordValues(N, rec, values);
+
   const updatedId = record.submitFields({
     type,
     id,
-    values,
+    values: normalizedValues,
     options: {
       enableSourcing: args.enableSourcing !== false,
       ignoreMandatoryFields: args.ignoreMandatoryFields === true
@@ -802,7 +862,7 @@ const createCustomRecordType = async (N, args = {}) => {
     type: "customrecordtype",
     isDynamic: false
   });
-  setRecordValues(customRecordType, recordValues);
+  setRecordValues(N, customRecordType, recordValues);
   const customRecordTypeId = customRecordType.save();
 
   return {
