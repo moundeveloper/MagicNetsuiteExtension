@@ -1266,6 +1266,68 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_create_script_field",
+            description:
+              "Find or create a NetSuite script parameter field using the native scriptcustfield.nl form POST. " +
+              "Uses the same fieldType and selectRecordType values as custom record fields. " +
+              "The scriptId key accepts either 'custscript_my_param' or 'my_param' and is normalized to NetSuite's metadata suffix format.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                scriptInternalId: {
+                  type: "string",
+                  description: "Internal ID of the parent script record; posted as scripttype."
+                },
+                scriptRecordId: {
+                  type: "string",
+                  description: "Alias for scriptInternalId."
+                },
+                label: { type: "string" },
+                scriptId: {
+                  type: "string",
+                  description: "Convenience value for the script parameter scriptid field. Passing 'custscript_my_param' or 'my_param' is normalized to '_my_param'."
+                },
+                fieldType: {
+                  type: "string",
+                  examples: [
+                    "CHECKBOX",
+                    "CURRENCY",
+                    "DATE",
+                    "DATETIME",
+                    "DECIMAL",
+                    "DOCUMENT",
+                    "EMAIL",
+                    "FREEFORMTEXT",
+                    "HELP",
+                    "HYPERLINK",
+                    "INLINEHTML",
+                    "INTEGER",
+                    "LIST",
+                    "LONGTEXT",
+                    "MULTISELECT",
+                    "PASSWORD",
+                    "PERCENT",
+                    "PHONE",
+                    "RICHTEXT",
+                    "TEXTAREA",
+                    "TIMEOFDAY"
+                  ],
+                  description: "Convenience value for the fieldtype field. Uses the same values as netsuite_create_custom_record_field."
+                },
+                selectRecordType: {
+                  type: "string",
+                  description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
+                },
+                description: { type: "string" },
+                storeValue: { type: "boolean" },
+                fieldValues: {
+                  type: "object",
+                  description: "Additional raw form fieldId-to-value pairs to include in the scriptcustfield.nl POST. scripttype is always set by the tool."
+                }
+              }
+            }
+          },
+          {
             name: "netsuite_get_custom_record_select_record_types",
             description:
               "Return the available List/Record selectrecordtype options for custom record SELECT and MULTISELECT fields from the live NetSuite account. " +
@@ -1681,6 +1743,45 @@ async function handleMcp(req) {
                 }
               },
               required: ["name", "scriptId", "fileId"]
+            }
+          },
+          {
+            name: "netsuite_create_script_deployment",
+            description:
+              "Create and deploy a NetSuite Suitelet script deployment for an existing script record. Destructive: creates a script deployment. Currently supports Suitelet deployments only. Pass the script record internal ID and a deployment script ID such as customdeploy_my_suitelet or my_suitelet.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                scriptInternalId: {
+                  type: "number",
+                  description: "Internal ID of the existing script record to deploy."
+                },
+                deploymentScriptId: {
+                  type: "string",
+                  description: "Deployment script ID, e.g. customdeploy_my_suitelet or my_suitelet. Normalized to NetSuite's metadata suffix format."
+                },
+                name: {
+                  type: "string",
+                  description: "Fallback deployment title when title is not provided."
+                },
+                title: {
+                  type: "string",
+                  description: "Display title for the deployment."
+                },
+                status: {
+                  type: "string",
+                  description: "Deployment status. Defaults to RELEASED. Supported values include RELEASED and TESTING."
+                },
+                logLevel: {
+                  type: "string",
+                  description: "Logging level. Defaults to DEBUG. Supported values include DEBUG, AUDIT, ERROR, and EMERGENCY."
+                },
+                runAsRole: {
+                  type: "number",
+                  description: "Optional internal role ID for the deployment's Run As Role. Defaults to the current user's role."
+                }
+              },
+              required: ["scriptInternalId", "deploymentScriptId"]
             }
           },
           {

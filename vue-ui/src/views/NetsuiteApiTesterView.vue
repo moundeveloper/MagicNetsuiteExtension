@@ -653,6 +653,21 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.CREATE_SCRIPT_FIELD,
+    description: "Finds or creates a script parameter field using the native scriptcustfield.nl form POST.",
+    destructive: true,
+    fields: [
+      f("scriptInternalId", "number", true, "Internal ID of the parent script record"),
+      f("label", "string", true, "Field label, mapped to label"),
+      f("scriptId", "string", true, "Script ID, e.g. custscript_my_param or my_param"),
+      f("fieldType", "string", true, "Value from GET_CUSTOM_RECORD_FIELD_TYPES, e.g. FREEFORMTEXT"),
+      f("selectRecordType", "string", false, "For SELECT/MULTISELECT: internal ID, customrecord_my_type, or -my_type"),
+      f("description", "string", false, "Optional description"),
+      f("storeValue", "boolean", false, "Whether to store values"),
+      f("fieldValues", "json", false, "Additional scriptcustfield.nl fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
     route: RequestRoutes.LOAD_RECORD_SUBLISTS,
     description: "Loads the sublist rows for a record. Returns all sublists unless specific IDs are provided.",
     fields: [
@@ -963,7 +978,8 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.SCRIPT_FILES,
       RequestRoutes.SUITELET_URL,
       RequestRoutes.OPEN_DEPLOYMENT_SUITELET,
-      RequestRoutes.CREATE_SCRIPT
+      RequestRoutes.CREATE_SCRIPT,
+      RequestRoutes.CREATE_SCRIPT_FIELD
     ]
   },
   {
