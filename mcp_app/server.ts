@@ -10,6 +10,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { playwrightController, type ControlResult, type PwCookie } from "./playwright-controller.js";
+
+// When on (default), the Suitelet control tools drive Playwright's own Chromium
+// instead of the Chrome-extension CDP path. Set MAGIC_NS_PLAYWRIGHT=0 to fall
+// back to the (still present, otherwise disabled) extension-backed controller.
+const USE_PLAYWRIGHT = process.env.MAGIC_NS_PLAYWRIGHT !== "0";
 
 const DIST_DIR = import.meta.filename.endsWith(".ts")
   ? path.join(import.meta.dirname, "dist")
@@ -367,6 +373,98 @@ function markdownToolResult(data: Record<string, unknown> & { markdown: string }
   };
 }
 
+// Turn a Playwright ControlResult into an MCP tool result, attaching the
+// screenshot (if any) as an image block so Claude can see the Suitelet.
+function controlToolResult(data: ControlResult, okMessage: string): CallToolResult {
+  const { screenshot, message, ...rest } = data;
+  const result = toolResult(rest, message || okMessage);
+  if (screenshot) {
+    result.content.push({ type: "image", data: screenshot, mimeType: "image/jpeg" });
+  }
+  return result;
+}
+
+// Resolve a Suitelet target to an account-correct scriptlet.nl URL using the
+// extension bridge (which can run SuiteQL against the logged-in account). The
+// extension is never asked to OPEN anything here — only to resolve the URL.
+async function resolveSuiteletUrl(args: {
+  query?: string;
+  scriptId?: string;
+  deployId?: string;
+  url?: string;
+  origin?: string;
+}): Promise<{ url: string; name: string }> {
+  if (args.url) {
+    return { url: args.url, name: "" };
+  }
+  // scriptId + deployId + known account origin -> build the URL directly. This
+  // works even for Suitelets whose deployment is NOT marked "deployed" (the
+  // stream_list lookup filters those out), which is common while testing.
+  if (args.scriptId && args.deployId && args.origin) {
+    const sid = encodeURIComponent(args.scriptId);
+    const did = encodeURIComponent(args.deployId);
+    return { url: `${args.origin}/app/site/hosting/scriptlet.nl?script=${sid}&deploy=${did}`, name: "" };
+  }
+  const query = args.query || args.scriptId || "";
+  const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_list", { query }));
+  const suitelets = rowsFrom(data);
+  if (!suitelets.length) {
+    throw new Error(
+      `No DEPLOYED Suitelet matched "${query}". The lookup only returns deployments marked Deployed — if this one is in Testing/undeployed, pass scriptId + deployId (and keep a NetSuite tab open for the account) to open it directly. Also confirm a NetSuite tab for the selected account is open so the bridge can resolve.`,
+    );
+  }
+  const needle = query.toLowerCase();
+  const match =
+    suitelets.find((s) => {
+      if (args.scriptId && String(s.scriptId).toLowerCase() === args.scriptId.toLowerCase()) {
+        return !args.deployId || String(s.deploymentId).toLowerCase() === args.deployId.toLowerCase();
+      }
+      return false;
+    }) ||
+    suitelets.find((s) =>
+      [s.scriptName, s.scriptId, s.deploymentScriptId]
+        .map((v) => String(v ?? "").toLowerCase())
+        .some((v) => v.includes(needle)),
+    ) ||
+    suitelets[0]!;
+  const url = String(match.url ?? "");
+  if (!url) throw new Error("Resolved Suitelet has no URL.");
+  return { url, name: String(match.scriptName ?? "") };
+}
+
+// Pull the real NetSuite session cookies from the logged-in browser (via the
+// extension's debugger) and map CDP cookie shape -> Playwright cookie shape, so
+// Playwright reuses the session instead of logging in again.
+async function getNetsuiteCookies(): Promise<{ cookies: PwCookie[]; origin: string }> {
+  try {
+    const data = parseToolJson(await callExtensionTool("netsuite_dump_cookies"));
+    const origin = isRecord(data) && typeof data.origin === "string" ? data.origin : "";
+    const raw = isRecord(data) && Array.isArray(data.cookies) ? data.cookies : [];
+    const mapped: PwCookie[] = [];
+    for (const c of raw) {
+      if (!isRecord(c) || !c.name || !c.domain) continue;
+      const sameSiteRaw = String(c.sameSite ?? "");
+      const sameSite =
+        sameSiteRaw === "Strict" || sameSiteRaw === "Lax" || sameSiteRaw === "None" ? sameSiteRaw : undefined;
+      const expires = typeof c.expires === "number" && c.expires > 0 ? c.expires : undefined;
+      mapped.push({
+        name: String(c.name),
+        value: String(c.value ?? ""),
+        domain: String(c.domain),
+        path: String(c.path || "/"),
+        ...(expires !== undefined ? { expires } : {}),
+        httpOnly: Boolean(c.httpOnly),
+        secure: Boolean(c.secure),
+        ...(sameSite ? { sameSite } : {}),
+      });
+    }
+    return { cookies: mapped, origin };
+  } catch {
+    // No NetSuite tab / dump failed — fall back to whatever session Playwright has.
+    return { cookies: [], origin: "" };
+  }
+}
+
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "Magic NetSuite MCP App",
@@ -547,6 +645,14 @@ export function createServer(): McpServer {
       url: z.string().optional(),
     },
   }, async ({ query, scriptId, deployId, url }) => {
+    if (USE_PLAYWRIGHT) {
+      // Cookies first — they also carry the preferred-account origin, which lets
+      // us build scriptId+deployId URLs directly (works for non-deployed ones).
+      const { cookies, origin } = await getNetsuiteCookies();
+      const resolved = await resolveSuiteletUrl({ query, scriptId, deployId, url, origin });
+      const data = await playwrightController.open(resolved.url, cookies, resolved.name);
+      return controlToolResult(data, "Suitelet opened in Playwright for control.");
+    }
     const openArgs: Record<string, unknown> = {};
     if (query) openArgs.query = query;
     if (scriptId) openArgs.scriptId = scriptId;
@@ -569,6 +675,9 @@ export function createServer(): McpServer {
     description: "List visible interactive elements (inputs, textareas, selects, buttons, links) of the controlled Suitelet with CSS selectors and labels.",
     inputSchema: {},
   }, async () => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.inspect(), "Suitelet inspected.");
+    }
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_inspect"));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet inspected.");
   });
@@ -578,6 +687,9 @@ export function createServer(): McpServer {
     description: "Capture a screenshot of the controlled Suitelet tab so Claude can see it. Use this instead of any external/Claude-in-Chrome browser screenshot tool.",
     inputSchema: {},
   }, async () => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.screenshot(), "Suitelet screenshot captured.");
+    }
     const raw = await callExtensionTool("netsuite_suitelet_screenshot");
     const data = parseToolJson(raw);
     const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet screenshot captured.");
@@ -597,6 +709,9 @@ export function createServer(): McpServer {
       y: z.number().optional(),
     },
   }, async ({ selector, x, y }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.hover({ selector, x, y }), "Suitelet hovered.");
+    }
     const raw = await callExtensionTool("netsuite_suitelet_hover", { selector, x, y });
     const data = parseToolJson(raw);
     const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet hovered.");
@@ -617,6 +732,9 @@ export function createServer(): McpServer {
       dx: z.number().optional(),
     },
   }, async ({ selector, to, dy, dx }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.scroll({ selector, to, dy, dx }), "Suitelet scrolled.");
+    }
     const raw = await callExtensionTool("netsuite_suitelet_scroll", { selector, to, dy, dx });
     const data = parseToolJson(raw);
     const result = toolResult(isRecord(data) ? data : { value: data }, "Suitelet scrolled.");
@@ -635,8 +753,32 @@ export function createServer(): McpServer {
       value: z.string().optional(),
     },
   }, async ({ selector, value = "" }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.fill({ selector, value }), "Suitelet field filled.");
+    }
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_fill", { selector, value }));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet field filled.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_select", {
+    title: "Select Suitelet Dropdown Option",
+    description:
+      "Choose an option in a dropdown of the controlled Suitelet. Works for BOTH native <select> and NetSuite's custom (NLAPI) dropdowns — do NOT try to click-open NetSuite dropdowns, they are not real <select>s. Pass the field by `selector` (e.g. \"#inpt_custpage_f_scripttype_1\") or `fieldId` (e.g. \"custpage_f_scripttype\"), and the choice by `value` or `label` (visible text, partial match ok). Call with NO value/label to just list the available options.",
+    inputSchema: {
+      selector: z.string().optional(),
+      fieldId: z.string().optional(),
+      value: z.string().optional(),
+      label: z.string().optional(),
+    },
+  }, async ({ selector, fieldId, value, label }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.select({ selector, fieldId, value, label }), "Suitelet option selected.");
+    }
+    const expr = JSON.stringify({ selector, fieldId, value, label });
+    const data = parseToolJson(await callExtensionTool("netsuite_suitelet_eval", {
+      expression: `(function(o){var f=o.fieldId;if(!f&&o.selector){var m=o.selector.match(/inpt_(.+?)_\\d+$/);if(m)f=m[1];}var fld=nlapiGetField(f);var raw=fld.getSelectOptions();var opts=[];for(var i=0;i<raw.length;i++){var v=raw[i].getId(),t=raw[i].getText();if(v!=='')opts.push({value:v,text:t});}var pick=null;if(o.value)pick=opts.filter(function(x){return x.value===o.value;})[0];if(!pick&&o.label)pick=opts.filter(function(x){return x.text.indexOf(o.label)>=0;})[0];if(pick)nlapiSetFieldValue(f,pick.value);return{ok:!!pick,chosen:pick,options:opts.map(function(x){return x.text;})};})(${expr})`,
+    }));
+    return toolResult(isRecord(data) ? data : { value: data }, "Suitelet option selected.");
   });
 
   server.registerTool("magic_netsuite_suitelet_click", {
@@ -647,6 +789,9 @@ export function createServer(): McpServer {
       text: z.string().optional(),
     },
   }, async ({ selector, text }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.click({ selector, text }), "Suitelet element clicked.");
+    }
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_click", { selector, text }));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet element clicked.");
   });
@@ -659,6 +804,9 @@ export function createServer(): McpServer {
       maxLength: z.number().optional(),
     },
   }, async ({ selector, maxLength }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.read({ selector, maxLength }), "Suitelet content read.");
+    }
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_read", { selector, maxLength }));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet content read.");
   });
@@ -670,6 +818,9 @@ export function createServer(): McpServer {
       expression: z.string(),
     },
   }, async ({ expression }) => {
+    if (USE_PLAYWRIGHT) {
+      return controlToolResult(await playwrightController.eval(expression), "Suitelet eval complete.");
+    }
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_eval", { expression }));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet eval complete.");
   });

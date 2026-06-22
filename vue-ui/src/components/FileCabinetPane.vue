@@ -63,7 +63,7 @@
             <InputText
               v-model="contentSearch"
               type="text"
-              placeholder="Filter..."
+              placeholder="Filter name or ID..."
               size="small"
               class="fc-filter-input"
             />
@@ -123,7 +123,7 @@
           <input
             v-model="globalSearchQuery"
             type="text"
-            placeholder="Search all files and folders..."
+            placeholder="Search all files and folders by name or ID..."
             class="fc-search-input"
             @input="handleGlobalSearch"
             @keydown.escape="clearGlobalSearch"
@@ -207,6 +207,7 @@
           v-else-if="
             globalSearchQuery.trim().length > 0 &&
             globalSearchQuery.trim().length < 3 &&
+            !isNumericGlobalSearchQuery &&
             !globalSearchLoading
           "
           class="fc-search-empty"
@@ -1421,6 +1422,9 @@ const globalSearchResults = ref<
   }[]
 >([]);
 const globalSearchLoading = ref(false);
+const isNumericGlobalSearchQuery = computed(() =>
+  /^\d+$/.test(globalSearchQuery.value.trim())
+);
 
 // ── Delete & Trash ─────────────────────────────────────────────────────────
 const showDeleteConfirm = ref(false);
@@ -1590,8 +1594,11 @@ const filteredItems = computed(() => {
     );
   }
   if (contentSearch.value) {
-    const q = contentSearch.value.toLowerCase();
-    items = items.filter((item) => item.name.toLowerCase().includes(q));
+    const q = contentSearch.value.trim().toLowerCase();
+    items = items.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) || String(item.id).includes(q)
+    );
   }
   items = [...items].sort((a, b) => {
     if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
@@ -2866,11 +2873,13 @@ const executeMove = async () => {
 // ── Global search ──────────────────────────────────────────────────────────
 
 let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+const isNumericSearchText = (value: string) => /^\d+$/.test(value.trim());
 
 const handleGlobalSearch = () => {
   if (searchDebounce) clearTimeout(searchDebounce);
   const q = globalSearchQuery.value.trim();
-  if (!q || q.length < 3) {
+  const isNumericQuery = isNumericSearchText(q);
+  if (!q || (!isNumericQuery && q.length < 3)) {
     globalSearchResults.value = [];
     return;
   }
@@ -2881,12 +2890,19 @@ const executeGlobalSearch = async (query: string) => {
   globalSearchLoading.value = true;
   try {
     const escaped = query.replace(/'/g, "''");
+    const numericId = isNumericSearchText(query) ? Number(query) : null;
+    const fileWhere = numericId !== null
+      ? `(LOWER(f.name) LIKE LOWER('%${escaped}%') OR f.id = ${numericId})`
+      : `LOWER(f.name) LIKE LOWER('%${escaped}%')`;
+    const folderWhere = numericId !== null
+      ? `(LOWER(name) LIKE LOWER('%${escaped}%') OR id = ${numericId})`
+      : `LOWER(name) LIKE LOWER('%${escaped}%')`;
     const [fileRows, folderRows] = await Promise.all([
       runQuery(
-        `SELECT f.id, f.name, f.folder, f.url, f.fileType, f.fileSize, mf.name AS foldername FROM File f LEFT JOIN MediaItemFolder mf ON f.folder = mf.id WHERE LOWER(f.name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 30`
+        `SELECT f.id, f.name, f.folder, f.url, f.fileType, f.fileSize, mf.name AS foldername FROM File f LEFT JOIN MediaItemFolder mf ON f.folder = mf.id WHERE ${fileWhere} AND ROWNUM <= 30`
       ),
       runQuery(
-        `SELECT id, name, parent FROM MediaItemFolder WHERE LOWER(name) LIKE LOWER('%${escaped}%') AND ROWNUM <= 15`
+        `SELECT id, name, parent FROM MediaItemFolder WHERE ${folderWhere} AND ROWNUM <= 15`
       )
     ]);
     const results: typeof globalSearchResults.value = [];

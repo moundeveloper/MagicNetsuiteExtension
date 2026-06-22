@@ -2142,6 +2142,12 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_dump_cookies",
+    description:
+      "Return the current NetSuite session cookies (including HttpOnly auth cookies) read from a logged-in NetSuite browser tab via the debugger. Used to hand the real browser session to an external automated browser (Playwright) so it doesn't have to log in again. Requires a NetSuite tab to be open in the browser.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
     name: "netsuite_suitelet_control_open",
     description:
       "START HERE to drive a Suitelet. Opens it in a real NetSuite browser tab (foreground) and attaches the controller. This toolset is fully self-contained — do NOT use Claude-in-Chrome, tab-context, navigate, or any other browser/screenshot tools; use this family (inspect/fill/click/read/eval/screenshot) for everything. PREFERRED: pass { query: \"<suitelet name>\" } (e.g. \"CTK SuiteQL\") and the correct account URL is resolved automatically — never invent or guess a URL. Alternatively pass { scriptId, deployId } from netsuite_suitelet_stream_list, or a full scriptlet.nl url. Omit all to control the already-active NetSuite tab. Returns the controlled url+title, the matched Suitelet, alternatives, a screenshot, and a snapshot of visible interactive elements for fill/click/read.",
@@ -2370,6 +2376,8 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleSuiteletFetchHtml(args);
         } else if (name === "netsuite_suitelet_proxy_request") {
           result = await handleSuiteletProxyRequest(args);
+        } else if (name === "netsuite_dump_cookies") {
+          result = await handleDumpNetsuiteCookies();
         } else if (name === "netsuite_suitelet_control_open") {
           result = await handleSuiteletControlOpen(args);
         } else if (name === "netsuite_suitelet_inspect") {
@@ -3739,6 +3747,57 @@ async function ensureSuiteletDebugger(tabId) {
 async function sendSuiteletDebuggerCommand(tabId, method, params) {
   await ensureSuiteletDebugger(tabId);
   return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
+// Read the live NetSuite session cookies (incl. HttpOnly auth cookies) so
+// Playwright can reuse the real browser session instead of logging in again.
+// Uses chrome.cookies (needs the "cookies" permission) — NOT the debugger — so
+// it does not flash the "… is in debug mode" banner and needs no open tab.
+const SAME_SITE_MAP = { no_restriction: "None", lax: "Lax", strict: "Strict" };
+
+async function handleDumpNetsuiteCookies() {
+  // Pick the account the SAME way the MCP bridge does: getPreferredNetsuiteTab()
+  // honors the mcpPreferredAccount setting (falls back to the active NS tab).
+  // Then dump ONLY that account's cookies via getAll({url}), which returns the
+  // cookies that would be sent to that origin (its host cookies + shared
+  // .netsuite.com) and EXCLUDES other logged-in accounts' host cookies.
+  let origin = "";
+  try {
+    const tab = await getPreferredNetsuiteTab();
+    if (tab?.url) origin = getTabOrigin(tab.url);
+  } catch { /* fall back below */ }
+
+  const raw = origin
+    ? await chrome.cookies.getAll({ url: `${origin}/` })
+    : await chrome.cookies.getAll({ domain: "netsuite.com" });
+
+  const cookies = (raw || []).map((c) => {
+    const out = {
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path || "/",
+      httpOnly: Boolean(c.httpOnly),
+      secure: Boolean(c.secure)
+    };
+    if (!c.session && typeof c.expirationDate === "number") {
+      out.expires = Math.floor(c.expirationDate);
+    }
+    const sameSite = SAME_SITE_MAP[c.sameSite];
+    if (sameSite) out.sameSite = sameSite;
+    return out;
+  });
+
+  if (!cookies.length) {
+    throw new Error("No NetSuite cookies found. Log into NetSuite in your browser first.");
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ ok: true, origin, count: cookies.length, cookies }, null, 2)
+    }]
+  };
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
