@@ -265,7 +265,7 @@ export const routes: FullRoute[] = [
     name: "NetSuite Agent Harness",
     icon: "pi pi-compass",
     component: NetsuiteAgentHarnessView,
-    status: RouteStatus.release,
+    status: RouteStatus.draft,
     breadcrumb: "NetSuite Agent Harness",
     children: [
       {
