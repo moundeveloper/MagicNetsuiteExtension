@@ -40,6 +40,15 @@ cd /d "%~dp0"
 
 echo.
 echo ====================================
+echo Step 1.6: Building MCP Apps
+echo ====================================
+cd /d "%~dp0mcp_app"
+call npm run build
+if %ERRORLEVEL% NEQ 0 goto :error
+cd /d "%~dp0"
+
+echo.
+echo ====================================
 echo Step 2: Cleaning destination folder
 echo ====================================
 
@@ -86,6 +95,17 @@ copy /y "%~dp0mcp_server\host.config.json" "%MCP_DEST%\"
 if %ERRORLEVEL% NEQ 0 goto :error
 
 copy /y "%~dp0mcp_server\installNativeHost.ps1" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 goto :error
+
+:: =========================
+:: STEP 2.6 - MCP Apps
+:: =========================
+echo.
+echo ====================================
+echo Step 2.6: Packaging MCP Apps for Claude
+echo ====================================
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0packageMcpApps.ps1" -DestinationFolder "%DEST_FOLDER%"
 if %ERRORLEVEL% NEQ 0 goto :error
 
 :: =========================
