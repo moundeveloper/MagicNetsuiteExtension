@@ -52,6 +52,12 @@ const TRANSACTION_TYPES: Record<string, string> = {
   cashsale: "CashSale"
 };
 const SEARCH_ONLY_RECORD_TYPES = new Set(["lead", "prospect"]);
+const ENTITY_SUITEQL_TYPES = new Set([
+  "customer",
+  "contact",
+  "vendor",
+  "partner"
+]);
 
 const filteredRecordTypes = computed(() => {
   const needle = typeFilter.value.trim().toLowerCase();
@@ -93,6 +99,21 @@ const buildSearchQueries = (recordType: string, searchText: string) => {
     }
     return [
       `SELECT id, tranid, BUILTIN.DF(entity) AS entity, trandate FROM transaction WHERE ${conditions.join(" AND ")} ORDER BY id DESC`
+    ];
+  }
+
+  if (ENTITY_SUITEQL_TYPES.has(cleanType)) {
+    const conditions: string[] = [];
+    if (cleanQuery) {
+      const search = escapeSuiteQL(cleanQuery);
+      conditions.push(
+        isNumeric(cleanQuery)
+          ? `(id = ${Number(cleanQuery)} OR LOWER(entityid) LIKE LOWER('%${search}%') OR LOWER(altname) LIKE LOWER('%${search}%'))`
+          : `(LOWER(entityid) LIKE LOWER('%${search}%') OR LOWER(altname) LIKE LOWER('%${search}%'))`
+      );
+    }
+    return [
+      `SELECT id, entityid, altname FROM ${cleanType}${conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""} ORDER BY id DESC`
     ];
   }
 

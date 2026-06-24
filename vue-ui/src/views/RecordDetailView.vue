@@ -27,6 +27,7 @@ const error = ref("");
 const bodyRecord = ref<RecordPayload | null>(null);
 const sublists = ref<Record<string, Array<Record<string, FieldValue>>>>({});
 const bodyFilter = ref("");
+const sublistFilter = ref("");
 const activeSublist = ref("");
 const expandedValues = ref(new Set<string>());
 const bodyPanePercent = ref(38);
@@ -56,11 +57,24 @@ const sublistEntries = computed(() =>
     .sort((a, b) => a.id.localeCompare(b.id))
 );
 
-const activeRows = computed(() => sublists.value[activeSublist.value] ?? []);
+const activeRowEntries = computed(() => {
+  const needle = sublistFilter.value.trim().toLowerCase();
+  return (sublists.value[activeSublist.value] ?? [])
+    .map((row, line) => ({ row, line }))
+    .filter(({ row }) => {
+      if (!needle) return true;
+      return Object.entries(row).some(
+        ([fieldId, field]) =>
+          `${fieldId} ${formatValue(field.text)} ${formatValue(field.value)}`
+            .toLowerCase()
+            .includes(needle)
+      );
+    });
+});
 
 const activeColumns = computed(() => {
   const ids = new Set<string>();
-  for (const row of activeRows.value) {
+  for (const { row } of activeRowEntries.value) {
     Object.keys(row).forEach((id) => ids.add(id));
   }
   return Array.from(ids);
@@ -288,8 +302,18 @@ onMounted(loadRecord);
             <div class="section-heading">
               <span>
                 <strong>Sublists</strong>
-                <small>{{ sublistEntries.length }} sublists</small>
+                <small>
+                  {{ sublistEntries.length }} sublists ·
+                  {{ activeRowEntries.length }} visible rows
+                </small>
               </span>
+              <label>
+                <i class="pi pi-search" />
+                <input
+                  v-model="sublistFilter"
+                  placeholder="Search sublist fields and values"
+                />
+              </label>
             </div>
             <div class="sublist-layout">
               <VueSplitter
@@ -322,8 +346,11 @@ onMounted(loadRecord);
                         </tr>
                       </thead>
                       <tbody>
-                        <tr v-for="(row, rowIndex) in activeRows" :key="rowIndex">
-                          <td>{{ rowIndex + 1 }}</td>
+                        <tr
+                          v-for="{ row, line } in activeRowEntries"
+                          :key="line"
+                        >
+                          <td>{{ line + 1 }}</td>
                           <td
                             v-for="column in activeColumns"
                             :key="column"
@@ -332,7 +359,7 @@ onMounted(loadRecord);
                               fieldId: column,
                               snapshot: row[column],
                               sublistId: activeSublist,
-                              line: rowIndex
+                              line
                             })"
                           >
                             <span>{{ displayValue(row[column]) }}</span>
@@ -480,6 +507,16 @@ button:hover {
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+.detail-view :deep(.vue-splitter > .splitter) {
+  background-color: var(--p-purple-300, #c4b5fd);
+  transition: background-color 0.15s ease;
+}
+
+.detail-view :deep(.vue-splitter > .splitter:hover),
+.detail-view :deep(.vue-splitter > .splitter.active) {
+  background-color: var(--p-purple-500, #8b5cf6);
 }
 
 .body-fields,

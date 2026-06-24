@@ -86,7 +86,13 @@ const triggerRef = ref<HTMLButtonElement | null>(null);
 const overlayRef = ref<HTMLElement | null>(null);
 const isOpen = ref(false);
 const highlightedIndex = ref(0);
-const overlayRect = ref<{ top: number; left: number; width: number } | null>(null);
+const overlayRect = ref<{
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+  placement: "top" | "bottom";
+} | null>(null);
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 const normalizedOptions = computed(() =>
@@ -113,12 +119,13 @@ const displayValue = computed(() => {
 
 const overlayStyle = computed(() => {
   if (!overlayRect.value) return {};
-  const { top, left, width } = overlayRect.value;
+  const { top, left, width, maxHeight } = overlayRect.value;
   return {
     position: "fixed" as const,
     top: `${top}px`,
     left: `${left}px`,
     width: `${width}px`,
+    maxHeight: `${maxHeight}px`,
     zIndex: "10000"
   };
 });
@@ -128,10 +135,24 @@ const computeOverlayRect = () => {
   const el = triggerRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
+  const preferredHeight = Math.min(220, normalizedOptions.value.length * 34 + 8);
+  const spaceBelow = window.innerHeight - rect.bottom - 8;
+  const spaceAbove = rect.top - 8;
+  const placement =
+    spaceBelow < preferredHeight && spaceAbove > spaceBelow ? "top" : "bottom";
+  const maxHeight = Math.max(
+    72,
+    Math.min(preferredHeight, placement === "top" ? spaceAbove : spaceBelow)
+  );
   overlayRect.value = {
-    top: rect.bottom + 3,
+    top:
+      placement === "top"
+        ? Math.max(4, rect.top - maxHeight - 3)
+        : rect.bottom + 3,
     left: rect.left,
-    width: rect.width
+    width: rect.width,
+    maxHeight,
+    placement
   };
 };
 
@@ -182,14 +203,22 @@ const handleOutsidePointerDown = (event: MouseEvent) => {
   close();
 };
 
+const handleViewportChange = () => {
+  if (isOpen.value) computeOverlayRect();
+};
+
 onMounted(() => {
   document.addEventListener("pointerdown", handleOutsidePointerDown);
   document.addEventListener("keydown", handleKeydown);
+  window.addEventListener("resize", handleViewportChange);
+  window.addEventListener("scroll", handleViewportChange, true);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleOutsidePointerDown);
   document.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("resize", handleViewportChange);
+  window.removeEventListener("scroll", handleViewportChange, true);
 });
 </script>
 

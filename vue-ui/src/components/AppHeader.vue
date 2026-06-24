@@ -12,6 +12,7 @@ import {
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 import MPanel from "./universal/panels/MPanel.vue";
 import { getNotebookEntries, type NotebookEntry } from "../utils/notebookDb";
+import { getNetsuiteEnvironment } from "../utils/api";
 
 const route = useRoute();
 const router = useRouter();
@@ -21,6 +22,8 @@ const search = ref("");
 const notebookSearchOpen = ref(false);
 const notebookSearch = ref("");
 const notebookEntries = ref<NotebookEntry[]>([]);
+const environmentHost = ref("unknown");
+const environmentLoading = ref(true);
 
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
@@ -70,6 +73,39 @@ const notebookSearchResults = computed(() => {
 });
 
 const isAdmin = computed(() => privilegeLevel === "ADMIN");
+
+const environmentAccount = computed(() => {
+  if (!environmentHost.value || environmentHost.value === "unknown") {
+    return "No account";
+  }
+
+  return (environmentHost.value.split(".")[0] || environmentHost.value)
+    .toUpperCase()
+    .replace(/-/g, "_");
+});
+
+const environmentType = computed(() => {
+  if (environmentAccount.value === "No account") return "Disconnected";
+  return /_SB\d+$/i.test(environmentAccount.value) ? "Sandbox" : "Production";
+});
+
+const refreshEnvironment = async () => {
+  environmentLoading.value = true;
+  environmentHost.value = await getNetsuiteEnvironment();
+  environmentLoading.value = false;
+};
+
+const handleTabActivated = () => {
+  void refreshEnvironment();
+};
+
+const handleTabUpdated: Parameters<
+  typeof chrome.tabs.onUpdated.addListener
+>[0] = (_tabId, changeInfo) => {
+  if (changeInfo.status === "complete" || changeInfo.url) {
+    void refreshEnvironment();
+  }
+};
 
 const canAccess = (link: RouteItem) => {
   if (link.status === RouteStatus.deprecated) return false;
@@ -189,10 +225,23 @@ const openNotebookEntry = (entry?: NotebookEntry) => {
 
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("focus", refreshEnvironment);
+  void refreshEnvironment();
+
+  if (typeof chrome !== "undefined" && chrome.tabs) {
+    chrome.tabs.onActivated.addListener(handleTabActivated);
+    chrome.tabs.onUpdated.addListener(handleTabUpdated);
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("focus", refreshEnvironment);
+
+  if (typeof chrome !== "undefined" && chrome.tabs) {
+    chrome.tabs.onActivated.removeListener(handleTabActivated);
+    chrome.tabs.onUpdated.removeListener(handleTabUpdated);
+  }
 });
 </script>
 
@@ -233,6 +282,24 @@ onBeforeUnmount(() => {
           </a>
         </template>
       </Breadcrumb>
+    </div>
+
+    <div
+      class="environment-account"
+      :class="{
+        'environment-account--sandbox': environmentType === 'Sandbox',
+        'environment-account--disconnected': environmentType === 'Disconnected'
+      }"
+      :title="environmentHost"
+      aria-live="polite"
+    >
+      <i
+        :class="environmentLoading ? 'pi pi-spin pi-spinner' : 'pi pi-building'"
+      ></i>
+      <span class="environment-account__text">
+        <strong>{{ environmentLoading ? "Detecting..." : environmentAccount }}</strong>
+        <small>{{ environmentType }}</small>
+      </span>
     </div>
 
     <RouterLink to="/settings" class="settings-link">
@@ -464,8 +531,65 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.environment-account {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--p-emerald-300);
+  border-radius: 0.5rem;
+  background: var(--p-emerald-50);
+  color: var(--p-emerald-700);
+  flex-shrink: 0;
+}
+
+.environment-account--sandbox {
+  border-color: var(--p-amber-300);
+  background: var(--p-amber-50);
+  color: var(--p-amber-700);
+}
+
+.environment-account--disconnected {
+  border-color: var(--p-slate-300);
+  background: var(--p-slate-100);
+  color: var(--p-slate-500);
+}
+
+.environment-account__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.05;
+}
+
+.environment-account__text strong {
+  max-width: 10rem;
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.environment-account__text small {
+  margin-top: 0.15rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .settings-btn {
   padding: 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .environment-account__text small {
+    display: none;
+  }
+
+  .environment-account__text strong {
+    max-width: 7rem;
+  }
 }
 
 .menu-item {
