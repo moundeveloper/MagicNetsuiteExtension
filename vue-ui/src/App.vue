@@ -29,6 +29,30 @@ const router = useRouter();
 
 onMounted(async () => {
   try {
+    const isDashboardPreview = new URLSearchParams(window.location.search).has(
+      "magicDashboardPreview"
+    );
+    if (isDashboardPreview) {
+      document.title = "Magic NetSuite";
+      document
+        .querySelectorAll<HTMLLinkElement>(
+          'link[rel="icon"], link[rel="shortcut icon"]'
+        )
+        .forEach((node) => node.remove());
+      const icon = document.createElement("link");
+      icon.rel = "icon";
+      icon.type = "image/png";
+      icon.href = chrome.runtime.getURL("icons/icon32.png");
+      document.head.appendChild(icon);
+    }
+
+    const initialRoute = new URLSearchParams(window.location.search).get(
+      "initialRoute"
+    );
+    if (initialRoute) {
+      await router.replace(initialRoute);
+    }
+
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "OPEN_VIEW") {
         router.push({ name: message.view });

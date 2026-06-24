@@ -11,6 +11,8 @@ import {
 } from "../router/routesMap";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 import MPanel from "./universal/panels/MPanel.vue";
+import MSelect from "./universal/input/MSelect.vue";
+import MLoader from "./universal/patterns/MLoader.vue";
 import { getNotebookEntries, type NotebookEntry } from "../utils/notebookDb";
 import { getNetsuiteEnvironment } from "../utils/api";
 
@@ -24,6 +26,16 @@ const notebookSearch = ref("");
 const notebookEntries = ref<NotebookEntry[]>([]);
 const environmentHost = ref("unknown");
 const environmentLoading = ref(true);
+const dashboardSessionId = new URLSearchParams(window.location.search).get(
+  "magicDashboardPreview"
+);
+const isDashboardPreview = Boolean(dashboardSessionId);
+const dashboardAccounts = ref<
+  Array<{ tabId: number; accountId: string; label: string; current: boolean }>
+>([]);
+const selectedDashboardTabId = ref<number | null>(null);
+const dashboardAccountSwitching = ref(false);
+const dashboardAccountsRefreshing = ref(false);
 
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
@@ -95,8 +107,67 @@ const refreshEnvironment = async () => {
   environmentLoading.value = false;
 };
 
+const loadDashboardAccounts = async () => {
+  if (!dashboardSessionId) return;
+  const response = await chrome.runtime.sendMessage({
+    type: "LIST_OPEN_NETSUITE_ACCOUNTS",
+    sessionId: dashboardSessionId
+  });
+  dashboardAccounts.value = response?.accounts || [];
+  selectedDashboardTabId.value =
+    dashboardAccounts.value.find((account) => account.current)?.tabId || null;
+};
+
+const refreshDashboardAccounts = async () => {
+  if (
+    !dashboardSessionId ||
+    dashboardAccountsRefreshing.value ||
+    dashboardAccountSwitching.value
+  ) {
+    return;
+  }
+
+  dashboardAccountsRefreshing.value = true;
+  try {
+    await Promise.all([loadDashboardAccounts(), refreshEnvironment()]);
+  } finally {
+    dashboardAccountsRefreshing.value = false;
+  }
+};
+
+const switchDashboardAccount = async () => {
+  if (!dashboardSessionId || !selectedDashboardTabId.value) return;
+  dashboardAccountSwitching.value = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "SWITCH_DASHBOARD_ACCOUNT",
+      sessionId: dashboardSessionId,
+      tabId: selectedDashboardTabId.value
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Could not switch NetSuite account.");
+    }
+    await refreshEnvironment();
+    await loadDashboardAccounts();
+  } catch (error) {
+    console.error("[AppHeader] Dashboard account switch failed", error);
+    await loadDashboardAccounts();
+  } finally {
+    dashboardAccountSwitching.value = false;
+  }
+};
+
+const handleDashboardAccountSelected = (
+  tabId: string | number | null
+) => {
+  selectedDashboardTabId.value =
+    tabId === null || tabId === "" ? null : Number(tabId);
+  void switchDashboardAccount();
+};
+
 const handleTabActivated = () => {
   void refreshEnvironment();
+  void loadDashboardAccounts();
 };
 
 const handleTabUpdated: Parameters<
@@ -302,12 +373,70 @@ onBeforeUnmount(() => {
       </span>
     </div>
 
+    <div v-if="isDashboardPreview" class="dashboard-account-selector">
+      <i
+        :class="
+          dashboardAccountSwitching
+            ? 'pi pi-spin pi-spinner'
+            : 'pi pi-clone'
+        "
+      ></i>
+      <MSelect
+        :model-value="selectedDashboardTabId"
+        :options="dashboardAccounts"
+        option-label="accountId"
+        option-value="tabId"
+        placeholder="Choose account"
+        size="small"
+        :disabled="dashboardAccountSwitching"
+        class="dashboard-account-selector__select"
+        @update:model-value="handleDashboardAccountSelected"
+      />
+      <Button
+        class="dashboard-account-selector__refresh"
+        severity="secondary"
+        text
+        rounded
+        :disabled="dashboardAccountSwitching || dashboardAccountsRefreshing"
+        title="Refresh open NetSuite accounts"
+        aria-label="Refresh open NetSuite accounts"
+        @click="refreshDashboardAccounts"
+      >
+        <i
+          :class="
+            dashboardAccountsRefreshing
+              ? 'pi pi-spin pi-spinner'
+              : 'pi pi-refresh'
+          "
+        ></i>
+      </Button>
+    </div>
+
     <RouterLink to="/settings" class="settings-link">
       <Button class="settings-btn">
         <i class="pi pi-cog text-white"></i>
       </Button>
     </RouterLink>
   </header>
+
+  <Teleport to="body">
+    <div
+      v-if="isDashboardPreview && dashboardAccountSwitching"
+      class="dashboard-context-loader"
+      role="status"
+      aria-live="assertive"
+      aria-label="Switching NetSuite environment"
+    >
+      <div class="dashboard-context-loader__panel">
+        <div class="dashboard-context-loader__icon">
+          <i class="pi pi-building"></i>
+        </div>
+        <MLoader class="dashboard-context-loader__spinner" />
+        <strong>Switching NetSuite context</strong>
+        <span>Waiting for the executor tab to finish loading…</span>
+      </div>
+    </div>
+  </Teleport>
 
   <Drawer
     v-model:visible="visibleBottom"
@@ -529,6 +658,126 @@ onBeforeUnmount(() => {
 
 .settings-link {
   flex-shrink: 0;
+}
+
+.dashboard-account-selector {
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--p-slate-100) 86%, transparent);
+  color: var(--p-slate-700);
+}
+
+.dashboard-account-selector__select {
+  width: 12rem;
+}
+
+.dashboard-account-selector__refresh {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
+
+.dashboard-account-selector__select :deep(.m-select-trigger) {
+  max-width: 12rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.dashboard-account-selector__select :deep(.m-select-trigger:hover),
+.dashboard-account-selector__select :deep(.m-select-trigger:focus) {
+  border: 0;
+  box-shadow: none;
+}
+
+.dashboard-context-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 41, 59, 0.48);
+  backdrop-filter: blur(5px) saturate(0.85);
+  cursor: wait;
+}
+
+.dashboard-context-loader__panel {
+  position: relative;
+  min-width: 21rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.75rem 2.25rem 1.6rem;
+  border: 1px solid var(--p-indigo-200);
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(135deg, var(--p-indigo-50), #ffffff 52%, var(--p-emerald-50));
+  color: var(--p-slate-800);
+  box-shadow:
+    0 22px 55px rgba(15, 23, 42, 0.28),
+    0 0 0 4px rgba(99, 102, 241, 0.1);
+  text-align: center;
+  overflow: hidden;
+}
+
+.dashboard-context-loader__panel::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--p-indigo-500),
+    var(--p-violet-500),
+    var(--p-emerald-500)
+  );
+}
+
+.dashboard-context-loader__icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  display: grid;
+  place-items: center;
+  border-radius: 0.75rem;
+  background: var(--p-indigo-100);
+  color: var(--p-indigo-700);
+  box-shadow: inset 0 0 0 1px var(--p-indigo-200);
+}
+
+.dashboard-context-loader__icon i {
+  font-size: 1.2rem;
+}
+
+.dashboard-context-loader__spinner {
+  margin: 0.1rem 0;
+}
+
+.dashboard-context-loader__spinner :deep(.loader) {
+  width: 2rem;
+  --c: no-repeat linear-gradient(var(--p-indigo-600) 0 0);
+}
+
+.dashboard-context-loader__panel strong {
+  font-family: var(--font-mono);
+  color: var(--p-indigo-900);
+  font-size: 0.95rem;
+}
+
+.dashboard-context-loader__panel span {
+  color: var(--p-emerald-700);
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .environment-account {

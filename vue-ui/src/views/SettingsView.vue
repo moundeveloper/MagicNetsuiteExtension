@@ -443,6 +443,15 @@ onMounted(async () => {
           binary
         />
       </div>
+      <div class="shortcut-item">
+        <label for="dashboard-preview-enabled">Dashboard Tab Preview:</label>
+        <Checkbox
+          id="dashboard-preview-enabled"
+          v-model="settings.dashboardPreviewEnabled"
+          binary
+        />
+        <small>Show the dashboard button beside NetSuite Customization.</small>
+      </div>
     </div>
 
     <!-- Extension identity section -->

@@ -28,6 +28,57 @@ type HarnessWorkerSession = {
 let harnessWorkerSession: HarnessWorkerSession | null = null;
 
 const HARNESS_WORKER_TAB_TITLE = "Agent Harness Processing";
+const DASHBOARD_PREVIEW_SESSIONS_KEY =
+  "magic_netsuite_dashboard_preview_sessions";
+const DASHBOARD_GOVERNANCE_THRESHOLD = 20;
+const dashboardGovernanceRefreshes = new Map<number, Promise<void>>();
+
+const chromeTabsCallback = <T>(
+  invoke: (done: (result: T) => void) => void
+): Promise<T> =>
+  new Promise((resolve, reject) => {
+    invoke((result) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+
+const queryChromeTabs = (
+  queryInfo: chrome.tabs.QueryInfo
+): Promise<chrome.tabs.Tab[]> =>
+  chromeTabsCallback((done) => chrome.tabs.query(queryInfo, done));
+
+const getChromeTab = (tabId: number): Promise<chrome.tabs.Tab> =>
+  chromeTabsCallback((done) => chrome.tabs.get(tabId, done));
+
+const updateChromeTab = (
+  tabId: number,
+  updateProperties: chrome.tabs.UpdateProperties
+): Promise<chrome.tabs.Tab | undefined> =>
+  new Promise((resolve, reject) => {
+    chrome.tabs.update(tabId, updateProperties, (tab) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+
+const removeChromeTab = (tabIds: number | number[]): Promise<void> =>
+  chromeTabsCallback((done) => {
+    const callback = () => done();
+    if (Array.isArray(tabIds)) chrome.tabs.remove(tabIds, callback);
+    else chrome.tabs.remove(tabIds, callback);
+  });
+
+const reloadChromeTab = (tabId: number): Promise<void> =>
+  chromeTabsCallback((done) => chrome.tabs.reload(tabId, {}, () => done()));
 
 type TabUpdatedListener = Parameters<
   typeof chrome.tabs.onUpdated.addListener
@@ -85,7 +136,7 @@ const endHarnessWorkerTab = async (sessionId?: string): Promise<void> => {
   harnessWorkerSession = null;
   detachWorkerTabDecorationWatcher();
   try {
-    await chrome.tabs.remove(session.tabId);
+    await removeChromeTab(session.tabId);
     console.log(`[callApi] Harness worker tab ${session.tabId} closed`);
   } catch {
     // Tab may already be closed by the user.
@@ -99,6 +150,108 @@ const getHarnessWorkerTabId = (): number | null => harnessWorkerSession?.tabId ?
 const shouldUseHarnessWorkerTab = (route: RequestRoutes): boolean => {
   if (!harnessWorkerSession) return false;
   return HEAVY_ROUTES.has(route);
+};
+
+const getDashboardPreviewSessionId = (): string | null => {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(
+    "magicDashboardPreview"
+  );
+};
+
+const getDashboardEnablerTab = async (): Promise<chrome.tabs.Tab | null> => {
+  const sessionId = getDashboardPreviewSessionId();
+  if (!sessionId || typeof chrome === "undefined" || !chrome.storage?.session) {
+    return null;
+  }
+
+  const result = await chrome.storage.session.get(
+    DASHBOARD_PREVIEW_SESSIONS_KEY
+  );
+  const session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];
+  if (!session?.enablerTabId) {
+    throw new Error(
+      "This dashboard preview is no longer connected to its NetSuite account tab."
+    );
+  }
+
+  try {
+    const tab = await getChromeTab(session.enablerTabId);
+    if (!tab?.id || !tab.url?.includes("magicDashboardEnabler=")) {
+      throw new Error("The dashboard enabler tab is unavailable.");
+    }
+    return tab;
+  } catch {
+    throw new Error(
+      "The NetSuite enabler tab was closed. Open a new dashboard preview from NetSuite."
+    );
+  }
+};
+
+const waitForDashboardTabLoad = async (tabId: number): Promise<void> => {
+  const current = await getChromeTab(tabId);
+  if (current.status === "complete") {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("The dashboard enabler tab did not finish refreshing."));
+    }, 15000);
+
+    const listener: TabUpdatedListener = (updatedTabId, changeInfo) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      window.clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      window.setTimeout(resolve, 400);
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+};
+
+const refreshDashboardEnablerIfNeeded = async (
+  tabId: number
+): Promise<void> => {
+  const activeRefresh = dashboardGovernanceRefreshes.get(tabId);
+  if (activeRefresh) {
+    await activeRefresh;
+    return;
+  }
+
+  const refresh = (async () => {
+    try {
+      const response = await sendMessageToTab(tabId, {
+        action: RequestRoutes.CHECK_GOVERNANCE,
+        data: {},
+        mode: ApiRequestType.NORMAL
+      });
+      const remaining = Number(response?.message?.remaining);
+      if (
+        Number.isFinite(remaining) &&
+        remaining <= DASHBOARD_GOVERNANCE_THRESHOLD
+      ) {
+        console.log(
+          `[callApi] Dashboard enabler governance is ${remaining}; refreshing tab ${tabId}`
+        );
+        await reloadChromeTab(tabId);
+        await waitForDashboardTabLoad(tabId);
+      }
+    } catch (error) {
+      console.warn(
+        "[callApi] Could not check dashboard enabler governance",
+        error
+      );
+    }
+  })();
+  dashboardGovernanceRefreshes.set(tabId, refresh);
+
+  try {
+    await refresh;
+  } finally {
+    dashboardGovernanceRefreshes.delete(tabId);
+  }
 };
 
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
@@ -121,14 +274,20 @@ const callApi = async (
   streamHandler?: Function
 ): Promise<ApiResponse> => {
   let activeTab: chrome.tabs.Tab;
+  const dashboardEnablerTab = await getDashboardEnablerTab();
 
-  try {
-    activeTab = await getActiveNetsuiteTab();
-  } catch {
+  if (dashboardEnablerTab) {
+    activeTab = dashboardEnablerTab;
+    await refreshDashboardEnablerIfNeeded(activeTab.id!);
+  } else {
     try {
-      activeTab = await findExistingNetsuiteTab();
+      activeTab = await getActiveNetsuiteTab();
     } catch {
-      throw new Error("No NetSuite tab found. Open a NetSuite page first.");
+      try {
+        activeTab = await findExistingNetsuiteTab();
+      } catch {
+        throw new Error("No NetSuite tab found. Open a NetSuite page first.");
+      }
     }
   }
 
@@ -138,7 +297,7 @@ const callApi = async (
     mode
   };
 
-  const workerTabId = shouldUseHarnessWorkerTab(route)
+  const workerTabId = !dashboardEnablerTab && shouldUseHarnessWorkerTab(route)
     ? getHarnessWorkerTabId()
     : null;
 
@@ -149,14 +308,18 @@ const callApi = async (
     return new Promise(async (resolve, reject) => {
       let streamTab: chrome.tabs.Tab;
 
-      try {
-        streamTab = await getActiveNetsuiteTab();
-      } catch {
+      if (dashboardEnablerTab) {
+        streamTab = dashboardEnablerTab;
+      } else {
         try {
-          streamTab = await findExistingNetsuiteTab();
+          streamTab = await getActiveNetsuiteTab();
         } catch {
-          reject(new Error("No NetSuite tab found. Open a NetSuite page first."));
-          return;
+          try {
+            streamTab = await findExistingNetsuiteTab();
+          } catch {
+            reject(new Error("No NetSuite tab found. Open a NetSuite page first."));
+            return;
+          }
         }
       }
 
@@ -204,6 +367,9 @@ const callApi = async (
               chrome.tabs.remove(tabId);
             }
 
+            if (dashboardEnablerTab) {
+              await refreshDashboardEnablerIfNeeded(tabId);
+            }
             resolve(message);
           }
         });
@@ -231,6 +397,15 @@ const callApi = async (
       console.warn("[callApi] Harness worker tab request failed, falling back", err);
       harnessWorkerSession = null;
     }
+  }
+
+  if (dashboardEnablerTab) {
+    const response = await sendMessageToTab(
+      dashboardEnablerTab.id!,
+      messagePayload
+    );
+    await refreshDashboardEnablerIfNeeded(dashboardEnablerTab.id!);
+    return response;
   }
 
   try {
@@ -300,7 +475,7 @@ const extractAccountIdFromUrl = (url: string): string | null => {
 const findExistingNetsuiteTab = async (
   currentUrl?: string
 ): Promise<chrome.tabs.Tab> => {
-  const allTabs = await chrome.tabs.query({});
+  const allTabs = await queryChromeTabs({});
   const netsuiteTabs = allTabs.filter(
     (tab) =>
       tab.url?.includes("app.netsuite.com") &&
@@ -368,7 +543,7 @@ const getExtensionIconUrl = (): string =>
 
 const decorateHarnessWorkerTab = async (tabId: number): Promise<void> => {
   try {
-    await chrome.tabs.update(tabId, { pinned: true });
+    await updateChromeTab(tabId, { pinned: true });
   } catch (err) {
     console.warn("[callApi] Could not pin harness worker tab", err);
   }
@@ -560,6 +735,11 @@ const closePanel = (): void => {
  * Returns "unknown" if not available.
  */
 const getNetsuiteEnvironment = async (): Promise<string> => {
+  const dashboardTab = await getDashboardEnablerTab();
+  if (dashboardTab?.url) {
+    return new URL(dashboardTab.url).hostname;
+  }
+
   try {
     const tab = await getActiveNetsuiteTab();
     if (tab.url) {

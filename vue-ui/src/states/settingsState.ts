@@ -10,6 +10,7 @@ export interface ShortcutsSettings {
   modulesSearch: string; // configurable, default "ctrl+m"
   elementScreenshotShortcut: string; // configurable, default "ctrl+shift+s"
   openOnCustomizationPage: boolean;
+  dashboardPreviewEnabled: boolean;
   preferredFeatures: string[]; // array of route names that are preferred
   // AI provider settings
   aiProvider: AiProvider;
@@ -49,6 +50,7 @@ const defaultSettings: ShortcutsSettings = {
   modulesSearch: "ctrl+m",
   elementScreenshotShortcut: "ctrl+shift+s",
   openOnCustomizationPage: true,
+  dashboardPreviewEnabled: false,
   preferredFeatures: [],
   aiProvider: "openrouter",
   ollamaBaseUrl: "http://localhost:11434",
@@ -89,6 +91,7 @@ export function useSettings() {
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
         settings.elementScreenshotShortcut = stored.elementScreenshotShortcut || defaultSettings.elementScreenshotShortcut;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
+        settings.dashboardPreviewEnabled = stored.dashboardPreviewEnabled ?? defaultSettings.dashboardPreviewEnabled;
         settings.aiProvider = stored.aiProvider === "puter" || !stored.aiProvider
           ? defaultSettings.aiProvider
           : stored.aiProvider;
