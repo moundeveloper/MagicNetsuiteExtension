@@ -758,6 +758,23 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_switch_environment",
+            description:
+              "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
+              "Pass an account ID such as 1964539 or 9937091_SB1. Empty accountId restores active-tab routing.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                accountId: {
+                  type: "string",
+                  description:
+                    "NetSuite account ID from the account subdomain, e.g. 1964539 or 9937091_SB1."
+                }
+              },
+              required: ["accountId"]
+            }
+          },
+          {
             name: "suiteql_search_tables",
             description:
               "Step 1 of discovery workflow. Search available SuiteQL tables by keyword. Returns table IDs and labels. Always run this before writing a query to confirm the exact table name.",

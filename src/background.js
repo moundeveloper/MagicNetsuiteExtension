@@ -1022,6 +1022,24 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_switch_environment",
+    description:
+      "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
+      "Pass an account ID such as 1964539 or 9937091_SB1. The extension selects a connected tab for that account, " +
+      "or opens a dedicated background tab when necessary. Use an empty accountId to restore active-tab routing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        accountId: {
+          type: "string",
+          description:
+            "NetSuite account ID from the account subdomain, e.g. 1964539 or 9937091_SB1. Empty string clears the preference."
+        }
+      },
+      required: ["accountId"]
+    }
+  },
+  {
     name: "suiteql_get_guide",
     description:
       "CALL THIS FIRST before any SuiteQL work. Returns the complete usage guide: correct syntax rules (no LIMIT — use ROWNUM), the mandatory discovery workflow, common table names, and worked examples.",
@@ -2462,7 +2480,9 @@ async function handleRequest({ requestId, method, params }) {
       }
 
       try {
-        if (name === "ping") {
+        if (name === "netsuite_switch_environment") {
+          result = await handleNetsuiteSwitchEnvironment(args);
+        } else if (name === "ping") {
           // Include account info so agents can discover which account is targeted
           const storageForPing = await chrome.storage.sync.get(["magic_netsuite_settings"]);
           const pingAccount = storageForPing?.magic_netsuite_settings?.mcpPreferredAccount || null;
@@ -2610,7 +2630,12 @@ async function handleRequest({ requestId, method, params }) {
       throw new Error(`Unknown method: ${method}`);
     }
 
-    return { requestId, success: true, result, account: mcpDedicatedTabAccountId || null };
+    const responseStorage = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    const responseAccount =
+      mcpDedicatedTabAccountId ||
+      responseStorage?.magic_netsuite_settings?.mcpPreferredAccount ||
+      null;
+    return { requestId, success: true, result, account: responseAccount };
   } catch (err) {
     // Handle non-Error throws (plain objects, strings) that have no .message
     const msg =
@@ -2626,6 +2651,48 @@ async function handleRequest({ requestId, method, params }) {
 // -----------------------------
 // SuiteQL Tool Handler
 // -----------------------------
+async function handleNetsuiteSwitchEnvironment(args = {}) {
+  const requestedAccount = String(args.accountId ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_");
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const settings = storageResult?.magic_netsuite_settings || {};
+
+  await chrome.storage.sync.set({
+    magic_netsuite_settings: {
+      ...settings,
+      mcpPreferredAccount: requestedAccount
+    }
+  });
+
+  if (!requestedAccount) {
+    const tab = await getActiveNetsuiteTab();
+    return asMcpTextResult({
+      switched: true,
+      accountId: extractAccountIdFromUrl(tab.url),
+      routing: "active-tab",
+      tabId: tab.id
+    });
+  }
+
+  const tab = await getPreferredNetsuiteTab();
+  const resolvedAccount = extractAccountIdFromUrl(tab.url);
+  if (resolvedAccount !== requestedAccount) {
+    throw new Error(
+      `Could not route MCP calls to account ${requestedAccount}; selected tab belongs to ${resolvedAccount || "unknown"}.`
+    );
+  }
+
+  return asMcpTextResult({
+    switched: true,
+    accountId: resolvedAccount,
+    routing: tab.id === mcpDedicatedTabId ? "dedicated-tab" : "connected-tab",
+    tabId: tab.id,
+    url: tab.url
+  });
+}
+
 async function handleSuiteQLTool(toolName, args) {
   const actionMap = {
     "suiteql_search_tables": "FETCH_SUITEQL_TABLES",

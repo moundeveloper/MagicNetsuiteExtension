@@ -23,6 +23,8 @@ import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
 import NotebookView from "../views/NotebookView.vue";
 import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
+import RecordsView from "../views/RecordsView.vue";
+import RecordDetailView from "../views/RecordDetailView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -129,6 +131,23 @@ export const routes: FullRoute[] = [
     component: CustomRecordsView,
     status: RouteStatus.release,
     breadcrumb: "Custom Records"
+  },
+  {
+    route: "/records",
+    name: "Records",
+    icon: "pi pi-database",
+    component: RecordsView,
+    status: RouteStatus.release,
+    breadcrumb: "Records",
+    children: [
+      {
+        route: "/records/:recordType/:recordId",
+        name: "RecordDetail",
+        component: RecordDetailView,
+        breadcrumb: "Record Detail",
+        breadcrumbParents: [{ label: "Records", route: "/records" }]
+      }
+    ]
   },
   {
     route: "/scripts",

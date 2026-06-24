@@ -3250,9 +3250,9 @@ const handlers = {
     console.log("Fetch SuiteQL Table Detail action received:", tableName);
     return window.fetchSuiteQLTableDetail(tableName);
   },
-  RUN_SUITEQL_QUERY: async ({ modules, payload: { sql, limit } }) => {
-    console.log("Run SuiteQL Query action received", { limit });
-    return window.runSuiteQLQuery(modules, sql, limit ?? 1000);
+  RUN_SUITEQL_QUERY: async ({ modules, payload: { sql, limit, offset } }) => {
+    console.log("Run SuiteQL Query action received", { limit, offset });
+    return window.runSuiteQLQuery(modules, sql, limit ?? 1000, offset ?? 0);
   },
   GET_SUITEQL_COUNT: async ({ modules, payload: { sql } }) => {
     console.log("Get SuiteQL Count action received");
@@ -3304,6 +3304,47 @@ const handlers = {
     console.log("Delete Folder action received", { folderId });
     return await window.deleteFolder(modules, { folderId });
   },
+  BATCH_DELETE_FILE_CABINET_ITEMS: async ({ modules, payload = {} }) => {
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    const folderIds = Array.isArray(payload.folderIds) ? payload.folderIds : [];
+    const deletedFiles = [];
+    const deletedFolders = [];
+    const errors = [];
+
+    for (const file of files) {
+      try {
+        const deleteResult = await window.deleteNetsuiteFile(modules, {
+          fileId: Number(file.fileId),
+          folderId: Number(file.folderId)
+        });
+        if (deleteResult !== "success") {
+          throw new Error(String(deleteResult || "File deletion failed"));
+        }
+        deletedFiles.push(Number(file.fileId));
+      } catch (error) {
+        errors.push({
+          type: "file",
+          id: Number(file.fileId),
+          error: error?.message || String(error)
+        });
+      }
+    }
+
+    for (const folderId of folderIds) {
+      try {
+        await window.deleteFolder(modules, { folderId: Number(folderId) });
+        deletedFolders.push(Number(folderId));
+      } catch (error) {
+        errors.push({
+          type: "folder",
+          id: Number(folderId),
+          error: error?.message || String(error)
+        });
+      }
+    }
+
+    return { deletedFiles, deletedFolders, errors };
+  },
   RENAME_FILE: async ({
     modules,
     payload: { fileId, newName, folderId, filetype, filesize }
@@ -3353,6 +3394,172 @@ const handlers = {
       headers: headers ?? {},
       body
     });
+  },
+  GET_RECORD_URL: async ({
+    modules,
+    payload: { type, id, isEditMode = false }
+  }) => {
+    const { url } = modules;
+    const relativeUrl = url.resolveRecord({
+      recordType: type,
+      recordId: id,
+      isEditMode
+    });
+    const domain = url.resolveDomain({ hostType: url.HostType.APPLICATION });
+    return new URL(relativeUrl, `https://${domain}`).href;
+  },
+  GET_RECORD_FIELD_DATA: async ({
+    modules,
+    payload: { type, id, fieldId, sublistId, line }
+  }) => {
+    const rec = modules.record.load({ type, id });
+    const isSublistField =
+      typeof sublistId === "string" && Number.isInteger(Number(line));
+
+    if (isSublistField) {
+      const options = {
+        sublistId,
+        fieldId,
+        line: Number(line)
+      };
+      let value = null;
+      let text = null;
+      try {
+        value = rec.getSublistValue(options);
+      } catch {}
+      try {
+        text = rec.getSublistText(options);
+      } catch {}
+      return { value, text };
+    }
+
+    let value = null;
+    let text = null;
+    try {
+      value = rec.getValue({ fieldId });
+    } catch {}
+    try {
+      text = rec.getText({ fieldId });
+    } catch {}
+    return { value, text };
+  },
+  SEARCH_RECORDS: async ({
+    modules,
+    payload: { recordType, searchText = "", pageIndex = 0, pageSize = 25 }
+  }) => {
+    const { search } = modules;
+    const normalizedType = String(recordType ?? "").trim().toLowerCase();
+    const enumKey = normalizedType
+      .replace(/([a-z])([A-Z])/g, "$1_$2")
+      .replace(/[^a-z0-9]+/g, "_")
+      .toUpperCase();
+    const searchType = search.Type?.[enumKey] ?? normalizedType;
+    const cleanText = String(searchText ?? "").trim();
+    const numericSearch = /^\d+$/.test(cleanText);
+
+    const entityTypes = new Set([
+      "lead",
+      "prospect",
+      "customer",
+      "contact",
+      "vendor",
+      "partner",
+      "employee"
+    ]);
+    const transactionTypes = new Set([
+      "salesorder",
+      "invoice",
+      "purchaseorder",
+      "vendorbill",
+      "estimate",
+      "creditmemo",
+      "journalentry",
+      "itemfulfillment",
+      "cashsale"
+    ]);
+
+    let columns = [
+      search.createColumn({ name: "internalid", sort: search.Sort.DESC })
+    ];
+    let filters = [];
+
+    if (entityTypes.has(normalizedType)) {
+      columns = [
+        search.createColumn({ name: "internalid", sort: search.Sort.DESC }),
+        search.createColumn({ name: "entityid" }),
+        search.createColumn({ name: "companyname" }),
+        search.createColumn({ name: "email" })
+      ];
+      if (cleanText) {
+        filters = numericSearch
+          ? [["internalid", search.Operator.ANYOF, cleanText]]
+          : [
+              ["entityid", search.Operator.CONTAINS, cleanText],
+              "OR",
+              ["companyname", search.Operator.CONTAINS, cleanText],
+              "OR",
+              ["email", search.Operator.CONTAINS, cleanText]
+            ];
+      }
+    } else if (transactionTypes.has(normalizedType)) {
+      columns = [
+        search.createColumn({ name: "internalid", sort: search.Sort.DESC }),
+        search.createColumn({ name: "tranid" }),
+        search.createColumn({ name: "entity" }),
+        search.createColumn({ name: "trandate" })
+      ];
+      if (cleanText) {
+        filters = numericSearch
+          ? [["internalid", search.Operator.ANYOF, cleanText]]
+          : [["tranid", search.Operator.CONTAINS, cleanText]];
+      }
+    } else if (cleanText) {
+      filters = numericSearch
+        ? [["internalid", search.Operator.ANYOF, cleanText]]
+        : [["name", search.Operator.CONTAINS, cleanText]];
+      columns.push(search.createColumn({ name: "name" }));
+    }
+
+    const recordSearch = search.create({
+      type: searchType,
+      filters,
+      columns
+    });
+    const safePageSize = Math.max(5, Math.min(1000, Number(pageSize) || 25));
+    const paged = recordSearch.runPaged({ pageSize: safePageSize });
+    const safePageIndex = Math.max(
+      0,
+      Math.min(Number(pageIndex) || 0, Math.max(0, paged.pageRanges.length - 1))
+    );
+    const page = paged.count > 0 ? paged.fetch({ index: safePageIndex }) : null;
+    const rows = (page?.data ?? []).map((result) => {
+      const values = {};
+      for (const column of columns) {
+        const name = column.name;
+        try {
+          values[name] = result.getValue(column);
+        } catch {}
+        try {
+          const text = result.getText(column);
+          if (text !== null && text !== undefined && text !== "") {
+            values[`${name}text`] = text;
+          }
+        } catch {}
+      }
+      return {
+        id: String(result.id),
+        recordType: result.recordType,
+        ...values
+      };
+    });
+
+    return {
+      results: rows,
+      totalCount: paged.count,
+      pageIndex: safePageIndex,
+      pageSize: safePageSize,
+      source: "N/search"
+    };
   },
   LOAD_RECORD: async ({ modules, payload: { type, id } }) => {
     console.log("Load Record (body only) action received", { type, id });

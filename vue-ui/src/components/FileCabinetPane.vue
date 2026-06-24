@@ -3164,8 +3164,11 @@ const executeDelete = async () => {
     breadcrumbs.value.length > 0
       ? breadcrumbs.value[breadcrumbs.value.length - 1]!.name
       : "Root";
-  let deletedCount = 0;
   const errors: string[] = [];
+  const preparedItems: CabinetItem[] = [];
+  const filesToDelete: { fileId: number; folderId: number }[] = [];
+  const folderIdsToDelete: number[] = [];
+
   try {
     for (const item of items) {
       try {
@@ -3182,12 +3185,12 @@ const executeDelete = async () => {
             fileType: null,
             fileSize: null
           });
-          await deleteNetsuiteRecursive(item.id);
-          await callApi(
-            RequestRoutes.DELETE_FOLDER,
-            { folderId: item.id },
-            ApiRequestType.NORMAL
+          await collectNetsuiteRecursiveDelete(
+            item.id,
+            filesToDelete,
+            folderIdsToDelete
           );
+          folderIdsToDelete.push(item.id);
         } else {
           let content: string | null = null;
           if (isTextFile(item as FileItem)) {
@@ -3214,23 +3217,37 @@ const executeDelete = async () => {
             fileType: (item as FileItem).filetype,
             fileSize: (item as FileItem).filesize
           });
-          await callApi(
-            RequestRoutes.DELETE_FILE,
-            { fileId: item.id, folderId: (item as FileItem).folder },
-            ApiRequestType.NORMAL
-          );
+          filesToDelete.push({
+            fileId: item.id,
+            folderId: (item as FileItem).folder
+          });
         }
-        deletedCount++;
+        preparedItems.push(item);
       } catch (err: any) {
         errors.push(`${item.name}: ${err.message || "failed"}`);
       }
     }
+
+    if (filesToDelete.length > 0 || folderIdsToDelete.length > 0) {
+      const response = await callApi(
+        RequestRoutes.BATCH_DELETE_FILE_CABINET_ITEMS,
+        { files: filesToDelete, folderIds: folderIdsToDelete },
+        ApiRequestType.NORMAL
+      );
+      const result = (response as ApiResponse)?.message || response;
+      for (const error of result?.errors || []) {
+        errors.push(
+          `${error.type} ${error.id}: ${error.error || "failed"}`
+        );
+      }
+    }
+
     emit("trash-changed");
-    if (deletedCount > 0)
+    if (preparedItems.length > 0)
       toast.add({
         severity: "success",
         summary: "Deleted",
-        detail: `${deletedCount} item${deletedCount !== 1 ? "s" : ""} moved to trash`,
+        detail: `${preparedItems.length} item${preparedItems.length !== 1 ? "s" : ""} moved to trash`,
         life: 3000
       });
     if (errors.length > 0)
@@ -3256,7 +3273,6 @@ const executeDelete = async () => {
     folderContentWarning.value = null;
   }
 };
-
 const buildFolderSnapshot = async (
   folderId: number
 ): Promise<FolderSnapshot> => {
@@ -3302,29 +3318,27 @@ const buildFolderSnapshot = async (
   return { files, subfolders };
 };
 
-const deleteNetsuiteRecursive = async (folderId: number) => {
+const collectNetsuiteRecursiveDelete = async (
+  folderId: number,
+  files: { fileId: number; folderId: number }[],
+  folderIds: number[]
+) => {
   const fileRows = await runQuery(
     `SELECT id FROM File WHERE folder = ${folderId}`
   );
-  for (const f of fileRows)
-    await callApi(
-      RequestRoutes.DELETE_FILE,
-      { fileId: Number(f.id), folderId },
-      ApiRequestType.NORMAL
-    );
+  for (const file of fileRows) {
+    files.push({ fileId: Number(file.id), folderId });
+  }
+
   const subfolderRows = await runQuery(
     `SELECT id FROM MediaItemFolder WHERE parent = ${folderId}`
   );
-  for (const sf of subfolderRows) {
-    await deleteNetsuiteRecursive(Number(sf.id));
-    await callApi(
-      RequestRoutes.DELETE_FOLDER,
-      { folderId: Number(sf.id) },
-      ApiRequestType.NORMAL
-    );
+  for (const subfolder of subfolderRows) {
+    const subfolderId = Number(subfolder.id);
+    await collectNetsuiteRecursiveDelete(subfolderId, files, folderIds);
+    folderIds.push(subfolderId);
   }
 };
-
 // ── Detail panel resize ────────────────────────────────────────────────────
 
 const startPanelResize = (e: MouseEvent) => {
