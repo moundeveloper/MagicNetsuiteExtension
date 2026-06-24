@@ -1339,6 +1339,79 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_create_list",
+    description:
+      "Create a NetSuite custom list using the native custlist.nl form POST. " +
+      "Destructive: creates metadata in the account. Pass name, scriptId, and values. " +
+      "The scriptId accepts customlist_my_list, my_list, or _my_list and is normalized to NetSuite's metadata suffix format.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Custom list display name." },
+        scriptId: { type: "string", description: "Custom list script ID, e.g. customlist_ai_session_status, ai_session_status, or _ai_session_status." },
+        description: { type: "string" },
+        isOrdered: { type: "boolean", description: "Whether the custom list is ordered. Defaults to true." },
+        isHierarchical: { type: "boolean", description: "Whether the custom list is hierarchical. Defaults to false." },
+        values: {
+          type: "array",
+          items: {
+            anyOf: [
+              { type: "string" },
+              {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                  abbreviation: { type: "string" },
+                  isInactive: { type: "boolean" },
+                  scriptId: { type: "string" }
+                },
+                required: ["value"]
+              }
+            ]
+          },
+          description: "Custom list values. Strings are accepted, or objects like { value: 'IN_PROGRESS', abbreviation: 'I' }."
+        },
+        listFields: { type: "object", description: "Additional raw form fieldId-to-value pairs to include in the custlist.nl POST." }
+      },
+      required: ["name", "scriptId", "values"]
+    }
+  },
+  {
+    name: "netsuite_update_list",
+    description:
+      "Update a NetSuite custom list using the native custlist.nl edit form POST. " +
+      "Destructive: modifies metadata in the account. Use valuesToAdd to append missing values, valuesToUpdate to rename/change existing values, or replaceAllValues to replace the whole value set. " +
+      "The tool fetches the existing edit form first and preserves NetSuite row tokens/translation metadata where possible.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        listId: { type: "string", description: "Internal ID of the custom list to edit." },
+        name: { type: "string", description: "Optional new custom list display name." },
+        scriptId: { type: "string", description: "Optional custom list script ID, e.g. customlist_ai_session_status or _ai_session_status." },
+        description: { type: "string" },
+        isOrdered: { type: "boolean", description: "Whether the custom list is ordered." },
+        isHierarchical: { type: "boolean", description: "Whether the custom list is hierarchical." },
+        valuesToAdd: {
+          type: "array",
+          items: { type: "object", properties: { value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" }, scriptId: { type: "string" } }, required: ["value"] },
+          description: "Values to add if missing, e.g. [{ value: 'FAILED', abbreviation: 'F' }]. Existing matching values are skipped."
+        },
+        valuesToUpdate: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" }, internalId: { type: "string" }, currentValue: { type: "string" }, value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" } }, required: ["value"] },
+          description: "Existing values to update. Match by id/internalId when known, otherwise by currentValue; value is the new display value."
+        },
+        replaceAllValues: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" }, internalId: { type: "string" }, value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" } }, required: ["value"] },
+          description: "Complete desired value set. Existing rows are preserved by id/internalId/currentValue/value where possible; omitted rows are removed from the submitted list."
+        },
+        listFields: { type: "object", description: "Additional raw form fieldId-to-value pairs to include in the custlist.nl POST." }
+      },
+      required: ["listId"]
+    }
+  },
+  {
     name: "netsuite_create_record",
     description:
       "Create a NetSuite standard or custom record using SuiteScript record.create, Record.setValue, and Record.save. " +
@@ -1433,6 +1506,7 @@ const MCP_TOOL_DEFINITIONS = [
       "Find or create a NetSuite custom record type metadata record using customrecordtype. " +
       "If an existing custom record type matches the normalized scriptId or recordname, returns that internal ID instead of creating a duplicate. " +
       "Set body fields with recordFields or convenience keys. The name key maps to recordname. " +
+      "The Include Name Field checkbox is off by default; set includeNameField true to enable it. " +
       "The scriptId key accepts either 'customrecord_my_type' or 'my_type' and is normalized so NetSuite saves CUSTOMRECORD_MY_TYPE. " +
       "Create fields afterward with netsuite_create_custom_record_field to avoid orphaned record types if a field save fails.",
     inputSchema: {
@@ -1449,6 +1523,10 @@ const MCP_TOOL_DEFINITIONS = [
         description: {
           type: "string",
           description: "Convenience value for the description field."
+        },
+        includeNameField: {
+          type: "boolean",
+          description: "Whether to check NetSuite's Include Name Field option. Defaults to false."
         },
         recordFields: {
           type: "object",
@@ -1520,6 +1598,55 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_update_custom_record_field",
+    description:
+      "Edit an existing NetSuite custom record field using the native custreccustfield.nl edit form POST. " +
+      "The tool loads the existing edit form first, preserves NetSuite metadata/sublist fields, and overrides only the provided friendly fields and fieldValues.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        customRecordFieldId: {
+          type: "string",
+          description: "Internal ID of the custom record field to edit."
+        },
+        customFieldId: {
+          type: "string",
+          description: "Alias for customRecordFieldId."
+        },
+        fieldId: {
+          type: "string",
+          description: "Alias for customRecordFieldId."
+        },
+        customRecordTypeId: {
+          type: "string",
+          description: "Internal ID of the parent custom record type; posted as rectype."
+        },
+        customRecordTypeInternalId: {
+          type: "string",
+          description: "Alias for customRecordTypeId."
+        },
+        label: { type: "string" },
+        fieldType: {
+          type: "string",
+          examples: CUSTOM_RECORD_FIELD_TYPE_HINTS,
+          description: "Optional new fieldtype value. If omitted, the existing type is preserved."
+        },
+        selectRecordType: {
+          type: "string",
+          description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
+        },
+        description: { type: "string" },
+        storeValue: { type: "boolean" },
+        showInList: { type: "boolean" },
+        fieldValues: {
+          type: "object",
+          description: "Additional raw form fieldId-to-value pairs to include in the custreccustfield.nl POST. rectype and id are always set by the tool."
+        }
+      },
+      required: ["customRecordFieldId", "customRecordTypeId"]
+    }
+  },
+  {
     name: "netsuite_create_script_field",
     description:
       "Find or create a NetSuite script parameter field using the native scriptcustfield.nl form POST. " +
@@ -1557,6 +1684,50 @@ const MCP_TOOL_DEFINITIONS = [
           description: "Additional raw form fieldId-to-value pairs to include in the scriptcustfield.nl POST. scripttype is always set by the tool."
         }
       }
+    }
+  },
+  {
+    name: "netsuite_update_script_field",
+    description:
+      "Edit an existing NetSuite script parameter field using the native scriptcustfield.nl edit form POST. " +
+      "The tool loads the existing edit form first, preserves NetSuite metadata/sublist fields, and overrides only the provided friendly fields and fieldValues.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptFieldId: {
+          type: "string",
+          description: "Internal ID of the script parameter field to edit."
+        },
+        fieldId: {
+          type: "string",
+          description: "Alias for scriptFieldId."
+        },
+        scriptInternalId: {
+          type: "string",
+          description: "Internal ID of the parent script record; posted as scripttype."
+        },
+        scriptRecordId: {
+          type: "string",
+          description: "Alias for scriptInternalId."
+        },
+        label: { type: "string" },
+        fieldType: {
+          type: "string",
+          examples: CUSTOM_RECORD_FIELD_TYPE_HINTS,
+          description: "Optional new fieldtype value. If omitted, the existing type is preserved."
+        },
+        selectRecordType: {
+          type: "string",
+          description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
+        },
+        description: { type: "string" },
+        storeValue: { type: "boolean" },
+        fieldValues: {
+          type: "object",
+          description: "Additional raw form fieldId-to-value pairs to include in the scriptcustfield.nl POST. scripttype and id are always set by the tool."
+        }
+      },
+      required: ["scriptFieldId", "scriptInternalId"]
     }
   },
   {
@@ -1989,8 +2160,9 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_create_script_deployment",
     description:
-      "Create and deploy a NetSuite Suitelet script deployment for an existing script record. Destructive: creates a script deployment. " +
-      "Currently supports Suitelet deployments only. Pass the script record internal ID and a deployment script ID such as customdeploy_my_suitelet or my_suitelet.",
+      "Create and deploy a NetSuite script deployment for an existing script record. Destructive: creates a deployment. " +
+      "Supports Suitelet/SCRIPTLET, SCHEDULED, MAPREDUCE, and RESTLET deployments through NetSuite's native scriptrecord.nl form POST. " +
+      "All internal roles are selected for audience-capable deployment types.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2001,6 +2173,11 @@ const MCP_TOOL_DEFINITIONS = [
         deploymentScriptId: {
           type: "string",
           description: "Deployment script ID, e.g. customdeploy_my_suitelet or my_suitelet. Normalized to NetSuite's metadata suffix format."
+        },
+        scriptType: {
+          type: "string",
+          enum: ["SCRIPTLET", "SUITELET", "SCHEDULED", "MAPREDUCE", "RESTLET"],
+          description: "Script deployment type. Defaults to SCRIPTLET. Use SCHEDULED for Scheduled Scripts, MAPREDUCE for Map/Reduce, RESTLET for RESTlets."
         },
         name: {
           type: "string",
@@ -2020,8 +2197,16 @@ const MCP_TOOL_DEFINITIONS = [
         },
         runAsRole: {
           type: "number",
-          description: "Optional internal role ID for the deployment's Run As Role. Defaults to the current user's role."
-        }
+          description: "Optional internal role ID for Suitelet Run As Role. Defaults to the current user's role."
+        },
+        priority: { type: "number", description: "Scheduled/MapReduce priority value. Defaults to 2 (Standard)." },
+        concurrencyLimit: { type: "number", description: "Map/Reduce concurrency limit. Defaults to 1." },
+        queueAllStagesAtOnce: { type: "boolean", description: "Map/Reduce queue all stages at once. Defaults to true." },
+        yieldAfterMins: { type: "number", description: "Map/Reduce yield-after minutes. Defaults to 60." },
+        bufferSize: { type: "number", description: "Map/Reduce buffer size. Defaults to 1." },
+        startDate: { type: "string", description: "Scheduled/MapReduce start date as NetSuite expects, e.g. 23-June-2026. Defaults to today." },
+        startTime: { type: "string", description: "Scheduled/MapReduce start time HHmm, e.g. 1800. Defaults to current time." },
+        deploymentFields: { type: "object", description: "Additional raw scriptrecord.nl fieldId-to-value overrides." }
       },
       required: ["scriptInternalId", "deploymentScriptId"]
     }
@@ -2302,6 +2487,10 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteLists(args);
         } else if (name === "netsuite_list_items") {
           result = await handleNetsuiteListItems(args);
+        } else if (name === "netsuite_create_list") {
+          result = await handleNetsuiteCreateList(args);
+        } else if (name === "netsuite_update_list") {
+          result = await handleNetsuiteUpdateList(args);
         } else if (name === "netsuite_create_record") {
           result = await handleNetsuiteCreateRecord(args);
         } else if (name === "netsuite_update_record_fields") {
@@ -2322,8 +2511,12 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteInspectCustomRecordField(args);
         } else if (name === "netsuite_create_custom_record_field") {
           result = await handleNetsuiteCreateCustomRecordField(args);
+        } else if (name === "netsuite_update_custom_record_field") {
+          result = await handleNetsuiteUpdateCustomRecordField(args);
         } else if (name === "netsuite_create_script_field") {
           result = await handleNetsuiteCreateScriptField(args);
+        } else if (name === "netsuite_update_script_field") {
+          result = await handleNetsuiteUpdateScriptField(args);
         } else if (name === "netsuite_read_file") {
           result = await handleNetsuiteReadFile(args);
         } else if (name === "netsuite_find_file") {
@@ -2895,6 +3088,48 @@ async function handleNetsuiteListItems(args) {
   };
 }
 
+async function handleNetsuiteCreateList(args) {
+  const name = String(args?.name ?? "").trim();
+  const scriptId = String(args?.scriptId ?? args?.scriptid ?? "").trim();
+  const values = args?.values ?? args?.listValues;
+  if (!name) throw new Error("name is required.");
+  if (!scriptId) throw new Error("scriptId is required.");
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("values must contain at least one custom list value.");
+  }
+
+  const result = await callNetsuiteRoute(
+    "CREATE_CUSTOM_LIST",
+    { ...args, name, scriptId, values },
+    "Failed to create custom list."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateList(args) {
+  const listId = String(args?.listId ?? args?.id ?? "").trim();
+  if (!listId) throw new Error("listId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_CUSTOM_LIST",
+    { ...args, listId },
+    "Failed to update custom list."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
 async function handleNetsuiteCreateRecord(args) {
   const recordType = String(args?.recordType ?? args?.type ?? "").trim();
   if (!recordType) throw new Error("recordType is required.");
@@ -3035,11 +3270,56 @@ async function handleNetsuiteCreateCustomRecordField(args) {
   };
 }
 
+async function handleNetsuiteUpdateCustomRecordField(args) {
+  const customRecordFieldId = String(args?.customRecordFieldId ?? args?.customFieldId ?? args?.fieldId ?? args?.id ?? "").trim();
+  const customRecordTypeId = String(args?.customRecordTypeId ?? args?.customRecordTypeInternalId ?? args?.recordTypeId ?? "").trim();
+  if (!customRecordFieldId) throw new Error("customRecordFieldId is required.");
+  if (!customRecordTypeId) throw new Error("customRecordTypeId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_CUSTOM_RECORD_FIELD",
+    {
+      ...args,
+      customRecordFieldId,
+      customRecordTypeId
+    },
+    "Failed to update custom record field."
+  );
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
 async function handleNetsuiteCreateScriptField(args) {
   const result = await callNetsuiteRoute(
     "CREATE_SCRIPT_FIELD",
     args,
     "Failed to create script field."
+  );
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateScriptField(args) {
+  const scriptFieldId = String(args?.scriptFieldId ?? args?.fieldId ?? args?.id ?? "").trim();
+  const scriptInternalId = String(args?.scriptInternalId ?? args?.scriptRecordId ?? args?.parentScriptId ?? "").trim();
+  if (!scriptFieldId) throw new Error("scriptFieldId is required.");
+  if (!scriptInternalId) throw new Error("scriptInternalId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_SCRIPT_FIELD",
+    {
+      ...args,
+      scriptFieldId,
+      scriptInternalId
+    },
+    "Failed to update script field."
   );
   return {
     content: [{
@@ -3494,9 +3774,19 @@ async function handleNetsuiteCreateScriptDeployment(args) {
       deploymentScriptId,
       name: args?.name ?? title,
       title: title || undefined,
-      status: args?.status ?? "RELEASED",
+      scriptType: args?.scriptType ?? "SCRIPTLET",
+      status: args?.status,
       logLevel: args?.logLevel ?? "DEBUG",
-      runAsRole: args?.runAsRole
+      runAsRole: args?.runAsRole,
+      priority: args?.priority,
+      concurrencyLimit: args?.concurrencyLimit,
+      queueAllStagesAtOnce: args?.queueAllStagesAtOnce,
+      yieldAfterMins: args?.yieldAfterMins,
+      bufferSize: args?.bufferSize,
+      startDate: args?.startDate,
+      startTime: args?.startTime,
+      recurringEvent: args?.recurringEvent,
+      deploymentFields: args?.deploymentFields
     },
     "Failed to create script deployment."
   );
@@ -5731,3 +6021,5 @@ function sendMessageToTab(tabId, message) {
     });
   });
 }
+
+

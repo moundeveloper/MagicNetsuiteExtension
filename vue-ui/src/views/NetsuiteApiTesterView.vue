@@ -536,6 +536,28 @@ const ENDPOINTS: EndpointDef[] = [
       f("apiVersion", "string", false, "API version, default 2.1")
     ]
   },
+  {
+    route: RequestRoutes.CREATE_SCRIPT_DEPLOYMENT,
+    description: "Creates a script deployment for Suitelet, Scheduled, Map/Reduce, or RESTlet script records.",
+    destructive: true,
+    fields: [
+      f("scriptInternalId", "number", true, "Internal ID of the existing script record"),
+      f("deploymentScriptId", "string", true, "Deployment script ID, e.g. customdeploy_my_script or _my_script"),
+      f("scriptType", "string", false, "SCRIPTLET, SCHEDULED, MAPREDUCE, or RESTLET. Defaults to SCRIPTLET."),
+      f("title", "string", false, "Deployment title"),
+      f("name", "string", false, "Fallback deployment title"),
+      f("status", "string", false, "Deployment status. Defaults by type: RELEASED for Suitelet, TESTING for RESTlet, NOTSCHEDULED for Scheduled/MapReduce."),
+      f("logLevel", "string", false, "DEBUG, AUDIT, ERROR, or EMERGENCY. Defaults to DEBUG."),
+      f("priority", "number", false, "Scheduled/MapReduce priority value. Defaults to 2 (Standard)."),
+      f("concurrencyLimit", "number", false, "Map/Reduce concurrency limit. Defaults to 1."),
+      f("yieldAfterMins", "number", false, "Map/Reduce yield-after minutes. Defaults to 60."),
+      f("bufferSize", "number", false, "Map/Reduce buffer size. Defaults to 1."),
+      f("queueAllStagesAtOnce", "boolean", false, "Map/Reduce queue all stages at once. Defaults to true."),
+      f("startDate", "string", false, "Scheduled/MapReduce start date, e.g. 23-June-2026. Defaults to today."),
+      f("startTime", "string", false, "Scheduled/MapReduce start time HHmm, e.g. 1800. Defaults to current time."),
+      f("deploymentFields", "json", false, "Additional raw scriptrecord.nl fieldId/value overrides", true, "{}")
+    ]
+  },
 
   // ── Records ──
   {
@@ -578,6 +600,37 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.CREATE_CUSTOM_LIST,
+    description: "Creates a NetSuite custom list using the native custlist.nl form POST.",
+    destructive: true,
+    fields: [
+      f("name", "string", true, "Custom list display name"),
+      f("scriptId", "string", true, "Script ID, e.g. customlist_ai_session_status or _ai_session_status"),
+      f("description", "string", false, "Optional description"),
+      f("isOrdered", "boolean", false, "Whether the custom list is ordered. Defaults to true."),
+      f("isHierarchical", "boolean", false, "Whether the custom list is hierarchical. Defaults to false."),
+      f("values", "json", true, "Custom list values", true, '[{"value":"IN_PROGRESS","abbreviation":"I"},{"value":"COMPLETED","abbreviation":"C"}]'),
+      f("listFields", "json", false, "Additional custlist.nl fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
+    route: RequestRoutes.UPDATE_CUSTOM_LIST,
+    description: "Updates a NetSuite custom list. Use valuesToAdd, valuesToUpdate, or replaceAllValues depending on intent; existing NetSuite row metadata is preserved where possible.",
+    destructive: true,
+    fields: [
+      f("listId", "string", true, "Internal ID of the custom list to edit"),
+      f("name", "string", false, "Optional new custom list display name"),
+      f("scriptId", "string", false, "Optional script ID, e.g. customlist_ai_session_status or _ai_session_status"),
+      f("description", "string", false, "Optional description"),
+      f("isOrdered", "boolean", false, "Whether the custom list is ordered"),
+      f("isHierarchical", "boolean", false, "Whether the custom list is hierarchical"),
+      f("valuesToAdd", "json", false, "Append these values if missing", true, '[{"value":"FAILED","abbreviation":"F"}]'),
+      f("valuesToUpdate", "json", false, "Change existing values. Match by id/internalId, or by currentValue when renaming.", true, '[{"currentValue":"FAILED","value":"NOT_INITIATED","abbreviation":"N"}]'),
+      f("replaceAllValues", "json", false, "Complete desired value set. Omitted values are removed from the submitted list.", true, '[{"value":"IN_PROGRESS","abbreviation":"I"},{"value":"COMPLETED","abbreviation":"C"}]'),
+      f("listFields", "json", false, "Additional custlist.nl fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
     route: RequestRoutes.CREATE_RECORD,
     description: "Creates a NetSuite standard or custom record using record.create, setValue, and save.",
     destructive: true,
@@ -610,6 +663,7 @@ const ENDPOINTS: EndpointDef[] = [
       f("name", "string", true, "Record type name, mapped to recordname"),
       f("scriptId", "string", true, "Script ID, e.g. customrecord_my_type or my_type"),
       f("description", "string", false, "Optional description"),
+      f("includeNameField", "boolean", false, "Check NetSuite's Include Name Field option. Defaults to false."),
       f("recordFields", "json", false, "Additional customrecordtype fieldId/value pairs", true, "{}")
     ]
   },
@@ -653,6 +707,22 @@ const ENDPOINTS: EndpointDef[] = [
     ]
   },
   {
+    route: RequestRoutes.UPDATE_CUSTOM_RECORD_FIELD,
+    description: "Edits an existing custom record field using the native custreccustfield.nl edit form POST.",
+    destructive: true,
+    fields: [
+      f("customRecordFieldId", "number", true, "Internal ID of the custom record field to edit"),
+      f("customRecordTypeId", "number", true, "Internal ID of the parent custom record type"),
+      f("label", "string", false, "New field label"),
+      f("fieldType", "string", false, "Optional field type value, e.g. SELECT or FREEFORMTEXT"),
+      f("selectRecordType", "string", false, "For SELECT/MULTISELECT: internal list/record type value"),
+      f("description", "string", false, "Optional description"),
+      f("storeValue", "boolean", false, "Whether to store values"),
+      f("showInList", "boolean", false, "Whether to show this field in list views"),
+      f("fieldValues", "json", false, "Additional custreccustfield.nl fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
     route: RequestRoutes.CREATE_SCRIPT_FIELD,
     description: "Finds or creates a script parameter field using the native scriptcustfield.nl form POST.",
     destructive: true,
@@ -662,6 +732,21 @@ const ENDPOINTS: EndpointDef[] = [
       f("scriptId", "string", true, "Script ID, e.g. custscript_my_param or my_param"),
       f("fieldType", "string", true, "Value from GET_CUSTOM_RECORD_FIELD_TYPES, e.g. FREEFORMTEXT"),
       f("selectRecordType", "string", false, "For SELECT/MULTISELECT: internal ID, customrecord_my_type, or -my_type"),
+      f("description", "string", false, "Optional description"),
+      f("storeValue", "boolean", false, "Whether to store values"),
+      f("fieldValues", "json", false, "Additional scriptcustfield.nl fieldId/value pairs", true, "{}")
+    ]
+  },
+  {
+    route: RequestRoutes.UPDATE_SCRIPT_FIELD,
+    description: "Edits an existing script parameter field using the native scriptcustfield.nl edit form POST.",
+    destructive: true,
+    fields: [
+      f("scriptFieldId", "number", true, "Internal ID of the script parameter field to edit"),
+      f("scriptInternalId", "number", true, "Internal ID of the parent script record"),
+      f("label", "string", false, "New field label"),
+      f("fieldType", "string", false, "Optional field type value, e.g. INTEGER or FREEFORMTEXT"),
+      f("selectRecordType", "string", false, "For SELECT/MULTISELECT: internal list/record type value"),
       f("description", "string", false, "Optional description"),
       f("storeValue", "boolean", false, "Whether to store values"),
       f("fieldValues", "json", false, "Additional scriptcustfield.nl fieldId/value pairs", true, "{}")
@@ -979,7 +1064,9 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.SUITELET_URL,
       RequestRoutes.OPEN_DEPLOYMENT_SUITELET,
       RequestRoutes.CREATE_SCRIPT,
-      RequestRoutes.CREATE_SCRIPT_FIELD
+      RequestRoutes.CREATE_SCRIPT_DEPLOYMENT,
+      RequestRoutes.CREATE_SCRIPT_FIELD,
+      RequestRoutes.UPDATE_SCRIPT_FIELD
     ]
   },
   {
@@ -991,6 +1078,8 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.GET_RECORD_FIELD_TYPES,
       RequestRoutes.GET_CUSTOM_LISTS,
       RequestRoutes.GET_CUSTOM_LIST_ITEMS,
+      RequestRoutes.CREATE_CUSTOM_LIST,
+      RequestRoutes.UPDATE_CUSTOM_LIST,
       RequestRoutes.CREATE_RECORD,
       RequestRoutes.UPDATE_RECORD_FIELDS,
       RequestRoutes.CREATE_CUSTOM_RECORD_TYPE,
@@ -998,6 +1087,7 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
       RequestRoutes.GET_CUSTOM_RECORD_SELECT_RECORD_TYPES,
       RequestRoutes.INSPECT_CUSTOM_RECORD_FIELD,
       RequestRoutes.CREATE_CUSTOM_RECORD_FIELD,
+      RequestRoutes.UPDATE_CUSTOM_RECORD_FIELD,
       RequestRoutes.LOAD_RECORD_SUBLISTS,
       RequestRoutes.GET_ALL_RECORD_TYPES,
       RequestRoutes.CUSTOM_RECORDS,
@@ -2166,3 +2256,5 @@ onBeforeUnmount(() => {
 
 .response-editor { flex: 1; min-height: 0; }
 </style>
+
+

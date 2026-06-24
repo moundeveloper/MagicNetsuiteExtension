@@ -33,10 +33,16 @@ echo Writing host.config.json (shouldLog=false, nativeBridgePipeName=magic_netsu
 powershell -NoProfile -ExecutionPolicy Bypass -Command "@{shouldLog=$false; nativeBridgePipeName='magic_netsuite_mcp_bridge'} | ConvertTo-Json | Set-Content '%~dp0mcp_server\host.config.json' -Encoding UTF8"
 if %ERRORLEVEL% NEQ 0 goto :error
 
-cd /d "%~dp0mcp_server"
-call build.bat
-if %ERRORLEVEL% NEQ 0 goto :error
-cd /d "%~dp0"
+if not exist "%~dp0mcp_server\build.bat" (
+    echo ERROR: MCP Server build script not found at "%~dp0mcp_server\build.bat"
+    goto :error
+)
+
+pushd "%~dp0mcp_server"
+call "%~dp0mcp_server\build.bat"
+set "MCP_BUILD_ERROR=%ERRORLEVEL%"
+popd
+if %MCP_BUILD_ERROR% NEQ 0 goto :error
 
 echo.
 echo ====================================
