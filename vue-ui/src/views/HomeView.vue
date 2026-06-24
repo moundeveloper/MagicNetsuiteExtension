@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getRouteMap,
   RouteStatus,
@@ -11,9 +11,22 @@ import { Privilege } from "../types/privilege";
 import { callApi, ApiRequestType } from "../utils/api";
 import { useSettings } from "../states/settingsState";
 import MPanel from "../components/universal/panels/MPanel.vue";
+import { getNetsuiteEnvironment } from "../utils/api";
+import {
+  clearRecentViews,
+  getRecentViews,
+  RECENT_VIEWS_CHANGED_EVENT,
+  removeRecentView,
+  type RecentView
+} from "../utils/recentViews";
 const { settings, isSettingsLoaded } = useSettings();
 
 const searchFeatures = ref("");
+const recentViews = ref<RecentView[]>([]);
+const recentEnvironment = ref("unknown");
+const recentAccount = computed(
+  () => recentEnvironment.value.split(".")[0]?.toUpperCase() || "UNKNOWN"
+);
 const props = defineProps<{
   vhOffset: number;
 }>();
@@ -67,6 +80,55 @@ const togglePreferred = (route: string) => {
   }
 };
 
+const loadRecentViews = async () => {
+  recentEnvironment.value = await getNetsuiteEnvironment();
+  recentViews.value = await getRecentViews(recentEnvironment.value);
+};
+
+const removeRecent = async (view: RecentView) => {
+  await removeRecentView(view);
+  await loadRecentViews();
+};
+
+const clearRecent = async () => {
+  await clearRecentViews(recentEnvironment.value);
+  await loadRecentViews();
+};
+
+const formatRecentTime = (timestamp: number) => {
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsed / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "yesterday" : `${days}d ago`;
+};
+
+const handleRecentViewsChanged = () => void loadRecentViews();
+const handleEnvironmentChanged = () => void loadRecentViews();
+
+onMounted(() => {
+  void loadRecentViews();
+  window.addEventListener(RECENT_VIEWS_CHANGED_EVENT, handleRecentViewsChanged);
+  window.addEventListener(
+    "magic-netsuite-environment-changed",
+    handleEnvironmentChanged
+  );
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener(
+    RECENT_VIEWS_CHANGED_EVENT,
+    handleRecentViewsChanged
+  );
+  window.removeEventListener(
+    "magic-netsuite-environment-changed",
+    handleEnvironmentChanged
+  );
+});
+
 const testPing = async () => {
   console.log("Testing ping with 30 second delay...");
   const result = await callApi(
@@ -92,6 +154,53 @@ const testPing = async () => {
     data-ignore
     class="flex flex-col gap-4 overflow-y-auto p-2"
   >
+    <MPanel
+      v-if="recentViews.length > 0 && !searchFeatures"
+      expanded
+      toggleable
+      outline
+      header="Workspace Trail"
+    >
+      <div class="recent-panel-heading">
+        <span>
+          Continue in
+          <strong>{{ recentAccount }}</strong>
+        </span>
+        <button class="recent-clear" title="Clear workspace trail" @click="clearRecent">
+          Clear
+        </button>
+      </div>
+      <div class="recent-grid">
+        <router-link
+          v-for="view in recentViews"
+          :key="`${view.environment}:${view.path}`"
+          :to="view.path"
+          custom
+          v-slot="{ navigate }"
+        >
+          <button class="recent-item" @click="navigate">
+            <span class="recent-icon">
+              <i :class="view.icon"></i>
+            </span>
+            <span class="recent-copy">
+              <strong>{{ view.label }}</strong>
+              <small>{{ view.section }} · {{ formatRecentTime(view.visitedAt) }}</small>
+            </span>
+            <span
+              class="recent-remove"
+              role="button"
+              tabindex="0"
+              title="Remove from trail"
+              @click.stop="removeRecent(view)"
+              @keydown.enter.stop="removeRecent(view)"
+            >
+              <i class="pi pi-times"></i>
+            </span>
+          </button>
+        </router-link>
+      </div>
+    </MPanel>
+
     <MPanel
       v-if="preferredFeatures.length > 0"
       expanded
@@ -203,6 +312,118 @@ const testPing = async () => {
 </template>
 
 <style scoped>
+.recent-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.5rem 0.75rem;
+  color: var(--p-slate-500);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+}
+
+.recent-panel-heading strong {
+  color: var(--p-indigo-600);
+}
+
+.recent-clear {
+  border: 0;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+  font: inherit;
+}
+
+.recent-clear:hover {
+  color: var(--p-red-500);
+}
+
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.65rem;
+  padding: 0.15rem 0.5rem 0.5rem;
+}
+
+.recent-item {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.7rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--p-slate-50) 90%, transparent);
+  color: var(--p-slate-700);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.recent-item:hover {
+  transform: translateY(-1px);
+  border-color: var(--p-indigo-300);
+  background: color-mix(in srgb, var(--p-indigo-50) 70%, var(--p-slate-50));
+}
+
+.recent-icon {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 0.45rem;
+  background: var(--p-indigo-100);
+  color: var(--p-indigo-600);
+}
+
+.recent-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.recent-copy strong,
+.recent-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-copy strong {
+  font-size: 0.8rem;
+}
+
+.recent-copy small {
+  color: var(--p-slate-400);
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+}
+
+.recent-remove {
+  flex: 0 0 auto;
+  padding: 0.3rem;
+  border-radius: 0.35rem;
+  color: var(--p-slate-300);
+  opacity: 0;
+}
+
+.recent-item:hover .recent-remove,
+.recent-remove:focus {
+  opacity: 1;
+}
+
+.recent-remove:hover {
+  color: var(--p-red-500);
+  background: var(--p-red-50);
+}
+
 .test-buttons {
   display: flex;
   gap: 1rem;

@@ -103,8 +103,16 @@ const environmentType = computed(() => {
 
 const refreshEnvironment = async () => {
   environmentLoading.value = true;
+  const previousEnvironment = environmentHost.value;
   environmentHost.value = await getNetsuiteEnvironment();
   environmentLoading.value = false;
+  if (previousEnvironment !== environmentHost.value) {
+    window.dispatchEvent(
+      new CustomEvent("magic-netsuite-environment-changed", {
+        detail: environmentHost.value
+      })
+    );
+  }
 };
 
 const loadDashboardAccounts = async () => {
