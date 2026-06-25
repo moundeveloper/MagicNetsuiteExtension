@@ -13,6 +13,7 @@ import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 import MPanel from "./universal/panels/MPanel.vue";
 import MSelect from "./universal/input/MSelect.vue";
 import MLoader from "./universal/patterns/MLoader.vue";
+import CommandPalette from "./CommandPalette.vue";
 import { getNotebookEntries, type NotebookEntry } from "../utils/notebookDb";
 import { getNetsuiteEnvironment } from "../utils/api";
 
@@ -36,6 +37,7 @@ const dashboardAccounts = ref<
 const selectedDashboardTabId = ref<number | null>(null);
 const dashboardAccountSwitching = ref(false);
 const dashboardAccountsRefreshing = ref(false);
+const commandPalette = ref<InstanceType<typeof CommandPalette> | null>(null);
 
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
@@ -422,12 +424,26 @@ onBeforeUnmount(() => {
       </Button>
     </div>
 
+    <Button
+      class="command-palette-trigger"
+      severity="secondary"
+      text
+      title="Go anywhere (Ctrl+K)"
+      aria-label="Go anywhere"
+      @click="commandPalette?.open()"
+    >
+      <i class="pi pi-search"></i>
+      <kbd>Ctrl K</kbd>
+    </Button>
+
     <RouterLink to="/settings" class="settings-link">
       <Button class="settings-btn">
         <i class="pi pi-cog text-white"></i>
       </Button>
     </RouterLink>
   </header>
+
+  <CommandPalette ref="commandPalette" />
 
   <Teleport to="body">
     <div
@@ -668,6 +684,28 @@ onBeforeUnmount(() => {
 
 .settings-link {
   flex-shrink: 0;
+}
+
+.command-palette-trigger {
+  display: inline-flex;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--p-slate-300);
+  color: var(--p-slate-600);
+  padding: 0 10px;
+}
+
+.command-palette-trigger kbd {
+  border: 1px solid var(--p-slate-300);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: white;
+  color: var(--p-slate-500);
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
 }
 
 .dashboard-account-selector {

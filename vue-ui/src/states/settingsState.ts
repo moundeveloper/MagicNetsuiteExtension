@@ -8,6 +8,8 @@ export interface ShortcutsSettings {
   extensionToggle: string; // fixed, display only
   drawerOpen: string; // configurable, default "ctrl+k"
   modulesSearch: string; // configurable, default "ctrl+m"
+  newDashboardTab: string; // configurable, default "ctrl+alt+n"
+  reopenClosedTab: string; // configurable, default "ctrl+alt+t"
   elementScreenshotShortcut: string; // configurable, default "ctrl+shift+s"
   openOnCustomizationPage: boolean;
   dashboardPreviewEnabled: boolean;
@@ -48,6 +50,8 @@ const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
   modulesSearch: "ctrl+m",
+  newDashboardTab: "ctrl+alt+n",
+  reopenClosedTab: "ctrl+alt+t",
   elementScreenshotShortcut: "ctrl+shift+s",
   openOnCustomizationPage: true,
   dashboardPreviewEnabled: false,
@@ -89,6 +93,10 @@ export function useSettings() {
           : [];
         settings.drawerOpen = stored.drawerOpen || defaultSettings.drawerOpen;
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
+        settings.newDashboardTab =
+          stored.newDashboardTab || defaultSettings.newDashboardTab;
+        settings.reopenClosedTab =
+          stored.reopenClosedTab || defaultSettings.reopenClosedTab;
         settings.elementScreenshotShortcut = stored.elementScreenshotShortcut || defaultSettings.elementScreenshotShortcut;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
         settings.dashboardPreviewEnabled = stored.dashboardPreviewEnabled ?? defaultSettings.dashboardPreviewEnabled;

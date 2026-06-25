@@ -192,7 +192,7 @@
             <button
               v-if="closedPanes.length"
               class="fc-tab-add"
-              title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+              :title="`Reopen closed File Cabinet tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
               @click="reopenClosedPane"
             >
               <i class="pi pi-history" style="font-size:0.75rem"></i>
@@ -252,7 +252,7 @@
                 <button
                   v-if="closedPanes.length"
                   class="fc-tab-add"
-                  title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+                  :title="`Reopen closed File Cabinet tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
                   @click="reopenClosedPane"
                 >
                   <i class="pi pi-history" style="font-size:0.75rem"></i>
@@ -312,7 +312,7 @@
                 <button
                   v-if="closedPanes.length"
                   class="fc-tab-add"
-                  title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+                  :title="`Reopen closed File Cabinet tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
                   @click="reopenClosedPane"
                 >
                   <i class="pi pi-history" style="font-size:0.75rem"></i>
@@ -548,8 +548,14 @@ import {
 } from "../utils/fileCabinetBookmarksDb";
 import { callApi as apiCall } from "../utils/api";
 import { getWorkspaceState, saveWorkspaceState } from "../utils/workspaceState";
+import { useSettings } from "../states/settingsState";
+import {
+  formatKeyboardShortcut,
+  keyboardShortcutMatches
+} from "../utils/keyboardShortcut";
 
 const toast = useToast();
+const { settings } = useSettings();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -770,9 +776,10 @@ const reopenClosedPane = () => {
 
 const handleClosedPaneShortcut = (event: KeyboardEvent) => {
   if (
-    (event.ctrlKey || event.metaKey) &&
-    event.shiftKey &&
-    event.key.toLowerCase() === "t"
+    keyboardShortcutMatches(
+      event,
+      settings.reopenClosedTab || "ctrl+alt+t"
+    )
   ) {
     event.preventDefault();
     event.stopImmediatePropagation();

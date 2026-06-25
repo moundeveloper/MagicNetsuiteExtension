@@ -10,6 +10,11 @@ import FileCodeEditor from "../components/FileCodeEditor.vue";
 import FileCabinetPane from "../components/FileCabinetPane.vue";
 import DiffViewer from "../components/DiffViewer.vue";
 import NotebookContextPanel from "../components/NotebookContextPanel.vue";
+import MContextMenu from "../components/universal/contextMenu/MContextMenu.vue";
+import {
+  useMContextMenu,
+  type ContextMenuItem
+} from "../composables/useMContextMenu";
 import { callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import {
@@ -93,6 +98,7 @@ const props = defineProps<{ vhOffset: number }>();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
+const { showContextMenu } = useMContextMenu();
 
 const scriptId = computed(() => Number(route.params.scriptId));
 const loading = ref(false);
@@ -503,6 +509,41 @@ const saveDeploymentParameters = async () => {
   } finally {
     deploymentParametersSaving.value = false;
   }
+};
+
+const copyDeploymentValue = async (label: string, value: string) => {
+  await navigator.clipboard.writeText(value);
+  toast.add({
+    severity: "success",
+    summary: "Copied",
+    detail: `${label} copied to clipboard`,
+    life: 1800
+  });
+};
+
+const deploymentContextMenu: ContextMenuItem[] = [
+  {
+    label: "Copy deployment script ID",
+    icon: "pi pi-copy",
+    action: (deployment: DeploymentItem) =>
+      void copyDeploymentValue("Deployment script ID", deployment.scriptid)
+  },
+  {
+    label: "Copy deployment internal ID",
+    icon: "pi pi-hashtag",
+    action: (deployment: DeploymentItem) =>
+      void copyDeploymentValue(
+        "Deployment internal ID",
+        String(deployment.primarykey)
+      )
+  }
+];
+
+const openDeploymentContextMenu = (
+  event: MouseEvent,
+  deployment: DeploymentItem
+) => {
+  showContextMenu(event, deployment, deploymentContextMenu);
 };
 
 const formatDateTime = (value: string): string => {
@@ -1440,10 +1481,13 @@ onMounted(loadScript);
                   @click="
                     isSuiteletScript
                       ? selectSuiteletDeployment(deployment)
-                      : openDeployment(deployment.primarykey)
+                      : undefined
+                  "
+                  @contextmenu.prevent="
+                    openDeploymentContextMenu($event, deployment)
                   "
                 >
-                  <span>
+                  <span class="deployment-identity">
                     <strong>{{ deployment.scriptid }}</strong>
                     <small>{{ deployment.recordtype || "All records" }}</small>
                   </span>
@@ -1850,6 +1894,7 @@ onMounted(loadScript);
             </div>
           </section>
         </div>
+        <MContextMenu />
       </div>
     </template>
   </MCard>
@@ -2230,9 +2275,14 @@ onMounted(loadScript);
   border-radius: 7px;
   background: white;
   color: var(--p-slate-700);
-  cursor: pointer;
+  cursor: default;
   padding: 7px 8px;
   text-align: left;
+}
+
+.deployment-row.active,
+.deployment-row:has(.deployment-open-btn:hover) {
+  cursor: pointer;
 }
 
 .deployment-row.active {
@@ -2240,14 +2290,26 @@ onMounted(loadScript);
   background: var(--p-indigo-50);
 }
 
-.deployment-row span:first-child {
+.deployment-identity {
   display: flex;
   min-width: 0;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.deployment-identity strong,
+.deployment-identity small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .deployment-actions {
   display: inline-flex;
+  min-width: max-content;
+  flex-shrink: 0;
   align-items: center;
   gap: 5px;
 }

@@ -640,8 +640,15 @@ button:hover:not(:disabled) {
   gap: 0.4rem;
   min-height: 36px;
   padding: 0 0.85rem;
-  background: var(--p-slate-800);
-  color: white;
+  border-color: var(--p-purple-200);
+  background: var(--p-purple-50);
+  color: var(--p-purple-700);
+}
+
+.primary-action:hover:not(:disabled) {
+  border-color: var(--p-purple-300);
+  background: var(--p-purple-100);
+  color: var(--p-purple-800);
 }
 
 .error-banner {

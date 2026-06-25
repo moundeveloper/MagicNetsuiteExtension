@@ -4,6 +4,11 @@ import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from "vue-rou
 import { routes } from "../router/routesMap";
 import { getNetsuiteEnvironment } from "../utils/api";
 import { getWorkspaceState, saveWorkspaceState } from "../utils/workspaceState";
+import { useSettings } from "../states/settingsState";
+import {
+  formatKeyboardShortcut,
+  keyboardShortcutMatches
+} from "../utils/keyboardShortcut";
 
 type TabGroup = "left" | "right";
 
@@ -12,11 +17,18 @@ type ViewTab = {
   fullPath: string;
   label: string;
   component: unknown;
+  routeHydrated: boolean;
 };
 
 type ReorderTarget = {
   id: string;
   side: "before" | "after";
+} | null;
+
+type TabContextMenu = {
+  tabId: string;
+  x: number;
+  y: number;
 } | null;
 
 type SavedWorkspace = {
@@ -29,12 +41,20 @@ type SavedWorkspace = {
   splitRatio: number;
 };
 
+type WorkspaceSnapshot = {
+  id: string;
+  name: string;
+  createdAt: number;
+  workspace: SavedWorkspace;
+};
+
 defineProps<{
   vhOffset: number;
 }>();
 
 const route = useRoute();
 const router = useRouter();
+const { settings } = useSettings();
 const workspaceRef = ref<HTMLElement | null>(null);
 const tabs = ref<ViewTab[]>([]);
 const activeTabId = ref("");
@@ -51,6 +71,12 @@ const dropZone = ref<"single" | "group-left" | "group-right" | null>(null);
 const isResizingSplit = ref(false);
 const workspaceGeneration = ref(0);
 const workspaceSwitching = ref(false);
+const tabContextMenu = ref<TabContextMenu>(null);
+const tabReloadVersions = ref<Record<string, number>>({});
+const workspaceLibraryOpen = ref(false);
+const workspaceSnapshotName = ref("");
+const workspaceSnapshots = ref<WorkspaceSnapshot[]>([]);
+const workspaceLibraryLoading = ref(false);
 let tabActivationNavigation = false;
 let nextTabId = 1;
 let workspaceEnvironment = "unknown";
@@ -105,7 +131,8 @@ const tabFromRoute = (currentRoute: RouteLocationNormalizedLoaded): ViewTab | nu
     id: createTabId(),
     fullPath: currentRoute.fullPath,
     label: routeLabel(currentRoute),
-    component
+    component,
+    routeHydrated: true
   };
 };
 
@@ -118,7 +145,8 @@ const tabFromPath = (path: string): ViewTab | null => {
     id: createTabId(),
     fullPath: resolved.fullPath,
     label: routeLabel(resolved),
-    component
+    component,
+    routeHydrated: false
   };
 };
 
@@ -202,6 +230,10 @@ const activateTab = async (tabId: string) => {
       tabActivationNavigation = false;
     }
   }
+  if (!tab.routeHydrated) {
+    tab.routeHydrated = true;
+    await nextTick();
+  }
 };
 
 const closeTab = async (tabId: string) => {
@@ -250,13 +282,98 @@ const reopenClosedTab = async () => {
 
 const handleWorkspaceShortcut = (event: KeyboardEvent) => {
   if (
-    (event.ctrlKey || event.metaKey) &&
-    event.shiftKey &&
-    event.key.toLowerCase() === "t"
+    keyboardShortcutMatches(
+      event,
+      settings.newDashboardTab || "ctrl+alt+n"
+    )
+  ) {
+    event.preventDefault();
+    void newHomeTab();
+    return;
+  }
+
+  if (
+    keyboardShortcutMatches(
+      event,
+      settings.reopenClosedTab || "ctrl+alt+t"
+    )
   ) {
     event.preventDefault();
     void reopenClosedTab();
   }
+};
+
+const showTabContextMenu = (event: MouseEvent, tabId: string) => {
+  tabContextMenu.value = {
+    tabId,
+    x: Math.min(event.clientX, window.innerWidth - 220),
+    y: Math.min(event.clientY, window.innerHeight - 240)
+  };
+};
+
+const hideTabContextMenu = () => {
+  tabContextMenu.value = null;
+};
+
+const reloadTab = (tabId: string) => {
+  tabReloadVersions.value = {
+    ...tabReloadVersions.value,
+    [tabId]: (tabReloadVersions.value[tabId] ?? 0) + 1
+  };
+  hideTabContextMenu();
+};
+
+const duplicateTab = async (tabId: string) => {
+  const source = findTab(tabId);
+  if (!source) return;
+  const duplicate = tabFromPath(source.fullPath);
+  if (!duplicate) return;
+
+  const sourceIndex = tabs.value.findIndex((tab) => tab.id === tabId);
+  tabs.value.splice(sourceIndex + 1, 0, duplicate);
+  const sourceGroup = leftTabIds.value.includes(tabId)
+    ? "left"
+    : rightTabIds.value.includes(tabId)
+      ? "right"
+      : null;
+  if (sourceGroup) addTabToGroup(duplicate.id, sourceGroup);
+  hideTabContextMenu();
+  await activateTab(duplicate.id);
+};
+
+const copyTabLink = async (tabId: string) => {
+  const tab = findTab(tabId);
+  if (!tab) return;
+  await navigator.clipboard.writeText(tab.fullPath);
+  hideTabContextMenu();
+};
+
+const closeOtherTabs = async (tabId: string) => {
+  const target = findTab(tabId);
+  if (!target) return;
+  tabs.value = [target];
+  activeTabId.value = tabId;
+  leftTabIds.value = [];
+  rightTabIds.value = [];
+  leftActiveId.value = "";
+  rightActiveId.value = "";
+  hideTabContextMenu();
+  await activateTab(tabId);
+};
+
+const closeTabsToRight = async (tabId: string) => {
+  const index = tabs.value.findIndex((tab) => tab.id === tabId);
+  if (index < 0 || index === tabs.value.length - 1) {
+    hideTabContextMenu();
+    return;
+  }
+  const removedIds = new Set(tabs.value.slice(index + 1).map((tab) => tab.id));
+  tabs.value = tabs.value.slice(0, index + 1);
+  leftTabIds.value = leftTabIds.value.filter((id) => !removedIds.has(id));
+  rightTabIds.value = rightTabIds.value.filter((id) => !removedIds.has(id));
+  ensureGroupState();
+  hideTabContextMenu();
+  if (removedIds.has(activeTabId.value)) await activateTab(tabId);
 };
 
 const serializeWorkspace = (): SavedWorkspace => ({
@@ -268,6 +385,137 @@ const serializeWorkspace = (): SavedWorkspace => ({
   rightActiveId: rightActiveId.value,
   splitRatio: splitRatio.value
 });
+
+const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<SavedWorkspace>;
+  if (!Array.isArray(candidate.tabs)) return null;
+
+  const normalizedTabs = candidate.tabs
+    .filter(
+      (tab): tab is { id: string; fullPath: string } =>
+        Boolean(
+          tab &&
+            typeof tab === "object" &&
+            typeof tab.id === "string" &&
+            typeof tab.fullPath === "string"
+        )
+    )
+    .map((tab) => ({ id: tab.id, fullPath: tab.fullPath }));
+  if (!normalizedTabs.length) return null;
+
+  return {
+    tabs: normalizedTabs,
+    activeTabId:
+      typeof candidate.activeTabId === "string"
+        ? candidate.activeTabId
+        : normalizedTabs[0]!.id,
+    leftTabIds: Array.isArray(candidate.leftTabIds)
+      ? candidate.leftTabIds.filter(
+          (id): id is string => typeof id === "string"
+        )
+      : [],
+    rightTabIds: Array.isArray(candidate.rightTabIds)
+      ? candidate.rightTabIds.filter(
+          (id): id is string => typeof id === "string"
+        )
+      : [],
+    leftActiveId:
+      typeof candidate.leftActiveId === "string"
+        ? candidate.leftActiveId
+        : "",
+    rightActiveId:
+      typeof candidate.rightActiveId === "string"
+        ? candidate.rightActiveId
+        : "",
+    splitRatio: Number.isFinite(Number(candidate.splitRatio))
+      ? Number(candidate.splitRatio)
+      : 50
+  };
+};
+
+const normalizeWorkspaceSnapshot = (
+  value: unknown
+): WorkspaceSnapshot | null => {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<WorkspaceSnapshot>;
+  const workspace = normalizeSavedWorkspace(candidate.workspace);
+  if (
+    !workspace ||
+    typeof candidate.id !== "string" ||
+    typeof candidate.name !== "string"
+  ) {
+    return null;
+  }
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    createdAt: Number.isFinite(Number(candidate.createdAt))
+      ? Number(candidate.createdAt)
+      : Date.now(),
+    workspace
+  };
+};
+
+const applySavedWorkspace = async (value: unknown) => {
+  const saved = normalizeSavedWorkspace(value);
+  if (!saved) return false;
+  const requestedActiveId = saved.tabs.some(
+    (tab) => tab.id === saved.activeTabId
+  )
+    ? saved.activeTabId
+    : saved.tabs[0]!.id;
+  const restoredTabs = saved.tabs
+    .map((item) => {
+      const tab = tabFromPath(item.fullPath);
+      return tab
+        ? {
+            ...tab,
+            id: item.id,
+            routeHydrated: item.id === requestedActiveId
+          }
+        : null;
+    })
+    .filter((tab): tab is ViewTab => Boolean(tab));
+  if (!restoredTabs.length) return false;
+
+  const active =
+    restoredTabs.find((tab) => tab.id === requestedActiveId) ??
+    restoredTabs[0]!;
+  if (!workspaceDisposed && route.fullPath !== active.fullPath) {
+    tabActivationNavigation = true;
+    try {
+      await router.replace(active.fullPath);
+      await nextTick();
+    } finally {
+      tabActivationNavigation = false;
+    }
+  }
+
+  tabs.value = restoredTabs;
+  nextTabId = Math.max(
+    nextTabId,
+    ...restoredTabs.map((tab) => {
+      const match = tab.id.match(/view-tab-(\d+)/);
+      return match ? Number(match[1]) + 1 : 1;
+    })
+  );
+  const validIds = new Set(restoredTabs.map((tab) => tab.id));
+  leftTabIds.value = saved.leftTabIds.filter((id) => validIds.has(id));
+  rightTabIds.value = saved.rightTabIds.filter((id) => validIds.has(id));
+  activeTabId.value = active.id;
+  leftActiveId.value = validIds.has(saved.leftActiveId)
+    ? saved.leftActiveId
+    : leftTabIds.value[0] ?? "";
+  rightActiveId.value = validIds.has(saved.rightActiveId)
+    ? saved.rightActiveId
+    : rightTabIds.value[0] ?? "";
+  splitRatio.value = Math.max(25, Math.min(75, saved.splitRatio || 50));
+  ensureGroupState();
+
+  workspaceGeneration.value += 1;
+  return true;
+};
 
 const scheduleWorkspaceSave = () => {
   if (!workspaceReady) return;
@@ -287,50 +535,115 @@ const restoreWorkspace = async (environment?: string) => {
     (await getNetsuiteEnvironment().catch(() => "unknown"));
   if (workspaceDisposed) return false;
 
-  const saved = await getWorkspaceState<SavedWorkspace>(
+  const saved = await getWorkspaceState<unknown>(
     "dashboard",
     workspaceEnvironment
   );
   if (workspaceDisposed) return false;
-  if (!saved?.tabs?.length) return false;
-
-  const restoredTabs = saved.tabs
-    .map((item) => {
-      const tab = tabFromPath(item.fullPath);
-      return tab ? { ...tab, id: item.id } : null;
-    })
-    .filter((tab): tab is ViewTab => Boolean(tab));
-  if (!restoredTabs.length) return false;
-
-  tabs.value = restoredTabs;
-  nextTabId = Math.max(
-    nextTabId,
-    ...restoredTabs.map((tab) => {
-      const match = tab.id.match(/view-tab-(\d+)/);
-      return match ? Number(match[1]) + 1 : 1;
-    })
-  );
-  const validIds = new Set(restoredTabs.map((tab) => tab.id));
-  leftTabIds.value = saved.leftTabIds.filter((id) => validIds.has(id));
-  rightTabIds.value = saved.rightTabIds.filter((id) => validIds.has(id));
-  activeTabId.value = validIds.has(saved.activeTabId)
-    ? saved.activeTabId
-    : restoredTabs[0]!.id;
-  leftActiveId.value = validIds.has(saved.leftActiveId)
-    ? saved.leftActiveId
-    : leftTabIds.value[0] ?? "";
-  rightActiveId.value = validIds.has(saved.rightActiveId)
-    ? saved.rightActiveId
-    : rightTabIds.value[0] ?? "";
-  splitRatio.value = Math.max(25, Math.min(75, saved.splitRatio || 50));
-  ensureGroupState();
-
-  const active = findTab(activeTabId.value);
-  if (!workspaceDisposed && active && route.fullPath !== active.fullPath) {
-    await router.replace(active.fullPath);
-  }
-  return true;
+  return applySavedWorkspace(saved);
 };
+
+const loadWorkspaceSnapshots = async () => {
+  workspaceLibraryLoading.value = true;
+  try {
+    const stored = await getWorkspaceState<unknown>(
+      "dashboard-snapshots",
+      workspaceEnvironment
+    );
+    workspaceSnapshots.value = Array.isArray(stored)
+      ? stored
+          .map(normalizeWorkspaceSnapshot)
+          .filter(
+            (snapshot): snapshot is WorkspaceSnapshot => Boolean(snapshot)
+          )
+      : [];
+  } finally {
+    workspaceLibraryLoading.value = false;
+  }
+};
+
+const openWorkspaceLibrary = async () => {
+  workspaceLibraryOpen.value = true;
+  workspaceSnapshotName.value = "";
+  await loadWorkspaceSnapshots();
+  await nextTick();
+  document
+    .querySelector<HTMLInputElement>(".workspace-library-create input")
+    ?.focus();
+};
+
+const saveWorkspaceSnapshot = async () => {
+  const name = workspaceSnapshotName.value.trim();
+  if (!name || tabs.value.length === 0) return;
+
+  const existing = workspaceSnapshots.value.find(
+    (snapshot) => snapshot.name.toLowerCase() === name.toLowerCase()
+  );
+  const snapshot: WorkspaceSnapshot = {
+    id: existing?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name,
+    createdAt: Date.now(),
+    workspace: serializeWorkspace()
+  };
+  const nextSnapshots = [
+    snapshot,
+    ...workspaceSnapshots.value.filter((item) => item.id !== snapshot.id)
+  ];
+  await saveWorkspaceState(
+    "dashboard-snapshots",
+    workspaceEnvironment,
+    nextSnapshots
+  );
+  workspaceSnapshots.value = nextSnapshots;
+  workspaceSnapshotName.value = "";
+};
+
+const restoreWorkspaceSnapshot = async (snapshot: WorkspaceSnapshot) => {
+  workspaceLibraryOpen.value = false;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+
+  const previousWorkspace = serializeWorkspace();
+  workspaceReady = false;
+  workspaceSwitching.value = true;
+  try {
+    const restored = await applySavedWorkspace(snapshot.workspace);
+    if (!restored) {
+      await applySavedWorkspace(previousWorkspace);
+      return;
+    }
+    await saveWorkspaceState(
+      "dashboard",
+      workspaceEnvironment,
+      serializeWorkspace()
+    );
+  } finally {
+    workspaceReady = true;
+    workspaceSwitching.value = false;
+  }
+};
+
+const deleteWorkspaceSnapshot = async (snapshotId: string) => {
+  const nextSnapshots = workspaceSnapshots.value.filter(
+    (snapshot) => snapshot.id !== snapshotId
+  );
+  await saveWorkspaceState(
+    "dashboard-snapshots",
+    workspaceEnvironment,
+    nextSnapshots
+  );
+  workspaceSnapshots.value = nextSnapshots;
+};
+
+const formatSnapshotDate = (timestamp: number) =>
+  new Date(timestamp).toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 
 const handleWorkspaceEnvironmentChanged = async (event: Event) => {
   const nextEnvironment =
@@ -566,7 +879,9 @@ const stopSplitResize = () => {
 
 watch(
   () => route.fullPath,
-  () => ensureRouteTab(route)
+  () => {
+    if (workspaceReady) ensureRouteTab(route);
+  }
 );
 
 watch(tabs, ensureGroupState, { deep: true });
@@ -585,6 +900,7 @@ onMounted(async () => {
   if (!restored) ensureRouteTab(route);
   workspaceReady = true;
   window.addEventListener("keydown", handleWorkspaceShortcut);
+  window.addEventListener("mousedown", hideTabContextMenu);
   window.addEventListener(
     "magic-netsuite-environment-changed",
     handleWorkspaceEnvironmentChanged
@@ -597,6 +913,7 @@ onBeforeUnmount(() => {
   stopSplitResize();
   if (saveTimer) clearTimeout(saveTimer);
   window.removeEventListener("keydown", handleWorkspaceShortcut);
+  window.removeEventListener("mousedown", hideTabContextMenu);
   window.removeEventListener(
     "magic-netsuite-environment-changed",
     handleWorkspaceEnvironmentChanged
@@ -632,6 +949,7 @@ onBeforeUnmount(() => {
           @dragover="onTabItemDragOver($event, tab.id)"
           @dragleave="reorderTarget = null"
           @drop.prevent.stop="onTabItemDrop($event, tab.id)"
+          @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
         >
           <span class="view-tab-label">{{ tab.label }}</span>
           <button
@@ -643,16 +961,27 @@ onBeforeUnmount(() => {
             <i class="pi pi-times"></i>
           </button>
         </div>
-        <button class="view-tab-add" title="New tab" @click="newHomeTab()">
+        <button
+          class="view-tab-add"
+          :title="`New tab (${formatKeyboardShortcut(settings.newDashboardTab)})`"
+          @click="newHomeTab()"
+        >
           <i class="pi pi-plus"></i>
         </button>
         <button
           v-if="closedTabs.length"
           class="view-tab-add"
-          title="Reopen closed tab (Ctrl+Shift+T)"
+          :title="`Reopen closed tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
           @click="reopenClosedTab"
         >
           <i class="pi pi-history"></i>
+        </button>
+        <button
+          class="view-tab-add"
+          title="Workspace library"
+          @click="openWorkspaceLibrary"
+        >
+          <i class="pi pi-briefcase"></i>
         </button>
       </div>
     </div>
@@ -685,19 +1014,24 @@ onBeforeUnmount(() => {
               @dragover="onTabItemDragOver($event, tab.id)"
               @dragleave="reorderTarget = null"
               @drop.prevent.stop="onTabItemDrop($event, tab.id)"
+              @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
               <span class="view-tab-label">{{ tab.label }}</span>
               <button class="view-tab-close" title="Close tab" @click.stop="closeTab(tab.id)">
                 <i class="pi pi-times"></i>
               </button>
             </div>
-            <button class="view-tab-add" title="New tab" @click="newHomeTab('left')">
+            <button
+              class="view-tab-add"
+              :title="`New tab (${formatKeyboardShortcut(settings.newDashboardTab)})`"
+              @click="newHomeTab('left')"
+            >
               <i class="pi pi-plus"></i>
             </button>
             <button
               v-if="closedTabs.length"
               class="view-tab-add"
-              title="Reopen closed tab (Ctrl+Shift+T)"
+              :title="`Reopen closed tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
               @click="reopenClosedTab"
             >
               <i class="pi pi-history"></i>
@@ -735,22 +1069,34 @@ onBeforeUnmount(() => {
               @dragover="onTabItemDragOver($event, tab.id)"
               @dragleave="reorderTarget = null"
               @drop.prevent.stop="onTabItemDrop($event, tab.id)"
+              @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
               <span class="view-tab-label">{{ tab.label }}</span>
               <button class="view-tab-close" title="Close tab" @click.stop="closeTab(tab.id)">
                 <i class="pi pi-times"></i>
               </button>
             </div>
-            <button class="view-tab-add" title="New tab" @click="newHomeTab('right')">
+            <button
+              class="view-tab-add"
+              :title="`New tab (${formatKeyboardShortcut(settings.newDashboardTab)})`"
+              @click="newHomeTab('right')"
+            >
               <i class="pi pi-plus"></i>
             </button>
             <button
               v-if="closedTabs.length"
               class="view-tab-add"
-              title="Reopen closed tab (Ctrl+Shift+T)"
+              :title="`Reopen closed tab (${formatKeyboardShortcut(settings.reopenClosedTab)})`"
               @click="reopenClosedTab"
             >
               <i class="pi pi-history"></i>
+            </button>
+            <button
+              class="view-tab-add"
+              title="Workspace library"
+              @click="openWorkspaceLibrary"
+            >
+              <i class="pi pi-briefcase"></i>
             </button>
           </div>
         </div>
@@ -792,14 +1138,146 @@ onBeforeUnmount(() => {
 
       <main
         v-for="tab in tabs"
-        :key="`${workspaceGeneration}:${tab.id}`"
+        :key="`${workspaceGeneration}:${tab.id}:${tabReloadVersions[tab.id] ?? 0}`"
         class="view-tab-pane"
         :style="getTabStyle(tab.id)"
         @mousedown.capture="activeTabId = tab.id"
       >
-        <component :is="tab.component" :vhOffset="vhOffset" />
+        <component
+          v-if="tab.routeHydrated"
+          :is="tab.component"
+          :vhOffset="vhOffset"
+        />
       </main>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="tabContextMenu"
+        class="view-tab-context-menu"
+        :style="{ left: `${tabContextMenu.x}px`, top: `${tabContextMenu.y}px` }"
+        @mousedown.stop
+        @contextmenu.prevent
+      >
+        <button type="button" @click="reloadTab(tabContextMenu.tabId)">
+          <i class="pi pi-refresh"></i>
+          Reload tab
+        </button>
+        <button type="button" @click="duplicateTab(tabContextMenu.tabId)">
+          <i class="pi pi-clone"></i>
+          Duplicate
+        </button>
+        <button type="button" @click="copyTabLink(tabContextMenu.tabId)">
+          <i class="pi pi-link"></i>
+          Copy link
+        </button>
+        <div class="view-tab-context-menu__separator"></div>
+        <button type="button" @click="closeOtherTabs(tabContextMenu.tabId)">
+          <i class="pi pi-times-circle"></i>
+          Close others
+        </button>
+        <button type="button" @click="closeTabsToRight(tabContextMenu.tabId)">
+          <i class="pi pi-angle-double-right"></i>
+          Close tabs to the right
+        </button>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="workspaceLibraryOpen"
+        class="workspace-library-backdrop"
+        @mousedown.self="workspaceLibraryOpen = false"
+      >
+        <section class="workspace-library">
+          <header>
+            <div>
+              <strong>Workspace Library</strong>
+              <span>Saved for {{ workspaceEnvironment.split(".")[0]?.toUpperCase() }}</span>
+            </div>
+            <button
+              type="button"
+              title="Close"
+              @click="workspaceLibraryOpen = false"
+            >
+              <i class="pi pi-times"></i>
+            </button>
+          </header>
+
+          <form
+            class="workspace-library-create"
+            @submit.prevent="saveWorkspaceSnapshot"
+          >
+            <input
+              v-model="workspaceSnapshotName"
+              placeholder="Name this workspace…"
+              maxlength="80"
+            />
+            <button
+              type="submit"
+              :disabled="!workspaceSnapshotName.trim() || tabs.length === 0"
+            >
+              <i class="pi pi-save"></i>
+              Save current layout
+            </button>
+          </form>
+
+          <div class="workspace-library-list">
+            <div v-if="workspaceLibraryLoading" class="workspace-library-empty">
+              <i class="pi pi-spin pi-spinner"></i>
+              Loading workspaces…
+            </div>
+            <article
+              v-for="snapshot in workspaceSnapshots"
+              v-else
+              :key="snapshot.id"
+            >
+              <span class="workspace-library-item-icon">
+                <i class="pi pi-objects-column"></i>
+              </span>
+              <span class="workspace-library-item-copy">
+                <strong>{{ snapshot.name }}</strong>
+                <small>
+                  {{ snapshot.workspace.tabs.length }} tabs
+                  <template
+                    v-if="
+                      snapshot.workspace.leftTabIds.length &&
+                      snapshot.workspace.rightTabIds.length
+                    "
+                  >
+                    · split {{ Math.round(snapshot.workspace.splitRatio) }}/{{ 100 - Math.round(snapshot.workspace.splitRatio) }}
+                  </template>
+                  · {{ formatSnapshotDate(snapshot.createdAt) }}
+                </small>
+              </span>
+              <button
+                type="button"
+                title="Restore workspace"
+                @click="restoreWorkspaceSnapshot(snapshot)"
+              >
+                <i class="pi pi-history"></i>
+              </button>
+              <button
+                type="button"
+                class="workspace-library-delete"
+                title="Delete workspace"
+                @click="deleteWorkspaceSnapshot(snapshot.id)"
+              >
+                <i class="pi pi-trash"></i>
+              </button>
+            </article>
+            <div
+              v-if="!workspaceLibraryLoading && workspaceSnapshots.length === 0"
+              class="workspace-library-empty"
+            >
+              <i class="pi pi-briefcase"></i>
+              <strong>No saved workspaces yet</strong>
+              <span>Arrange your tabs and save the layout above.</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -903,6 +1381,247 @@ onBeforeUnmount(() => {
   color: var(--p-slate-500);
   font-family: var(--font-mono);
   font-size: 0.78rem;
+}
+
+.view-tab-context-menu {
+  position: fixed;
+  z-index: 100000;
+  display: flex;
+  width: 210px;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 8px;
+  background: white;
+  padding: 5px;
+  box-shadow: 0 14px 38px rgba(15, 23, 42, 0.22);
+}
+
+.view-tab-context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--p-slate-700);
+  cursor: pointer;
+  padding: 7px 8px;
+  text-align: left;
+  font-size: 0.75rem;
+}
+
+.view-tab-context-menu button:hover {
+  background: var(--p-slate-100);
+}
+
+.view-tab-context-menu button i {
+  width: 14px;
+  color: var(--p-indigo-500);
+  font-size: 0.72rem;
+}
+
+.view-tab-context-menu__separator {
+  height: 1px;
+  margin: 3px 2px;
+  background: var(--p-slate-200);
+}
+
+.workspace-library-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.46);
+  padding: 18px;
+  backdrop-filter: blur(3px);
+}
+
+.workspace-library {
+  display: flex;
+  width: min(680px, 96vw);
+  max-height: min(720px, 90vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.32);
+}
+
+.workspace-library > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--p-slate-200);
+  padding: 13px 15px;
+}
+
+.workspace-library > header > div,
+.workspace-library-item-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-library > header strong {
+  color: var(--p-slate-800);
+  font-size: 0.9rem;
+}
+
+.workspace-library > header span {
+  color: var(--p-indigo-500);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.workspace-library button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+}
+
+.workspace-library button:hover:not(:disabled) {
+  border-color: var(--p-indigo-300);
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-700);
+}
+
+.workspace-library button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.workspace-library > header button {
+  width: 30px;
+  height: 30px;
+}
+
+.workspace-library-create {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  padding: 11px 13px;
+}
+
+.workspace-library-create input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-800);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.workspace-library-create input:focus {
+  border-color: var(--p-indigo-400);
+  box-shadow: 0 0 0 2px var(--p-indigo-100);
+}
+
+.workspace-library-create button {
+  border-color: var(--p-indigo-200);
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-700);
+  padding: 0 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.workspace-library-list {
+  min-height: 220px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.workspace-library-list article {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 9px;
+}
+
+.workspace-library-list article:hover {
+  background: var(--p-slate-50);
+}
+
+.workspace-library-item-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-indigo-100);
+  border-radius: 8px;
+  background: var(--p-indigo-50);
+  color: var(--p-indigo-600);
+}
+
+.workspace-library-item-copy {
+  flex: 1;
+}
+
+.workspace-library-item-copy strong {
+  overflow: hidden;
+  color: var(--p-slate-700);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-library-item-copy small {
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+}
+
+.workspace-library-list article > button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+}
+
+.workspace-library-delete:hover {
+  border-color: var(--p-red-200) !important;
+  background: var(--p-red-50) !important;
+  color: var(--p-red-600) !important;
+}
+
+.workspace-library-empty {
+  display: flex;
+  min-height: 210px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--p-slate-400);
+  text-align: center;
+  font-size: 0.72rem;
+}
+
+.workspace-library-empty > i {
+  color: var(--p-indigo-400);
+  font-size: 1.3rem;
+}
+
+.workspace-library-empty strong {
+  color: var(--p-slate-600);
+  font-size: 0.8rem;
 }
 
 .view-tab-close,

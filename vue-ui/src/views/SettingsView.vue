@@ -420,6 +420,23 @@ onMounted(async () => {
         <small>(On NetSuite pages)</small>
       </div>
       <div class="shortcut-item">
+        <label for="new-dashboard-tab">New Dashboard Tab:</label>
+        <InputText
+          id="new-dashboard-tab"
+          v-model="settings.newDashboardTab"
+          placeholder="e.g., ctrl+alt+n"
+        />
+      </div>
+      <div class="shortcut-item">
+        <label for="reopen-closed-tab">Reopen Closed Dashboard Tab:</label>
+        <InputText
+          id="reopen-closed-tab"
+          v-model="settings.reopenClosedTab"
+          placeholder="e.g., ctrl+alt+t"
+        />
+        <small>Avoid browser-reserved shortcuts such as Ctrl+Shift+T.</small>
+      </div>
+      <div class="shortcut-item">
         <label for="element-screenshot">Element Screenshot:</label>
         <InputText
           id="element-screenshot"
