@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from "vue-router";
 import { routes } from "../router/routesMap";
+import { getNetsuiteEnvironment } from "../utils/api";
+import { getWorkspaceState, saveWorkspaceState } from "../utils/workspaceState";
 
 type TabGroup = "left" | "right";
 
@@ -16,6 +18,16 @@ type ReorderTarget = {
   id: string;
   side: "before" | "after";
 } | null;
+
+type SavedWorkspace = {
+  tabs: Array<{ id: string; fullPath: string }>;
+  activeTabId: string;
+  leftTabIds: string[];
+  rightTabIds: string[];
+  leftActiveId: string;
+  rightActiveId: string;
+  splitRatio: number;
+};
 
 defineProps<{
   vhOffset: number;
@@ -39,6 +51,11 @@ const dropZone = ref<"single" | "group-left" | "group-right" | null>(null);
 const isResizingSplit = ref(false);
 let tabActivationNavigation = false;
 let nextTabId = 1;
+let workspaceEnvironment = "unknown";
+let workspaceReady = false;
+let workspaceDisposed = false;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+const closedTabs = ref<Array<{ tab: ViewTab; group: TabGroup | null; index: number }>>([]);
 
 const isSplit = computed(() => leftTabIds.value.length > 0 && rightTabIds.value.length > 0);
 const leftTabs = computed(() => leftTabIds.value.map(findTab).filter(Boolean) as ViewTab[]);
@@ -190,6 +207,19 @@ const closeTab = async (tabId: string) => {
 
   const wasActive = activeTabId.value === tabId;
   const index = tabs.value.findIndex((tab) => tab.id === tabId);
+  const closingTab = findTab(tabId);
+  if (closingTab) {
+    closedTabs.value.unshift({
+      tab: { ...closingTab },
+      group: leftTabIds.value.includes(tabId)
+        ? "left"
+        : rightTabIds.value.includes(tabId)
+          ? "right"
+          : null,
+      index
+    });
+    closedTabs.value = closedTabs.value.slice(0, 10);
+  }
   tabs.value = tabs.value.filter((tab) => tab.id !== tabId);
   leftTabIds.value = leftTabIds.value.filter((id) => id !== tabId);
   rightTabIds.value = rightTabIds.value.filter((id) => id !== tabId);
@@ -200,6 +230,133 @@ const closeTab = async (tabId: string) => {
   const nextTab =
     tabs.value[Math.max(0, Math.min(index, tabs.value.length - 1))] ?? tabs.value[0];
   if (nextTab) await activateTab(nextTab.id);
+};
+
+const reopenClosedTab = async () => {
+  const closed = closedTabs.value.shift();
+  if (!closed) return;
+
+  const restored = tabFromPath(closed.tab.fullPath);
+  if (!restored) return;
+  tabs.value.splice(Math.min(closed.index, tabs.value.length), 0, restored);
+
+  if (isSplit.value && closed.group) {
+    addTabToGroup(restored.id, closed.group);
+  }
+  await activateTab(restored.id);
+};
+
+const handleWorkspaceShortcut = (event: KeyboardEvent) => {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    event.key.toLowerCase() === "t"
+  ) {
+    event.preventDefault();
+    void reopenClosedTab();
+  }
+};
+
+const serializeWorkspace = (): SavedWorkspace => ({
+  tabs: tabs.value.map((tab) => ({ id: tab.id, fullPath: tab.fullPath })),
+  activeTabId: activeTabId.value,
+  leftTabIds: [...leftTabIds.value],
+  rightTabIds: [...rightTabIds.value],
+  leftActiveId: leftActiveId.value,
+  rightActiveId: rightActiveId.value,
+  splitRatio: splitRatio.value
+});
+
+const scheduleWorkspaceSave = () => {
+  if (!workspaceReady) return;
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    void saveWorkspaceState(
+      "dashboard",
+      workspaceEnvironment,
+      serializeWorkspace()
+    );
+  }, 250);
+};
+
+const restoreWorkspace = async (environment?: string) => {
+  workspaceEnvironment =
+    environment ??
+    (await getNetsuiteEnvironment().catch(() => "unknown"));
+  if (workspaceDisposed) return false;
+
+  const saved = await getWorkspaceState<SavedWorkspace>(
+    "dashboard",
+    workspaceEnvironment
+  );
+  if (workspaceDisposed) return false;
+  if (!saved?.tabs?.length) return false;
+
+  const restoredTabs = saved.tabs
+    .map((item) => {
+      const tab = tabFromPath(item.fullPath);
+      return tab ? { ...tab, id: item.id } : null;
+    })
+    .filter((tab): tab is ViewTab => Boolean(tab));
+  if (!restoredTabs.length) return false;
+
+  tabs.value = restoredTabs;
+  nextTabId = Math.max(
+    nextTabId,
+    ...restoredTabs.map((tab) => {
+      const match = tab.id.match(/view-tab-(\d+)/);
+      return match ? Number(match[1]) + 1 : 1;
+    })
+  );
+  const validIds = new Set(restoredTabs.map((tab) => tab.id));
+  leftTabIds.value = saved.leftTabIds.filter((id) => validIds.has(id));
+  rightTabIds.value = saved.rightTabIds.filter((id) => validIds.has(id));
+  activeTabId.value = validIds.has(saved.activeTabId)
+    ? saved.activeTabId
+    : restoredTabs[0]!.id;
+  leftActiveId.value = validIds.has(saved.leftActiveId)
+    ? saved.leftActiveId
+    : leftTabIds.value[0] ?? "";
+  rightActiveId.value = validIds.has(saved.rightActiveId)
+    ? saved.rightActiveId
+    : rightTabIds.value[0] ?? "";
+  splitRatio.value = Math.max(25, Math.min(75, saved.splitRatio || 50));
+  ensureGroupState();
+
+  const active = findTab(activeTabId.value);
+  if (!workspaceDisposed && active && route.fullPath !== active.fullPath) {
+    await router.replace(active.fullPath);
+  }
+  return true;
+};
+
+const handleWorkspaceEnvironmentChanged = async (event: Event) => {
+  const nextEnvironment =
+    (event as CustomEvent<string>).detail ||
+    (await getNetsuiteEnvironment().catch(() => "unknown"));
+  if (nextEnvironment === workspaceEnvironment) return;
+
+  if (workspaceReady) {
+    await saveWorkspaceState(
+      "dashboard",
+      workspaceEnvironment,
+      serializeWorkspace()
+    );
+  }
+
+  workspaceReady = false;
+  const restored = await restoreWorkspace(nextEnvironment);
+  if (!restored) {
+    tabs.value = [];
+    activeTabId.value = "";
+    leftTabIds.value = [];
+    rightTabIds.value = [];
+    leftActiveId.value = "";
+    rightActiveId.value = "";
+    await router.replace("/");
+    ensureRouteTab(router.currentRoute.value);
+  }
+  workspaceReady = true;
 };
 
 const newHomeTab = async (group?: TabGroup) => {
@@ -391,14 +548,37 @@ watch(
 );
 
 watch(tabs, ensureGroupState, { deep: true });
+watch(
+  [tabs, activeTabId, leftTabIds, rightTabIds, leftActiveId, rightActiveId, splitRatio],
+  scheduleWorkspaceSave,
+  { deep: true }
+);
 
 onMounted(async () => {
+  workspaceDisposed = false;
   await router.isReady();
-  ensureRouteTab(route);
+  if (workspaceDisposed) return;
+  const restored = await restoreWorkspace();
+  if (workspaceDisposed) return;
+  if (!restored) ensureRouteTab(route);
+  workspaceReady = true;
+  window.addEventListener("keydown", handleWorkspaceShortcut);
+  window.addEventListener(
+    "magic-netsuite-environment-changed",
+    handleWorkspaceEnvironmentChanged
+  );
 });
 
 onBeforeUnmount(() => {
+  workspaceDisposed = true;
+  workspaceReady = false;
   stopSplitResize();
+  if (saveTimer) clearTimeout(saveTimer);
+  window.removeEventListener("keydown", handleWorkspaceShortcut);
+  window.removeEventListener(
+    "magic-netsuite-environment-changed",
+    handleWorkspaceEnvironmentChanged
+  );
 });
 </script>
 
@@ -444,6 +624,14 @@ onBeforeUnmount(() => {
         <button class="view-tab-add" title="New tab" @click="newHomeTab()">
           <i class="pi pi-plus"></i>
         </button>
+        <button
+          v-if="closedTabs.length"
+          class="view-tab-add"
+          title="Reopen closed tab (Ctrl+Shift+T)"
+          @click="reopenClosedTab"
+        >
+          <i class="pi pi-history"></i>
+        </button>
       </div>
     </div>
 
@@ -483,6 +671,14 @@ onBeforeUnmount(() => {
             </div>
             <button class="view-tab-add" title="New tab" @click="newHomeTab('left')">
               <i class="pi pi-plus"></i>
+            </button>
+            <button
+              v-if="closedTabs.length"
+              class="view-tab-add"
+              title="Reopen closed tab (Ctrl+Shift+T)"
+              @click="reopenClosedTab"
+            >
+              <i class="pi pi-history"></i>
             </button>
           </div>
         </div>
@@ -525,6 +721,14 @@ onBeforeUnmount(() => {
             </div>
             <button class="view-tab-add" title="New tab" @click="newHomeTab('right')">
               <i class="pi pi-plus"></i>
+            </button>
+            <button
+              v-if="closedTabs.length"
+              class="view-tab-add"
+              title="Reopen closed tab (Ctrl+Shift+T)"
+              @click="reopenClosedTab"
+            >
+              <i class="pi pi-history"></i>
             </button>
           </div>
         </div>

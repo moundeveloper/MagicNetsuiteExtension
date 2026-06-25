@@ -73,11 +73,6 @@ const app = createApp(App);
 
 app.use(router);
 
-const initialRoute = window.location.hash.slice(1);
-if (initialRoute) {
-  router.push(initialRoute);
-}
-
 app.use(PrimeVue, {
   theme: {
     preset: auraPreset,
@@ -104,6 +99,19 @@ app.use(VueCodemirror, {
   extensions: [basicSetup],
 });
 
-app.mount("#app");
+const bootstrap = async () => {
+  const initialRoute =
+    new URLSearchParams(window.location.search).get("initialRoute") ||
+    window.location.hash.slice(1);
 
-installElementScreenshotPicker();
+  if (initialRoute) {
+    await router.replace(initialRoute);
+  } else {
+    await router.isReady();
+  }
+
+  app.mount("#app");
+  installElementScreenshotPicker();
+};
+
+void bootstrap();

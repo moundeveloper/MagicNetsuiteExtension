@@ -189,6 +189,14 @@
             >
               <i class="pi pi-plus" style="font-size:0.75rem"></i>
             </button>
+            <button
+              v-if="closedPanes.length"
+              class="fc-tab-add"
+              title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+              @click="reopenClosedPane"
+            >
+              <i class="pi pi-history" style="font-size:0.75rem"></i>
+            </button>
           </div>
         </div>
 
@@ -240,6 +248,14 @@
                   @drop.prevent.stop="openItemInNewTab($event, 'left')"
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
+                </button>
+                <button
+                  v-if="closedPanes.length"
+                  class="fc-tab-add"
+                  title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+                  @click="reopenClosedPane"
+                >
+                  <i class="pi pi-history" style="font-size:0.75rem"></i>
                 </button>
               </div>
             </div>
@@ -293,6 +309,14 @@
                 >
                   <i class="pi pi-plus" style="font-size:0.75rem"></i>
                 </button>
+                <button
+                  v-if="closedPanes.length"
+                  class="fc-tab-add"
+                  title="Reopen closed File Cabinet tab (Ctrl+Shift+T)"
+                  @click="reopenClosedPane"
+                >
+                  <i class="pi pi-history" style="font-size:0.75rem"></i>
+                </button>
               </div>
             </div>
           </div>
@@ -332,25 +356,28 @@
             @mousedown="startSplitResize"
           ></div>
           <!-- All pane instances — always in DOM, positioned by getPaneStyle -->
-          <FileCabinetPane
-            v-for="pane in panes"
-            :key="pane.id"
-            :style="getPaneStyle(pane.id)"
-            :ref="(el) => registerPaneRef(pane.id, el)"
-            :bookmarked-ids="bookmarkedIds"
-            :current-environment="currentEnvironment"
-            :initial-folder-id="pane.initialFolderId"
-            :initial-file="pane.initialFile"
-            @mousedown.capture="activePaneId = pane.id"
-            @label-change="(label) => updatePaneLabel(pane.id, label)"
-            @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
-            @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
-            @bookmark-changed="reloadBookmarks"
-            @trash-changed="reloadTrashCount"
-            @expand-folder="expandFolderInTree"
-            @item-moved="onItemMoved"
-            @open-in-newtab="(item) => addPaneForItem(item)"
-          />
+          <template v-if="workspaceRestored">
+            <FileCabinetPane
+              v-for="pane in panes"
+              :key="pane.id"
+              :style="getPaneStyle(pane.id)"
+              :ref="(el) => registerPaneRef(pane.id, el)"
+              :bookmarked-ids="bookmarkedIds"
+              :current-environment="currentEnvironment"
+              :initial-folder-id="pane.initialFolderId"
+              :initial-file="pane.initialFile"
+              @mousedown.capture="activePaneId = pane.id"
+              @label-change="(label) => updatePaneLabel(pane.id, label)"
+              @folder-navigate="(fid) => onPaneFolderNavigate(pane.id, fid)"
+              @folder-info-change="(info) => onPaneFolderInfoChange(pane.id, info)"
+              @file-change="(file) => onPaneFileChange(pane.id, file)"
+              @bookmark-changed="reloadBookmarks"
+              @trash-changed="reloadTrashCount"
+              @expand-folder="expandFolderInTree"
+              @item-moved="onItemMoved"
+              @open-in-newtab="(item) => addPaneForItem(item)"
+            />
+          </template>
         </div>
       </div>
     </template>
@@ -491,7 +518,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, watch, nextTick } from "vue";
+import { ref, computed, onBeforeUnmount, onMounted, watch, nextTick } from "vue";
 import { callApi, ApiRequestType, type ApiResponse, getNetsuiteEnvironment } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
@@ -520,6 +547,7 @@ import {
   type Bookmark
 } from "../utils/fileCabinetBookmarksDb";
 import { callApi as apiCall } from "../utils/api";
+import { getWorkspaceState, saveWorkspaceState } from "../utils/workspaceState";
 
 const toast = useToast();
 
@@ -563,10 +591,26 @@ interface PaneDef {
   } | null;
 }
 
+interface SavedFileCabinetWorkspace {
+  panes: PaneDef[];
+  activePaneId: string;
+  isSplit: boolean;
+  leftGroupIds: string[];
+  rightGroupIds: string[];
+  leftActiveId: string;
+  rightActiveId: string | null;
+  splitRatio: number;
+}
+
 let _paneCounter = 1;
 
 const panes = ref<PaneDef[]>([{ id: "pane-1", label: "File Cabinet" }]);
 const activePaneId = ref("pane-1");
+const workspaceRestored = ref(false);
+const closedPanes = ref<
+  Array<{ pane: PaneDef; group: "left" | "right" | null; index: number }>
+>([]);
+let workspaceSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Split
 const isSplit = ref(false);
@@ -604,6 +648,11 @@ const activeFolderInfo = ref<FolderItem | null>(null);
 const getActivePaneId = () => activePaneId.value;
 
 const onPaneFolderNavigate = (paneId: string, folderId: number | null) => {
+  const pane = panes.value.find((item) => item.id === paneId);
+  if (pane) {
+    pane.initialFolderId = folderId;
+    pane.initialFile = null;
+  }
   if (paneId !== getActivePaneId()) return;
   activeFolderId.value = folderId;
   // Sync tree: expand path if needed
@@ -645,6 +694,15 @@ const addPaneToGroup = (group: "left" | "right") => {
 const closePane = (paneId: string) => {
   if (panes.value.length <= 1) return;
   const idx = panes.value.findIndex((p) => p.id === paneId);
+  const closingPane = panes.value[idx];
+  if (closingPane) {
+    closedPanes.value.unshift({
+      pane: JSON.parse(JSON.stringify(closingPane)),
+      group: null,
+      index: idx
+    });
+    closedPanes.value = closedPanes.value.slice(0, 10);
+  }
   panes.value.splice(idx, 1);
   delete paneRefs[paneId];
   if (activePaneId.value === paneId) {
@@ -653,6 +711,16 @@ const closePane = (paneId: string) => {
 };
 
 const closePaneFromSplit = (paneId: string, group: "left" | "right") => {
+  const paneIndex = panes.value.findIndex((p) => p.id === paneId);
+  const closingPane = panes.value[paneIndex];
+  if (closingPane) {
+    closedPanes.value.unshift({
+      pane: JSON.parse(JSON.stringify(closingPane)),
+      group,
+      index: paneIndex
+    });
+    closedPanes.value = closedPanes.value.slice(0, 10);
+  }
   if (group === "left") {
     leftGroupIds.value = leftGroupIds.value.filter((id) => id !== paneId);
     if (leftGroupIds.value.length === 0) {
@@ -679,6 +747,37 @@ const closePaneFromSplit = (paneId: string, group: "left" | "right") => {
   const idx = panes.value.findIndex((p) => p.id === paneId);
   if (idx >= 0) panes.value.splice(idx, 1);
   delete paneRefs[paneId];
+};
+
+const reopenClosedPane = () => {
+  const closed = closedPanes.value.shift();
+  if (!closed) return;
+
+  _paneCounter++;
+  const id = `pane-${_paneCounter}`;
+  const pane = { ...closed.pane, id };
+  panes.value.splice(Math.min(closed.index, panes.value.length), 0, pane);
+
+  if (isSplit.value && closed.group === "right") {
+    rightGroupIds.value = [...rightGroupIds.value, id];
+    rightActiveId.value = id;
+  } else {
+    leftGroupIds.value = [...leftGroupIds.value, id];
+    leftActiveId.value = id;
+  }
+  activePaneId.value = id;
+};
+
+const handleClosedPaneShortcut = (event: KeyboardEvent) => {
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.shiftKey &&
+    event.key.toLowerCase() === "t"
+  ) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    reopenClosedPane();
+  }
 };
 
 // ── Pane style (absolute positioning for stable-mount layout) ─────────────
@@ -871,6 +970,14 @@ const onTabbarDragLeave = (event: DragEvent) => {
   const related = event.relatedTarget as Node | null;
   const target = event.currentTarget as HTMLElement;
   if (!related || !target.contains(related)) dropZone.value = null;
+};
+
+const onPaneFileChange = (
+  paneId: string,
+  file: PaneDef["initialFile"]
+) => {
+  const pane = panes.value.find((item) => item.id === paneId);
+  if (pane) pane.initialFile = file ? { ...file } : null;
 };
 
 const onSingleTabbarDragOver = (event: DragEvent) => {
@@ -1212,6 +1319,114 @@ const formatFolderSize = (kb: number | null | undefined): string => {
 
 const currentEnvironment = ref("unknown");
 
+const serializeFileCabinetWorkspace = (): SavedFileCabinetWorkspace => ({
+  panes: JSON.parse(JSON.stringify(panes.value)),
+  activePaneId: activePaneId.value,
+  isSplit: isSplit.value,
+  leftGroupIds: [...leftGroupIds.value],
+  rightGroupIds: [...rightGroupIds.value],
+  leftActiveId: leftActiveId.value,
+  rightActiveId: rightActiveId.value,
+  splitRatio: splitRatio.value
+});
+
+const scheduleFileCabinetWorkspaceSave = () => {
+  if (!workspaceRestored.value || !currentEnvironment.value) return;
+  if (workspaceSaveTimer) clearTimeout(workspaceSaveTimer);
+  workspaceSaveTimer = setTimeout(() => {
+    void saveWorkspaceState(
+      "file-cabinet",
+      currentEnvironment.value,
+      serializeFileCabinetWorkspace()
+    );
+  }, 250);
+};
+
+const restoreFileCabinetWorkspace = async () => {
+  const saved = await getWorkspaceState<SavedFileCabinetWorkspace>(
+    "file-cabinet",
+    currentEnvironment.value
+  );
+  if (!saved?.panes?.length) return;
+
+  panes.value = saved.panes;
+  const validIds = new Set(panes.value.map((pane) => pane.id));
+  activePaneId.value = validIds.has(saved.activePaneId)
+    ? saved.activePaneId
+    : panes.value[0]!.id;
+  isSplit.value = saved.isSplit;
+  leftGroupIds.value = saved.leftGroupIds.filter((id) => validIds.has(id));
+  rightGroupIds.value = saved.rightGroupIds.filter((id) => validIds.has(id));
+  leftActiveId.value = validIds.has(saved.leftActiveId)
+    ? saved.leftActiveId
+    : leftGroupIds.value[0] ?? panes.value[0]!.id;
+  rightActiveId.value =
+    saved.rightActiveId && validIds.has(saved.rightActiveId)
+      ? saved.rightActiveId
+      : rightGroupIds.value[0] ?? null;
+  splitRatio.value = Math.max(20, Math.min(80, saved.splitRatio || 50));
+
+  if (!leftGroupIds.value.length || !rightGroupIds.value.length) {
+    isSplit.value = false;
+    leftGroupIds.value = panes.value.map((pane) => pane.id);
+    rightGroupIds.value = [];
+  }
+
+  const highestId = panes.value.reduce((highest, pane) => {
+    const match = pane.id.match(/pane-(\d+)/);
+    return Math.max(highest, match ? Number(match[1]) : 0);
+  }, 1);
+  _paneCounter = Math.max(_paneCounter, highestId);
+};
+
+const handleFileCabinetEnvironmentChanged = async (event: Event) => {
+  const nextEnvironment = (event as CustomEvent<string>).detail;
+  if (!nextEnvironment || nextEnvironment === currentEnvironment.value) return;
+
+  if (workspaceRestored.value) {
+    await saveWorkspaceState(
+      "file-cabinet",
+      currentEnvironment.value,
+      serializeFileCabinetWorkspace()
+    );
+  }
+
+  workspaceRestored.value = false;
+  Object.keys(paneRefs).forEach((key) => delete paneRefs[key]);
+  currentEnvironment.value = nextEnvironment;
+  panes.value = [{ id: "pane-1", label: "File Cabinet" }];
+  activePaneId.value = "pane-1";
+  isSplit.value = false;
+  leftGroupIds.value = ["pane-1"];
+  rightGroupIds.value = [];
+  leftActiveId.value = "pane-1";
+  rightActiveId.value = null;
+  splitRatio.value = 50;
+  _paneCounter = 1;
+  await restoreFileCabinetWorkspace();
+  workspaceRestored.value = true;
+  await Promise.all([
+    reloadBookmarks(),
+    loadSidebarRootFolders(),
+    reloadTrashCount()
+  ]);
+};
+
+watch(
+  [
+    panes,
+    activePaneId,
+    isSplit,
+    leftGroupIds,
+    rightGroupIds,
+    leftActiveId,
+    rightActiveId,
+    splitRatio
+  ],
+  scheduleFileCabinetWorkspaceSave,
+  { deep: true }
+);
+
 // ── Shared: bookmarks ──────────────────────────────────────────────────────
 
 const bookmarks = ref<Bookmark[]>([]);
@@ -1522,12 +1737,28 @@ const restoreFolderSnapshot = async (snapshot: FolderSnapshot, parentFolderId: n
 
 onMounted(async () => {
   currentEnvironment.value = await getNetsuiteEnvironment();
+  await restoreFileCabinetWorkspace();
+  workspaceRestored.value = true;
+  window.addEventListener("keydown", handleClosedPaneShortcut, true);
+  window.addEventListener(
+    "magic-netsuite-environment-changed",
+    handleFileCabinetEnvironmentChanged
+  );
   await autoPurgeTrash(currentEnvironment.value);
   trashCount.value = await getTrashCount(currentEnvironment.value);
   await reloadBookmarks();
   await loadSidebarRootFolders();
   // Eagerly verify bookmarks on first load (non-blocking)
   checkAllBookmarks();
+});
+
+onBeforeUnmount(() => {
+  if (workspaceSaveTimer) clearTimeout(workspaceSaveTimer);
+  window.removeEventListener("keydown", handleClosedPaneShortcut, true);
+  window.removeEventListener(
+    "magic-netsuite-environment-changed",
+    handleFileCabinetEnvironmentChanged
+  );
 });
 </script>
 

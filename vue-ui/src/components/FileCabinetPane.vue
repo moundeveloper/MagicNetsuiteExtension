@@ -1364,6 +1364,7 @@ const emit = defineEmits<{
   (e: "label-change", label: string): void;
   (e: "folder-navigate", folderId: number | null): void;
   (e: "folder-info-change", info: FolderItem | null): void;
+  (e: "file-change", file: FileItem | null): void;
   (e: "expand-folder", folderId: number): void;
   (e: "item-moved", dstFolderId: number): void;
   (e: "open-in-newtab", item: CabinetItem): void;
@@ -1741,6 +1742,7 @@ const buildBreadcrumbs = async (folderId: number | null) => {
 
 const navigateToFolder = async (folderId: number | null) => {
   openedFile.value = null;
+  emit("file-change", null);
   fileContent.value = null;
   fileLoadError.value = null;
   isLoading.value = true;
@@ -1839,6 +1841,7 @@ const openFile = async (file: FileItem) => {
     return;
   }
   openedFile.value = file;
+  emit("file-change", file);
   fileContent.value = null;
   fileIsBinary.value = false;
   fileContentType.value = "";
@@ -1889,6 +1892,7 @@ const openFile = async (file: FileItem) => {
 
 const closeFile = () => {
   openedFile.value = null;
+  emit("file-change", null);
   fileContent.value = null;
   fileLoadError.value = null;
   isEditing.value = false;

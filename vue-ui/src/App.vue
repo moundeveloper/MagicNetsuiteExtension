@@ -46,13 +46,6 @@ onMounted(async () => {
       document.head.appendChild(icon);
     }
 
-    const initialRoute = new URLSearchParams(window.location.search).get(
-      "initialRoute"
-    );
-    if (initialRoute) {
-      await router.replace(initialRoute);
-    }
-
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === "OPEN_VIEW") {
         router.push({ name: message.view });
