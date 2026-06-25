@@ -1,4 +1,5 @@
 import { computed, reactive } from "vue";
+import { setFlightRecorderEnabled } from "../states/settingsState";
 
 const SESSION_KEY = "magic_netsuite_temporary_admin_access";
 const ACCESS_DURATION_MS = 30 * 60 * 1000;
@@ -39,6 +40,7 @@ const scheduleExpiry = () => {
   const remaining = state.expiresAt - Date.now();
   if (remaining <= 0) {
     state.expiresAt = 0;
+    void setFlightRecorderEnabled(false);
     void chrome.storage.session.remove(SESSION_KEY).catch(() => undefined);
     emitAccessChanged();
     return;
@@ -46,6 +48,7 @@ const scheduleExpiry = () => {
   expiryTimer = window.setTimeout(() => {
     state.expiresAt = 0;
     expiryTimer = null;
+    void setFlightRecorderEnabled(false);
     void chrome.storage.session.remove(SESSION_KEY).catch(() => undefined);
     emitAccessChanged();
   }, remaining);
@@ -102,6 +105,7 @@ export const revokeAdminAccess = async () => {
   if (isBuiltInAdmin) return;
   clearExpiryTimer();
   state.expiresAt = 0;
+  await setFlightRecorderEnabled(false);
   try {
     await chrome.storage.session.remove(SESSION_KEY);
   } catch {

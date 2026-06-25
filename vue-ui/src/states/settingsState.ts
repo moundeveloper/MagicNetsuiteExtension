@@ -13,6 +13,7 @@ export interface ShortcutsSettings {
   elementScreenshotShortcut: string; // configurable, default "ctrl+shift+s"
   openOnCustomizationPage: boolean;
   dashboardPreviewEnabled: boolean;
+  flightRecorderEnabled: boolean;
   preferredFeatures: string[]; // array of route names that are preferred
   // AI provider settings
   aiProvider: AiProvider;
@@ -55,6 +56,7 @@ const defaultSettings: ShortcutsSettings = {
   elementScreenshotShortcut: "ctrl+shift+s",
   openOnCustomizationPage: true,
   dashboardPreviewEnabled: false,
+  flightRecorderEnabled: false,
   preferredFeatures: [],
   aiProvider: "openrouter",
   ollamaBaseUrl: "http://localhost:11434",
@@ -100,6 +102,9 @@ export function useSettings() {
         settings.elementScreenshotShortcut = stored.elementScreenshotShortcut || defaultSettings.elementScreenshotShortcut;
         settings.openOnCustomizationPage = stored.openOnCustomizationPage ?? defaultSettings.openOnCustomizationPage;
         settings.dashboardPreviewEnabled = stored.dashboardPreviewEnabled ?? defaultSettings.dashboardPreviewEnabled;
+        settings.flightRecorderEnabled =
+          stored.flightRecorderEnabled ??
+          defaultSettings.flightRecorderEnabled;
         settings.aiProvider = stored.aiProvider === "puter" || !stored.aiProvider
           ? defaultSettings.aiProvider
           : stored.aiProvider;
@@ -159,3 +164,18 @@ export function useSettings() {
     isSettingsLoaded
   };
 }
+
+export const isFlightRecorderEnabled = () =>
+  settings.flightRecorderEnabled === true;
+
+export const setFlightRecorderEnabled = async (enabled: boolean) => {
+  settings.flightRecorderEnabled = enabled;
+  if (!isLoaded) return;
+  try {
+    await chrome.storage.sync.set({
+      magic_netsuite_settings: JSON.parse(JSON.stringify(settings))
+    });
+  } catch {
+    // Extension context may have been invalidated.
+  }
+};

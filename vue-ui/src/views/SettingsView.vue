@@ -62,6 +62,11 @@ const unlockAdminMode = async () => {
   adminUnlockRequested.value = false;
 };
 
+const handleFlightRecorderToggle = (enabled: boolean) => {
+  if (!hasAdminAccess.value) return;
+  settings.flightRecorderEnabled = enabled;
+};
+
 const providerOptions = [
   { label: "OpenRouter (free models + paid)", value: "openrouter" },
   { label: "GitHub Copilot", value: "copilot" },
@@ -506,6 +511,20 @@ onBeforeUnmount(() => {
         Access is temporary and will be removed automatically. Turn the flag
         off to revoke it immediately.
       </p>
+
+      <div class="shortcut-item">
+        <label for="flight-recorder-enabled">Flight Recorder:</label>
+        <Checkbox
+          id="flight-recorder-enabled"
+          :model-value="settings.flightRecorderEnabled"
+          :disabled="!hasAdminAccess"
+          binary
+          @update:model-value="handleFlightRecorderToggle(Boolean($event))"
+        />
+        <small>
+          Capture NetSuite request payloads, responses, timing, and failures.
+        </small>
+      </div>
     </div>
 
     <!-- Shortcuts section -->

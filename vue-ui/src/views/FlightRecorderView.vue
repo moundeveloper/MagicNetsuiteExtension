@@ -520,11 +520,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  padding-block: 0.35rem;
   border-right: 1px solid var(--line);
 }
 
 .timeline > .empty-state {
-  min-height: 100%;
+  min-height: calc(100% - 0.7rem);
   flex: 1;
 }
 

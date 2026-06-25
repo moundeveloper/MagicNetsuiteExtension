@@ -1,5 +1,7 @@
 import Dexie, { type EntityTable } from "dexie";
 import { RequestRoutes } from "../types/request";
+import { hasAdminAccess } from "./adminAccess";
+import { isFlightRecorderEnabled } from "../states/settingsState";
 
 export type ActivityStatus = "success" | "error";
 export type ActivityKind = "read" | "write" | "execute" | "system";
@@ -159,7 +161,13 @@ export const recordActivity = async (
     response?: unknown;
   }
 ) => {
-  if (IGNORED_ROUTES.has(entry.route)) return;
+  if (
+    IGNORED_ROUTES.has(entry.route) ||
+    !hasAdminAccess.value ||
+    !isFlightRecorderEnabled()
+  ) {
+    return;
+  }
   await db.activities.add({
     ...entry,
     kind: getActivityKind(entry.route),

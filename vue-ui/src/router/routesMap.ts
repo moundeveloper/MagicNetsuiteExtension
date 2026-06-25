@@ -26,6 +26,7 @@ import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
 import RecordsView from "../views/RecordsView.vue";
 import RecordDetailView from "../views/RecordDetailView.vue";
 import FlightRecorderView from "../views/FlightRecorderView.vue";
+import WatchtowerView from "../views/WatchtowerView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -108,6 +109,14 @@ export const routes: FullRoute[] = [
     status: RouteStatus.release,
     breadcrumb: "Flight Recorder",
     adminOnly: true
+  },
+  {
+    route: "/watchtower",
+    name: "Watchtower",
+    icon: "pi pi-eye",
+    component: WatchtowerView,
+    status: RouteStatus.release,
+    breadcrumb: "Watchtower"
   },
   {
     route: "/bundles",

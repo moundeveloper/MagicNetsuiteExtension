@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import VueSplitter from "@rmp135/vue-splitter";
-import { callApi, closePanel, type ApiResponse } from "../utils/api";
+import {
+  callApi,
+  closePanel,
+  getNetsuiteEnvironment,
+  type ApiResponse
+} from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { useMContextMenu } from "../composables/useMContextMenu";
 import MContextMenu from "../components/universal/contextMenu/MContextMenu.vue";
+import { useToast } from "primevue";
+import {
+  addWatchedRecord,
+  isRecordWatched,
+  recordWatchKey,
+  removeWatchedRecord
+} from "../utils/recordWatchDb";
 
 type FieldValue = {
   value: unknown;
@@ -22,6 +34,7 @@ type RecordPayload = {
 const props = defineProps<{ vhOffset: number }>();
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 const loading = ref(false);
 const error = ref("");
 const bodyRecord = ref<RecordPayload | null>(null);
@@ -32,6 +45,9 @@ const activeSublist = ref("");
 const expandedValues = ref(new Set<string>());
 const bodyPanePercent = ref(38);
 const sublistNavPercent = ref(20);
+const environment = ref("unknown");
+const watched = ref(false);
+const changingWatch = ref(false);
 const resolvedFieldCache = new Map<string, FieldValue>();
 const { showContextMenu } = useMContextMenu();
 
@@ -137,6 +153,61 @@ const openInNetSuite = async () => {
   }
 };
 
+const refreshWatchState = async () => {
+  environment.value = await getNetsuiteEnvironment().catch(() => "unknown");
+  watched.value = await isRecordWatched(
+    environment.value,
+    recordType.value,
+    recordId.value
+  );
+};
+
+const toggleWatch = async () => {
+  if (changingWatch.value) return;
+  changingWatch.value = true;
+  try {
+    if (watched.value) {
+      await removeWatchedRecord(
+        recordWatchKey(environment.value, recordType.value, recordId.value)
+      );
+      watched.value = false;
+      toast.add({
+        severity: "info",
+        summary: "Removed from Watchtower",
+        detail: `${recordType.value} #${recordId.value}`,
+        life: 2200
+      });
+    } else {
+      await addWatchedRecord({
+        environment: environment.value,
+        recordType: recordType.value,
+        recordId: recordId.value,
+        data: bodyRecord.value
+      });
+      watched.value = true;
+      toast.add({
+        severity: "success",
+        summary: "Added to Watchtower",
+        detail: "The current record state is now the baseline.",
+        life: 2600
+      });
+    }
+  } finally {
+    changingWatch.value = false;
+  }
+};
+
+const openWatchtower = async () => {
+  await router.push({
+    path: "/watchtower",
+    query: {
+      type: recordType.value,
+      id: recordId.value,
+      scan: "1"
+    }
+  });
+};
+
 const toggleExpanded = (key: string) => {
   const next = new Set(expandedValues.value);
   if (next.has(key)) next.delete(key);
@@ -209,7 +280,22 @@ const openFieldContextMenu = (event: MouseEvent, field: FieldContext) => {
   ]);
 };
 
-onMounted(loadRecord);
+const handleWatchtowerChanged = () => void refreshWatchState();
+
+onMounted(async () => {
+  await Promise.all([loadRecord(), refreshWatchState()]);
+  window.addEventListener(
+    "magic-netsuite-watchtower-changed",
+    handleWatchtowerChanged
+  );
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener(
+    "magic-netsuite-watchtower-changed",
+    handleWatchtowerChanged
+  );
+});
 </script>
 
 <template>
@@ -226,6 +312,30 @@ onMounted(loadRecord);
         </div>
       </div>
       <div class="header-actions">
+        <button
+          :class="{ 'watch-action-active': watched }"
+          :disabled="loading || !bodyRecord || changingWatch"
+          @click="toggleWatch"
+        >
+          <i
+            :class="
+              changingWatch
+                ? 'pi pi-spin pi-spinner'
+                : watched
+                  ? 'pi pi-eye-slash'
+                  : 'pi pi-eye'
+            "
+          />
+          {{ watched ? "Unwatch" : "Watch" }}
+        </button>
+        <button
+          :disabled="loading || !bodyRecord"
+          title="Open this record in Watchtower and scan it"
+          @click="openWatchtower"
+        >
+          <i class="pi pi-binoculars" />
+          Watchtower
+        </button>
         <button @click="loadRecord">
           <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
           Refresh
@@ -479,6 +589,12 @@ button:hover {
   border-color: var(--p-purple-300);
   background: var(--p-purple-100);
   color: var(--p-purple-800);
+}
+
+.watch-action-active {
+  border-color: var(--p-amber-300);
+  background: var(--p-amber-50);
+  color: var(--p-amber-700);
 }
 
 .error-banner {
