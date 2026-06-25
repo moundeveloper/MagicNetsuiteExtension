@@ -165,14 +165,27 @@ const getDashboardEnablerTab = async (): Promise<chrome.tabs.Tab | null> => {
     return null;
   }
 
-  const result = await chrome.storage.session.get(
+  let result = await chrome.storage.session.get(
     DASHBOARD_PREVIEW_SESSIONS_KEY
   );
-  const session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];
+  let session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];
   if (!session?.enablerTabId) {
-    throw new Error(
-      "This dashboard preview is no longer connected to its NetSuite account tab."
-    );
+    const recovered = await chrome.runtime.sendMessage({
+      type: "RECOVER_DASHBOARD_PREVIEW_SESSION",
+      sessionId
+    });
+    if (recovered?.ok) {
+      result = await chrome.storage.session.get(
+        DASHBOARD_PREVIEW_SESSIONS_KEY
+      );
+      session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];
+    }
+    if (!session?.enablerTabId) {
+      throw new Error(
+        recovered?.error ||
+          "This dashboard preview is no longer connected to its NetSuite account tab."
+      );
+    }
   }
 
   try {

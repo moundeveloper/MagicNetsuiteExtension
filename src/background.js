@@ -328,6 +328,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     MCP_INSTALL_INFO: handleMcpInstallInfo,
     NETSUITE_PROXY_FETCH: proxyNetsuiteIframeFetch,
     LIST_OPEN_NETSUITE_ACCOUNTS: listOpenNetsuiteAccounts,
+    RECOVER_DASHBOARD_PREVIEW_SESSION: recoverDashboardPreviewSession,
     OPEN_DASHBOARD_PREVIEW: openDashboardPreview,
     SWITCH_DASHBOARD_ACCOUNT: switchDashboardAccount,
     DASHBOARD_ENABLER_READY: dashboardEnablerReady,
@@ -853,6 +854,31 @@ const listOpenNetsuiteAccounts = ({ message, sender, sendResponse }) => {
       sendResponse({ ok: true, accounts });
     } catch (error) {
       sendResponse({ ok: false, error: error.message, accounts: [] });
+    }
+  })();
+  return true;
+};
+
+const recoverDashboardPreviewSession = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      const liveSession = await getLiveDashboardPreviewSession();
+      if (!liveSession?.sessionId || !liveSession.session?.enablerTabId) {
+        throw new Error("Dashboard preview session could not be recovered.");
+      }
+      if (
+        message.sessionId &&
+        liveSession.sessionId !== message.sessionId
+      ) {
+        throw new Error("The open dashboard group belongs to another session.");
+      }
+      sendResponse({
+        ok: true,
+        sessionId: liveSession.sessionId,
+        session: liveSession.session
+      });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
     }
   })();
   return true;
