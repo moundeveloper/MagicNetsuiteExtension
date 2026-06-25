@@ -174,6 +174,7 @@ const handleDashboardAccountSelected = (
 };
 
 const handleTabActivated = () => {
+  if (dashboardAccountSwitching.value) return;
   void refreshEnvironment();
   void loadDashboardAccounts();
 };
@@ -181,6 +182,7 @@ const handleTabActivated = () => {
 const handleTabUpdated: Parameters<
   typeof chrome.tabs.onUpdated.addListener
 >[0] = (_tabId, changeInfo) => {
+  if (dashboardAccountSwitching.value) return;
   if (changeInfo.status === "complete" || changeInfo.url) {
     void refreshEnvironment();
   }

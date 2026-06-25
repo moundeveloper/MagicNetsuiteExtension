@@ -41,6 +41,20 @@ interface DeploymentItem {
   loglevel?: string;
 }
 
+interface DeploymentParameter {
+  id: string;
+  label: string;
+  type: string;
+  value: unknown;
+  text: unknown;
+  originalValue: unknown;
+}
+
+interface RecordFieldValue {
+  value: unknown;
+  text: unknown;
+}
+
 interface LogItem {
   id: string;
   datetime: string;
@@ -108,6 +122,12 @@ const logs = ref<LogItem[]>([]);
 const logsLoading = ref(false);
 const clearingLogs = ref(false);
 const runningDeploymentIds = ref<Set<string>>(new Set());
+const showDeploymentParameters = ref(false);
+const parameterDeployment = ref<DeploymentItem | null>(null);
+const deploymentParameters = ref<DeploymentParameter[]>([]);
+const deploymentParametersLoading = ref(false);
+const deploymentParametersSaving = ref(false);
+const deploymentParametersError = ref("");
 const logSearch = ref("");
 const selectedDeploymentIds = ref<number[]>([]);
 const selectedSuiteletDeploymentId = ref<string>("");
@@ -291,6 +311,199 @@ const filteredLogs = computed(() => {
     return matchesLevel && matchesText;
   });
 });
+
+const serializeParameterValue = (value: unknown) => {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+
+const dirtyDeploymentParameters = computed(() =>
+  deploymentParameters.value.filter(
+    (parameter) =>
+      serializeParameterValue(parameter.value) !==
+      serializeParameterValue(parameter.originalValue)
+  )
+);
+
+const normalizedParameterType = (parameter: DeploymentParameter) =>
+  parameter.type.trim().toLowerCase();
+
+const isCheckboxParameter = (parameter: DeploymentParameter) =>
+  normalizedParameterType(parameter) === "checkbox";
+
+const isNumericParameter = (parameter: DeploymentParameter) =>
+  ["currency", "float", "integer", "percent", "poscurrency", "rate"].includes(
+    normalizedParameterType(parameter)
+  );
+
+const isLongTextParameter = (parameter: DeploymentParameter) =>
+  ["clob", "help", "html", "inlinehtml", "longtext", "richtext", "textarea"].includes(
+    normalizedParameterType(parameter)
+  );
+
+const isDateParameter = (parameter: DeploymentParameter) =>
+  ["date", "datetime", "datetimetz", "timeofday"].includes(
+    normalizedParameterType(parameter)
+  );
+
+const isMultiSelectParameter = (parameter: DeploymentParameter) =>
+  normalizedParameterType(parameter) === "multiselect";
+
+const parameterInputValue = (parameter: DeploymentParameter) => {
+  if (Array.isArray(parameter.value)) return parameter.value.join(", ");
+  return parameter.value === null || parameter.value === undefined
+    ? ""
+    : String(parameter.value);
+};
+
+const normalizeLoadedParameterValue = (value: unknown, type: string) => {
+  if (type.trim().toLowerCase() !== "checkbox") {
+    return Array.isArray(value) ? [...value] : value;
+  }
+  if (typeof value === "string") {
+    return value === "T" || value.toLowerCase() === "true";
+  }
+  return Boolean(value);
+};
+
+const updateParameterTextValue = (
+  parameter: DeploymentParameter,
+  value: string
+) => {
+  if (isMultiSelectParameter(parameter)) {
+    parameter.value = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return;
+  }
+  parameter.value = value;
+};
+
+const coerceParameterForSubmit = (parameter: DeploymentParameter) => {
+  if (isCheckboxParameter(parameter)) return Boolean(parameter.value);
+  if (isMultiSelectParameter(parameter)) {
+    return Array.isArray(parameter.value) ? parameter.value : [];
+  }
+  if (isNumericParameter(parameter) && parameter.value !== "") {
+    const numericValue = Number(parameter.value);
+    return Number.isFinite(numericValue) ? numericValue : parameter.value;
+  }
+  return parameter.value ?? "";
+};
+
+const openDeploymentParameterEditor = async (deployment: DeploymentItem) => {
+  parameterDeployment.value = deployment;
+  deploymentParameters.value = [];
+  deploymentParametersError.value = "";
+  showDeploymentParameters.value = true;
+  deploymentParametersLoading.value = true;
+
+  try {
+    const recordResponse = await callApi(RequestRoutes.LOAD_RECORD, {
+      type: "scriptdeployment",
+      id: deployment.primarykey
+    });
+    if (recordResponse.status === "error") {
+      throw new Error(String(recordResponse.message));
+    }
+
+    const body = (recordResponse.message?.body ?? {}) as Record<
+      string,
+      RecordFieldValue
+    >;
+    const parameterEntries = Object.entries(body).filter(([fieldId]) =>
+      fieldId.toLowerCase().startsWith("custscript")
+    );
+    const fieldIds = parameterEntries.map(([fieldId]) => fieldId);
+
+    let metadata: Record<string, { label?: string; type?: string }> = {};
+    if (fieldIds.length) {
+      const metadataResponse = await callApi(
+        RequestRoutes.GET_RECORD_FIELD_TYPES,
+        {
+          type: "scriptdeployment",
+          id: deployment.primarykey,
+          fieldIds
+        }
+      );
+      if (metadataResponse.status !== "error") {
+        metadata = metadataResponse.message?.fields ?? {};
+      }
+    }
+
+    deploymentParameters.value = parameterEntries
+      .map(([fieldId, field]) => {
+        const type = metadata[fieldId]?.type || "";
+        const value = normalizeLoadedParameterValue(field.value, type);
+        return {
+          id: fieldId,
+          label: metadata[fieldId]?.label || fieldId,
+          type,
+          value,
+          text: field.text,
+          originalValue: Array.isArray(value) ? [...value] : value
+        };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  } catch (err) {
+    deploymentParametersError.value =
+      err instanceof Error ? err.message : String(err);
+  } finally {
+    deploymentParametersLoading.value = false;
+  }
+};
+
+const saveDeploymentParameters = async () => {
+  const deployment = parameterDeployment.value;
+  if (
+    !deployment ||
+    deploymentParametersSaving.value ||
+    dirtyDeploymentParameters.value.length === 0
+  ) {
+    return;
+  }
+
+  deploymentParametersSaving.value = true;
+  deploymentParametersError.value = "";
+  try {
+    const values = Object.fromEntries(
+      dirtyDeploymentParameters.value.map((parameter) => [
+        parameter.id,
+        coerceParameterForSubmit(parameter)
+      ])
+    );
+    const response = await callApi(RequestRoutes.UPDATE_RECORD_FIELDS, {
+      recordType: "scriptdeployment",
+      recordId: deployment.primarykey,
+      values,
+      enableSourcing: true,
+      ignoreMandatoryFields: false
+    });
+    if (response.status === "error") {
+      throw new Error(String(response.message));
+    }
+
+    for (const parameter of deploymentParameters.value) {
+      parameter.originalValue = Array.isArray(parameter.value)
+        ? [...parameter.value]
+        : parameter.value;
+    }
+    toast.add({
+      severity: "success",
+      summary: "Parameters updated",
+      detail: `${Object.keys(values).length} parameter${Object.keys(values).length === 1 ? "" : "s"} saved on ${deployment.scriptid}.`,
+      life: 3000
+    });
+    showDeploymentParameters.value = false;
+  } catch (err) {
+    deploymentParametersError.value =
+      err instanceof Error ? err.message : String(err);
+  } finally {
+    deploymentParametersSaving.value = false;
+  }
+};
 
 const formatDateTime = (value: string): string => {
   const date = new Date(value);
@@ -1264,6 +1477,14 @@ onMounted(loadScript);
                     <button
                       type="button"
                       class="deployment-open-btn"
+                      title="Edit deployment parameters"
+                      @click.stop="openDeploymentParameterEditor(deployment)"
+                    >
+                      <i class="pi pi-sliders-h" />
+                    </button>
+                    <button
+                      type="button"
+                      class="deployment-open-btn"
                       title="Open deployment record"
                       @click.stop="openDeployment(deployment.primarykey)"
                     >
@@ -1457,6 +1678,142 @@ onMounted(loadScript);
               </div>
             </div>
           </aside>
+        </div>
+
+        <div
+          v-if="showDeploymentParameters"
+          class="modal-backdrop"
+          @click.self="showDeploymentParameters = false"
+        >
+          <section class="deployment-parameters-modal">
+            <header class="file-picker-header">
+              <div>
+                <strong>Deployment Parameters</strong>
+                <span>
+                  {{ parameterDeployment?.scriptid }}
+                  <template v-if="parameterDeployment?.deploymentid">
+                    · #{{ parameterDeployment.deploymentid }}
+                  </template>
+                </span>
+              </div>
+              <button
+                type="button"
+                class="icon-btn"
+                title="Close"
+                :disabled="deploymentParametersSaving"
+                @click="showDeploymentParameters = false"
+              >
+                <i class="pi pi-times" />
+              </button>
+            </header>
+
+            <div v-if="deploymentParametersLoading" class="loading-state parameter-loading">
+              <i class="pi pi-spin pi-spinner" />
+              <span>Loading deployment parameters...</span>
+            </div>
+            <div v-else class="deployment-parameters-body">
+              <div v-if="deploymentParametersError" class="error-strip">
+                {{ deploymentParametersError }}
+              </div>
+              <div
+                v-if="deploymentParameters.length === 0 && !deploymentParametersError"
+                class="empty-state parameter-empty"
+              >
+                No <code>custscript</code> parameters were found on this deployment.
+              </div>
+              <div v-else class="deployment-parameter-list">
+                <label
+                  v-for="parameter in deploymentParameters"
+                  :key="parameter.id"
+                  class="deployment-parameter-field"
+                >
+                  <span class="deployment-parameter-label">
+                    <strong>{{ parameter.label }}</strong>
+                    <code>{{ parameter.id }}</code>
+                  </span>
+                  <input
+                    v-if="isCheckboxParameter(parameter)"
+                    v-model="parameter.value"
+                    type="checkbox"
+                    class="deployment-parameter-checkbox"
+                  />
+                  <textarea
+                    v-else-if="isLongTextParameter(parameter)"
+                    :value="parameterInputValue(parameter)"
+                    rows="4"
+                    @input="
+                      updateParameterTextValue(
+                        parameter,
+                        ($event.target as HTMLTextAreaElement).value
+                      )
+                    "
+                  />
+                  <input
+                    v-else
+                    :value="parameterInputValue(parameter)"
+                    :type="isNumericParameter(parameter) ? 'number' : 'text'"
+                    :placeholder="
+                      isMultiSelectParameter(parameter)
+                        ? 'Comma-separated internal IDs'
+                        : isDateParameter(parameter)
+                          ? 'Date or date/time value'
+                          : ''
+                    "
+                    @input="
+                      updateParameterTextValue(
+                        parameter,
+                        ($event.target as HTMLInputElement).value
+                      )
+                    "
+                  />
+                  <small
+                    v-if="
+                      parameter.text !== null &&
+                      parameter.text !== undefined &&
+                      String(parameter.text) !== parameterInputValue(parameter)
+                    "
+                  >
+                    Current display value: {{ parameter.text }}
+                  </small>
+                </label>
+              </div>
+            </div>
+
+            <footer class="deployment-parameters-footer">
+              <span>
+                {{ dirtyDeploymentParameters.length }}
+                changed
+              </span>
+              <div>
+                <button
+                  type="button"
+                  class="secondary-btn"
+                  :disabled="deploymentParametersSaving"
+                  @click="showDeploymentParameters = false"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="primary-btn"
+                  :disabled="
+                    deploymentParametersSaving ||
+                    dirtyDeploymentParameters.length === 0
+                  "
+                  @click="saveDeploymentParameters"
+                >
+                  <i
+                    :class="
+                      deploymentParametersSaving
+                        ? 'pi pi-spin pi-spinner'
+                        : 'pi pi-save'
+                    "
+                  />
+                  {{ deploymentParametersSaving ? "Saving" : "Save Parameters" }}
+                </button>
+              </div>
+            </footer>
+          </section>
         </div>
 
         <div
@@ -2251,6 +2608,115 @@ onMounted(loadScript);
   overflow: hidden;
 }
 
+.deployment-parameters-modal {
+  display: flex;
+  width: min(720px, 96vw);
+  max-height: min(760px, 92vh);
+  min-height: 320px;
+  flex-direction: column;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.deployment-parameters-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.parameter-loading,
+.parameter-empty {
+  min-height: 240px;
+}
+
+.deployment-parameter-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.deployment-parameter-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.deployment-parameter-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.deployment-parameter-label strong {
+  color: var(--p-slate-700);
+  font-size: 0.78rem;
+}
+
+.deployment-parameter-label code {
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+}
+
+.deployment-parameter-field input:not([type="checkbox"]),
+.deployment-parameter-field textarea {
+  width: 100%;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-800);
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.deployment-parameter-field textarea {
+  resize: vertical;
+}
+
+.deployment-parameter-field input:focus,
+.deployment-parameter-field textarea:focus {
+  border-color: var(--p-indigo-400);
+  box-shadow: 0 0 0 2px var(--p-indigo-100);
+}
+
+.deployment-parameter-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--p-indigo-600);
+}
+
+.deployment-parameter-field small {
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+}
+
+.deployment-parameters-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--p-slate-200);
+  background: var(--p-slate-50);
+  padding: 10px 12px;
+}
+
+.deployment-parameters-footer > span {
+  color: var(--p-slate-500);
+  font-size: 0.72rem;
+}
+
+.deployment-parameters-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
 .file-picker-header {
   display: flex;
   align-items: flex-start;
@@ -2308,6 +2774,10 @@ onMounted(loadScript);
 
   .active-file-meta {
     display: none;
+  }
+
+  .deployment-parameter-list {
+    grid-template-columns: 1fr;
   }
 }
 </style>

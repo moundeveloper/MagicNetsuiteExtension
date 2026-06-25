@@ -49,6 +49,8 @@ const reorderTarget = ref<ReorderTarget>(null);
 const splitDropSide = ref<TabGroup | null>(null);
 const dropZone = ref<"single" | "group-left" | "group-right" | null>(null);
 const isResizingSplit = ref(false);
+const workspaceGeneration = ref(0);
+const workspaceSwitching = ref(false);
 let tabActivationNavigation = false;
 let nextTabId = 1;
 let workspaceEnvironment = "unknown";
@@ -336,17 +338,35 @@ const handleWorkspaceEnvironmentChanged = async (event: Event) => {
     (await getNetsuiteEnvironment().catch(() => "unknown"));
   if (nextEnvironment === workspaceEnvironment) return;
 
-  if (workspaceReady) {
-    await saveWorkspaceState(
-      "dashboard",
-      workspaceEnvironment,
-      serializeWorkspace()
-    );
-  }
-
+  const previousEnvironment = workspaceEnvironment;
+  const previousWorkspace = workspaceReady ? serializeWorkspace() : null;
   workspaceReady = false;
-  const restored = await restoreWorkspace(nextEnvironment);
-  if (!restored) {
+  workspaceSwitching.value = true;
+
+  // Unmount every account-bound view before restoring the next workspace.
+  // Tab IDs are intentionally stable in storage, so merely replacing the tab
+  // array lets Vue reuse old component instances and their stale API state.
+  tabs.value = [];
+  activeTabId.value = "";
+  leftTabIds.value = [];
+  rightTabIds.value = [];
+  leftActiveId.value = "";
+  rightActiveId.value = "";
+  workspaceGeneration.value += 1;
+  await nextTick();
+
+  try {
+    if (previousWorkspace) {
+      await saveWorkspaceState(
+        "dashboard",
+        previousEnvironment,
+        previousWorkspace
+      );
+    }
+
+    const restored = await restoreWorkspace(nextEnvironment);
+    if (restored) return;
+
     tabs.value = [];
     activeTabId.value = "";
     leftTabIds.value = [];
@@ -355,8 +375,10 @@ const handleWorkspaceEnvironmentChanged = async (event: Event) => {
     rightActiveId.value = "";
     await router.replace("/");
     ensureRouteTab(router.currentRoute.value);
+  } finally {
+    workspaceReady = true;
+    workspaceSwitching.value = false;
   }
-  workspaceReady = true;
 };
 
 const newHomeTab = async (group?: TabGroup) => {
@@ -736,6 +758,10 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="view-pane-host" :class="{ 'view-pane-host--split-drag': draggingTabId && !isSplit }">
+      <div v-if="workspaceSwitching" class="view-workspace-switching">
+        <i class="pi pi-spin pi-spinner"></i>
+        <span>Loading account workspace...</span>
+      </div>
       <div
         class="view-split-overlay view-split-overlay--left"
         :class="{ 'view-split-overlay--active': splitDropSide === 'left' }"
@@ -766,7 +792,7 @@ onBeforeUnmount(() => {
 
       <main
         v-for="tab in tabs"
-        :key="tab.id"
+        :key="`${workspaceGeneration}:${tab.id}`"
         class="view-tab-pane"
         :style="getTabStyle(tab.id)"
         @mousedown.capture="activeTabId = tab.id"
@@ -863,6 +889,20 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.view-workspace-switching {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--p-slate-50);
+  color: var(--p-slate-500);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
 }
 
 .view-tab-close,
