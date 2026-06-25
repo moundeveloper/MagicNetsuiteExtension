@@ -19,6 +19,7 @@ import {
   removeRecentView,
   type RecentView
 } from "../utils/recentViews";
+import { hasAdminAccess } from "../utils/adminAccess";
 const { settings, isSettingsLoaded } = useSettings();
 
 const searchFeatures = ref("");
@@ -43,7 +44,7 @@ const allFeatures = computed(() => {
       !blackList.includes(route.name.toLowerCase()) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
       route.status !== RouteStatus.deprecated &&
-      (!route.adminOnly || isAdmin.value) &&
+      (!route.adminOnly || hasAdminAccess.value) &&
       (privilegeLevel === Privilege.ADMIN ||
         route.status === RouteStatus.release)
   );

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useSettings } from "../states/settingsState";
-import { onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import InputText from "primevue/inputtext";
 import InputNumber from "primevue/inputnumber";
 import Checkbox from "primevue/checkbox";
@@ -11,9 +12,55 @@ import {
   fetchCopilotModels
 } from "../composables/useAiProvider";
 import { getExtensionUserId, regenerateExtensionUserId } from "../utils/extensionUser";
+import {
+  adminAccessExpiresAt,
+  hasAdminAccess,
+  initializeAdminAccess,
+  isBuiltInAdmin,
+  revokeAdminAccess,
+  unlockAdminAccess
+} from "../utils/adminAccess";
 
 const { settings } = useSettings();
+const route = useRoute();
 const extensionUserId = ref("");
+const adminPasskey = ref("");
+const adminError = ref("");
+const adminUnlockRequested = ref(false);
+const currentTime = ref(Date.now());
+let adminClock: ReturnType<typeof setInterval> | null = null;
+
+const adminRemaining = computed(() => {
+  if (isBuiltInAdmin) return "Permanent build access";
+  const expiresAt = adminAccessExpiresAt.value;
+  if (!expiresAt) return "";
+  const remaining = Math.max(0, expiresAt - currentTime.value);
+  const minutes = Math.floor(remaining / 60000);
+  const seconds = Math.floor((remaining % 60000) / 1000);
+  return `${minutes}:${String(seconds).padStart(2, "0")} remaining`;
+});
+
+const handleAdminToggle = async (enabled: boolean) => {
+  adminError.value = "";
+  if (!enabled) {
+    adminUnlockRequested.value = false;
+    adminPasskey.value = "";
+    await revokeAdminAccess();
+    return;
+  }
+  adminUnlockRequested.value = true;
+};
+
+const unlockAdminMode = async () => {
+  adminError.value = "";
+  const unlocked = await unlockAdminAccess(adminPasskey.value);
+  if (!unlocked) {
+    adminError.value = "Incorrect passkey.";
+    return;
+  }
+  adminPasskey.value = "";
+  adminUnlockRequested.value = false;
+};
 
 const providerOptions = [
   { label: "OpenRouter (free models + paid)", value: "openrouter" },
@@ -389,11 +436,78 @@ const modelLabel = (m: OllamaModel) => {
 
 onMounted(async () => {
   extensionUserId.value = await getExtensionUserId();
+  await initializeAdminAccess();
+  adminUnlockRequested.value =
+    route.query.adminRequired === "1" && !hasAdminAccess.value;
+  adminClock = setInterval(() => {
+    currentTime.value = Date.now();
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  if (adminClock) clearInterval(adminClock);
 });
 </script>
 
 <template>
   <div class="settings-view">
+    <div class="settings-section admin-access-section">
+      <div class="admin-heading">
+        <div>
+          <span class="admin-eyebrow">RESTRICTED TOOLS</span>
+          <h2>Admin Mode</h2>
+        </div>
+        <span v-if="hasAdminAccess" class="admin-status active">
+          <i class="pi pi-shield"></i>
+          {{ adminRemaining }}
+        </span>
+        <span v-else class="admin-status">
+          <i class="pi pi-lock"></i>
+          Locked
+        </span>
+      </div>
+
+      <div class="shortcut-item">
+        <label for="admin-mode">Enable Admin Mode:</label>
+        <Checkbox
+          id="admin-mode"
+          :model-value="hasAdminAccess"
+          :disabled="isBuiltInAdmin"
+          binary
+          @update:model-value="handleAdminToggle(Boolean($event))"
+        />
+        <small>
+          Temporarily reveals API Tester and Flight Recorder for 30 minutes.
+        </small>
+      </div>
+
+      <form
+        v-if="adminUnlockRequested && !hasAdminAccess"
+        class="admin-unlock"
+        @submit.prevent="unlockAdminMode"
+      >
+        <InputText
+          v-model="adminPasskey"
+          type="password"
+          autocomplete="off"
+          placeholder="Enter admin passkey"
+          autofocus
+        />
+        <Button
+          type="submit"
+          icon="pi pi-unlock"
+          label="Unlock for 30 minutes"
+          :disabled="!adminPasskey"
+        />
+        <span v-if="adminError" class="admin-error">{{ adminError }}</span>
+      </form>
+
+      <p v-if="hasAdminAccess && !isBuiltInAdmin" class="provider-hint">
+        Access is temporary and will be removed automatically. Turn the flag
+        off to revoke it immediately.
+      </p>
+    </div>
+
     <!-- Shortcuts section -->
     <div class="settings-section">
       <h2>Shortcuts</h2>
@@ -919,6 +1033,66 @@ onMounted(async () => {
 .settings-section h2 {
   font-size: 1.5rem;
   margin-bottom: 1rem;
+}
+
+.admin-access-section {
+  margin-top: 0;
+  padding: 1rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 0.75rem;
+  background: linear-gradient(120deg, var(--p-slate-50), #f3f0ff);
+}
+
+.admin-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.admin-heading h2 {
+  margin: 0.15rem 0 1rem;
+}
+
+.admin-eyebrow {
+  color: var(--p-slate-500);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.admin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 999px;
+  color: var(--p-slate-500);
+  font-size: 0.72rem;
+}
+
+.admin-status.active {
+  border-color: var(--p-green-300);
+  background: var(--p-green-50);
+  color: var(--p-green-700);
+}
+
+.admin-unlock {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 0 0 1rem 200px;
+}
+
+.admin-unlock :deep(input) {
+  min-width: 240px;
+}
+
+.admin-error {
+  color: var(--p-red-600);
+  font-size: 0.75rem;
 }
 
 .shortcut-item {

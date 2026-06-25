@@ -16,6 +16,7 @@ import MLoader from "./universal/patterns/MLoader.vue";
 import CommandPalette from "./CommandPalette.vue";
 import { getNotebookEntries, type NotebookEntry } from "../utils/notebookDb";
 import { getNetsuiteEnvironment } from "../utils/api";
+import { hasAdminAccess } from "../utils/adminAccess";
 
 const route = useRoute();
 const router = useRouter();
@@ -51,7 +52,7 @@ const allLinks = computed(() => {
       !blackList.includes(link.name.toLowerCase()) &&
       link.status !== RouteStatus.deprecated &&
       (mode === "development" || link.status === RouteStatus.release) &&
-      (!link.adminOnly || isAdmin.value)
+      (!link.adminOnly || hasAdminAccess.value)
     );
   });
 });

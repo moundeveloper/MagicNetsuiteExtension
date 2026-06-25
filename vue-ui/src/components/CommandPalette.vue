@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { routes, RouteStatus } from "../router/routesMap";
 import { getNetsuiteEnvironment } from "../utils/api";
 import { getRecentViews, type RecentView } from "../utils/recentViews";
+import { hasAdminAccess } from "../utils/adminAccess";
 
 type PaletteItem = {
   id: string;
@@ -23,7 +24,6 @@ const recentViews = ref<RecentView[]>([]);
 const environment = ref("unknown");
 const inputRef = ref<HTMLInputElement | null>(null);
 
-const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 const mode = import.meta.env.MODE;
 
 const featureItems = computed<PaletteItem[]>(() =>
@@ -32,7 +32,7 @@ const featureItems = computed<PaletteItem[]>(() =>
       (route) =>
         route.route !== "/processing" &&
         route.status !== RouteStatus.deprecated &&
-        (!route.adminOnly || isAdmin) &&
+        (!route.adminOnly || hasAdminAccess.value) &&
         (mode === "development" || route.status === RouteStatus.release)
     )
     .map((route) => ({

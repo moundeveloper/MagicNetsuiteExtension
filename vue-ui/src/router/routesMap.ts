@@ -25,6 +25,7 @@ import NotebookView from "../views/NotebookView.vue";
 import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
 import RecordsView from "../views/RecordsView.vue";
 import RecordDetailView from "../views/RecordDetailView.vue";
+import FlightRecorderView from "../views/FlightRecorderView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -98,6 +99,15 @@ export const routes: FullRoute[] = [
     component: LogSearchView,
     status: RouteStatus.release,
     breadcrumb: "Logs"
+  },
+  {
+    route: "/flight-recorder",
+    name: "Flight Recorder",
+    icon: "pi pi-wave-pulse",
+    component: FlightRecorderView,
+    status: RouteStatus.release,
+    breadcrumb: "Flight Recorder",
+    adminOnly: true
   },
   {
     route: "/bundles",
@@ -253,7 +263,8 @@ export const routes: FullRoute[] = [
     icon: "pi pi-send",
     component: ApiTesterView,
     status: RouteStatus.release,
-    breadcrumb: "API Tester"
+    breadcrumb: "API Tester",
+    adminOnly: true
   },
   {
     route: "/feature-feedback",
@@ -332,15 +343,13 @@ export const getRouteMap = (): RouteItem[] => {
 
 export const getRoutes = () => {
   const result: any[] = [];
-  const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 
   for (const route of routes) {
-    if (route.adminOnly && !isAdmin) continue;
-
     const baseRoute = {
       path: route.route,
       name: route.name,
-      component: route.component
+      component: route.component,
+      meta: { adminOnly: Boolean(route.adminOnly) }
     };
 
     result.push(baseRoute);
@@ -350,7 +359,8 @@ export const getRoutes = () => {
         result.push({
           path: child.route,
           name: child.name,
-          component: child.component
+          component: child.component,
+          meta: { adminOnly: Boolean(route.adminOnly) }
         });
       }
     }

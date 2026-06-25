@@ -1,4 +1,5 @@
 import { RequestRoutes } from "../types/request";
+import { recordActivity } from "./activityRecorderDb";
 
 export type ApiResponse = {
   status: "ok" | "error";
@@ -280,7 +281,7 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
 // Main API Function
 // ============================================================================
 
-const callApi = async (
+const callApiInternal = async (
   route: RequestRoutes,
   payload: any = {},
   mode: ApiRequestType = ApiRequestType.NORMAL,
@@ -433,6 +434,52 @@ const callApi = async (
       // No existing connected tab works; surface the original failure via temp tab.
     }
     return await handleFallbackWithTempTab(activeTab, messagePayload);
+  }
+};
+
+const callApi = async (
+  route: RequestRoutes,
+  payload: any = {},
+  mode: ApiRequestType = ApiRequestType.NORMAL,
+  streamHandler?: Function
+): Promise<ApiResponse> => {
+  const startedAt = Date.now();
+  let environment = "unknown";
+  try {
+    environment = await getNetsuiteEnvironment();
+  } catch {
+    // Recording must never prevent an API call.
+  }
+
+  try {
+    const response = await callApiInternal(route, payload, mode, streamHandler);
+    void recordActivity({
+      route,
+      mode,
+      status: response?.status === "error" ? "error" : "success",
+      environment,
+      startedAt,
+      durationMs: Date.now() - startedAt,
+      payload,
+      response,
+      error:
+        response?.status === "error"
+          ? String(response?.message || "NetSuite returned an error")
+          : undefined
+    }).catch(() => undefined);
+    return response;
+  } catch (error) {
+    void recordActivity({
+      route,
+      mode,
+      status: "error",
+      environment,
+      startedAt,
+      durationMs: Date.now() - startedAt,
+      payload,
+      error: error instanceof Error ? error.message : String(error)
+    }).catch(() => undefined);
+    throw error;
   }
 };
 

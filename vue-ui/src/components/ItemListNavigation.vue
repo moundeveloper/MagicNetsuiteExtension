@@ -11,6 +11,7 @@ import { useSettings } from "../states/settingsState";
 import { Privilege } from "../types/privilege";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
 import MPanel from "../components/universal/panels/MPanel.vue";
+import { hasAdminAccess } from "../utils/adminAccess";
 
 const props = defineProps<{
   links: RouteItem[];
@@ -30,7 +31,7 @@ const allLinks = computed(() => {
       !blackList.includes(link.name.toLowerCase()) &&
       link.status !== RouteStatus.deprecated &&
       (mode === "development" || link.status === RouteStatus.release) &&
-      (!link.adminOnly || isAdmin.value)
+      (!link.adminOnly || hasAdminAccess.value)
     );
   });
 });
