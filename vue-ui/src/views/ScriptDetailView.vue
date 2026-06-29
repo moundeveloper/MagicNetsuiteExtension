@@ -936,6 +936,13 @@ const saveScriptToNotebook = async () => {
   });
 };
 
+const openDependencyExplorer = () => {
+  void router.push({
+    path: "/dependency-explorer",
+    query: { scriptId: String(scriptId.value) }
+  });
+};
+
 const openDeployment = async (deploymentId: string) => {
   const response = await callApi(RequestRoutes.SCRIPT_DEPLOYMENT_URL, {
     deployment: deploymentId
@@ -1246,6 +1253,16 @@ onMounted(loadScript);
             >
               <i class="pi pi-bookmark" />
               <span>Notebook</span>
+            </button>
+            <button
+              type="button"
+              class="secondary-btn"
+              :disabled="!script"
+              title="Inspect dependencies and change impact"
+              @click="openDependencyExplorer"
+            >
+              <i class="pi pi-share-alt" />
+              <span>Impact</span>
             </button>
             <NotebookContextPanel
               :context="notebookContext"

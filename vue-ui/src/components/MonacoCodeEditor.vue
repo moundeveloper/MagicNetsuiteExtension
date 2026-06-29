@@ -89,6 +89,7 @@ interface EditorConfig {
   minimap?: boolean;
   disableAutoScrollOnFocus?: boolean;
   validateTags?: boolean;
+  formatOnMount?: boolean;
 }
 
 interface MonacoEditorProps {
@@ -99,6 +100,10 @@ interface MonacoEditorProps {
   options?: editor.IStandaloneEditorConstructionOptions;
   completionItems?: CompletionItem[];
   config?: EditorConfig;
+  highlightRange?: {
+    startLine: number;
+    endLine?: number;
+  } | null;
 }
 
 const props = withDefaults(defineProps<MonacoEditorProps>(), {
@@ -131,6 +136,50 @@ const editorContainer: Ref<HTMLElement | null> = ref(null);
 let editorInstance: editor.IStandaloneCodeEditor | null = null;
 let completionProvider: IDisposable | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let highlightDecorations: string[] = [];
+
+const applyHighlightRange = () => {
+  if (!editorInstance) return;
+  const range = props.highlightRange;
+  if (!range?.startLine) {
+    highlightDecorations = editorInstance.deltaDecorations(
+      highlightDecorations,
+      []
+    );
+    return;
+  }
+  const model = editorInstance.getModel();
+  if (!model) return;
+  const startLine = Math.min(
+    Math.max(1, range.startLine),
+    model.getLineCount()
+  );
+  const endLine = Math.min(
+    Math.max(startLine, range.endLine ?? startLine),
+    model.getLineCount()
+  );
+  const selection = new monaco.Range(
+    startLine,
+    1,
+    endLine,
+    model.getLineMaxColumn(endLine)
+  );
+  highlightDecorations = editorInstance.deltaDecorations(
+    highlightDecorations,
+    [
+      {
+        range: selection,
+        options: {
+          isWholeLine: true,
+          className: "monaco-reference-highlight",
+          linesDecorationsClassName: "monaco-reference-highlight-gutter"
+        }
+      }
+    ]
+  );
+  editorInstance.setSelection(selection);
+  editorInstance.revealRangeInCenter(selection);
+};
 
 const setupResizeObserver = () => {
   if (!editorContainer.value || !editorInstance) return;
@@ -161,7 +210,10 @@ onMounted(async () => {
 
   let formatted = props.modelValue;
 
-  if (props.language === "javascript" || props.language === "typescript") {
+  if (
+    props.config.formatOnMount !== false &&
+    (props.language === "javascript" || props.language === "typescript")
+  ) {
     try {
       formatted = await prettier.format(props.modelValue, {
         parser: "babel",
@@ -178,7 +230,7 @@ onMounted(async () => {
       );
       formatted = props.modelValue;
     }
-  } else if (props.language === "xml") {
+  } else if (props.config.formatOnMount !== false && props.language === "xml") {
     formatted = formatFtl(props.modelValue);
   }
 
@@ -194,7 +246,8 @@ onMounted(async () => {
     lineNumbers: "on",
     renderWhitespace: "selection",
     tabSize: 2,
-    cursorSmoothCaretAnimation: "off"
+    cursorSmoothCaretAnimation: "off",
+    ...props.options
   };
 
   if (props.config?.defocusScroll) {
@@ -207,6 +260,7 @@ onMounted(async () => {
 
   // Create editor
   editorInstance = monaco.editor.create(editorContainer.value, editorOptions);
+  applyHighlightRange();
 
   // Setup resize observer to handle container size changes
   setupResizeObserver();
@@ -399,6 +453,12 @@ watch(
 );
 
 watch(
+  () => props.highlightRange,
+  () => applyHighlightRange(),
+  { deep: true }
+);
+
+watch(
   () => props.completionItems,
   () => {
     registerCompletions();
@@ -507,6 +567,19 @@ defineExpose({
 </style>
 
 <style>
+.monaco-reference-highlight {
+  border-top: 1px solid rgb(96 165 250 / 85%);
+  border-bottom: 1px solid rgb(96 165 250 / 85%);
+  background: rgb(59 130 246 / 16%);
+}
+
+.monaco-reference-highlight-gutter {
+  width: 4px !important;
+  margin-left: 3px;
+  border-radius: 3px;
+  background: #60a5fa;
+}
+
 .context-view.monaco-component {
   display: none !important;
 }

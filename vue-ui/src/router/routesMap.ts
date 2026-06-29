@@ -27,6 +27,7 @@ import RecordsView from "../views/RecordsView.vue";
 import RecordDetailView from "../views/RecordDetailView.vue";
 import FlightRecorderView from "../views/FlightRecorderView.vue";
 import WatchtowerView from "../views/WatchtowerView.vue";
+import DependencyExplorerView from "../views/DependencyExplorerView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -117,6 +118,14 @@ export const routes: FullRoute[] = [
     component: WatchtowerView,
     status: RouteStatus.release,
     breadcrumb: "Watchtower"
+  },
+  {
+    route: "/dependency-explorer",
+    name: "Dependency Explorer",
+    icon: "pi pi-share-alt",
+    component: DependencyExplorerView,
+    status: RouteStatus.release,
+    breadcrumb: "Dependency Explorer"
   },
   {
     route: "/bundles",

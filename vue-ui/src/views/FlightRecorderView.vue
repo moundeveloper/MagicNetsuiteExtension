@@ -389,7 +389,7 @@ onBeforeUnmount(() => {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.3rem;
   overflow: hidden;
   color: var(--ink);
 }
@@ -398,40 +398,39 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
+  gap: 0.55rem;
+  padding: 0.32rem 0.55rem;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 7px;
   background: linear-gradient(120deg, #f8fafc 0%, #eef4ff 55%, #f7f3ff 100%);
 }
 
 .eyebrow {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.3rem;
   color: #516078;
-  font-size: 0.66rem;
+  font-size: 0.5rem;
   font-weight: 800;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.09em;
 }
 
 .live-dot {
-  width: 0.5rem;
-  height: 0.5rem;
+  width: 0.36rem;
+  height: 0.36rem;
   border-radius: 999px;
   background: #22c55e;
-  box-shadow: 0 0 0 4px rgb(34 197 94 / 15%);
+  box-shadow: 0 0 0 3px rgb(34 197 94 / 15%);
 }
 
 .recorder-hero h1 {
-  margin: 0.18rem 0;
-  font-size: 1.55rem;
+  margin: 0.02rem 0 0;
+  font-size: 0.98rem;
+  line-height: 1.1;
 }
 
 .recorder-hero p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.78rem;
+  display: none;
 }
 
 .hero-actions,
@@ -441,36 +440,42 @@ onBeforeUnmount(() => {
   gap: 0.55rem;
 }
 
+.recorder-hero :deep(.p-button) {
+  min-height: 1.9rem;
+  padding: 0.28rem 0.6rem;
+  font-size: 0.72rem;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.65rem;
+  gap: 0.32rem;
 }
 
 .stats-grid article {
   display: grid;
-  gap: 0.12rem;
-  padding: 0.75rem 0.9rem;
+  gap: 0;
+  padding: 0.25rem 0.42rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 6px;
   background: rgb(255 255 255 / 88%);
 }
 
 .stats-grid span,
 .request-facts span {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.49rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .stats-grid strong {
-  font-size: 1.35rem;
+  font-size: 0.78rem;
 }
 
 .stats-grid small {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.52rem;
 }
 
 .stats-grid article.danger {
@@ -479,9 +484,9 @@ onBeforeUnmount(() => {
 }
 
 .toolbar {
-  padding: 0.55rem;
+  padding: 0.3rem;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 7px;
   background: rgb(255 255 255 / 90%);
 }
 
