@@ -1,6 +1,9 @@
 // extensionUser.ts — Manage unique extension user ID
 
 const EXTENSION_USER_ID_KEY = "magic_netsuite_extension_user_id";
+type ExtensionUserStorageResult = {
+  [EXTENSION_USER_ID_KEY]?: string;
+};
 
 export const getExtensionUserId = async (): Promise<string> => {
   return new Promise((resolve) => {
@@ -14,7 +17,7 @@ export const getExtensionUserId = async (): Promise<string> => {
       return resolve(newId);
     }
 
-    chrome.storage.local.get([EXTENSION_USER_ID_KEY], (result) => {
+    chrome.storage.local.get<ExtensionUserStorageResult>([EXTENSION_USER_ID_KEY], (result) => {
       if (result[EXTENSION_USER_ID_KEY]) {
         return resolve(result[EXTENSION_USER_ID_KEY]);
       }

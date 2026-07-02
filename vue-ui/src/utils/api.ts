@@ -33,6 +33,12 @@ const DASHBOARD_PREVIEW_SESSIONS_KEY =
   "magic_netsuite_dashboard_preview_sessions";
 const DASHBOARD_GOVERNANCE_THRESHOLD = 20;
 const dashboardGovernanceRefreshes = new Map<number, Promise<void>>();
+type DashboardPreviewSession = {
+  enablerTabId?: number;
+};
+type DashboardPreviewSessionsStorage = {
+  [DASHBOARD_PREVIEW_SESSIONS_KEY]?: Record<string, DashboardPreviewSession>;
+};
 
 const chromeTabsCallback = <T>(
   invoke: (done: (result: T) => void) => void
@@ -166,7 +172,7 @@ const getDashboardEnablerTab = async (): Promise<chrome.tabs.Tab | null> => {
     return null;
   }
 
-  let result = await chrome.storage.session.get(
+  let result = await chrome.storage.session.get<DashboardPreviewSessionsStorage>(
     DASHBOARD_PREVIEW_SESSIONS_KEY
   );
   let session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];
@@ -176,7 +182,7 @@ const getDashboardEnablerTab = async (): Promise<chrome.tabs.Tab | null> => {
       sessionId
     });
     if (recovered?.ok) {
-      result = await chrome.storage.session.get(
+      result = await chrome.storage.session.get<DashboardPreviewSessionsStorage>(
         DASHBOARD_PREVIEW_SESSIONS_KEY
       );
       session = result?.[DASHBOARD_PREVIEW_SESSIONS_KEY]?.[sessionId];

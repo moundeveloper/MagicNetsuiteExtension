@@ -121,7 +121,7 @@
             :key="cidx"
             class="m-table-cell"
             @contextmenu.prevent="
-              column.contextMenu && showContextMenu($event, row, column.contextMenu)
+              column.contextMenu && showContextMenu($event, row, column.contextMenu!)
             "
           >
             <component

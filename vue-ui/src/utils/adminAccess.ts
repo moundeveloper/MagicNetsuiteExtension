@@ -4,6 +4,11 @@ import { setFlightRecorderEnabled } from "../states/settingsState";
 const SESSION_KEY = "magic_netsuite_temporary_admin_access";
 const ACCESS_DURATION_MS = 30 * 60 * 1000;
 const PASSKEY = "mounmoon";
+type AdminAccessStorageResult = {
+  [SESSION_KEY]?: {
+    expiresAt?: number;
+  };
+};
 
 const state = reactive({
   initialized: false,
@@ -59,7 +64,7 @@ export const initializeAdminAccess = () => {
   initialization ??= (async () => {
     if (!isBuiltInAdmin) {
       try {
-        const result = await chrome.storage.session.get(SESSION_KEY);
+        const result = await chrome.storage.session.get<AdminAccessStorageResult>(SESSION_KEY);
         const expiresAt = Number(result?.[SESSION_KEY]?.expiresAt || 0);
         if (expiresAt > Date.now()) {
           state.expiresAt = expiresAt;

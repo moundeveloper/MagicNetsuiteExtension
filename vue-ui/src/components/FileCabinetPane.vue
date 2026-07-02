@@ -1565,9 +1565,15 @@ const isPdfFile = (item: FileItem) => item.filetype === "PDF";
 const isPreviewable = (item: FileItem) =>
   isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
 
-const getCodeLanguage = (item: FileItem): "javascript" | "sql" => {
-  if (item.filetype === "JAVASCRIPT" || item.filetype === "TYPESCRIPT")
-    return "javascript";
+type FileEditorLanguage = "javascript" | "typescript" | "sql" | "json";
+
+const getFileExtension = (name: string) =>
+  name.toLowerCase().split(".").pop() ?? "";
+
+const getCodeLanguage = (item: FileItem): FileEditorLanguage => {
+  const ext = getFileExtension(item.name);
+  if (item.filetype === "JSON" || ext === "json") return "json";
+  if (ext === "sql") return "sql";
   return "javascript";
 };
 

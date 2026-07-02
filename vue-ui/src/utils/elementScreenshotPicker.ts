@@ -8,6 +8,11 @@ const CLIPBOARD_WRITE_REQUEST = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD";
 const CLIPBOARD_WRITE_RESPONSE = "MAGIC_NETSUITE_WRITE_IMAGE_CLIPBOARD_RESULT";
 const FRAME_RECT_REQUEST = "MAGIC_NETSUITE_GET_EXTENSION_FRAME_RECT";
 const FRAME_RECT_RESPONSE = "MAGIC_NETSUITE_EXTENSION_FRAME_RECT";
+type ScreenshotSettingsStorageResult = {
+  magic_netsuite_settings?: {
+    elementScreenshotShortcut?: string;
+  };
+};
 
 let installed = false;
 let active = false;
@@ -670,7 +675,9 @@ export const installElementScreenshotPicker = async () => {
   });
 
   try {
-    const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    const result = await chrome.storage.sync.get<ScreenshotSettingsStorageResult>([
+      "magic_netsuite_settings"
+    ]);
     shortcut =
       result.magic_netsuite_settings?.elementScreenshotShortcut ||
       DEFAULT_SHORTCUT;
@@ -680,8 +687,11 @@ export const installElementScreenshotPicker = async () => {
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "sync" && changes.magic_netsuite_settings) {
+      const newSettings = changes.magic_netsuite_settings.newValue as
+        | ScreenshotSettingsStorageResult["magic_netsuite_settings"]
+        | undefined;
       shortcut =
-        changes.magic_netsuite_settings.newValue?.elementScreenshotShortcut ||
+        newSettings?.elementScreenshotShortcut ||
         DEFAULT_SHORTCUT;
     }
 

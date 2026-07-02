@@ -4,6 +4,7 @@ import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { MergeView } from "@codemirror/merge";
 import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
 import { sql } from "@codemirror/lang-sql";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -13,7 +14,7 @@ interface Props {
   original: string;
   /** Right pane content — editable (the "compare to" side) */
   modified: string;
-  language?: "javascript" | "sql" | "text";
+  language?: "javascript" | "typescript" | "sql" | "json" | "text";
 }
 
 const props = defineProps<Props>();
@@ -47,7 +48,10 @@ const lightHighlightStyle = HighlightStyle.define([
 
 const getLangExtension = () => {
   if (props.language === "sql") return sql();
-  if (props.language === "javascript") return javascript();
+  if (props.language === "json") return json();
+  if (props.language === "javascript" || props.language === "typescript") {
+    return javascript({ jsx: true, typescript: props.language === "typescript" });
+  }
   return [];
 };
 

@@ -172,6 +172,7 @@ import {
   type ModuleSearchResult,
   type StoredMember
 } from "../utils/modulesDb";
+import type { ShortcutsSettings } from "../states/settingsState";
 
 // ── State ──────────────────────────────────────────────────────────
 const paletteOpen = ref(false);
@@ -434,6 +435,9 @@ const onMessage = (e: MessageEvent) => {
 
 // ── Internal shortcut listener (handles Ctrl+M when iframe has focus) ──
 let internalShortcut = "ctrl+m";
+type SettingsStorageResult = {
+  magic_netsuite_settings?: Partial<Pick<ShortcutsSettings, "modulesSearch">>;
+};
 
 const parseShortcut = (s: string) => {
   const parts = s.toLowerCase().split("+");
@@ -461,14 +465,17 @@ onMounted(() => {
 
   // Load configured shortcut from extension settings
   try {
-    chrome.storage.sync.get(["magic_netsuite_settings"], (result) => {
+    chrome.storage.sync.get<SettingsStorageResult>(["magic_netsuite_settings"], (result) => {
       if (result?.magic_netsuite_settings?.modulesSearch) {
         internalShortcut = result.magic_netsuite_settings.modulesSearch;
       }
     });
     chrome.storage.onChanged.addListener((changes) => {
-      if (changes.magic_netsuite_settings?.newValue?.modulesSearch) {
-        internalShortcut = changes.magic_netsuite_settings.newValue.modulesSearch;
+      const newSettings = changes.magic_netsuite_settings?.newValue as
+        | SettingsStorageResult["magic_netsuite_settings"]
+        | undefined;
+      if (newSettings?.modulesSearch) {
+        internalShortcut = newSettings.modulesSearch;
       }
     });
   } catch {

@@ -651,7 +651,18 @@ const registerPaneRef = (id: string, el: any) => {
 const activeFolderId = ref<number | null>(null);
 const activeFolderInfo = ref<FolderItem | null>(null);
 
-const getActivePaneId = () => activePaneId.value;
+const getActivePaneId = () => {
+  if (!isSplit.value) return activePaneId.value;
+  if (leftGroupIds.value.includes(activePaneId.value) || rightGroupIds.value.includes(activePaneId.value)) {
+    return activePaneId.value;
+  }
+  return leftActiveId.value || rightActiveId.value || panes.value[0]?.id || activePaneId.value;
+};
+
+const getActivePaneGroup = (): "left" | "right" => {
+  const paneId = getActivePaneId();
+  return rightGroupIds.value.includes(paneId) ? "right" : "left";
+};
 
 const onPaneFolderNavigate = (paneId: string, folderId: number | null) => {
   const pane = panes.value.find((item) => item.id === paneId);
@@ -1165,7 +1176,7 @@ const addPaneForItem = (item: any) => {
   panes.value.push(newPane);
 
   if (isSplit.value) {
-    const group = leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+    const group = getActivePaneGroup();
     if (group === "left") {
       leftGroupIds.value = [...leftGroupIds.value, newId];
       leftActiveId.value = newId;
@@ -1453,7 +1464,9 @@ const removeBookmarkById = async (id: number) => {
 };
 
 const navigateToBookmark = async (bm: Bookmark) => {
-  const pane = paneRefs[getActivePaneId()];
+  const paneId = getActivePaneId();
+  activePaneId.value = paneId;
+  const pane = paneRefs[paneId];
   if (!pane) return;
 
   if (bm.itemType === "folder") {
@@ -1591,7 +1604,7 @@ const openBookmarkInNewTab = async (bm: Bookmark) => {
   panes.value.push(newPane);
 
   if (isSplit.value) {
-    const group = leftGroupIds.value.includes(activePaneId.value) ? "left" : "right";
+    const group = getActivePaneGroup();
     if (group === "left") {
       leftGroupIds.value = [...leftGroupIds.value, newId];
       leftActiveId.value = newId;

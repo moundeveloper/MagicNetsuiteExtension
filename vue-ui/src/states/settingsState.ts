@@ -47,6 +47,12 @@ export interface ShortcutsSettings {
   agentSubagentStepLimit: number;
 }
 
+type StoredSettingsResult = {
+  magic_netsuite_settings?: Omit<Partial<ShortcutsSettings>, "aiProvider"> & {
+    aiProvider?: AiProvider | "puter";
+  };
+};
+
 const defaultSettings: ShortcutsSettings = {
   extensionToggle: "Alt+Shift+U",
   drawerOpen: "ctrl+k",
@@ -85,7 +91,9 @@ let isLoaded = false;
 export function useSettings() {
   const loadSettings = async () => {
     try {
-      const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+      const result = await chrome.storage.sync.get<StoredSettingsResult>([
+        "magic_netsuite_settings"
+      ]);
       
       if (result.magic_netsuite_settings) {
         const stored = result.magic_netsuite_settings;

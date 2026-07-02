@@ -16,6 +16,7 @@ import {
   type DecorationSet
 } from "@codemirror/view";
 import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
 import { sql } from "@codemirror/lang-sql";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -30,7 +31,7 @@ import type { SearchOptions } from "../composables/useCodeViewerSearch";
 
 interface Props {
   code: string;
-  language?: "javascript" | "sql";
+  language?: "javascript" | "typescript" | "sql" | "json";
   autoHeight?: boolean;
   showId?: boolean;
 }
@@ -113,7 +114,7 @@ const nordHighlightStyle = HighlightStyle.define([
 ]);
 
 // --- Format code ---
-const formatCode = async (code: string, lang: "javascript" | "sql" = "javascript") => {
+const formatCode = async (code: string, lang: Props["language"] = "javascript") => {
   if (lang === "sql") {
     try {
       return sqlFormat(code, { language: "sql", keywordCase: "upper" });
@@ -121,6 +122,7 @@ const formatCode = async (code: string, lang: "javascript" | "sql" = "javascript
       return code;
     }
   }
+  if (lang === "json" || lang === "typescript") return code;
   try {
     return await prettier.format(code, {
       parser: "babel",
@@ -139,7 +141,11 @@ const createEditor = async () => {
   if (!editorEl.value) return;
   const formattedCode = await formatCode(props.code, props.language ?? "javascript");
 
-  const langExtension = props.language === "sql" ? sql() : javascript();
+  const langExtension = props.language === "sql"
+    ? sql()
+    : props.language === "json"
+      ? json()
+      : javascript({ jsx: true, typescript: props.language === "typescript" });
 
   // Nord-like theme (matching SuiteQLCodeEditor)
   const nordLikeTheme = EditorView.theme({

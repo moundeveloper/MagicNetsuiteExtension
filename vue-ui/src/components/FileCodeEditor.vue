@@ -22,6 +22,7 @@ import {
   indentWithTab,
 } from "@codemirror/commands";
 import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
 import { sql } from "@codemirror/lang-sql";
 import {
   autocompletion,
@@ -45,7 +46,7 @@ import { lintKeymap } from "@codemirror/lint";
 
 const props = defineProps<{
   modelValue?: string;
-  language?: "javascript" | "sql";
+  language?: "javascript" | "typescript" | "sql" | "json";
   readonly?: boolean;
 }>();
 
@@ -236,7 +237,8 @@ const nordHighlightStyle = HighlightStyle.define([
 
 const buildLangExtension = (lang?: string) => {
   if (lang === "sql") return sql();
-  return javascript();
+  if (lang === "json") return json();
+  return javascript({ jsx: true, typescript: lang === "typescript" });
 };
 
 // ── Lifecycle ──────────────────────────────────────────────────────────────

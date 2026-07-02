@@ -10,6 +10,17 @@ export default defineConfig({
   optimizeDeps: {
     include: ["monaco-editor"]
   },
+  resolve: {
+    // CodeMirror breaks silently (no syntax colors) when two copies of these
+    // packages end up in the bundle — force a single instance.
+    dedupe: [
+      "@codemirror/state",
+      "@codemirror/view",
+      "@codemirror/language",
+      "@lezer/highlight",
+      "@lezer/common"
+    ]
+  },
   base: "./",
   build: {
     outDir: "../src/dist/vue-ui",

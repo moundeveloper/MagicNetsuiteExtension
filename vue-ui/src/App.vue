@@ -1,5 +1,10 @@
 <script setup lang="ts">
-import { RouterView, useRouter, useRoute } from "vue-router";
+import {
+  RouterView,
+  useRouter,
+  useRoute,
+  type RouteRecordNameGeneric
+} from "vue-router";
 import AppHeader from "./components/AppHeader.vue";
 import { getRouteMap } from "./router/routesMap";
 import { onBeforeUnmount, onMounted, ref, computed } from "vue";
@@ -17,6 +22,9 @@ const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 const isProcessingRoute = computed(() => route.path === "/processing");
 
 type PanelAction = "open" | "close";
+type OpenViewStorage = {
+  openView?: RouteRecordNameGeneric;
+};
 
 const sendPanelState = (action: PanelAction): void => {
   chrome.runtime.sendMessage({
@@ -52,7 +60,7 @@ onMounted(async () => {
       }
     });
 
-    chrome.storage.session.get("openView", (result) => {
+    chrome.storage.session.get<OpenViewStorage>("openView", (result) => {
       if (isAdmin) console.log("openView", result);
       if (result?.openView) {
         router.push({ name: result.openView });
