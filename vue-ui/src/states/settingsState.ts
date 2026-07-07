@@ -37,6 +37,8 @@ export interface ShortcutsSettings {
   mcpEnabled: boolean;
   /** Names of MCP tools that are disabled and should be hidden from AI clients */
   mcpDisabledTools: string[];
+  /** Deployed Suitelet URL used for server-side MCP routing */
+  mcpSuiteletDeploymentUrl: string;
   /** Enable extended thinking / reasoning mode for supported models */
   thinkingMode: boolean;
   /** Max thinking token budget — used for Claude extended thinking via Copilot */
@@ -78,6 +80,7 @@ const defaultSettings: ShortcutsSettings = {
   mcpPreferredAccount: "",
   mcpEnabled: true,
   mcpDisabledTools: [],
+  mcpSuiteletDeploymentUrl: "",
   thinkingMode: false,
   thinkingBudget: 8000,
   agentMainStepLimit: 25,
@@ -131,6 +134,8 @@ export function useSettings() {
         settings.mcpDisabledTools = Array.isArray(stored.mcpDisabledTools)
           ? [...stored.mcpDisabledTools]
           : [];
+        settings.mcpSuiteletDeploymentUrl =
+          stored.mcpSuiteletDeploymentUrl ?? defaultSettings.mcpSuiteletDeploymentUrl;
         settings.thinkingMode = stored.thinkingMode ?? defaultSettings.thinkingMode;
         settings.thinkingBudget = stored.thinkingBudget ?? defaultSettings.thinkingBudget;
         settings.agentMainStepLimit = stored.agentMainStepLimit ?? defaultSettings.agentMainStepLimit;

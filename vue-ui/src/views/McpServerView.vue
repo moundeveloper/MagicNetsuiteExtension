@@ -9,6 +9,7 @@ import ToggleSwitch from "primevue/toggleswitch";
 import Toast from "primevue/toast";
 import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
+import ServerComponentsPanel from "../components/ServerComponentsPanel.vue";
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -273,6 +274,7 @@ interface UsageEntry {
   tool: string;
   timestamp: string;
   success: boolean;
+  executionSide?: "server" | "client" | "local" | "unknown";
   error: string | null;
 }
 
@@ -562,6 +564,22 @@ onBeforeUnmount(() => {
           <i class="pi pi-info-circle" />
           <span>No account selected -- MCP will use the active tab</span>
         </div>
+
+        <div class="current-preference">
+          <i class="pi pi-server" />
+          <span>Server-side MCP routing auto-discovers the Magic Netsuite Server Suitelet</span>
+        </div>
+      </div>
+
+      <!-- Server Components Section -->
+      <div class="mcp-section">
+        <h2>Server Components</h2>
+        <p class="section-description">
+          Deploy, verify, and remove the shared Magic NetSuite server Suitelet
+          components used by server execution, FreeMarker rendering, and
+          server-side MCP routing.
+        </p>
+        <ServerComponentsPanel title="Deployment" auto-check />
       </div>
 
       <!-- Available Tools Section -->
@@ -706,6 +724,7 @@ onBeforeUnmount(() => {
           <div class="usage-log-header">
             <span class="log-col-time">Time</span>
             <span class="log-col-tool">Tool</span>
+            <span class="log-col-side">Side</span>
             <span class="log-col-status">Status</span>
             <span class="log-col-error">Error</span>
           </div>
@@ -717,6 +736,14 @@ onBeforeUnmount(() => {
           >
             <span class="log-col-time">{{ formatTime(entry.timestamp) }}</span>
             <span class="log-col-tool"><code>{{ entry.tool }}</code></span>
+            <span class="log-col-side">
+              <span
+                class="side-badge"
+                :class="`side-${entry.executionSide ?? 'unknown'}`"
+              >
+                {{ entry.executionSide ?? "unknown" }}
+              </span>
+            </span>
             <span class="log-col-status">
               <span v-if="entry.success" class="log-ok">
                 <i class="pi pi-check" /> OK
@@ -1360,6 +1387,46 @@ onBeforeUnmount(() => {
 
 .log-col-status {
   flex: 0 0 50px;
+}
+
+.log-col-side {
+  flex: 0 0 70px;
+}
+
+.side-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.side-server {
+  color: var(--p-green-700);
+  background: var(--p-green-50);
+  border: 1px solid var(--p-green-200);
+}
+
+.side-client {
+  color: var(--p-blue-700);
+  background: var(--p-blue-50);
+  border: 1px solid var(--p-blue-200);
+}
+
+.side-local {
+  color: var(--p-slate-700);
+  background: var(--p-slate-100);
+  border: 1px solid var(--p-slate-300);
+}
+
+.side-unknown {
+  color: var(--p-slate-500);
+  background: var(--p-slate-50);
+  border: 1px solid var(--p-slate-200);
 }
 
 .log-col-error {

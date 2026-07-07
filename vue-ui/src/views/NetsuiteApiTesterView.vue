@@ -1029,6 +1029,12 @@ const ENDPOINTS: EndpointDef[] = [
     fields: []
   },
   {
+    route: RequestRoutes.DEPLOY_SERVER_COMPONENTS,
+    description: "Deploys or repairs the Magic NetSuite server-side components.",
+    destructive: true,
+    fields: []
+  },
+  {
     route: RequestRoutes.REMOVE_SERVER_COMPONENTS,
     description: "Removes the Magic NetSuite server-side components from this account.",
     destructive: true,
@@ -1154,7 +1160,11 @@ const GROUPS: { label: string; icon: string; routes: RequestRoutes[] }[] = [
   {
     label: "Server",
     icon: "pi pi-cog",
-    routes: [RequestRoutes.CHECK_SERVER_COMPONENTS, RequestRoutes.REMOVE_SERVER_COMPONENTS]
+    routes: [
+      RequestRoutes.CHECK_SERVER_COMPONENTS,
+      RequestRoutes.DEPLOY_SERVER_COMPONENTS,
+      RequestRoutes.REMOVE_SERVER_COMPONENTS
+    ]
   }
 ];
 

@@ -758,6 +758,73 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "magic_netsuite_save_skill",
+            description:
+              "Save or update a reusable Markdown skill in the Magic NetSuite extension skill library. Use this when the user asks you to create a skill for Magic NetSuite.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: { type: "number" },
+                name: { type: "string" },
+                description: { type: "string" },
+                tags: {
+                  anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }]
+                },
+                content: { type: "string" },
+                markdown: { type: "string" },
+                domain: { type: "string", enum: ["global", "sql"] },
+                enabled: { type: "boolean" },
+                upsertByName: { type: "boolean" }
+              },
+              required: ["name"]
+            }
+          },
+          {
+            name: "magic_netsuite_list_skills",
+            description: "List Magic NetSuite skill metadata from the extension skill library.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                includeDisabled: { type: "boolean" }
+              }
+            }
+          },
+          {
+            name: "magic_netsuite_search_skills",
+            description: "Search Magic NetSuite skills by name, description, and tags. Returns metadata only.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string" },
+                includeDisabled: { type: "boolean" }
+              }
+            }
+          },
+          {
+            name: "magic_netsuite_load_skill",
+            description: "Load one Magic NetSuite skill, including Markdown content, by ID.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: { type: "number" },
+                skillId: { type: "number" }
+              }
+            }
+          },
+          {
+            name: "magic_netsuite_set_skill_enabled",
+            description: "Enable or disable a Magic NetSuite skill by ID.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: { type: "number" },
+                skillId: { type: "number" },
+                enabled: { type: "boolean" }
+              },
+              required: ["enabled"]
+            }
+          },
+          {
             name: "netsuite_switch_environment",
             description:
               "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
@@ -2047,6 +2114,49 @@ async function handleMcp(req) {
                 }
               },
               required: ["code"]
+            }
+          },
+          {
+            name: "netsuite_server_info",
+            description:
+              "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in extension settings.",
+            inputSchema: {
+              type: "object",
+              properties: {}
+            }
+          },
+          {
+            name: "netsuite_submit_task",
+            description:
+              "Submit a NetSuite task using the server-side N/task module from the deployed MCP Suitelet. Destructive/side-effecting depending on task type.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                taskType: {
+                  type: "string",
+                  description: "N/task TaskType key or value, e.g. SCHEDULED_SCRIPT, MAP_REDUCE, CSV_IMPORT."
+                },
+                values: {
+                  type: "object",
+                  description: "Task object properties to assign before submit, such as scriptId, deploymentId, params, or importFile."
+                }
+              },
+              required: ["taskType"]
+            }
+          },
+          {
+            name: "netsuite_check_task_status",
+            description:
+              "Check a NetSuite task status using the server-side N/task module from the deployed MCP Suitelet.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                taskId: {
+                  type: "string",
+                  description: "Task ID returned by netsuite_submit_task or another NetSuite task submit call."
+                }
+              },
+              required: ["taskId"]
             }
           }
         ]

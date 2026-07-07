@@ -80,70 +80,12 @@
                   <code class="ml-1 text-xs bg-slate-200 px-1 rounded">{{ userId.slice(-8) }}</code>
                 </div>
 
-                <Button
-                  size="small"
-                  @click="checkServerComponents"
-                  :loading="serverStatus.checking"
-                  class="w-full mb-2"
-                >
-                  Check Server
-                </Button>
-
-               <div v-if="serverStatus.components" class="text-xs space-y-1">
-  <div :class="serverStatus.components.folderExists ? 'text-green-600' : 'text-red-600'">
-    Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
-  </div>
-
-  <div :class="serverStatus.components.serverFileExists ? 'text-green-600' : 'text-red-600'">
-    Server File: {{ serverStatus.components.serverFileExists ? '✓' : '✗' }}
-  </div>
-
-  <div :class="serverStatus.components.suiteletScriptExists ? 'text-green-600' : 'text-red-600'">
-    Suitelet Script: {{ serverStatus.components.suiteletScriptExists ? '✓' : '✗' }}
-  </div>
-
-  <div :class="serverStatus.components.suiteletDeployed ? 'text-green-600' : 'text-red-600'">
-    Suitelet Deployed: {{ serverStatus.components.suiteletDeployed ? '✓' : '✗' }}
-  </div>
-
-  <div :class="serverStatus.components.allReady ? 'text-green-600' : 'text-red-600'">
-    All Ready: {{ serverStatus.components.allReady ? '✓' : '✗' }}
-  </div>
-</div>
-
-                <div v-if="serverStatus.error" class="text-red-500 mt-2">
-                  {{ serverStatus.error }}
-                </div>
-
-                <Button
-                  size="small"
-                  :severity="removeConfirmPending ? 'warn' : 'danger'"
-                  :loading="isRemoving"
-                  :disabled="isRemoving"
-                  @click="removeServerComponents"
-                  class="w-full mt-2"
-                >
-                  {{ removeConfirmPending ? 'Click Again to Confirm' : 'Remove Server Components' }}
-                </Button>
-
-                <!-- Inline removal step results -->
-                <div v-if="removeStatus" class="text-xs space-y-1 mt-2">
-                  <div
-                    v-for="step in removeStatus.steps"
-                    :key="step.name"
-                    :class="{
-                      'text-green-600': step.status === 'removed',
-                      'text-gray-500': step.status === 'skipped',
-                      'text-red-500': step.status === 'error'
-                    }"
-                  >
-                    <span v-if="step.status === 'removed'">✓</span>
-                    <span v-else-if="step.status === 'skipped'">–</span>
-                    <span v-else>✗</span>
-                    {{ step.name }}
-                    <span v-if="step.error" class="ml-1 opacity-75">({{ step.error }})</span>
-                  </div>
-                </div>
+                <ServerComponentsPanel
+                  ref="serverComponentsPanelRef"
+                  title="Server"
+                  :show-all-ready="true"
+                  :show-deploy="false"
+                />
               </div>
             </div>
           </div>
@@ -282,15 +224,16 @@
 </template>
 
 <script lang="ts" setup>
-import { onBeforeUnmount, onMounted, ref, watch, computed } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, computed } from "vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
-import { Button, useToast } from "primevue";
+import { Button } from "primevue";
 import { InputText } from "primevue";
 import { defaultCode } from "../utils/temp";
 import VueSplitter from "@rmp135/vue-splitter";
 import TerminalLogs from "../components/TerminalLogs.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import ServerComponentsPanel from "../components/ServerComponentsPanel.vue";
 import { completionItems } from "../utils/codeEditorJSCompletion";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
@@ -331,17 +274,8 @@ const fileSearchTerm = ref("");
 const commandSearchTerm = ref("");
 const isRestoring = ref(true);
 const executionMode = ref<"client" | "server">("client");
-const serverStatus = ref<{
-  checking: boolean;
-  components: any;
-  error: string | null;
-}>({
-  checking: false,
-  components: null,
-  error: null
-});
 const userId = ref<string>("");
-const toast = useToast();
+const serverComponentsPanelRef = ref<InstanceType<typeof ServerComponentsPanel> | null>(null);
 
 const tabs = computed(() =>
   openTabs.value
@@ -628,7 +562,7 @@ const runFile = async (fileId: string) => {
       }
 
       // Refresh server component status after execution (same as switching to server mode)
-      await checkServerComponents();
+      await serverComponentsPanelRef.value?.check();
     }
   } catch (error) {
     console.error("Execution error:", error);
@@ -647,98 +581,6 @@ const runFile = async (fileId: string) => {
 const runCurrentFile = () => {
   if (activeFileId.value) {
     runFile(activeFileId.value);
-  }
-};
-
-const checkServerComponents = async () => {
-  serverStatus.value.checking = true;
-  serverStatus.value.error = null;
-
-  try {
-    const response = await callApi(RequestRoutes.CHECK_SERVER_COMPONENTS);
-    const result = (response as ApiResponse)?.message || response;
-    serverStatus.value.components = result;
-  } catch (err: any) {
-    serverStatus.value.error = err.message || "Failed to check server components";
-  } finally {
-    serverStatus.value.checking = false;
-  }
-};
-
-const removeConfirmPending = ref(false);
-let removeConfirmTimer: number | undefined;
-
-const isRemoving = ref(false);
-
-interface RemoveStep {
-  name: string;
-  status: "removed" | "skipped" | "error";
-  error?: string;
-}
-const removeStatus = ref<{ steps: RemoveStep[] } | null>(null);
-
-const removeServerComponents = async () => {
-  // First click: show a warning toast and arm the confirmation window
-  if (!removeConfirmPending.value) {
-    removeConfirmPending.value = true;
-    toast.add({
-      severity: "warn",
-      summary: "Confirm Removal",
-      detail: "Click the button again within 3 seconds to confirm",
-      life: 3000
-    });
-    removeConfirmTimer = window.setTimeout(() => {
-      removeConfirmPending.value = false;
-    }, 3000);
-    return;
-  }
-
-  // Second click (within window): proceed with removal
-  removeConfirmPending.value = false;
-  if (removeConfirmTimer) {
-    clearTimeout(removeConfirmTimer);
-    removeConfirmTimer = undefined;
-  }
-
-  isRemoving.value = true;
-  removeStatus.value = null;
-
-  try {
-    const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
-    const result = (response as ApiResponse)?.message || response;
-
-    // New structured format: { steps: [{name, status, error?}] }
-    if (result?.steps && Array.isArray(result.steps)) {
-      removeStatus.value = { steps: result.steps };
-      const removedCount = result.steps.filter((s: RemoveStep) => s.status === "removed").length;
-      const errorCount = result.steps.filter((s: RemoveStep) => s.status === "error").length;
-      toast.add({
-        severity: errorCount > 0 ? "warn" : "success",
-        summary: "Components Removed",
-        detail: `${removedCount} removed, ${errorCount} error(s)`,
-        life: 4000
-      });
-    } else {
-      // Legacy flat array fallback
-      const removedItems = Array.isArray(result) ? result.join(", ") : "none";
-      toast.add({
-        severity: "success",
-        summary: "Components Removed",
-        detail: `Removed: ${removedItems}`,
-        life: 4000
-      });
-    }
-
-    await checkServerComponents();
-  } catch (err: any) {
-    toast.add({
-      severity: "error",
-      summary: "Removal Failed",
-      detail: err.message || "Unknown error",
-      life: 5000
-    });
-  } finally {
-    isRemoving.value = false;
   }
 };
 
@@ -795,8 +637,9 @@ watch(
 watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
 
 watch(executionMode, async (mode) => {
-  if (mode === "server" && !serverStatus.value.checking) {
-    await checkServerComponents();
+  if (mode === "server") {
+    await nextTick();
+    await serverComponentsPanelRef.value?.check();
   }
 });
 

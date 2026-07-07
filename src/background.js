@@ -179,11 +179,12 @@ The join column names are not always obvious.
 const mcpUsageLog = [];
 const MCP_USAGE_MAX = 100;
 
-const recordMcpUsage = (toolName, success, errorMsg) => {
+const recordMcpUsage = (toolName, success, errorMsg, executionSide = "unknown") => {
   mcpUsageLog.unshift({
     tool: toolName,
     timestamp: new Date().toISOString(),
     success,
+    executionSide,
     error: errorMsg || null
   });
   if (mcpUsageLog.length > MCP_USAGE_MAX) {
@@ -1339,6 +1340,270 @@ let mcpDedicatedTabAccountId = null;
 const MCP_GOVERNANCE_THRESHOLD = 100;
 let mcpDedicatedTabRefreshing = false;
 let mcpDedicatedTabCreating = false;
+const MAGIC_NETSUITE_SERVER_SCRIPT_ID = "customscript_magic_netsuite_server";
+const MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID = "customdeploy_magic_netsuite_server_dp";
+let mcpSuiteletServerUrlCache = null;
+
+const SKILLS_DB_NAME = "MagicNetsuiteSkills";
+const SKILLS_DB_VERSION = 3;
+const SKILLS_STORE_NAME = "skills";
+
+function openSkillsDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(SKILLS_DB_NAME, SKILLS_DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const store = db.objectStoreNames.contains(SKILLS_STORE_NAME)
+        ? request.transaction.objectStore(SKILLS_STORE_NAME)
+        : db.createObjectStore(SKILLS_STORE_NAME, {
+            keyPath: "id",
+            autoIncrement: true
+          });
+
+      ["name", "tags", "description", "enabled", "domain"].forEach((indexName) => {
+        if (!store.indexNames.contains(indexName)) {
+          store.createIndex(indexName, indexName);
+        }
+      });
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Failed to open skills database."));
+  });
+}
+
+async function withSkillsStore(mode, operation) {
+  const db = await openSkillsDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SKILLS_STORE_NAME, mode);
+      const store = tx.objectStore(SKILLS_STORE_NAME);
+      const value = operation(store);
+      tx.oncomplete = () => resolve(value);
+      tx.onerror = () => reject(tx.error || new Error("Skills database transaction failed."));
+      tx.onabort = () => reject(tx.error || new Error("Skills database transaction was aborted."));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function requestToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Skills database request failed."));
+  });
+}
+
+async function getAllStoredSkills() {
+  return withSkillsStore("readonly", (store) => requestToPromise(store.getAll()));
+}
+
+function normalizeSkillPayload(args) {
+  const name = String(args?.name || "").trim();
+  const content = String(args?.content || args?.markdown || "").trim();
+  if (!name) throw new Error("Skill name is required.");
+  if (!content) throw new Error("Skill content or markdown is required.");
+
+  const domain = args?.domain === "sql" ? "sql" : "global";
+  return {
+    name,
+    description: String(args?.description || "").trim(),
+    tags: Array.isArray(args?.tags)
+      ? args.tags.map((tag) => String(tag).trim()).filter(Boolean).join(", ")
+      : String(args?.tags || "").trim(),
+    content,
+    enabled: args?.enabled === undefined ? true : Boolean(args.enabled),
+    domain
+  };
+}
+
+async function handleMagicSaveSkill(args) {
+  const now = new Date().toISOString();
+  const payload = normalizeSkillPayload(args);
+  const idArg = Number(args?.id);
+  const upsertByName = args?.upsertByName !== false;
+
+  const savedId = await withSkillsStore("readwrite", async (store) => {
+    let existing = null;
+    if (Number.isFinite(idArg) && idArg > 0) {
+      existing = await requestToPromise(store.get(idArg));
+    }
+    if (!existing && upsertByName) {
+      const all = await requestToPromise(store.getAll());
+      existing = all.find(
+        (skill) => String(skill.name || "").toLowerCase() === payload.name.toLowerCase()
+      );
+    }
+
+    if (existing?.id) {
+      await requestToPromise(
+        store.put({
+          ...existing,
+          ...payload,
+          id: existing.id,
+          createdAt: existing.createdAt || now,
+          updatedAt: now
+        })
+      );
+      return existing.id;
+    }
+
+    return requestToPromise(
+      store.add({
+        ...payload,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            saved: true,
+            id: savedId,
+            name: payload.name,
+            enabled: payload.enabled,
+            domain: payload.domain
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+async function handleMagicListSkills(args) {
+  const includeDisabled = args?.includeDisabled !== false;
+  const skills = (await getAllStoredSkills())
+    .filter((skill) => includeDisabled || skill.enabled !== false)
+    .map(({ id, name, description, tags, enabled, domain, updatedAt }) => ({
+      id,
+      name,
+      description,
+      tags,
+      enabled: enabled !== false,
+      domain: domain || "global",
+      updatedAt
+    }));
+  return { content: [{ type: "text", text: JSON.stringify({ skills }, null, 2) }] };
+}
+
+async function handleMagicSearchSkills(args) {
+  const query = String(args?.query || "").trim().toLowerCase();
+  const includeDisabled = Boolean(args?.includeDisabled);
+  const terms = query.split(/\s+/).filter(Boolean);
+  const results = (await getAllStoredSkills())
+    .filter((skill) => includeDisabled || skill.enabled !== false)
+    .map((skill) => {
+      const haystack = `${skill.name || ""} ${skill.description || ""} ${skill.tags || ""}`.toLowerCase();
+      const score = terms.length
+        ? terms.reduce((sum, term) => sum + (haystack.includes(term) ? 2 : 0), 0)
+        : 1;
+      return { skill, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(({ skill }) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tags: skill.tags,
+      enabled: skill.enabled !== false,
+      domain: skill.domain || "global"
+    }));
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ matched: results.length, results }, null, 2)
+      }
+    ]
+  };
+}
+
+async function handleMagicLoadSkill(args) {
+  const id = Number(args?.id ?? args?.skillId);
+  if (!Number.isFinite(id)) throw new Error("Skill id is required.");
+  const skill = await withSkillsStore("readonly", (store) => requestToPromise(store.get(id)));
+  if (!skill) throw new Error(`Skill with ID ${id} was not found.`);
+  return { content: [{ type: "text", text: JSON.stringify(skill, null, 2) }] };
+}
+
+async function handleMagicSetSkillEnabled(args) {
+  const id = Number(args?.id ?? args?.skillId);
+  if (!Number.isFinite(id)) throw new Error("Skill id is required.");
+  const enabled = Boolean(args?.enabled);
+
+  await withSkillsStore("readwrite", async (store) => {
+    const skill = await requestToPromise(store.get(id));
+    if (!skill) throw new Error(`Skill with ID ${id} was not found.`);
+    await requestToPromise(
+      store.put({
+        ...skill,
+        enabled,
+        updatedAt: new Date().toISOString()
+      })
+    );
+  });
+
+  return { content: [{ type: "text", text: JSON.stringify({ id, enabled }, null, 2) }] };
+}
+
+const MCP_SERVER_SIDE_TOOL_NAMES = new Set([
+  "suiteql_search_tables",
+  "suiteql_get_table_fields",
+  "suiteql_get_table_joins",
+  "suiteql_execute_query",
+  "suiteql_discover_field_values",
+  "netsuite_load_record",
+  "netsuite_get_record_sublists",
+  "netsuite_get_record_fields",
+  "netsuite_list_record_types",
+  "netsuite_lists",
+  "netsuite_list_items",
+  "netsuite_create_list",
+  "netsuite_update_list",
+  "netsuite_create_record",
+  "netsuite_update_record_fields",
+  "netsuite_create_custom_record_type",
+  "netsuite_get_custom_record_field_types",
+  "netsuite_create_custom_record_field",
+  "netsuite_update_custom_record_field",
+  "netsuite_get_custom_record_select_record_types",
+  "netsuite_inspect_custom_record_field",
+  "netsuite_find_file",
+  "netsuite_find_folder",
+  "netsuite_list_folder",
+  "netsuite_read_file",
+  "netsuite_create_folder",
+  "netsuite_upload_file",
+  "netsuite_update_file_content",
+  "netsuite_rename_file",
+  "netsuite_rename_folder",
+  "netsuite_delete_file",
+  "netsuite_delete_folder",
+  "netsuite_move_items",
+  "netsuite_get_scripts",
+  "netsuite_get_script_files",
+  "netsuite_get_deployed_scripts",
+  "netsuite_get_logs",
+  "netsuite_create_script_record",
+  "netsuite_create_script_deployment",
+  "netsuite_create_script_field",
+  "netsuite_update_script_field",
+  "netsuite_run_quick_script",
+  "netsuite_submit_task",
+  "netsuite_check_task_status",
+  "netsuite_server_info"
+]);
 
 // ── MCP: Direct Queries to Native Host ──
 // Allows the side panel to query the native host directly (e.g. for install path)
@@ -1774,6 +2039,74 @@ const MCP_TOOL_DEFINITIONS = [
           description: "Optional message to echo back"
         }
       }
+    }
+  },
+  {
+    name: "magic_netsuite_save_skill",
+    description:
+      "Save or update a reusable Markdown skill in the Magic NetSuite extension skill library. Use this when the user asks you to create a skill for Magic NetSuite. Skills are available to the Vue Skills view and local agent harnesses.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Optional existing skill ID to update." },
+        name: { type: "string", description: "Short skill name." },
+        description: { type: "string", description: "One-sentence description for search results." },
+        tags: {
+          anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Comma-separated tags or an array of tags."
+        },
+        content: { type: "string", description: "Markdown skill content." },
+        markdown: { type: "string", description: "Alias for content." },
+        domain: { type: "string", enum: ["global", "sql"], description: "Skill scope. Defaults to global." },
+        enabled: { type: "boolean", description: "Whether the skill is enabled. Defaults to true." },
+        upsertByName: { type: "boolean", description: "Update a same-name skill if found. Defaults to true." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "magic_netsuite_list_skills",
+    description: "List Magic NetSuite skill metadata from the extension skill library.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeDisabled: { type: "boolean", description: "Include disabled skills. Defaults to true." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_search_skills",
+    description: "Search Magic NetSuite skills by name, description, and tags. Returns metadata only.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms. Leave empty to list all enabled skills." },
+        includeDisabled: { type: "boolean", description: "Include disabled skills. Defaults to false." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_load_skill",
+    description: "Load one Magic NetSuite skill, including its Markdown content, by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Skill ID." },
+        skillId: { type: "number", description: "Alias for id." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_set_skill_enabled",
+    description: "Enable or disable a Magic NetSuite skill by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Skill ID." },
+        skillId: { type: "number", description: "Alias for id." },
+        enabled: { type: "boolean", description: "True to enable, false to disable." }
+      },
+      required: ["enabled"]
     }
   },
   {
@@ -3003,6 +3336,58 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "magic_netsuite_deploy_server_components",
+    description:
+      "Deploy or repair the Magic NetSuite server-side components used by server Quick Script, FreeMarker rendering, and MCP Suitelet-backed tools. Returns before/after component status.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_server_info",
+    description:
+      "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in settings.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_submit_task",
+    description:
+      "Submit a NetSuite task using the server-side N/task module from the deployed MCP Suitelet. Destructive/side-effecting depending on task type.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskType: {
+          type: "string",
+          description: "N/task TaskType key or value, e.g. SCHEDULED_SCRIPT, MAP_REDUCE, CSV_IMPORT."
+        },
+        values: {
+          type: "object",
+          description: "Task object properties to assign before submit, such as scriptId, deploymentId, params, or importFile."
+        }
+      },
+      required: ["taskType"]
+    }
+  },
+  {
+    name: "netsuite_check_task_status",
+    description:
+      "Check a NetSuite task status using the server-side N/task module from the deployed MCP Suitelet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Task ID returned by netsuite_submit_task or another NetSuite task submit call."
+        }
+      },
+      required: ["taskId"]
+    }
+  },
+  {
     name: "netsuite_suitelet_stream_start",
     description:
       "Start an interactive Suitelet viewer session for the MCP App. Opens the provided NetSuite Suitelet URL, or uses the preferred NetSuite tab when no URL is provided.",
@@ -3234,9 +3619,15 @@ async function handleRequest({ requestId, method, params }) {
         throw new Error(`Tool "${name}" is disabled. Enable it in the MCP Server settings.`);
       }
 
+      let executionSide = "client";
       try {
-        if (name === "netsuite_switch_environment") {
+        result = await callMcpSuiteletServerTool(name, args);
+
+        if (result) {
+          executionSide = "server";
+        } else if (name === "netsuite_switch_environment") {
           result = await handleNetsuiteSwitchEnvironment(args);
+          executionSide = "local";
         } else if (name === "ping") {
           // Include account info so agents can discover which account is targeted
           const storageForPing = await chrome.storage.sync.get(["magic_netsuite_settings"]);
@@ -3244,8 +3635,25 @@ async function handleRequest({ requestId, method, params }) {
           const text = args.message ? `pong: ${args.message}` : "pong";
           const accountInfo = pingAccount ? ` (account: ${pingAccount})` : "";
           result = { content: [{ type: "text", text: text + accountInfo }] };
+          executionSide = "local";
+        } else if (name === "magic_netsuite_save_skill") {
+          result = await handleMagicSaveSkill(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_list_skills") {
+          result = await handleMagicListSkills(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_search_skills") {
+          result = await handleMagicSearchSkills(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_load_skill") {
+          result = await handleMagicLoadSkill(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_set_skill_enabled") {
+          result = await handleMagicSetSkillEnabled(args);
+          executionSide = "local";
         } else if (name === "suiteql_get_guide") {
           result = { content: [{ type: "text", text: SUITEQL_GUIDE }] };
+          executionSide = "local";
         } else if (name.startsWith("suiteql_")) {
           result = await handleSuiteQLTool(name, args);
         } else if (name === "netsuite_search_docs") {
@@ -3328,6 +3736,8 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteCreateScriptDeployment(args);
         } else if (name === "netsuite_run_quick_script") {
           result = await handleNetsuiteRunQuickScript(args);
+        } else if (name === "magic_netsuite_deploy_server_components") {
+          result = await handleMagicDeployServerComponents();
         } else if (name === "netsuite_get_logs") {
           result = await handleNetsuiteGetLogs(args);
         } else if (name === "netsuite_suitelet_stream_start") {
@@ -3367,7 +3777,7 @@ async function handleRequest({ requestId, method, params }) {
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
-        recordMcpUsage(name, true, null);
+        recordMcpUsage(name, true, null, executionSide);
 
         // After a successful tool call, check governance on the dedicated tab
         // and refresh it if needed for the next call.
@@ -3378,7 +3788,7 @@ async function handleRequest({ requestId, method, params }) {
           });
         }
       } catch (toolErr) {
-        recordMcpUsage(name, false, toolErr.message);
+        recordMcpUsage(name, false, toolErr.message, executionSide);
         throw toolErr;
       }
     } else {
@@ -4390,6 +4800,58 @@ function asMcpTextResult(result) {
   };
 }
 
+async function callMcpSuiteletServerTool(name, args) {
+  if (!MCP_SERVER_SIDE_TOOL_NAMES.has(name)) return null;
+
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const overrideUrl = String(storageResult?.magic_netsuite_settings?.mcpSuiteletDeploymentUrl || "").trim();
+  const suiteletUrl = overrideUrl || await resolveMcpSuiteletServerUrl();
+  if (!suiteletUrl) return null;
+
+  const body = new URLSearchParams();
+  body.set("action", "mcpToolCall");
+  body.set("name", name);
+  body.set("arguments", JSON.stringify(args || {}));
+
+  const response = await fetch(suiteletUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: body.toString()
+  });
+
+  if (!response.ok) {
+    throw new Error(`MCP Suitelet server route failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+
+  const payload = await response.json();
+  if (payload?.unsupported) return null;
+  if (payload?.ok === undefined) return null;
+  if (!payload?.ok) {
+    const raw = payload?.error;
+    throw new Error(raw ? (typeof raw === "string" ? raw : JSON.stringify(raw)) : "MCP Suitelet server route failed.");
+  }
+  return payload.result;
+}
+
+async function resolveMcpSuiteletServerUrl() {
+  if (mcpSuiteletServerUrlCache?.url && Date.now() - mcpSuiteletServerUrlCache.at < 60000) {
+    return mcpSuiteletServerUrlCache.url;
+  }
+
+  const { suitelets } = await querySuitelets(MAGIC_NETSUITE_SERVER_SCRIPT_ID);
+  const matched = suitelets.find((suitelet) =>
+    String(suitelet.scriptId || "").toLowerCase() === MAGIC_NETSUITE_SERVER_SCRIPT_ID ||
+    String(suitelet.deploymentScriptId || "").toLowerCase() === MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID
+  ) || suitelets[0];
+
+  if (!matched?.url) return "";
+  mcpSuiteletServerUrlCache = { url: matched.url, at: Date.now(), matched };
+  return matched.url;
+}
+
 async function handleNetsuiteCreateFolder(args) {
   const name = String(args?.name ?? "").trim();
   if (!name) throw new Error("name is required.");
@@ -4690,6 +5152,15 @@ async function handleNetsuiteRunQuickScript(args) {
   }
 
   return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
+}
+
+async function handleMagicDeployServerComponents() {
+  const result = await callNetsuiteRoute(
+    "DEPLOY_SERVER_COMPONENTS",
+    {},
+    "Failed to deploy Magic NetSuite server components."
+  );
+  return asMcpTextResult(result);
 }
 
 async function handleNetsuiteGetDeployedScripts(args) {

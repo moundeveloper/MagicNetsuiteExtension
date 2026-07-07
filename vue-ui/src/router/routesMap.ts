@@ -28,6 +28,7 @@ import RecordDetailView from "../views/RecordDetailView.vue";
 import FlightRecorderView from "../views/FlightRecorderView.vue";
 import WatchtowerView from "../views/WatchtowerView.vue";
 import DependencyExplorerView from "../views/DependencyExplorerView.vue";
+import SkillsView from "../views/SkillsView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -274,6 +275,14 @@ export const routes: FullRoute[] = [
     component: McpServerView,
     status: RouteStatus.release,
     breadcrumb: "MCP Server"
+  },
+  {
+    route: "/skills",
+    name: "Skills",
+    icon: "pi pi-book",
+    component: SkillsView,
+    status: RouteStatus.release,
+    breadcrumb: "Skills"
   },
   {
     route: "/api-tester",

@@ -51,6 +51,7 @@ const WRITE_ROUTES = new Set<RequestRoutes>([
   RequestRoutes.UPDATE_CUSTOM_RECORD_FIELD,
   RequestRoutes.CREATE_SCRIPT_FIELD,
   RequestRoutes.UPDATE_SCRIPT_FIELD,
+  RequestRoutes.DEPLOY_SERVER_COMPONENTS,
   RequestRoutes.REMOVE_SERVER_COMPONENTS
 ]);
 

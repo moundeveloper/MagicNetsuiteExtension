@@ -3028,6 +3028,10 @@ const handlers = {
   CHECK_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
     return window.checkMagicNetsuiteComponents(modules, {}, csrfToken);
   },
+  DEPLOY_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
+    console.log("Deploy Server Components action received");
+    return await window.deployMagicNetsuiteComponents(modules, {}, csrfToken);
+  },
   REMOVE_SERVER_COMPONENTS: async ({ modules, payload, csrfToken }) => {
     console.log("Remove Server Components action received");
     return await window.removeMagicNetsuiteComponents(modules, {}, csrfToken);

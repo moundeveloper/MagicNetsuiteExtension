@@ -117,63 +117,13 @@
           </div>
 
           <div class="sidebar-section">
-            <h4>Server</h4>
-            <Button
-              size="small"
-              class="w-full"
-              :loading="serverStatus.checking"
-              @click="checkServerComponents"
-            >
-              Check Server
-            </Button>
-
-            <div v-if="serverStatus.components" class="text-xs space-y-1">
-              <div :class="serverStatus.components.folderExists ? 'text-green-600' : 'text-red-600'">
-                Folder: {{ serverStatus.components.folderExists ? '✓' : '✗' }}
-              </div>
-              <div :class="serverStatus.components.serverFileExists ? 'text-green-600' : 'text-red-600'">
-                Server File: {{ serverStatus.components.serverFileExists ? '✓' : '✗' }}
-              </div>
-              <div :class="serverStatus.components.suiteletScriptExists ? 'text-green-600' : 'text-red-600'">
-                Suitelet Script: {{ serverStatus.components.suiteletScriptExists ? '✓' : '✗' }}
-              </div>
-              <div :class="serverStatus.components.suiteletDeployed ? 'text-green-600' : 'text-red-600'">
-                Suitelet Deployed: {{ serverStatus.components.suiteletDeployed ? '✓' : '✗' }}
-              </div>
-            </div>
-
-            <div v-if="serverStatus.error" class="text-xs text-red-500">
-              {{ serverStatus.error }}
-            </div>
-
-            <Button
-              size="small"
-              :severity="removeConfirmPending ? 'warn' : 'danger'"
-              :loading="isRemoving"
-              :disabled="isRemoving"
-              class="w-full mt-2"
-              @click="removeServerComponents"
-            >
-              {{ removeConfirmPending ? 'Click Again to Confirm' : 'Remove Server Components' }}
-            </Button>
-
-            <div v-if="removeStatus" class="text-xs space-y-1 mt-2">
-              <div
-                v-for="step in removeStatus.steps"
-                :key="step.name"
-                :class="{
-                  'text-green-600': step.status === 'removed',
-                  'text-gray-500': step.status === 'skipped',
-                  'text-red-500': step.status === 'error'
-                }"
-              >
-                <span v-if="step.status === 'removed'">✓</span>
-                <span v-else-if="step.status === 'skipped'">–</span>
-                <span v-else>✗</span>
-                {{ step.name }}
-                <span v-if="step.error" class="ml-1 opacity-75">({{ step.error }})</span>
-              </div>
-            </div>
+            <ServerComponentsPanel
+              ref="serverComponentsPanelRef"
+              title="Server"
+              :show-all-ready="false"
+              :show-deploy="false"
+              auto-check
+            />
           </div>
 
           <div class="sidebar-section">
@@ -239,6 +189,7 @@ import { Button, InputText, Select, useToast } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
+import ServerComponentsPanel from "../components/ServerComponentsPanel.vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 
@@ -458,33 +409,13 @@ const recordRows = ref<RecordListRow[]>([]);
 const recordTypesLoading = ref(false);
 const recordsLoading = ref(false);
 const recordListError = ref("");
+const serverComponentsPanelRef = ref<InstanceType<typeof ServerComponentsPanel> | null>(null);
 
 const recordTypeOptions = computed(() =>
   contextMode.value === "transaction"
     ? transactionRecordTypeOptions
     : customRecordTypes.value
 );
-
-const serverStatus = ref<{
-  checking: boolean;
-  components: any;
-  error: string | null;
-}>({
-  checking: false,
-  components: null,
-  error: null
-});
-
-interface RemoveStep {
-  name: string;
-  status: "removed" | "skipped" | "error";
-  error?: string;
-}
-
-const removeConfirmPending = ref(false);
-const isRemoving = ref(false);
-const removeStatus = ref<{ steps: RemoveStep[] } | null>(null);
-let removeConfirmTimer: number | undefined;
 
 const renderTemplate = async () => {
   if (!template.value.trim()) {
@@ -524,7 +455,7 @@ const renderTemplate = async () => {
       ? `data:${result.mimeType || "application/pdf"};base64,${result.pdf}`
       : "";
     lastRenderedAt.value = new Date().toLocaleTimeString();
-    await checkServerComponents();
+    await serverComponentsPanelRef.value?.check();
   } catch (err: any) {
     renderError.value = err?.message || String(err);
     toast.add({
@@ -535,20 +466,6 @@ const renderTemplate = async () => {
     });
   } finally {
     isRendering.value = false;
-  }
-};
-
-const checkServerComponents = async () => {
-  serverStatus.value.checking = true;
-  serverStatus.value.error = null;
-
-  try {
-    const response = await callApi(RequestRoutes.CHECK_SERVER_COMPONENTS);
-    serverStatus.value.components = (response as ApiResponse)?.message || response;
-  } catch (err: any) {
-    serverStatus.value.error = err?.message || "Failed to check server components";
-  } finally {
-    serverStatus.value.checking = false;
   }
 };
 
@@ -571,57 +488,6 @@ const setContextMode = (mode: ContextMode) => {
         : freestyleTemplate;
   if (mode === "customrecord" && customRecordTypes.value.length === 0) {
     void loadRecordTypes();
-  }
-};
-
-const removeServerComponents = async () => {
-  if (!removeConfirmPending.value) {
-    removeConfirmPending.value = true;
-    toast.add({
-      severity: "warn",
-      summary: "Confirm Removal",
-      detail: "Click the button again within 3 seconds to confirm",
-      life: 3000
-    });
-    removeConfirmTimer = window.setTimeout(() => {
-      removeConfirmPending.value = false;
-    }, 3000);
-    return;
-  }
-
-  removeConfirmPending.value = false;
-  if (removeConfirmTimer) {
-    clearTimeout(removeConfirmTimer);
-    removeConfirmTimer = undefined;
-  }
-
-  isRemoving.value = true;
-  removeStatus.value = null;
-
-  try {
-    const response = await callApi(RequestRoutes.REMOVE_SERVER_COMPONENTS);
-    const result = (response as ApiResponse)?.message || response;
-    if (result?.steps && Array.isArray(result.steps)) {
-      removeStatus.value = { steps: result.steps };
-      const removedCount = result.steps.filter((step: RemoveStep) => step.status === "removed").length;
-      const errorCount = result.steps.filter((step: RemoveStep) => step.status === "error").length;
-      toast.add({
-        severity: errorCount > 0 ? "warn" : "success",
-        summary: "Components Removed",
-        detail: `${removedCount} removed, ${errorCount} error(s)`,
-        life: 4000
-      });
-    }
-    await checkServerComponents();
-  } catch (err: any) {
-    toast.add({
-      severity: "error",
-      summary: "Removal Failed",
-      detail: err?.message || "Unknown error",
-      life: 5000
-    });
-  } finally {
-    isRemoving.value = false;
   }
 };
 
@@ -758,7 +624,7 @@ onMounted(async () => {
   if (savedMode === "freestyle" || savedMode === "transaction" || savedMode === "customrecord") {
     contextMode.value = savedMode;
   }
-  await Promise.all([checkServerComponents(), loadRecordTypes()]);
+  await loadRecordTypes();
 });
 </script>
 

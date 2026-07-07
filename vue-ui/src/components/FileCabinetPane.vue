@@ -960,6 +960,77 @@
       </div>
     </Teleport>
 
+    <!-- Referencing scripts dialog -->
+    <Teleport to="body">
+      <div
+        v-if="showScriptReferencesDialog"
+        class="fc-confirm-overlay"
+        @click.self="closeScriptReferencesDialog"
+      >
+        <div class="fc-confirm-box fc-script-ref-box">
+          <div class="fc-confirm-header">
+            <i class="pi pi-code text-indigo-500"></i>
+            <span>Referencing Scripts</span>
+            <button
+              class="fc-dialog-close"
+              title="Close"
+              @click="closeScriptReferencesDialog"
+            >
+              <i class="pi pi-times text-xs"></i>
+            </button>
+          </div>
+          <div class="fc-confirm-body">
+            <div v-if="scriptReferencesFile" class="fc-script-ref-source">
+              <i :class="getItemIcon(scriptReferencesFile)" class="text-xs"></i>
+              <span>{{ scriptReferencesFile.name }}</span>
+              <code>#{{ scriptReferencesFile.id }}</code>
+            </div>
+
+            <div v-if="scriptReferencesLoading" class="fc-script-ref-loading">
+              <i class="pi pi-spin pi-spinner text-indigo-500"></i>
+            </div>
+            <div v-else-if="scriptReferencesError" class="fc-script-ref-error">
+              {{ scriptReferencesError }}
+            </div>
+            <div v-else-if="scriptReferences.length === 0" class="fc-script-ref-empty">
+              No script records use this file.
+            </div>
+            <div v-else class="fc-script-ref-list">
+              <div
+                v-for="script in scriptReferences"
+                :key="script.id"
+                class="fc-script-ref-row"
+              >
+                <div class="fc-script-ref-main">
+                  <strong>{{ script.name || script.scriptid }}</strong>
+                  <span>{{ script.scriptid }} · {{ script.scripttype || "Script" }}</span>
+                </div>
+                <div class="fc-script-ref-actions">
+                  <button
+                    title="Open in extension"
+                    @click="openScriptReferenceInExtension(script)"
+                  >
+                    <i class="pi pi-arrow-right"></i>
+                  </button>
+                  <button
+                    title="Open in NetSuite"
+                    @click="openScriptReferenceInNetsuite(script)"
+                  >
+                    <i class="pi pi-external-link"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="fc-confirm-actions">
+            <Button size="small" severity="secondary" @click="closeScriptReferencesDialog">
+              Close
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- Delete confirmation dialog -->
     <Teleport to="body">
       <div
@@ -1253,6 +1324,7 @@ import {
   watch,
   nextTick
 } from "vue";
+import { useRouter } from "vue-router";
 import { callApi, ApiRequestType, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import { Button, InputText, useToast } from "primevue";
@@ -1330,6 +1402,15 @@ interface FolderSnapshot {
   subfolders: SubfolderSnapshot[];
 }
 
+interface ScriptReference {
+  id: number;
+  name: string;
+  scriptid: string;
+  scripttype: string;
+  owner?: string;
+  scriptfile: number;
+}
+
 // ── Props & Emits ──────────────────────────────────────────────────────────
 
 const props = defineProps<{
@@ -1372,6 +1453,7 @@ const emit = defineEmits<{
 }>();
 
 const toast = useToast();
+const router = useRouter();
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -1439,6 +1521,13 @@ const showMoveConfirm = ref(false);
 const moveTargets = ref<CabinetItem[]>([]);
 const moveDestFolder = ref<CabinetItem | null>(null);
 const moveSrcFolderId = ref<number | null>(null);
+
+// ── Script references ───────────────────────────────────────────────────────
+const showScriptReferencesDialog = ref(false);
+const scriptReferencesFile = ref<FileItem | null>(null);
+const scriptReferences = ref<ScriptReference[]>([]);
+const scriptReferencesLoading = ref(false);
+const scriptReferencesError = ref("");
 
 type ContextMenuAction = {
   label: string;
@@ -1562,6 +1651,15 @@ const IMAGE_FILE_TYPES = new Set([
 const isTextFile = (item: FileItem) => TEXT_FILE_TYPES.has(item.filetype);
 const isImageFile = (item: FileItem) => IMAGE_FILE_TYPES.has(item.filetype);
 const isPdfFile = (item: FileItem) => item.filetype === "PDF";
+const isScriptFile = (item: FileItem) => {
+  const ext = getFileExtension(item.name);
+  return (
+    item.filetype === "JAVASCRIPT" ||
+    item.filetype === "TYPESCRIPT" ||
+    ext === "js" ||
+    ext === "ts"
+  );
+};
 const isPreviewable = (item: FileItem) =>
   isTextFile(item) || isImageFile(item) || item.filetype === "SVGIMAGE";
 
@@ -1654,6 +1752,67 @@ const runQuery = async (sql: string): Promise<any[]> => {
   const result = (response as ApiResponse)?.message || response;
   if (result?.error) throw new Error(result.error);
   return Array.isArray(result) ? result : result?.results || [];
+};
+
+const openScriptReferencesDialog = async (file: FileItem) => {
+  scriptReferencesFile.value = file;
+  scriptReferences.value = [];
+  scriptReferencesError.value = "";
+  scriptReferencesLoading.value = true;
+  showScriptReferencesDialog.value = true;
+
+  try {
+    const rows = await runQuery(
+      `
+        SELECT
+          id,
+          name,
+          scriptid,
+          scripttype,
+          owner,
+          scriptfile
+        FROM script
+        WHERE scriptfile = ${file.id}
+        ORDER BY name
+      `
+    );
+    scriptReferences.value = rows.map((row) => ({
+      id: Number(row.id),
+      name: String(row.name ?? ""),
+      scriptid: String(row.scriptid ?? ""),
+      scripttype: String(row.scripttype ?? ""),
+      owner: row.owner == null ? undefined : String(row.owner),
+      scriptfile: Number(row.scriptfile)
+    }));
+  } catch (err: unknown) {
+    scriptReferencesError.value =
+      err instanceof Error ? err.message : String(err);
+  } finally {
+    scriptReferencesLoading.value = false;
+  }
+};
+
+const closeScriptReferencesDialog = () => {
+  showScriptReferencesDialog.value = false;
+  scriptReferencesLoading.value = false;
+  scriptReferencesError.value = "";
+};
+
+const openScriptReferenceInExtension = async (script: ScriptReference) => {
+  await router.push(`/scripts/${script.id}`);
+  closeScriptReferencesDialog();
+};
+
+const getNetsuiteScriptUrl = (script: ScriptReference) => {
+  const env =
+    props.currentEnvironment !== "unknown"
+      ? props.currentEnvironment
+      : "system.netsuite.com";
+  return `https://${env}/app/common/scripting/script.nl?id=${script.id}`;
+};
+
+const openScriptReferenceInNetsuite = (script: ScriptReference) => {
+  window.open(getNetsuiteScriptUrl(script), "_blank", "noopener,noreferrer");
 };
 
 // ── Data fetching ──────────────────────────────────────────────────────────
@@ -2208,6 +2367,13 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
         icon: "pi pi-external-link",
         handler: () => window.open(getNetsuiteEditUrl(item), "_blank")
       });
+      if (isScriptFile(item as FileItem)) {
+        actions.push({
+          label: "Scripts Using This File",
+          icon: "pi pi-code",
+          handler: () => openScriptReferencesDialog(item as FileItem)
+        });
+      }
       actions.push({
         label: "Copy URL",
         icon: "pi pi-link",
@@ -4353,6 +4519,122 @@ defineExpose({
 }
 .fc-confirm-danger span {
   color: var(--p-red-600);
+}
+.fc-dialog-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--p-slate-500);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fc-dialog-close:hover {
+  background: var(--p-slate-100);
+  color: var(--p-slate-900);
+}
+.fc-script-ref-box {
+  width: min(680px, calc(100vw - 32px));
+  max-width: 680px;
+}
+.fc-script-ref-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: var(--p-slate-50);
+  font-size: 12px;
+  color: var(--p-slate-700);
+  margin-bottom: 12px;
+}
+.fc-script-ref-source span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fc-script-ref-source code {
+  font-size: 11px;
+  color: var(--p-slate-500);
+}
+.fc-script-ref-loading,
+.fc-script-ref-empty,
+.fc-script-ref-error {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--p-slate-500);
+}
+.fc-script-ref-error {
+  color: var(--p-red-600);
+}
+.fc-script-ref-list {
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fc-script-ref-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--p-slate-200);
+}
+.fc-script-ref-row:last-child {
+  border-bottom: 0;
+}
+.fc-script-ref-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fc-script-ref-main strong {
+  font-size: 13px;
+  color: var(--p-slate-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fc-script-ref-main span {
+  font-size: 11px;
+  color: var(--p-slate-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fc-script-ref-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.fc-script-ref-actions button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--p-slate-600);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fc-script-ref-actions button:hover {
+  background: var(--p-slate-50);
+  color: var(--p-blue-700);
+  border-color: var(--p-blue-300);
 }
 .fc-delete-list {
   margin: 0.5rem 0;
