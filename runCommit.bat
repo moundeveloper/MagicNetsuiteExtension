@@ -55,6 +55,15 @@ cd /d "%~dp0"
 
 echo.
 echo ====================================
+echo Step 1.7: Building SDF Deploy Tool
+echo ====================================
+cd /d "%~dp0sdf_tool"
+call pkg src/cli.js -t node18-win-x64 --output sdfDeploy.exe
+if %ERRORLEVEL% NEQ 0 goto :error
+cd /d "%~dp0"
+
+echo.
+echo ====================================
 echo Step 2: Cleaning destination folder
 echo ====================================
 
@@ -112,6 +121,17 @@ echo Step 2.6: Packaging MCP Apps for Claude
 echo ====================================
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0packageMcpApps.ps1" -DestinationFolder "%DEST_FOLDER%"
+if %ERRORLEVEL% NEQ 0 goto :error
+
+:: =========================
+:: STEP 2.7 - SDF Deploy Tool
+:: =========================
+echo.
+echo ====================================
+echo Step 2.7: Packaging SDF Deploy Tool
+echo ====================================
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0packageSdfTool.ps1" -DestinationFolder "%DEST_FOLDER%"
 if %ERRORLEVEL% NEQ 0 goto :error
 
 :: =========================

@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const net = require("net");
+const { spawn } = require("child_process");
 
 // -----------------------------------------------
 // CONFIG + BASE DIR
@@ -374,6 +375,97 @@ async function uploadLocalFilesViaExtension(args = {}) {
         errors
       }, null, 2)
     }]
+  };
+}
+
+// -----------------------------------------------
+// SDF DEPLOY TOOL (script record + deployments via SuiteCloud CLI)
+// -----------------------------------------------
+// netsuite_create_script_record is handled locally by spawning the bundled
+// sdfDeploy companion. It owns the SDF project (self-scaffolded beside its
+// exe), account -> SuiteCloud authid mapping (interactive browser login for
+// unknown accounts), and the suitecloud validate/deploy run.
+
+function resolveSdfDeployBin() {
+  const candidates = [
+    process.env.MAGIC_NS_SDF_DEPLOY,
+    // shipped layout: <DEST>\mcpServer\magiNetsuiteMCPServer.exe + <DEST>\sdfDeploy\sdfDeploy.exe
+    path.join(BASE_DIR, "..", "sdfDeploy", "sdfDeploy.exe"),
+    path.join(BASE_DIR, "sdfDeploy", "sdfDeploy.exe"),
+    // dev layout: repo root\mcp_server + repo root\sdf_tool
+    path.join(BASE_DIR, "..", "sdf_tool", "sdfDeploy.exe")
+  ].filter(Boolean);
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c;
+    } catch { /* keep looking */ }
+  }
+  return null;
+}
+
+async function createScriptRecordViaSdf(args = {}) {
+  const bin = resolveSdfDeployBin();
+  if (!bin) {
+    throw new Error(
+      "sdfDeploy.exe not found. Expected it beside the MCP server " +
+      "(sdfDeploy\\sdfDeploy.exe) or via the MAGIC_NS_SDF_DEPLOY env var."
+    );
+  }
+
+  // Resolve target account: explicit arg wins, else the currently selected
+  // MCP account (populated from bridge responses). Populate it with a cheap
+  // ping if nothing has talked to the extension yet.
+  let accountId = args.accountId || currentAccount;
+  if (!accountId) {
+    try {
+      await callExtension("tools/call", { name: "ping", arguments: {} });
+    } catch { /* extension may be down; fall through */ }
+    accountId = currentAccount;
+  }
+  if (!accountId) {
+    throw new Error(
+      "No NetSuite account selected. Open a NetSuite tab / select an account " +
+      "in the extension (or pass accountId explicitly), then retry."
+    );
+  }
+
+  const spec = { ...args, accountId };
+  log("sdfDeploy spawn", bin, "account", accountId, "script", spec.scriptId);
+
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(bin, ["deploy", "-"], {
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const killer = setTimeout(() => {
+      child.kill();
+      reject(new Error("sdfDeploy timed out after 10 minutes."));
+    }, 10 * 60 * 1000);
+
+    child.stdout.on("data", (d) => { stdout += d; });
+    child.stderr.on("data", (d) => { stderr += d; });
+    child.on("error", (err) => { clearTimeout(killer); reject(err); });
+    child.on("close", (code) => {
+      clearTimeout(killer);
+      log("sdfDeploy exit", code, stderr.slice(-2000));
+      let payload = null;
+      try { payload = JSON.parse(stdout); } catch { /* non-JSON stdout */ }
+      if (payload) return resolve(payload);
+      reject(new Error(
+        `sdfDeploy exited with code ${code} and no JSON result. ` +
+        `stderr tail: ${stderr.slice(-800)}`
+      ));
+    });
+
+    child.stdin.write(JSON.stringify(spec));
+    child.stdin.end();
+  });
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    isError: result && result.ok === false ? true : undefined
   };
 }
 
@@ -2012,90 +2104,97 @@ async function handleMcp(req) {
           {
             name: "netsuite_create_script_record",
             description:
-              "Create a NetSuite Script record for an already-uploaded script file. Destructive: creates a script record. Common scriptType values: SCRIPTLET (Suitelet), RESTLET, USEREVENT, SCHEDULED, MAPREDUCE, CLIENT, PORTLET, WORKFLOWACTION.",
+              "Create (or update) a NetSuite Script record WITH its deployments in one call, via the bundled SuiteCloud SDF deploy tool. " +
+              "Destructive: uploads the script file, creates/updates the script record and every deployment listed. " +
+              "Runs locally against the currently selected MCP account; if that account has no SuiteCloud login yet, a browser login console opens and the user must authenticate (first call for a new account may take longer or time out — retry after login). " +
+              "Script parameters (script custom fields) and scheduled/map-reduce recurrence are supported. " +
+              "Deployment defaults: RELEASED (NOTSCHEDULED for scheduled/mapreduce), DEBUG log, all internal roles for suitelet/restlet.",
             inputSchema: {
               type: "object",
               properties: {
-                name: {
+                scriptType: {
                   type: "string",
-                  description: "Human-readable script name."
+                  enum: ["suitelet", "restlet", "clientscript", "usereventscript", "scheduledscript", "mapreducescript"],
+                  description: "SDF script type. Aliases accepted: scriptlet->suitelet, client->clientscript, userevent/ue->usereventscript, scheduled/ss->scheduledscript, mapreduce/mr->mapreducescript."
                 },
                 scriptId: {
                   type: "string",
-                  description: "Script ID, e.g. customscript_my_script."
+                  description: "Script ID, e.g. customscript_my_script (customscript_ prefix added if missing)."
                 },
-                fileId: {
-                  type: "number",
-                  description: "Internal ID of the uploaded script file."
-                },
-                scriptType: {
+                name: { type: "string", description: "Human-readable script name." },
+                description: { type: "string", description: "Optional script description." },
+                accountId: {
                   type: "string",
-                  description: "NetSuite script type constant. Defaults to SCRIPTLET."
+                  description: "Optional NetSuite account ID override, e.g. 1964539 or 9937091_SB1. Defaults to the currently selected MCP account."
                 },
-                description: {
-                  type: "string",
-                  description: "Optional script description."
+                scriptFile: {
+                  type: "object",
+                  description: "The SuiteScript source file. cabinetPath is the File Cabinet target path; provide content (inline source) or localPath (existing local file).",
+                  properties: {
+                    cabinetPath: { type: "string", description: "Path under the File Cabinet, e.g. SuiteScripts/MyTool/my_script.js." },
+                    content: { type: "string", description: "Inline JavaScript source of the script." },
+                    localPath: { type: "string", description: "Absolute local path of an existing .js file to upload instead of content." }
+                  },
+                  required: ["cabinetPath"]
                 },
-                apiVersion: {
-                  type: "string",
-                  description: "SuiteScript API version. Defaults to 2.1."
+                parameters: {
+                  type: "array",
+                  description: "Optional script parameters (custscript custom fields).",
+                  items: {
+                    type: "object",
+                    properties: {
+                      scriptId: { type: "string", description: "Parameter ID, e.g. custscript_my_param." },
+                      label: { type: "string" },
+                      fieldType: { type: "string", description: "TEXT, TEXTAREA, SELECT, CHECKBOX, INTEGER, DATE, ..." },
+                      mandatory: { type: "boolean" },
+                      storeValue: { type: "boolean" },
+                      selectRecordType: { type: "string" },
+                      description: { type: "string" },
+                      help: { type: "string" },
+                      defaultValue: { type: "string" }
+                    },
+                    required: ["scriptId", "label"]
+                  }
+                },
+                deployments: {
+                  type: "array",
+                  description: "Deployments to create. At least one required.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      scriptId: { type: "string", description: "Deployment ID, e.g. customdeploy_my_script." },
+                      title: { type: "string" },
+                      status: { type: "string", description: "RELEASED, TESTING, or NOTSCHEDULED (scheduled/mapreduce)." },
+                      logLevel: { type: "string", description: "DEBUG, AUDIT, ERROR, EMERGENCY." },
+                      isDeployed: { type: "boolean" },
+                      allRoles: { type: "boolean" },
+                      audienceRoles: { type: "array", items: { type: "string" }, description: "Explicit role list when allRoles is false." },
+                      isOnline: { type: "boolean", description: "Suitelet: available without login." },
+                      recordType: { type: "string", description: "Client/UserEvent: record type, e.g. SALESORDER." },
+                      eventType: { type: "string", description: "UserEvent: CREATE, EDIT, VIEW, DELETE... blank = all." },
+                      executionContext: { type: "string", description: "Pipe-joined contexts, e.g. USERINTERFACE|CSVIMPORT." },
+                      runAsRole: { type: "string", description: "e.g. ADMINISTRATOR." },
+                      bufferSize: { type: "number" },
+                      concurrencyLimit: { type: "number" },
+                      queueAllStagesAtOnce: { type: "boolean" },
+                      yieldAfterMins: { type: "number" },
+                      recurrence: {
+                        type: "object",
+                        description: "Scheduled/MapReduce single-run schedule.",
+                        properties: {
+                          type: { type: "string", enum: ["single"] },
+                          startDate: { type: "string", description: "YYYY-MM-DD" },
+                          startTime: { type: "string", description: "HH:mm:ssZ, e.g. 22:00:00Z" },
+                          repeat: { type: "string" }
+                        }
+                      },
+                      parameterValues: { type: "object", description: "Deployment-level parameter values keyed by parameter scriptId." }
+                    },
+                    required: ["scriptId"]
+                  }
                 }
               },
-              required: ["name", "scriptId", "fileId"]
-            }
-          },
-          {
-            name: "netsuite_create_script_deployment",
-            description:
-              "Create and deploy a NetSuite script deployment for an existing script record. Destructive: creates a deployment. " +
-              "Supports Suitelet/SCRIPTLET, SCHEDULED, MAPREDUCE, and RESTLET deployments through NetSuite's native scriptrecord.nl form POST. " +
-              "All internal roles are selected for audience-capable deployment types.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                scriptInternalId: {
-                  type: "number",
-                  description: "Internal ID of the existing script record to deploy."
-                },
-                deploymentScriptId: {
-                  type: "string",
-                  description: "Deployment script ID, e.g. customdeploy_my_suitelet or my_suitelet. Normalized to NetSuite's metadata suffix format."
-                },
-                scriptType: {
-                  type: "string",
-                  enum: ["SCRIPTLET", "SUITELET", "SCHEDULED", "MAPREDUCE", "RESTLET"],
-                  description: "Script deployment type. Defaults to SCRIPTLET. Use SCHEDULED for Scheduled Scripts, MAPREDUCE for Map/Reduce, RESTLET for RESTlets."
-                },
-                name: {
-                  type: "string",
-                  description: "Fallback deployment title when title is not provided."
-                },
-                title: {
-                  type: "string",
-                  description: "Display title for the deployment."
-                },
-                status: {
-                  type: "string",
-                  description: "Deployment status. Defaults to RELEASED. Supported values include RELEASED and TESTING."
-                },
-                logLevel: {
-                  type: "string",
-                  description: "Logging level. Defaults to DEBUG. Supported values include DEBUG, AUDIT, ERROR, and EMERGENCY."
-                },
-                runAsRole: {
-                  type: "number",
-                  description: "Optional internal role ID for Suitelet Run As Role. Defaults to the current user's role."
-                },
-                priority: { type: "number", description: "Scheduled/MapReduce priority value. Defaults to 2 (Standard)." },
-                concurrencyLimit: { type: "number", description: "Map/Reduce concurrency limit. Defaults to 1." },
-                queueAllStagesAtOnce: { type: "boolean", description: "Map/Reduce queue all stages at once. Defaults to true." },
-                yieldAfterMins: { type: "number", description: "Map/Reduce yield-after minutes. Defaults to 60." },
-                bufferSize: { type: "number", description: "Map/Reduce buffer size. Defaults to 1." },
-                startDate: { type: "string", description: "Scheduled/MapReduce start date as NetSuite expects, e.g. 23-June-2026. Defaults to today." },
-                startTime: { type: "string", description: "Scheduled/MapReduce start time HHmm, e.g. 1800. Defaults to current time." },
-                deploymentFields: { type: "object", description: "Additional raw scriptrecord.nl fieldId-to-value overrides." }
-              },
-              required: ["scriptInternalId", "deploymentScriptId"]
+              required: ["scriptType", "scriptId", "name", "scriptFile", "deployments"]
             }
           },
           {
@@ -2177,6 +2276,9 @@ async function handleMcp(req) {
     else if (method === "tools/call") {
       if (params?.name === "netsuite_upload_file") {
         result = await uploadLocalFilesViaExtension(params.arguments || {});
+      }
+      if (params?.name === "netsuite_create_script_record") {
+        result = await createScriptRecordViaSdf(params.arguments || {});
       }
       if (!result) {
         result = await callExtension("tools/call", params);

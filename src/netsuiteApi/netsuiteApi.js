@@ -3230,10 +3230,6 @@ const handlers = {
       csrfToken
     );
   },
-  CREATE_SCRIPT_DEPLOYMENT: async ({ modules, payload }) => {
-    console.log("Create Script Deployment action received", payload);
-    return await window.createScriptDeployRecord(modules, payload);
-  },
   GET_ALL_RECORD_TYPES: async ({ modules }) => {
     console.log("Get All Record Types action received");
     const { record, query } = modules;

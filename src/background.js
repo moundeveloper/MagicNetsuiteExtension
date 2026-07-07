@@ -1596,7 +1596,6 @@ const MCP_SERVER_SIDE_TOOL_NAMES = new Set([
   "netsuite_get_deployed_scripts",
   "netsuite_get_logs",
   "netsuite_create_script_record",
-  "netsuite_create_script_deployment",
   "netsuite_create_script_field",
   "netsuite_update_script_field",
   "netsuite_run_quick_script",
@@ -3264,60 +3263,6 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
-    name: "netsuite_create_script_deployment",
-    description:
-      "Create and deploy a NetSuite script deployment for an existing script record. Destructive: creates a deployment. " +
-      "Supports Suitelet/SCRIPTLET, SCHEDULED, MAPREDUCE, and RESTLET deployments through NetSuite's native scriptrecord.nl form POST. " +
-      "All internal roles are selected for audience-capable deployment types.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        scriptInternalId: {
-          type: "number",
-          description: "Internal ID of the existing script record to deploy."
-        },
-        deploymentScriptId: {
-          type: "string",
-          description: "Deployment script ID, e.g. customdeploy_my_suitelet or my_suitelet. Normalized to NetSuite's metadata suffix format."
-        },
-        scriptType: {
-          type: "string",
-          enum: ["SCRIPTLET", "SUITELET", "SCHEDULED", "MAPREDUCE", "RESTLET"],
-          description: "Script deployment type. Defaults to SCRIPTLET. Use SCHEDULED for Scheduled Scripts, MAPREDUCE for Map/Reduce, RESTLET for RESTlets."
-        },
-        name: {
-          type: "string",
-          description: "Fallback deployment title when title is not provided."
-        },
-        title: {
-          type: "string",
-          description: "Display title for the deployment."
-        },
-        status: {
-          type: "string",
-          description: "Deployment status. Defaults to RELEASED. Supported values include RELEASED and TESTING."
-        },
-        logLevel: {
-          type: "string",
-          description: "Logging level. Defaults to DEBUG. Supported values include DEBUG, AUDIT, ERROR, and EMERGENCY."
-        },
-        runAsRole: {
-          type: "number",
-          description: "Optional internal role ID for Suitelet Run As Role. Defaults to the current user's role."
-        },
-        priority: { type: "number", description: "Scheduled/MapReduce priority value. Defaults to 2 (Standard)." },
-        concurrencyLimit: { type: "number", description: "Map/Reduce concurrency limit. Defaults to 1." },
-        queueAllStagesAtOnce: { type: "boolean", description: "Map/Reduce queue all stages at once. Defaults to true." },
-        yieldAfterMins: { type: "number", description: "Map/Reduce yield-after minutes. Defaults to 60." },
-        bufferSize: { type: "number", description: "Map/Reduce buffer size. Defaults to 1." },
-        startDate: { type: "string", description: "Scheduled/MapReduce start date as NetSuite expects, e.g. 23-June-2026. Defaults to today." },
-        startTime: { type: "string", description: "Scheduled/MapReduce start time HHmm, e.g. 1800. Defaults to current time." },
-        deploymentFields: { type: "object", description: "Additional raw scriptrecord.nl fieldId-to-value overrides." }
-      },
-      required: ["scriptInternalId", "deploymentScriptId"]
-    }
-  },
-  {
     name: "netsuite_run_quick_script",
     description:
       "Run a small SuiteScript/JavaScript snippet in the authenticated NetSuite page context. " +
@@ -3732,8 +3677,6 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteGetDeployedScripts(args);
         } else if (name === "netsuite_create_script_record") {
           result = await handleNetsuiteCreateScriptRecord(args);
-        } else if (name === "netsuite_create_script_deployment") {
-          result = await handleNetsuiteCreateScriptDeployment(args);
         } else if (name === "netsuite_run_quick_script") {
           result = await handleNetsuiteRunQuickScript(args);
         } else if (name === "magic_netsuite_deploy_server_components") {
@@ -5037,45 +4980,9 @@ async function handleNetsuiteCreateScriptRecord(args) {
   return asMcpTextResult(result);
 }
 
-async function handleNetsuiteCreateScriptDeployment(args) {
-  const scriptInternalId = parseInt(String(args?.scriptInternalId ?? ""), 10);
-  const deploymentScriptId = String(
-    args?.deploymentScriptId ?? args?.scriptId ?? ""
-  ).trim();
-  const title = String(args?.title ?? args?.name ?? "").trim();
-
-  if (isNaN(scriptInternalId)) {
-    throw new Error("scriptInternalId must be a numeric script record ID.");
-  }
-  if (!deploymentScriptId) {
-    throw new Error("deploymentScriptId is required.");
-  }
-
-  const result = await callNetsuiteRoute(
-    "CREATE_SCRIPT_DEPLOYMENT",
-    {
-      scriptInternalId,
-      deploymentScriptId,
-      name: args?.name ?? title,
-      title: title || undefined,
-      scriptType: args?.scriptType ?? "SCRIPTLET",
-      status: args?.status,
-      logLevel: args?.logLevel ?? "DEBUG",
-      runAsRole: args?.runAsRole,
-      priority: args?.priority,
-      concurrencyLimit: args?.concurrencyLimit,
-      queueAllStagesAtOnce: args?.queueAllStagesAtOnce,
-      yieldAfterMins: args?.yieldAfterMins,
-      bufferSize: args?.bufferSize,
-      startDate: args?.startDate,
-      startTime: args?.startTime,
-      recurringEvent: args?.recurringEvent,
-      deploymentFields: args?.deploymentFields
-    },
-    "Failed to create script deployment."
-  );
-  return asMcpTextResult(result);
-}
+// netsuite_create_script_deployment was removed: script records + deployments
+// are now created together by the SDF deploy companion (sdf_tool/sdfDeploy.exe)
+// through the MCP server's netsuite_create_script_record handler.
 
 // -----------------------------
 // Script Tool Helpers (MCP bridge)

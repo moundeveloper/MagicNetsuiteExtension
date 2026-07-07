@@ -548,71 +548,9 @@ async function waitUntilMagicScriptsFolderDeleted(N, folderId) {
   );
 }
 
-/**
- * Create a script deployment
- * @param {object} N - NetSuite modules
- * @param {string} scriptRecordId - Internal ID of the script record
- * @param {string} deploymentId - Deployment script ID
- * @param {string} title - Deployment title
- * @returns {Promise<{deploymentId: string|null}>}
- */
-window.createScriptDeployment = async (
-  N,
-  scriptRecordId,
-  deploymentId,
-  title
-) => {
-  const { url } = N;
-  const domain = url.resolveDomain({ hostType: url.HostType.APPLICATION });
-  const csrfToken = document.querySelector('input[name="_csrf"]')?.value;
-
-  const body = `submitter=Save&scripttype=scriptdeployment&name=${encodeURIComponent(
-    title
-  )}&scriptid=${encodeURIComponent(
-    deploymentId
-  )}&script=${scriptRecordId}&isdeployed=T&status=RELEASED&loglevel=DEBUG&_csrf=${encodeURIComponent(
-    csrfToken
-  )}&nsapiCT=${Date.now()}&type=scriptdeployment&id=&externalid=&whence=${encodeURIComponent(
-    `/app/common/scripting/scriptdeployment.nl`
-  )}`;
-
-  try {
-    const response = await fetch(
-      `${domain}/app/common/scripting/scriptdeployment.nl`,
-      {
-        method: "POST",
-        credentials: "include",
-        mode: "cors",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "accept-language": "it-IT,it;q=0.6",
-          "cache-control": "max-age=0",
-          "sec-fetch-dest": "document",
-          "sec-fetch-mode": "navigate",
-          "sec-fetch-site": "same-origin",
-          "sec-fetch-user": "?1",
-          "upgrade-insecure-requests": "1"
-        },
-        referrer: `https://${domain}/app/common/scripting/scriptdeployment.nl`,
-        body
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to create deployment: ${response.status}`);
-    }
-
-    const html = await response.text();
-    const extractedId = extractDeploymentIdFromHtml(html);
-
-    return { deploymentId: extractedId || deploymentId };
-  } catch (error) {
-    console.error("[createScriptDeployment]", error);
-    throw error;
-  }
-};
+// window.createScriptDeployment was removed (dead code): deployments are now
+// created by the SDF deploy companion (sdf_tool/sdfDeploy.exe). The internal
+// server-component deploy flow still uses window.createScriptDeployRecord.
 
 /**
  * Execute server-side script via suitelet
@@ -1359,25 +1297,6 @@ define(
       if (args.description) values.description = args.description;
       if (args.apiVersion) values.apiversion = args.apiVersion;
       return tryCreateRecord(['script'], values);
-    },
-    netsuite_create_script_deployment: function(args) {
-      var values = {};
-      values.script = parseId(args.scriptInternalId, 'scriptInternalId');
-      values.scriptid = normalizeScriptSuffix(args.deploymentScriptId || args.scriptId, 'customdeploy');
-      values.title = args.title || args.name || values.scriptid;
-      values.status = args.status || 'RELEASED';
-      if (args.logLevel) values.loglevel = args.logLevel;
-      if (args.runAsRole) values.runasrole = args.runAsRole;
-      applyValues({ setValue: function(opts) { values[opts.fieldId] = opts.value; } }, args.deploymentFields || {});
-      var deployment = record.create({
-        type: 'scriptdeployment',
-        isDynamic: true,
-        defaultValues: { script: values.script }
-      });
-      Object.keys(values).forEach(function(fieldId) {
-        if (fieldId !== 'script') deployment.setValue({ fieldId: fieldId, value: values[fieldId] });
-      });
-      return { deploymentRecordId: deployment.save({ enableSourcing: true, ignoreMandatoryFields: false }), deploymentScriptId: values.scriptid };
     },
     netsuite_run_quick_script: function(args) {
       var code = String(args.code || '').trim();

@@ -26,3 +26,7 @@ vue-ui/.env*.local
 *.sw?
 *.exe
 node_modules
+
+# SDF deploy tool runtime state (machine-specific)
+sdf_tool/sdf-project
+sdf_tool/accounts.json
