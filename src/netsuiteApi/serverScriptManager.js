@@ -1214,20 +1214,9 @@ define(
         return row;
       });
     },
-    netsuite_create_custom_record_type: function(args) {
-      var values = args.recordFields || {};
-      values.recordname = values.recordname || args.name;
-      values.scriptid = values.scriptid || normalizeScriptSuffix(args.scriptId, 'customrecord');
-      values.description = values.description || args.description;
-      if (args.includeNameField !== undefined) values.includename = args.includeNameField === true;
-      return tryCreateRecord(['customrecordtype'], values);
-    },
-    netsuite_get_custom_record_field_types: function(args) {
-      return { options: getSelectOptions('customrecordcustomfield', 'fieldtype', args.filter) };
-    },
-    netsuite_get_custom_record_select_record_types: function(args) {
-      return { options: getSelectOptions('customrecordcustomfield', 'selectrecordtype', args.filter) };
-    },
+    // Custom record type/field creation and update entries were removed:
+    // custom records (with all fields) are now created and updated through
+    // the SDF deploy companion (netsuite_sdf_deploy / netsuite_sdf_import_object).
     netsuite_inspect_custom_record_field: function(args) {
       var fieldId = args.customFieldId || args.customRecordFieldId || args.fieldId;
       if (!fieldId && args.customRecordTypeId) {
@@ -1239,31 +1228,6 @@ define(
       }
       if (!fieldId) throw new Error('customFieldId or customRecordTypeId is required.');
       return serializeRecord(record.load({ type: 'customrecordcustomfield', id: fieldId, isDynamic: false }));
-    },
-    netsuite_create_custom_record_field: function(args) {
-      var values = args.fieldValues || {};
-      values.label = values.label || args.label;
-      values.scriptid = values.scriptid || normalizeScriptSuffix(args.scriptId, 'custrecord');
-      values.fieldtype = values.fieldtype || args.fieldType || 'TEXT';
-      values.rectype = values.rectype || parseId(args.customRecordTypeId || args.customRecordTypeInternalId, 'customRecordTypeId');
-      values.description = values.description || args.description;
-      if (args.selectRecordType !== undefined) values.selectrecordtype = args.selectRecordType;
-      if (args.storeValue !== undefined) values.storevalue = args.storeValue === true;
-      if (args.showInList !== undefined) values.showinlist = args.showInList === true;
-      return tryCreateRecord(['customrecordcustomfield'], values);
-    },
-    netsuite_update_custom_record_field: function(args) {
-      var id = parseId(args.customRecordFieldId || args.customFieldId || args.fieldId, 'customRecordFieldId');
-      var loaded = record.load({ type: 'customrecordcustomfield', id: id, isDynamic: true });
-      var values = args.fieldValues || {};
-      if (args.label !== undefined) values.label = args.label;
-      if (args.fieldType !== undefined) values.fieldtype = args.fieldType;
-      if (args.selectRecordType !== undefined) values.selectrecordtype = args.selectRecordType;
-      if (args.description !== undefined) values.description = args.description;
-      if (args.storeValue !== undefined) values.storevalue = args.storeValue === true;
-      if (args.showInList !== undefined) values.showinlist = args.showInList === true;
-      applyValues(loaded, values);
-      return { customRecordFieldId: loaded.save(), updated: true };
     },
     netsuite_create_script_field: function(args) {
       var values = args.fieldValues || {};
@@ -1288,16 +1252,9 @@ define(
       applyValues(loaded.rec, values);
       return { scriptFieldId: loaded.rec.save(), recordType: loaded.recordType, updated: true };
     },
-    netsuite_create_script_record: function(args) {
-      var values = {};
-      values.name = String(args.name || '');
-      values.scriptid = String(args.scriptId || '').replace(/^customscript/i, '').replace(/^_?/, '_');
-      values.scriptfile = parseId(args.fileId, 'fileId');
-      values.scripttype = args.scriptType || 'SCRIPTLET';
-      if (args.description) values.description = args.description;
-      if (args.apiVersion) values.apiversion = args.apiVersion;
-      return tryCreateRecord(['script'], values);
-    },
+    // netsuite_create_script_record removed: script/deployment creation now
+    // goes through the SDF deploy companion (netsuite_sdf_deploy). record.create
+    // on the 'script' type is blocked by NetSuite anyway.
     netsuite_run_quick_script: function(args) {
       var code = String(args.code || '').trim();
       if (!code) throw new Error('code is required.');

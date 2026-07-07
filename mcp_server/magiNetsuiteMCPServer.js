@@ -381,10 +381,11 @@ async function uploadLocalFilesViaExtension(args = {}) {
 // -----------------------------------------------
 // SDF DEPLOY TOOL (script record + deployments via SuiteCloud CLI)
 // -----------------------------------------------
-// netsuite_create_script_record is handled locally by spawning the bundled
-// sdfDeploy companion. It owns the SDF project (self-scaffolded beside its
-// exe), account -> SuiteCloud authid mapping (interactive browser login for
-// unknown accounts), and the suitecloud validate/deploy run.
+// netsuite_sdf_deploy is handled locally by spawning the bundled sdfDeploy
+// companion. It owns the SDF project (self-scaffolded beside its exe),
+// account -> SuiteCloud authid mapping (interactive browser login for unknown
+// accounts), and the suitecloud validate/deploy run. Redeploying the same
+// script/object IDs updates the existing account objects.
 
 function resolveSdfDeployBin() {
   const candidates = [
@@ -403,23 +404,14 @@ function resolveSdfDeployBin() {
   return null;
 }
 
-async function createScriptRecordViaSdf(args = {}) {
-  const bin = resolveSdfDeployBin();
-  if (!bin) {
-    throw new Error(
-      "sdfDeploy.exe not found. Expected it beside the MCP server " +
-      "(sdfDeploy\\sdfDeploy.exe) or via the MAGIC_NS_SDF_DEPLOY env var."
-    );
-  }
-
-  // Resolve target account: explicit arg wins, else the currently selected
-  // MCP account (populated from bridge responses). Populate it with a cheap
-  // ping if nothing has talked to the extension yet.
-  let accountId = args.accountId || currentAccount;
+// Resolve the target NetSuite account id: explicit arg wins, else the
+// currently selected MCP account (populated from bridge responses; nudged with
+// a cheap ping if nothing has talked to the extension yet).
+async function resolveSdfAccountId(explicit) {
+  let accountId = explicit || currentAccount;
   if (!accountId) {
-    try {
-      await callExtension("tools/call", { name: "ping", arguments: {} });
-    } catch { /* extension may be down; fall through */ }
+    try { await callExtension("tools/call", { name: "ping", arguments: {} }); }
+    catch { /* extension may be down; fall through */ }
     accountId = currentAccount;
   }
   if (!accountId) {
@@ -428,15 +420,22 @@ async function createScriptRecordViaSdf(args = {}) {
       "in the extension (or pass accountId explicitly), then retry."
     );
   }
+  return accountId;
+}
 
-  const spec = { ...args, accountId };
-  log("sdfDeploy spawn", bin, "account", accountId, "script", spec.scriptId);
-
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn(bin, ["deploy", "-"], {
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"]
-    });
+// Spawn the companion with the given argv; optional stdinObj is JSON-piped in.
+// Returns the parsed JSON result object.
+function runSdfCompanion(argv, stdinObj) {
+  const bin = resolveSdfDeployBin();
+  if (!bin) {
+    throw new Error(
+      "sdfDeploy.exe not found. Expected it beside the MCP server " +
+      "(sdfDeploy\\sdfDeploy.exe) or via the MAGIC_NS_SDF_DEPLOY env var."
+    );
+  }
+  log("sdfDeploy spawn", bin, argv.join(" "));
+  return new Promise((resolve, reject) => {
+    const child = spawn(bin, argv, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const killer = setTimeout(() => {
@@ -459,14 +458,41 @@ async function createScriptRecordViaSdf(args = {}) {
       ));
     });
 
-    child.stdin.write(JSON.stringify(spec));
+    if (stdinObj !== undefined) child.stdin.write(JSON.stringify(stdinObj));
     child.stdin.end();
   });
+}
 
+function asSdfResult(result) {
   return {
     content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     isError: result && result.ok === false ? true : undefined
   };
+}
+
+async function sdfDeployViaCompanion(args = {}) {
+  const accountId = await resolveSdfAccountId(args.accountId);
+  const spec = { ...args, accountId };
+  return asSdfResult(await runSdfCompanion(["deploy", "-"], spec));
+}
+
+async function sdfListObjectsViaCompanion(args = {}) {
+  const accountId = await resolveSdfAccountId(args.accountId);
+  const argv = ["list-objects", "--account", accountId];
+  if (Array.isArray(args.type) && args.type.length) argv.push("--type", ...args.type);
+  else if (typeof args.type === "string" && args.type) argv.push("--type", args.type);
+  if (args.scriptId) argv.push("--scriptid", String(args.scriptId));
+  return asSdfResult(await runSdfCompanion(argv));
+}
+
+async function sdfImportObjectViaCompanion(args = {}) {
+  const accountId = await resolveSdfAccountId(args.accountId);
+  if (!args.type) throw new Error("type is required.");
+  const ids = Array.isArray(args.scriptId) ? args.scriptId : [args.scriptId].filter(Boolean);
+  if (!ids.length) throw new Error("scriptId is required.");
+  const argv = ["import-object", "--account", accountId, "--type", String(args.type), "--scriptid", ...ids.map(String)];
+  if (args.includeTemplate === false) argv.push("--no-template");
+  return asSdfResult(await runSdfCompanion(argv));
 }
 
 function pdfDataUrlToBuffer(dataUrl) {
@@ -1401,196 +1427,6 @@ async function handleMcp(req) {
             }
           },
           {
-            name: "netsuite_create_custom_record_type",
-            description:
-              "Find or create a NetSuite custom record type metadata record using customrecordtype. " +
-              "If an existing custom record type matches the normalized scriptId or recordname, returns that internal ID instead of creating a duplicate. " +
-              "Set body fields with recordFields or convenience keys. The name key maps to recordname. " +
-              "The Include Name Field checkbox is off by default; set includeNameField true to enable it. " +
-              "The scriptId key accepts either 'customrecord_my_type' or 'my_type' and is normalized so NetSuite saves CUSTOMRECORD_MY_TYPE. " +
-              "Create fields afterward with netsuite_create_custom_record_field to avoid orphaned record types if a field save fails.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                name: {
-                  type: "string",
-                  description: "Convenience value for the custom record type recordname field."
-                },
-                scriptId: {
-                  type: "string",
-                  description: "Convenience value for the custom record type scriptid field. Accepts 'customrecord_my_type', 'my_type', or '_my_type'."
-                },
-                description: {
-                  type: "string",
-                  description: "Convenience value for the description field."
-                },
-                includeNameField: {
-                  type: "boolean",
-                  description: "Whether to check NetSuite's Include Name Field option. Defaults to false."
-                },
-                recordFields: {
-                  type: "object",
-                  description: "Additional raw fieldId-to-value pairs to set on the customrecordtype before save(). These override convenience keys."
-                },
-                customFields: {
-                  type: "array",
-                  description: "Deprecated and rejected by this tool. Create fields with netsuite_create_custom_record_field after the record type is saved."
-                }
-              }
-            }
-          },
-          {
-            name: "netsuite_get_custom_record_field_types",
-            description:
-              "Return the available custom record field type select options from the live NetSuite account. " +
-              "Internally creates an unsaved customrecordcustomfield record and reads record.getField({ fieldId: 'fieldtype' }).getSelectOptions(...). " +
-              "Use the returned option values as the fieldType for netsuite_create_custom_record_field.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                filter: {
-                  type: "string",
-                  description: "Optional text filter passed to getSelectOptions. Leave empty to list available field types."
-                }
-              }
-            }
-          },
-          {
-            name: "netsuite_create_custom_record_field",
-            description:
-              "Find or create a NetSuite custom record field metadata record using customrecordcustomfield. " +
-              "If an existing field with the normalized scriptId is already attached to the custom record type, returns that internal ID instead of creating a duplicate. " +
-              "Creation uses the native NetSuite custreccustfield.nl form POST because client-side SuiteScript cannot reliably save customrecordcustomfield records. " +
-              "Call netsuite_get_custom_record_field_types first when you need valid fieldType values.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                customRecordTypeId: {
-                  type: "string",
-                  description: "Internal ID of the custom record type metadata record; posted as rectype."
-                },
-                customRecordTypeInternalId: {
-                  type: "string",
-                  description: "Alias for customRecordTypeId."
-                },
-                label: { type: "string" },
-                scriptId: {
-                  type: "string",
-                  description: "Convenience value for the custom field scriptid field. The form POST sends NetSuite's metadata suffix format only, e.g. '_my_field'. Passing 'custrecord_my_field' or 'my_field' is normalized to '_my_field'."
-                },
-                fieldType: {
-                  type: "string",
-                  examples: [
-                    "CHECKBOX",
-                    "CURRENCY",
-                    "DATE",
-                    "DATETIME",
-                    "DECIMAL",
-                    "DOCUMENT",
-                    "EMAIL",
-                    "FREEFORMTEXT",
-                    "HELP",
-                    "HYPERLINK",
-                    "INLINEHTML",
-                    "INTEGER",
-                    "LIST",
-                    "LONGTEXT",
-                    "MULTISELECT",
-                    "PASSWORD",
-                    "PERCENT",
-                    "PHONE",
-                    "RICHTEXT",
-                    "TEXTAREA",
-                    "TIMEOFDAY"
-                  ],
-                  description: "Convenience value for the fieldtype field. If these hints do not match your account, call netsuite_get_custom_record_field_types and use a returned value."
-                },
-                selectRecordType: {
-                  type: "string",
-                  description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT. Use an internal numeric ID such as a custom record type ID. Custom record script IDs like 'customrecord_my_type' are resolved to internal IDs. Negative built-in IDs are validated against netsuite_get_custom_record_select_record_types. If creating a SELECT/MULTISELECT for a custom list or record list and no valid list/record is specified, use TEXT instead; the tool defaults missing selectRecordType SELECT/MULTISELECT requests to TEXT."
-                },
-                description: { type: "string" },
-                storeValue: { type: "boolean" },
-                showInList: { type: "boolean" },
-                fieldValues: {
-                  type: "object",
-                  description: "Additional raw form fieldId-to-value pairs to include in the custreccustfield.nl POST. rectype is always set by the tool."
-                }
-              }
-            }
-          },
-          {
-            name: "netsuite_update_custom_record_field",
-            description:
-              "Edit an existing NetSuite custom record field using the native custreccustfield.nl edit form POST. " +
-              "The tool loads the existing edit form first, preserves NetSuite metadata/sublist fields, and overrides only the provided friendly fields and fieldValues.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                customRecordFieldId: {
-                  type: "string",
-                  description: "Internal ID of the custom record field to edit."
-                },
-                customFieldId: {
-                  type: "string",
-                  description: "Alias for customRecordFieldId."
-                },
-                fieldId: {
-                  type: "string",
-                  description: "Alias for customRecordFieldId."
-                },
-                customRecordTypeId: {
-                  type: "string",
-                  description: "Internal ID of the parent custom record type; posted as rectype."
-                },
-                customRecordTypeInternalId: {
-                  type: "string",
-                  description: "Alias for customRecordTypeId."
-                },
-                label: { type: "string" },
-                fieldType: {
-                  type: "string",
-                  examples: [
-                    "CHECKBOX",
-                    "CURRENCY",
-                    "DATE",
-                    "DATETIME",
-                    "DECIMAL",
-                    "DOCUMENT",
-                    "EMAIL",
-                    "FREEFORMTEXT",
-                    "HELP",
-                    "HYPERLINK",
-                    "INLINEHTML",
-                    "INTEGER",
-                    "LIST",
-                    "LONGTEXT",
-                    "MULTISELECT",
-                    "PASSWORD",
-                    "PERCENT",
-                    "PHONE",
-                    "RICHTEXT",
-                    "TEXTAREA",
-                    "TIMEOFDAY"
-                  ],
-                  description: "Optional new fieldtype value. If omitted, the existing type is preserved."
-                },
-                selectRecordType: {
-                  type: "string",
-                  description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
-                },
-                description: { type: "string" },
-                storeValue: { type: "boolean" },
-                showInList: { type: "boolean" },
-                fieldValues: {
-                  type: "object",
-                  description: "Additional raw form fieldId-to-value pairs to include in the custreccustfield.nl POST. rectype and id are always set by the tool."
-                }
-              },
-              required: ["customRecordFieldId", "customRecordTypeId"]
-            }
-          },
-          {
             name: "netsuite_create_script_field",
             description:
               "Find or create a NetSuite script parameter field using the native scriptcustfield.nl form POST. " +
@@ -1637,7 +1473,7 @@ async function handleMcp(req) {
                     "TEXTAREA",
                     "TIMEOFDAY"
                   ],
-                  description: "Convenience value for the fieldtype field. Uses the same values as netsuite_create_custom_record_field."
+                  description: "Convenience value for the fieldtype field, using the example values listed above."
                 },
                 selectRecordType: {
                   type: "string",
@@ -1716,21 +1552,6 @@ async function handleMcp(req) {
                 }
               },
               required: ["scriptFieldId", "scriptInternalId"]
-            }
-          },
-          {
-            name: "netsuite_get_custom_record_select_record_types",
-            description:
-              "Return the available List/Record selectrecordtype options for custom record SELECT and MULTISELECT fields from the live NetSuite account. " +
-              "Use one returned option value as selectRecordType for netsuite_create_custom_record_field. Do not guess negative built-in IDs. If no valid custom list or record list exists, create the field as TEXT.",
-            inputSchema: {
-              type: "object",
-              properties: {
-                filter: {
-                  type: "string",
-                  description: "Optional text filter passed to getSelectOptions. Examples: Employee, Custom List, Agent Provider."
-                }
-              }
             }
           },
           {
@@ -2102,20 +1923,111 @@ async function handleMcp(req) {
             }
           },
           {
-            name: "netsuite_create_script_record",
+            name: "netsuite_sdf_deploy",
             description:
-              "Create (or update) a NetSuite Script record WITH its deployments in one call, via the bundled SuiteCloud SDF deploy tool. " +
-              "Destructive: uploads the script file, creates/updates the script record and every deployment listed. " +
+              "Deploy NetSuite customizations via the bundled SuiteCloud SDF deploy tool. THE tool for creating or updating scripts+deployments, CUSTOM RECORD TYPES (with all their fields in one shot), and advanced PDF/HTML TEMPLATES — do not create these piecemeal with other tools. Deploying again with the same script/object IDs UPDATES the existing objects (create-or-update semantics). " +
+              "PREFER THE STRUCTURED PAYLOADS — do NOT hand-write SDF XML: (1) SCRIPT: scriptType + scriptFile + deployments; (2) customRecords: record types with their fields; (3) templates: advanced PDF/HTML templates with FreeMarker source. " +
+              "The raw `objects` array (full SDF object XML) is ONLY for other object types or XML obtained from netsuite_sdf_import_object. " +
               "Runs locally against the currently selected MCP account; if that account has no SuiteCloud login yet, a browser login console opens and the user must authenticate (first call for a new account may take longer or time out — retry after login). " +
-              "Script parameters (script custom fields) and scheduled/map-reduce recurrence are supported. " +
-              "Deployment defaults: RELEASED (NOTSCHEDULED for scheduled/mapreduce), DEBUG log, all internal roles for suitelet/restlet.",
+              "Script deployment defaults: RELEASED (NOTSCHEDULED for scheduled/mapreduce), DEBUG log, all internal roles for suitelet/restlet, runs as ADMINISTRATOR where supported. " +
+              "Required features (CUSTOMRECORDS, ADVANCEDPRINTING, ...) are declared automatically.",
             inputSchema: {
               type: "object",
               properties: {
+                customRecords: {
+                  type: "array",
+                  description: "STRUCTURED custom record types to create/update (preferred over raw XML). Field types: TEXT, TEXTAREA, CLOBTEXT, CHECKBOX, INTEGER, FLOAT, CURRENCY, PERCENT, DATE, DATETIMETZ, EMAIL, PHONE, HYPERLINK, SELECT, MULTISELECT, RICHTEXT, INLINEHTML, IMAGE, DOCUMENT, PASSWORD, TIMEOFDAY (aliases: FREEFORMTEXT, LONGTEXT, DECIMAL, LIST, DATETIME).",
+                  items: {
+                    type: "object",
+                    properties: {
+                      scriptId: { type: "string", description: "e.g. customrecord_my_type (prefix added if missing)." },
+                      name: { type: "string", description: "Record display name (recordname)." },
+                      description: { type: "string" },
+                      includeNameField: { type: "boolean", description: "Defaults to true." },
+                      showId: { type: "boolean" },
+                      hierarchical: { type: "boolean" },
+                      inactive: { type: "boolean" },
+                      enableNumbering: { type: "boolean" },
+                      numberingPrefix: { type: "string" },
+                      fields: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            scriptId: { type: "string", description: "e.g. custrecord_my_field (prefix added if missing)." },
+                            label: { type: "string" },
+                            fieldType: { type: "string", description: "See list above. Defaults to TEXT." },
+                            mandatory: { type: "boolean" },
+                            storeValue: { type: "boolean", description: "Defaults to true." },
+                            showInList: { type: "boolean", description: "Defaults to true." },
+                            selectRecordType: { type: "string", description: "SELECT/MULTISELECT target: customrecord_/customlist_ scriptid (auto-wrapped) or numeric list id." },
+                            isParent: { type: "boolean", description: "Marks a parent-child SELECT field." },
+                            parentSubtab: { type: "string", description: "Parent record subtab ref, e.g. customrecord_parent.custrecordtab_children." },
+                            defaultValue: { type: "string" },
+                            defaultChecked: { type: "boolean" },
+                            description: { type: "string" },
+                            help: { type: "string" },
+                            displayType: { type: "string", description: "NORMAL (default), HIDDEN, DISABLED, INLINE." }
+                          },
+                          required: ["scriptId", "label"]
+                        }
+                      },
+                      subtabs: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            scriptId: { type: "string", description: "e.g. custrecordtab_my_tab (prefix added if missing)." },
+                            title: { type: "string" }
+                          },
+                          required: ["scriptId", "title"]
+                        }
+                      }
+                    },
+                    required: ["scriptId", "name"]
+                  }
+                },
+                templates: {
+                  type: "array",
+                  description: "STRUCTURED advanced PDF/HTML templates to create/update (preferred over raw XML).",
+                  items: {
+                    type: "object",
+                    properties: {
+                      scriptId: { type: "string", description: "e.g. custtmpl_my_template (prefix added if missing)." },
+                      title: { type: "string" },
+                      standard: { type: "string", description: "Base standard template id, e.g. STDTMPLCUSTINVC (invoice), STDTMPLSALESORD (sales order), STDTMPLESTIMATE (quote)." },
+                      content: { type: "string", description: "FreeMarker template source (the <pdf>...</pdf> document)." },
+                      localPath: { type: "string", description: "Local file with the FreeMarker source, instead of content." },
+                      description: { type: "string" },
+                      preferred: { type: "boolean" },
+                      inactive: { type: "boolean" }
+                    },
+                    required: ["scriptId", "title", "standard"]
+                  }
+                },
+                objects: {
+                  type: "array",
+                  description: "Raw SDF object XML pass-through — ONLY for object types not covered by the structured payloads, or XML returned by netsuite_sdf_import_object. Root tag must carry a scriptid attribute.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      xml: { type: "string", description: "Full SDF object XML, e.g. <customrecordtype scriptid=\"customrecord_x\">...</customrecordtype>." },
+                      template: {
+                        type: "object",
+                        description: "Template source sidecar (<scriptid>.template.xml) for advanced PDF/HTML templates.",
+                        properties: {
+                          content: { type: "string", description: "Inline template source (FreeMarker XML)." },
+                          localPath: { type: "string", description: "Absolute local path of an existing template file." }
+                        }
+                      }
+                    },
+                    required: ["xml"]
+                  }
+                },
                 scriptType: {
                   type: "string",
                   enum: ["suitelet", "restlet", "clientscript", "usereventscript", "scheduledscript", "mapreducescript"],
-                  description: "SDF script type. Aliases accepted: scriptlet->suitelet, client->clientscript, userevent/ue->usereventscript, scheduled/ss->scheduledscript, mapreduce/mr->mapreducescript."
+                  description: "SDF script type (only for the structured script payload). Aliases accepted: scriptlet->suitelet, client->clientscript, userevent/ue->usereventscript, scheduled/ss->scheduledscript, mapreduce/mr->mapreducescript."
                 },
                 scriptId: {
                   type: "string",
@@ -2194,7 +2106,51 @@ async function handleMcp(req) {
                   }
                 }
               },
-              required: ["scriptType", "scriptId", "name", "scriptFile", "deployments"]
+              required: []
+            }
+          },
+          {
+            name: "netsuite_sdf_list_objects",
+            description:
+              "List custom objects deployed in the currently selected NetSuite account, as {type, scriptId} entries, via the SuiteCloud SDF tool. " +
+              "Use this to discover objects to import/edit with netsuite_sdf_import_object. Optionally filter by object type(s) and/or a scriptid substring. " +
+              "For SDF object types see the SuiteCloud object reference (e.g. customrecordtype, advancedpdftemplate, savedsearch, role, customlist, ...).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Object type(s) to list, e.g. [\"customrecordtype\",\"advancedpdftemplate\"]. Omit to list all."
+                },
+                scriptId: { type: "string", description: "Only list objects whose script id contains this value." },
+                accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
+              },
+              required: []
+            }
+          },
+          {
+            name: "netsuite_sdf_import_object",
+            description:
+              "Import an existing custom object's SDF XML from the currently selected account and return it, so you can edit it and redeploy the change with netsuite_sdf_deploy (create-or-update). " +
+              "OBJECTS ONLY (custom records, templates, saved searches, roles, lists, ...); script records/deployments have their own tooling and are rejected here. " +
+              "For advanced PDF/HTML templates the FreeMarker source is returned as templateXml. " +
+              "Workflow: import -> edit the returned xml (and templateXml) -> call netsuite_sdf_deploy with objects:[{ xml, template:{content} }] using the SAME scriptid.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                type: { type: "string", description: "SDF object type, e.g. customrecordtype, advancedpdftemplate, savedsearch, role, customlist." },
+                scriptId: {
+                  oneOf: [
+                    { type: "string" },
+                    { type: "array", items: { type: "string" } }
+                  ],
+                  description: "Script id(s) of the object(s) to import, e.g. customrecord_my_type."
+                },
+                includeTemplate: { type: "boolean", description: "Include the template source sidecar for template objects. Defaults to true." },
+                accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
+              },
+              required: ["type", "scriptId"]
             }
           },
           {
@@ -2277,8 +2233,14 @@ async function handleMcp(req) {
       if (params?.name === "netsuite_upload_file") {
         result = await uploadLocalFilesViaExtension(params.arguments || {});
       }
-      if (params?.name === "netsuite_create_script_record") {
-        result = await createScriptRecordViaSdf(params.arguments || {});
+      if (params?.name === "netsuite_sdf_deploy") {
+        result = await sdfDeployViaCompanion(params.arguments || {});
+      }
+      if (params?.name === "netsuite_sdf_list_objects") {
+        result = await sdfListObjectsViaCompanion(params.arguments || {});
+      }
+      if (params?.name === "netsuite_sdf_import_object") {
+        result = await sdfImportObjectViaCompanion(params.arguments || {});
       }
       if (!result) {
         result = await callExtension("tools/call", params);

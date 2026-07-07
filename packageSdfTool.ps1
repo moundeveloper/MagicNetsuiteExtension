@@ -43,9 +43,12 @@ try {
 @"
 # Magic NetSuite SDF Deploy Tool
 
-Companion exe that creates NetSuite script records + deployments from a JSON
-spec through the SuiteCloud CLI (SDF). Invoked automatically by the Magic
-NetSuite MCP server for the ``netsuite_create_script_record`` tool.
+Companion exe that deploys NetSuite customizations from a JSON spec through
+the SuiteCloud CLI (SDF): script records + deployments (structured spec) and
+raw SDF objects such as custom record types and advanced PDF/HTML templates
+(``objects`` array). Redeploying the same IDs updates the existing objects.
+Invoked automatically by the Magic NetSuite MCP server for the
+``netsuite_sdf_deploy`` tool.
 
 - The reusable SDF project self-scaffolds in ``sdf-project/`` beside this exe.
 - Account -> SuiteCloud authid mapping is cached in ``accounts.json``. Unknown
@@ -55,7 +58,11 @@ NetSuite MCP server for the ``netsuite_create_script_record`` tool.
   first use if missing.
 
 Manual usage:
-``sdfDeploy.exe deploy <spec.json|->`` | ``cleanup <scriptId> [--inactivate]`` | ``list`` | ``resolve-account <accountId>``
+``sdfDeploy.exe deploy <spec.json|->`` | ``cleanup <scriptId> [--inactivate]`` | ``list`` | ``resolve-account <accountId>`` | ``list-objects --account <id> [--type <t...>] [--scriptid <id>]`` | ``import-object --account <id> --type <t> --scriptid <id...> [--no-template]``
+
+Object import/update workflow (objects only, not scripts): ``list-objects`` to
+discover -> ``import-object`` returns the object's SDF xml -> edit it -> ``deploy``
+with an objects[] entry using the same scriptid to update it on the account.
 "@ | Set-Content -LiteralPath (Join-Path $SdfDest "README.md") -Encoding UTF8
 
 Write-Host "SDF deploy tool packaged to $SdfDest"
