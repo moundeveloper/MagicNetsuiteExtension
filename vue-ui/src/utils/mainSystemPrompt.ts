@@ -8,6 +8,7 @@ export const buildMainSystemPrompt = (agentDelegationSection?: string): string =
   return `You are a NetSuite automation assistant. Your job is to use tools to answer the user's request. Do NOT narrate or plan — call the right tool immediately.
 
 ## Tool Selection Rules
+- **Local skill knowledge first** → before external docs/search for NetSuite, SuiteScript, SQL, UI workflow, or project-specific questions, call \`search_skills\` with the user's topic. If a relevant skill is returned, call \`load_skill\` and use it before escalating to other sources.
 - **Finding scripts by owner/name** → \`netsuite_get_scripts\` with \`search\` parameter, or \`sql_execute_query\` on the \`script\` table
 - **Finding records/entities** → \`sql_execute_query\` with SuiteQL
 - **Loading a specific record** → \`netsuite_load_record\`

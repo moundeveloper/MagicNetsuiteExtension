@@ -29,6 +29,32 @@ const { spawn } = require("child_process");
 let shouldLog = true;
 let BASE_DIR = __dirname; // fallback
 let hostConfig = {};
+let lastLocalSkillSearchAt = 0;
+
+function shouldRequireLocalSkillSearchBeforeDocs(params = {}) {
+  if (params?.name !== "netsuite_search_docs") return false;
+  const args = params.arguments || {};
+  const query = String(args.query || "").toLowerCase();
+  if (!query) return false;
+  const knowledgeTopic =
+    /\b(netsuite|suite(script|ql|cloud)|freemarker|free\s*marker|bfo|advanced\s+pdf|template|templates|pdf|html|governance|limit|quota|workflow|record|search|script|deployment|custom\s+record|text|characters?|spacing|spaced|font|css)\b/i.test(query);
+  if (!knowledgeTopic) return false;
+  return Date.now() - lastLocalSkillSearchAt > 120000;
+}
+
+function localSkillSearchRequiredResult(query) {
+  return {
+    content: [
+      {
+        type: "text",
+        text:
+          "Local Magic NetSuite skills must be checked before NetSuite docs for this topic. " +
+          `Call magic_netsuite_search_skills first with query "${query}", then call magic_netsuite_load_skill for relevant results. ` +
+          "Use netsuite_search_docs only if the loaded local skills are missing or insufficient."
+      }
+    ]
+  };
+}
 
 for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
   try {
@@ -909,7 +935,7 @@ async function handleMcp(req) {
           },
           {
             name: "magic_netsuite_search_skills",
-            description: "Search Magic NetSuite skills by name, description, and tags. Returns metadata only.",
+            description: "Search the local Magic NetSuite skill library by name, description, and tags. Use this BEFORE netsuite_search_docs or other external documentation for NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions. Returns metadata only; call magic_netsuite_load_skill for relevant results.",
             inputSchema: {
               type: "object",
               properties: {
@@ -1041,7 +1067,7 @@ async function handleMcp(req) {
           {
             name: "netsuite_search_docs",
             description:
-              "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. Use this first to find relevant documentation, then call 'netsuite_read_doc_page' with a returned URL to get the full content. Always use this tool for any factual question about NetSuite — do NOT answer from training data.",
+              "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. For NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions, first call magic_netsuite_search_skills and load any relevant local skill. Use this docs tool only when local skills are missing or insufficient, then call 'netsuite_read_doc_page' with a returned URL to get the full content.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2230,6 +2256,13 @@ async function handleMcp(req) {
 
     // ✅ ONLY HERE we depend on extension
     else if (method === "tools/call") {
+      if (params?.name === "magic_netsuite_search_skills") {
+        lastLocalSkillSearchAt = Date.now();
+      }
+      if (shouldRequireLocalSkillSearchBeforeDocs(params)) {
+        const query = String(params.arguments?.query || "");
+        result = localSkillSearchRequiredResult(query);
+      }
       if (params?.name === "netsuite_upload_file") {
         result = await uploadLocalFilesViaExtension(params.arguments || {});
       }
@@ -2305,5 +2338,3 @@ process.on("unhandledRejection", (reason) => {
 });
 
 log("host started");
-
-

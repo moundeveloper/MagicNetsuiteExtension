@@ -1345,12 +1345,15 @@ const MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID = "customdeploy_magic_netsuite_
 let mcpSuiteletServerUrlCache = null;
 
 const SKILLS_DB_NAME = "MagicNetsuiteSkills";
-const SKILLS_DB_VERSION = 3;
 const SKILLS_STORE_NAME = "skills";
 
 function openSkillsDb() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(SKILLS_DB_NAME, SKILLS_DB_VERSION);
+    // Do not pin a version here: the Vue UI owns schema migrations and may
+    // already have upgraded this IndexedDB database beyond the background
+    // worker's local schema knowledge. Opening without a version attaches to
+    // the current database version instead of throwing VersionError.
+    const request = indexedDB.open(SKILLS_DB_NAME);
 
     request.onupgradeneeded = () => {
       const db = request.result;
@@ -2072,7 +2075,7 @@ const MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "magic_netsuite_search_skills",
-    description: "Search Magic NetSuite skills by name, description, and tags. Returns metadata only.",
+    description: "Search the local Magic NetSuite skill library by name, description, and tags. Use this BEFORE netsuite_search_docs or other external documentation for NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions. Returns metadata only; call magic_netsuite_load_skill for relevant results.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2212,7 +2215,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_search_docs",
     description:
-      "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. Use this first to find relevant documentation, then call 'netsuite_read_doc_page' with a returned URL to get the full content. Always use this tool for any factual question about NetSuite — do NOT answer from training data.",
+      "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. For NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions, first call magic_netsuite_search_skills and load any relevant local skill. Use this docs tool only when local skills are missing or insufficient, then call 'netsuite_read_doc_page' with a returned URL to get the full content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7160,5 +7163,3 @@ function sendMessageToTab(tabId, message) {
     });
   });
 }
-
-

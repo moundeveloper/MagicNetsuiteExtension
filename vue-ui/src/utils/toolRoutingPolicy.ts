@@ -127,6 +127,25 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     preferWhen: "user explicitly asks for the current time or date",
     avoidWhen: "time/date is not relevant to the task",
   },
+  search_skills: {
+    purpose: "Search the local Magic NetSuite skill library for project-specific instructions and saved knowledge",
+    costTier: "free",
+    expectedLatencyMs: 50,
+    riskLevel: "none",
+    reversible: true,
+    failureModes: ["no matching skills found"],
+    preferWhen:
+      "before external documentation for NetSuite, SuiteScript, SQL, UI workflow, or project-specific knowledge questions",
+  },
+  load_skill: {
+    purpose: "Load full content for a local Magic NetSuite skill returned by search_skills",
+    costTier: "free",
+    expectedLatencyMs: 50,
+    riskLevel: "none",
+    reversible: true,
+    failureModes: ["skill ID not found"],
+    preferWhen: "search_skills returned a relevant skill for the user's topic",
+  },
   fetch_url: {
     purpose: "Fetch the text content of a public web URL",
     costTier: "moderate",
@@ -616,6 +635,12 @@ export const ROUTING_RULES: RoutingRule[] = [
       "API reference database (method names, parameter types, return values). Never use the module " +
       "docs tool for conceptual or limits questions — it has no such data and will loop uselessly.",
   },
+  {
+    id: "R12",
+    description: "Search local skills before external knowledge sources",
+    rationale:
+      "The user maintains a local skill library with project-specific instructions. For NetSuite, SuiteScript, SQL, UI workflow, or project-specific knowledge questions, call search_skills first and load relevant skills before docs or web-style sources.",
+  },
 ];
 
 // ─────────────────────────────────────────────
@@ -639,6 +664,11 @@ ROUTING EXAMPLES (study these before each decision):
 
 ✓ GOOD — user asks "show me scripts named 'invoice'"
   → NetSuite data → use netsuite_get_scripts
+
+✓ GOOD — user asks "what are the map reduce limits?"
+  → conceptual NetSuite knowledge → call search_skills("map reduce limits governance")
+  → if relevant local skills exist, load_skill first
+  → if skills are insufficient, use search_netsuite_docs
 
 ✓ GOOD — user asks "run the deploy script"
   → destructive (script execution) → first confirm with user before calling netsuite_run_script
@@ -668,7 +698,7 @@ ROUTING EXAMPLES (study these before each decision):
 ✗ BAD — user asks "what are the map reduce limits?"
   → calling netsuite_search_module_docs repeatedly
   → WRONG: module docs only has API signatures, not execution limits
-  → CORRECT: use search_netsuite_docs to find the Help Center article on map reduce limits
+  → CORRECT: search local skills first, then use search_netsuite_docs if needed
 
 ✗ BAD — user says "hello, how are you?"
   → calling get_current_time or any NetSuite tool

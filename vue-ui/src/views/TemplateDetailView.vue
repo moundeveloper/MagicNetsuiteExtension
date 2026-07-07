@@ -142,6 +142,10 @@ const handleVersionChange = () => {
   getTemplate(selectedVersion.value);
 };
 
+const refreshTemplate = () => {
+  void getTemplate(selectedVersion.value);
+};
+
 const fetchCompareVersion = async (
   version: number | "currentCode" | null,
   isLeft: boolean
@@ -419,6 +423,9 @@ onBeforeUnmount(() => {
             <button type="button" class="primary-btn primary-btn--icon" :disabled="loading" title="Save template" @click="saveTemplate">
               <i class="pi pi-save font-medium"></i>
             </button>
+            <button type="button" class="secondary-btn secondary-btn--icon" :disabled="loading" title="Refresh template" @click="refreshTemplate">
+              <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"></i>
+            </button>
           </div>
         </template>
         <template #default>
@@ -450,6 +457,10 @@ onBeforeUnmount(() => {
                 <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-save'"></i>
                 <span>{{ loading ? "Saving" : "Save" }}</span>
                 <kbd v-if="!loading" class="shortcut-kbd">Ctrl+S</kbd>
+              </button>
+              <button type="button" class="secondary-btn" :disabled="loading" @click="refreshTemplate">
+                <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"></i>
+                <span>Refresh</span>
               </button>
             </div>
           </div>
@@ -689,7 +700,8 @@ onBeforeUnmount(() => {
   color: var(--p-red-600);
 }
 
-.primary-btn {
+.primary-btn,
+.secondary-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -706,10 +718,22 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
 }
 
+.secondary-btn {
+  border-color: var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-600);
+}
+
 .primary-btn:hover:not(:disabled) {
   border-color: var(--p-slate-700);
   background: var(--p-slate-700);
   color: white;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  border-color: #d8c6ff;
+  background: #faf7ff;
+  color: #7b2ff7;
 }
 
 .primary-btn--icon {
@@ -717,7 +741,13 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
-.primary-btn:disabled {
+.secondary-btn--icon {
+  width: 32px;
+  padding: 0;
+}
+
+.primary-btn:disabled,
+.secondary-btn:disabled {
   background: var(--p-slate-300);
   border-color: var(--p-slate-300);
   color: var(--p-slate-100);

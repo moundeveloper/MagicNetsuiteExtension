@@ -1652,8 +1652,6 @@ export const useAgent = (options: AgentOptions = {}) => {
     "cache_delete",
     "cache_store",
     "cache_upload_file",
-    "search_skills",
-    "load_skill",
     "agent_todo_write",
     "agent_todo_read",
   ]);

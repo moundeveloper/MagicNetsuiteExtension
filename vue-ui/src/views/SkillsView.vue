@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import InputText from "primevue/inputtext";
 import Textarea from "primevue/textarea";
 import MCard from "../components/universal/card/MCard.vue";
@@ -34,6 +34,8 @@ const viewMode = ref<"edit" | "preview">("edit");
 const saving = ref(false);
 const statusMessage = ref("");
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const skillListWidth = ref(34);
+const isResizingSkillList = ref(false);
 
 const emptyForm = (): SkillForm => ({
   name: "",
@@ -80,6 +82,31 @@ const loadSkills = async () => {
   } else {
     createNewSkill();
   }
+};
+
+const refreshSkills = async () => {
+  statusMessage.value = "";
+  await loadSkills();
+};
+
+const startSkillListResize = (event: MouseEvent) => {
+  event.preventDefault();
+  isResizingSkillList.value = true;
+  const container = (event.currentTarget as HTMLElement).parentElement;
+  const startX = event.clientX;
+  const startWidth = skillListWidth.value;
+  const containerWidth = container?.clientWidth || window.innerWidth;
+  const onMove = (moveEvent: MouseEvent) => {
+    const deltaPct = ((moveEvent.clientX - startX) / containerWidth) * 100;
+    skillListWidth.value = Math.min(55, Math.max(22, startWidth + deltaPct));
+  };
+  const onUp = () => {
+    isResizingSkillList.value = false;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 };
 
 const selectSkill = (skill: Skill) => {
@@ -202,6 +229,10 @@ const formatDate = (value?: string): string => {
 };
 
 onMounted(loadSkills);
+
+onBeforeUnmount(() => {
+  isResizingSkillList.value = false;
+});
 </script>
 
 <template>
@@ -283,6 +314,14 @@ onMounted(loadSkills);
           </div>
           <div class="toolbar-right">
             <InputText v-model="searchQuery" placeholder="Search skills..." class="skills-search" />
+            <button
+              type="button"
+              class="toolbar-btn"
+              title="Refresh skills"
+              @click="refreshSkills"
+            >
+              <i class="pi pi-refresh" />
+            </button>
             <button type="button" class="toolbar-btn" title="New skill" @click="createNewSkill">
               <i class="pi pi-plus" />
             </button>
@@ -290,7 +329,7 @@ onMounted(loadSkills);
         </header>
 
         <section class="skills-body">
-          <aside class="skill-list">
+          <aside class="skill-list" :style="{ flexBasis: `${skillListWidth}%` }">
             <button
               v-for="skill in filteredSkills"
               :key="skill.id"
@@ -317,6 +356,12 @@ onMounted(loadSkills);
               <span>No skills found.</span>
             </div>
           </aside>
+
+          <div
+            class="skill-list-resize-handle"
+            :class="{ 'skill-list-resize-handle--active': isResizingSkillList }"
+            @mousedown="startSkillListResize"
+          />
 
           <section class="skill-editor">
             <div class="editor-header">
@@ -380,7 +425,6 @@ onMounted(loadSkills);
                   v-if="viewMode === 'edit'"
                   v-model="form.content"
                   class="skill-content"
-                  auto-resize
                   rows="18"
                 />
                 <div v-else class="markdown-preview">
@@ -491,10 +535,9 @@ onMounted(loadSkills);
 }
 
 .skills-body {
-  display: grid;
+  display: flex;
   flex: 1;
   min-height: 0;
-  grid-template-columns: minmax(260px, 32%) minmax(0, 1fr);
   overflow: hidden;
 }
 
@@ -506,6 +549,20 @@ onMounted(loadSkills);
   overflow-y: auto;
   border-right: 1px solid var(--p-slate-200);
   background: #f8fafc;
+  flex: 0 0 auto;
+}
+
+.skill-list-resize-handle {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  border-right: 1px solid var(--p-slate-200);
+  background: #f8fafc;
+  transition: background 0.15s;
+}
+
+.skill-list-resize-handle:hover,
+.skill-list-resize-handle--active {
+  background: #d8c6ff;
 }
 
 .skill-row {
@@ -584,6 +641,7 @@ onMounted(loadSkills);
 
 .skill-editor {
   display: flex;
+  flex: 1 1 0;
   min-width: 0;
   min-height: 0;
   flex-direction: column;
@@ -715,8 +773,11 @@ onMounted(loadSkills);
 }
 
 .skill-content {
-  min-height: 100%;
+  display: block;
+  height: 100%;
+  min-height: 0;
   resize: none;
+  overflow: auto;
   padding: 10px;
   font-family: "JetBrains Mono", monospace;
   line-height: 1.5;
@@ -859,13 +920,18 @@ onMounted(loadSkills);
 
 @media (max-width: 980px) {
   .skills-body {
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 
   .skill-list {
+    flex-basis: auto !important;
     max-height: 34vh;
     border-right: 0;
     border-bottom: 1px solid var(--p-slate-200);
+  }
+
+  .skill-list-resize-handle {
+    display: none;
   }
 
   .skills-search {

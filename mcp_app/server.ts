@@ -580,7 +580,7 @@ export function createServer(): McpServer {
 
   server.registerTool("magic_netsuite_search_skills", {
     title: "Search Magic NetSuite Skills",
-    description: "Search Magic NetSuite skills by name, description, and tags. Returns metadata only.",
+    description: "Search the local Magic NetSuite skill library by name, description, and tags. Use this before external documentation for NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions. Returns metadata only; load relevant results with magic_netsuite_load_skill.",
     inputSchema: {
       query: z.string().optional(),
       includeDisabled: z.boolean().optional(),

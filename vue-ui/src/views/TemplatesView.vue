@@ -112,6 +112,18 @@ onMounted(async () => {
         collapsible
         collapsible-key="advanced-pdf-templates"
       >
+        <template #search-actions>
+          <button
+            type="button"
+            class="refresh-btn"
+            title="Refresh templates"
+            :disabled="loading"
+            @click="getAdvancedPdfTemplates"
+          >
+            <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />
+          </button>
+        </template>
+
         <MTableColumn
           label="Name"
           field="name"
@@ -213,3 +225,29 @@ onMounted(async () => {
     </template>
   </MCard>
 </template>
+
+<style scoped>
+.refresh-btn {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  border-color: #d8c6ff;
+  background: #faf7ff;
+  color: #7b2ff7;
+}
+
+.refresh-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+</style>
