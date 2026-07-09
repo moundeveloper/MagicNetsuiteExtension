@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { debounce } from "lodash";
 import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
@@ -18,6 +18,7 @@ type RecordRow = {
 };
 
 const props = defineProps<{ vhOffset: number }>();
+const route = useRoute();
 const router = useRouter();
 
 const recordTypes = ref<RecordTypeOption[]>([]);
@@ -185,10 +186,14 @@ const loadRecordTypes = async () => {
       .sort((a: RecordTypeOption, b: RecordTypeOption) =>
         a.name.localeCompare(b.name)
       );
+    const requestedType = String(route.query.type ?? "").toLowerCase();
+    const requestedQuery = String(route.query.q ?? "");
     selectedRecordType.value =
+      recordTypes.value.find((type) => type.id === requestedType)?.id ??
       recordTypes.value.find((type) => type.id === "customer")?.id ??
       recordTypes.value[0]?.id ??
       "";
+    if (requestedQuery) query.value = requestedQuery;
     if (selectedRecordType.value) await searchRecords();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause);
@@ -349,6 +354,26 @@ watch(query, () => {
   searchRequestId += 1;
   debouncedSearch();
 });
+watch(
+  () => route.query,
+  async (nextQuery) => {
+    const requestedType = String(nextQuery.type ?? "").toLowerCase();
+    const requestedSearch = String(nextQuery.q ?? "");
+    if (!requestedType && !requestedSearch) return;
+    if (
+      selectedRecordType.value === requestedType &&
+      query.value === requestedSearch
+    ) {
+      return;
+    }
+    if (requestedType && recordTypes.value.some((type) => type.id === requestedType)) {
+      selectedRecordType.value = requestedType;
+    }
+    query.value = requestedSearch;
+    page.value = 1;
+    await searchRecords();
+  }
+);
 onMounted(loadRecordTypes);
 onBeforeUnmount(() => debouncedSearch.cancel());
 </script>

@@ -116,6 +116,36 @@
             </div>
           </div>
 
+          <div class="sidebar-section" v-if="renderHistory.length">
+            <div class="section-title-row">
+              <h4>Recent Prints</h4>
+              <Button
+                size="small"
+                severity="secondary"
+                text
+                icon="pi pi-trash"
+                title="Clear print history"
+                @click="clearRenderHistory"
+              />
+            </div>
+            <div class="history-list">
+              <button
+                v-for="entry in renderHistory"
+                :key="entry.id"
+                type="button"
+                class="history-entry"
+                :title="entry.title"
+                @click="restoreHistoryEntry(entry)"
+              >
+                <span>
+                  <strong>{{ entry.title }}</strong>
+                  <small>{{ entry.recordLabel || entry.contextMode }} · {{ formatHistoryTime(entry.renderedAt) }}</small>
+                </span>
+                <i class="pi pi-history"></i>
+              </button>
+            </div>
+          </div>
+
           <div class="sidebar-section">
             <ServerComponentsPanel
               ref="serverComponentsPanelRef"
@@ -195,6 +225,9 @@ import { RequestRoutes } from "../types/request";
 
 const STORAGE_KEY = "freemarkerRendererTemplate";
 const CONTEXT_MODE_KEY = "freemarkerRendererContextMode";
+const STATE_KEY = "freemarkerRendererState";
+const HISTORY_KEY = "freemarkerRendererHistory";
+const MAX_HISTORY_ENTRIES = 8;
 
 const freestyleTemplate = `<?xml version="1.0"?>
 <!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
@@ -363,6 +396,23 @@ interface RecordListRow {
   raw: Record<string, unknown>;
 }
 
+interface RendererState {
+  contextMode: ContextMode;
+  recordType: RecordTypeOption | null;
+  record: RecordListRow | null;
+  recordSearch: string;
+  renderedPdfUrl: string;
+  lastRenderedAt: string;
+}
+
+interface RenderHistoryEntry extends RendererState {
+  id: string;
+  title: string;
+  template: string;
+  renderedAt: number;
+  recordLabel: string;
+}
+
 const TRANSACTION_RECORD_TYPES: Record<string, string> = {
   cashsale: "CashSale",
   creditmemo: "CustCred",
@@ -410,12 +460,106 @@ const recordTypesLoading = ref(false);
 const recordsLoading = ref(false);
 const recordListError = ref("");
 const serverComponentsPanelRef = ref<InstanceType<typeof ServerComponentsPanel> | null>(null);
+const renderHistory = ref<RenderHistoryEntry[]>([]);
 
 const recordTypeOptions = computed(() =>
   contextMode.value === "transaction"
     ? transactionRecordTypeOptions
     : customRecordTypes.value
 );
+
+const safeParse = <T,>(value: string | null, fallback: T): T => {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+const getRendererState = (): RendererState => ({
+  contextMode: contextMode.value,
+  recordType: selectedRecordType.value,
+  record: selectedRecord.value,
+  recordSearch: recordSearch.value,
+  renderedPdfUrl: renderedPdfUrl.value,
+  lastRenderedAt: lastRenderedAt.value
+});
+
+const persistRendererState = () => {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify(getRendererState()));
+    localStorage.setItem(CONTEXT_MODE_KEY, contextMode.value);
+  } catch {
+    // localStorage may reject large PDF data URLs; history still works without blocking editing.
+  }
+};
+
+const persistRenderHistory = () => {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(renderHistory.value));
+  } catch {
+    const withoutPdf = renderHistory.value.map((entry) => ({
+      ...entry,
+      renderedPdfUrl: ""
+    }));
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(withoutPdf));
+  }
+};
+
+const historyTitle = () => {
+  if (contextMode.value === "freestyle") return "Freestyle template";
+  const typeName = selectedRecordType.value?.name || selectedRecordType.value?.id || "Record";
+  const recordName = selectedRecord.value?.label || selectedRecord.value?.id || "";
+  return `${typeName}${recordName ? ` #${recordName}` : ""}`;
+};
+
+const addRenderHistoryEntry = () => {
+  const state = getRendererState();
+  const entry: RenderHistoryEntry = {
+    ...state,
+    id: `${Date.now()}:${state.recordType?.id ?? "freestyle"}:${state.record?.id ?? "none"}`,
+    title: historyTitle(),
+    template: template.value,
+    renderedAt: Date.now(),
+    recordLabel: state.record?.label || state.record?.id || ""
+  };
+  renderHistory.value = [
+    entry,
+    ...renderHistory.value.filter(
+      (existing) =>
+        existing.template !== entry.template ||
+        existing.contextMode !== entry.contextMode ||
+        existing.recordType?.id !== entry.recordType?.id ||
+        existing.record?.id !== entry.record?.id
+    )
+  ].slice(0, MAX_HISTORY_ENTRIES);
+  persistRenderHistory();
+};
+
+const restoreHistoryEntry = (entry: RenderHistoryEntry) => {
+  contextMode.value = entry.contextMode;
+  template.value = entry.template;
+  selectedRecordType.value = entry.recordType;
+  selectedRecord.value = entry.record;
+  recordSearch.value = entry.recordSearch || "";
+  recordRows.value = entry.record ? [entry.record] : [];
+  renderedPdfUrl.value = entry.renderedPdfUrl || "";
+  lastRenderedAt.value = entry.lastRenderedAt || formatHistoryTime(entry.renderedAt);
+  renderError.value = "";
+  persistRendererState();
+};
+
+const clearRenderHistory = () => {
+  renderHistory.value = [];
+  localStorage.removeItem(HISTORY_KEY);
+};
+
+const formatHistoryTime = (value: number | string) => {
+  const date = typeof value === "number" ? new Date(value) : new Date(value);
+  if (Number.isNaN(date.getTime())) return "recently";
+  return date.toLocaleString();
+};
 
 const renderTemplate = async () => {
   if (!template.value.trim()) {
@@ -455,6 +599,8 @@ const renderTemplate = async () => {
       ? `data:${result.mimeType || "application/pdf"};base64,${result.pdf}`
       : "";
     lastRenderedAt.value = new Date().toLocaleTimeString();
+    persistRendererState();
+    addRenderHistoryEntry();
     await serverComponentsPanelRef.value?.check();
   } catch (err: any) {
     renderError.value = err?.message || String(err);
@@ -480,6 +626,7 @@ const setContextMode = (mode: ContextMode) => {
   recordRows.value = [];
   recordListError.value = "";
   localStorage.setItem(CONTEXT_MODE_KEY, mode);
+  persistRendererState();
   template.value =
     mode === "transaction"
       ? transactionTemplate
@@ -609,22 +756,44 @@ const loadRecords = async () => {
 
 watch(template, (value) => {
   localStorage.setItem(STORAGE_KEY, value);
+  persistRendererState();
 });
 
 watch(contextMode, () => {
   if (!recordTypeOptions.value.includes(selectedRecordType.value as RecordTypeOption)) {
     selectedRecordType.value = null;
   }
+  persistRendererState();
+});
+
+watch([selectedRecordType, selectedRecord, recordSearch, renderedPdfUrl], () => {
+  persistRendererState();
 });
 
 onMounted(async () => {
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) template.value = saved;
-  const savedMode = localStorage.getItem(CONTEXT_MODE_KEY);
+  renderHistory.value = safeParse<RenderHistoryEntry[]>(
+    localStorage.getItem(HISTORY_KEY),
+    []
+  );
+  const savedState = safeParse<Partial<RendererState>>(
+    localStorage.getItem(STATE_KEY),
+    {}
+  );
+  const savedMode = savedState.contextMode || localStorage.getItem(CONTEXT_MODE_KEY);
   if (savedMode === "freestyle" || savedMode === "transaction" || savedMode === "customrecord") {
     contextMode.value = savedMode;
   }
   await loadRecordTypes();
+  if (savedState.recordType) selectedRecordType.value = savedState.recordType;
+  if (savedState.record) {
+    selectedRecord.value = savedState.record;
+    recordRows.value = [savedState.record];
+  }
+  if (savedState.recordSearch) recordSearch.value = savedState.recordSearch;
+  if (savedState.renderedPdfUrl) renderedPdfUrl.value = savedState.renderedPdfUrl;
+  if (savedState.lastRenderedAt) lastRenderedAt.value = savedState.lastRenderedAt;
 });
 </script>
 
@@ -712,6 +881,74 @@ onMounted(async () => {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--p-slate-700);
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.section-title-row h4 {
+  margin-bottom: 0;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.history-entry {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid var(--p-slate-200);
+  border-radius: 5px;
+  background: white;
+  color: var(--p-slate-600);
+  cursor: pointer;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+}
+
+.history-entry:hover {
+  border-color: #d8c6ff;
+  background: #faf7ff;
+  color: #7b2ff7;
+}
+
+.history-entry span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.history-entry strong,
+.history-entry small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-entry strong {
+  font-size: 0.75rem;
+}
+
+.history-entry small {
+  color: var(--p-slate-500);
+  font-size: 0.65rem;
+}
+
+.history-entry i {
+  flex: 0 0 auto;
+  color: var(--p-slate-400);
+  font-size: 0.75rem;
 }
 
 .context-mode-grid {

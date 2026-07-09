@@ -2,7 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { routes, RouteStatus } from "../router/routesMap";
-import { getNetsuiteEnvironment } from "../utils/api";
+import {
+  ApiRequestType,
+  callApi,
+  closePanel,
+  getNetsuiteEnvironment,
+  type ApiResponse
+} from "../utils/api";
+import { RequestRoutes } from "../types/request";
 import { getRecentViews, type RecentView } from "../utils/recentViews";
 import { hasAdminAccess } from "../utils/adminAccess";
 
@@ -14,6 +21,9 @@ type PaletteItem = {
   path: string;
   kind: "feature" | "recent" | "jump";
   keywords: string;
+  action?: "route" | "open-record-url";
+  recordType?: string;
+  recordLookup?: string;
 };
 
 const router = useRouter();
@@ -87,6 +97,40 @@ const directJumpItems = computed<PaletteItem[]>(() => {
       kind: "jump",
       keywords: value
     });
+  }
+
+  match = value.match(/^(?:record\s+)?invoice\s+(.+)$/i);
+  if (match) {
+    const invoiceNumber = match[1]!.trim();
+    if (invoiceNumber) {
+      const searchPath = `/records?type=invoice&q=${encodeURIComponent(invoiceNumber)}`;
+      items.push(
+        {
+          id: `jump:invoice-dashboard:${invoiceNumber}`,
+          label: `Open Invoice ${invoiceNumber}`,
+          detail: "Resolve invoice and open in dashboard",
+          icon: "pi pi-file-pdf",
+          path: searchPath,
+          kind: "jump",
+          keywords: value,
+          action: "route",
+          recordType: "invoice",
+          recordLookup: invoiceNumber
+        },
+        {
+          id: `jump:invoice-netsuite:${invoiceNumber}`,
+          label: `Open Invoice ${invoiceNumber} in NetSuite`,
+          detail: "Resolve invoice and open the NetSuite record",
+          icon: "pi pi-external-link",
+          path: searchPath,
+          kind: "jump",
+          keywords: value,
+          action: "open-record-url",
+          recordType: "invoice",
+          recordLookup: invoiceNumber
+        }
+      );
+    }
   }
 
   match = value.match(/^bundles?\s+#?(\d+)$/i);
@@ -164,9 +208,57 @@ const openPalette = async () => {
   inputRef.value?.focus();
 };
 
+const normalizeRows = (response: ApiResponse): Record<string, unknown>[] => {
+  const message = response?.message;
+  if (Array.isArray(message)) return message as Record<string, unknown>[];
+  if (Array.isArray(message?.results)) return message.results as Record<string, unknown>[];
+  if (Array.isArray(message?.rows)) return message.rows as Record<string, unknown>[];
+  return [];
+};
+
+const resolveRecordId = async (recordType: string, lookup: string) => {
+  const cleaned = lookup.trim();
+  if (/^\d+$/.test(cleaned)) return cleaned;
+  if (recordType !== "invoice") return "";
+  const search = cleaned.replace(/'/g, "''");
+  const rows = normalizeRows(
+    (await callApi(
+      RequestRoutes.RUN_SUITEQL_QUERY,
+      {
+        sql: `SELECT id, tranid FROM transaction WHERE type = 'CustInvc' AND LOWER(tranid) = LOWER('${search}') ORDER BY id DESC`,
+        limit: 1
+      },
+      ApiRequestType.NORMAL
+    )) as ApiResponse
+  );
+  return String(rows[0]?.id ?? "");
+};
+
 const selectItem = async (item?: PaletteItem) => {
   if (!item) return;
   closePalette();
+  if (item.recordType && item.recordLookup) {
+    const recordId = await resolveRecordId(item.recordType, item.recordLookup);
+    if (recordId && item.action !== "open-record-url") {
+      await router.push(
+        `/records/${encodeURIComponent(item.recordType)}/${encodeURIComponent(recordId)}`
+      );
+      return;
+    }
+
+    if (recordId && item.action === "open-record-url") {
+      const response = (await callApi(RequestRoutes.GET_RECORD_URL, {
+        type: item.recordType,
+        id: recordId,
+        isEditMode: false
+      })) as ApiResponse;
+      if (response?.status !== "error" && response?.message) {
+        window.open(String(response.message), "_blank");
+        closePanel();
+        return;
+      }
+    }
+  }
   await router.push(item.path);
 };
 

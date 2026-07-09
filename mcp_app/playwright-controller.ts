@@ -15,6 +15,9 @@ const PROFILE_DIR =
 // killed (e.g. on Claude restart). We additionally snapshot storageState
 // (which captures session cookies) and re-inject it on launch.
 const STATE_FILE = path.join(path.dirname(PROFILE_DIR), "magic-ns-storage-state.json");
+const TEMPLATE_REVIEW_STATE_FILE =
+  process.env.MAGIC_NS_TEMPLATE_REVIEW_STATE ||
+  path.join(path.dirname(PROFILE_DIR), "template-review-state.json");
 
 const NAV_TIMEOUT = 45000;
 
@@ -41,6 +44,24 @@ let context: BrowserContext | null = null;
 let page: Page | null = null;
 let launching: Promise<Page> | null = null;
 
+type TemplateReviewStatus = "open" | "needs_changes" | "approved";
+type TemplateReviewState = {
+  reviewId: string;
+  title: string;
+  html: string;
+  freemarker: string;
+  referenceImageDataUrl: string;
+  referenceImageUrl: string;
+  feedback: string;
+  status: TemplateReviewStatus;
+  version: number;
+  updatedAt: string;
+};
+
+let templateReviewState: TemplateReviewState | null = null;
+let templateReviewBindingReady = false;
+const templateReviewWaiters = new Set<(state: TemplateReviewState) => void>();
+
 async function launch(): Promise<Page> {
   const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
     headless: false, // actions must be visible (user requirement)
@@ -51,6 +72,7 @@ async function launch(): Promise<Page> {
   ctx.on("close", () => {
     context = null;
     page = null;
+    templateReviewBindingReady = false;
   });
 
   // Re-inject previously saved session cookies (lost from the profile on close).
@@ -68,6 +90,7 @@ async function launch(): Promise<Page> {
   const p = ctx.pages()[0] ?? (await ctx.newPage());
   p.on("close", () => {
     if (page === p) page = null;
+    templateReviewBindingReady = false;
   });
   page = p;
   return p;
@@ -93,6 +116,7 @@ async function ensurePage(): Promise<Page> {
       const np = (context.pages().find((pg) => !pg.isClosed())) ?? (await context.newPage());
       np.on("close", () => {
         if (page === np) page = null;
+        templateReviewBindingReady = false;
       });
       page = np;
       return np;
@@ -263,6 +287,190 @@ async function brandTab(p: Page, title: string, favicon: string): Promise<void> 
   }
 }
 
+function makeReviewId(): string {
+  return `review_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function currentReviewSnapshot(): TemplateReviewState {
+  if (!templateReviewState) throw new Error("No template review is open.");
+  return { ...templateReviewState };
+}
+
+function resolveTemplateReview(state: TemplateReviewState): void {
+  for (const resolve of templateReviewWaiters) resolve({ ...state });
+  templateReviewWaiters.clear();
+}
+
+function persistTemplateReviewState(state: TemplateReviewState): void {
+  try {
+    fs.mkdirSync(path.dirname(TEMPLATE_REVIEW_STATE_FILE), { recursive: true });
+    fs.writeFileSync(TEMPLATE_REVIEW_STATE_FILE, JSON.stringify({
+      reviewId: state.reviewId,
+      title: state.title,
+      status: state.status,
+      feedback: state.feedback,
+      version: state.version,
+      updatedAt: state.updatedAt,
+      pending: state.status === "open",
+    }, null, 2));
+  } catch {
+    /* hook state is best-effort */
+  }
+}
+
+function applyTemplateReviewUpdate(patch: Partial<TemplateReviewState>): TemplateReviewState {
+  if (!templateReviewState) {
+    templateReviewState = {
+      reviewId: makeReviewId(),
+      title: "NetSuite Template Review",
+      html: "",
+      freemarker: "",
+      referenceImageDataUrl: "",
+      referenceImageUrl: "",
+      feedback: "",
+      status: "open",
+      version: 0,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  templateReviewState = {
+    ...templateReviewState,
+    ...patch,
+    version: templateReviewState.version + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  persistTemplateReviewState(templateReviewState);
+  if (templateReviewState.status === "approved" || templateReviewState.status === "needs_changes") {
+    resolveTemplateReview(templateReviewState);
+  }
+  return { ...templateReviewState };
+}
+
+async function ensureTemplateReviewBinding(p: Page): Promise<void> {
+  if (templateReviewBindingReady) return;
+  try {
+    await p.exposeBinding("__magicTemplateReviewAction", async (_source, payload: Record<string, unknown>) => {
+      const status = payload.status === "approved" ? "approved" : "needs_changes";
+      applyTemplateReviewUpdate({
+        status,
+        feedback: String(payload.feedback ?? ""),
+      });
+    });
+    templateReviewBindingReady = true;
+  } catch {
+    templateReviewBindingReady = true;
+  }
+}
+
+function buildTemplateReviewHtml(state: TemplateReviewState): string {
+  const data = JSON.stringify(state).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${state.title}</title>
+  <style>
+    :root { color-scheme: light; font-family: Segoe UI, Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #eef3f7; color: #27323a; overflow: hidden; }
+    .shell { display: grid; grid-template-rows: 34px minmax(0, 1fr) 86px; width: 100vw; height: 100vh; min-width: 1120px; }
+    .toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 8px; border-bottom: 1px solid #dbe3ea; background: #fbfcfd; }
+    .toolbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 800; }
+    .hint { color: #62696e; font-size: 11px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pill { margin-left: auto; border: 1px solid #d8c6ff; background: #faf7ff; color: #7b2ff7; border-radius: 5px; padding: 3px 7px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .main { display: grid; grid-template-columns: minmax(250px, 30%) minmax(420px, 42%) minmax(300px, 28%); min-height: 0; padding: 6px; gap: 6px; }
+    .pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid #dbe3ea; border-radius: 6px; background: #fff; }
+    .pane:last-child { border-right: 0; }
+    .pane-head { display: flex; align-items: center; justify-content: space-between; min-height: 29px; padding: 4px 8px; border-bottom: 1px solid #dbe3ea; background: #fbfcfd; color: #27323a; font-size: 11px; font-weight: 800; }
+    .pane-body { flex: 1; min-height: 0; overflow: auto; }
+    .reference-wrap { display: flex; align-items: flex-start; justify-content: center; min-height: 100%; padding: 8px; background: #f8fafc; }
+    .reference-wrap img { max-width: 100%; height: auto; border: 1px solid #dbe3ea; border-radius: 4px; background: #fff; }
+    .empty-reference { margin: auto; max-width: 260px; color: #62696e; font-size: 12px; line-height: 1.35; text-align: center; }
+    iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+    pre { min-height: 100%; margin: 0; padding: 8px; color: #27323a; background: #fff; font: 11px/1.42 Consolas, "Courier New", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .review { display: grid; grid-template-columns: minmax(0, 1fr) 96px 92px; gap: 7px; align-items: center; padding: 6px; border-top: 1px solid #dbe3ea; background: #fbfcfd; }
+    textarea { width: 100%; height: 70px; resize: none; border: 1px solid #b4c4d3; border-radius: 6px; padding: 7px; color: #27323a; font: 12px/1.35 Segoe UI, Arial, sans-serif; outline: none; }
+    textarea:focus { border-color: #c6a7ff; box-shadow: 0 0 0 3px rgba(198, 167, 255, .22); }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 32px; min-width: 0; border: 1px solid #dbe3ea; border-radius: 6px; background: #fff; color: #27323a; cursor: pointer; font: 800 12px Segoe UI, Arial, sans-serif; padding: 5px 9px; white-space: nowrap; }
+    button:hover { border-color: #c6a7ff; background: #faf7ff; color: #7b2ff7; }
+    .approve { background: #27323a; border-color: #27323a; color: #fff; }
+    .approve:hover { background: #7b2ff7; color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="toolbar">
+      <strong id="title"></strong>
+      <span class="hint">Review the match, write fixes, or approve to generate FreeMarker.</span>
+      <span class="pill" id="status"></span>
+    </div>
+    <div class="main">
+      <section class="pane">
+        <div class="pane-head"><span>Reference</span></div>
+        <div class="pane-body reference-wrap" id="reference"></div>
+      </section>
+      <section class="pane">
+        <div class="pane-head"><span>Rendered HTML</span></div>
+        <div class="pane-body"><iframe id="htmlFrame" sandbox="allow-same-origin"></iframe></div>
+      </section>
+      <section class="pane">
+        <div class="pane-head"><span>FreeMarker / Render Result</span></div>
+        <div class="pane-body"><pre id="freemarker"></pre></div>
+      </section>
+    </div>
+    <div class="review">
+      <textarea id="feedback" placeholder="Write fixes for the agent here"></textarea>
+      <button type="button" id="fixes">Send Fixes</button>
+      <button type="button" class="approve" id="approve">Approve</button>
+    </div>
+  </div>
+  <script>
+    let state = ${data};
+    function render() {
+      document.title = state.title || "NetSuite Template Review";
+      document.getElementById("title").textContent = state.title || "NetSuite Template Review";
+      document.getElementById("status").textContent = state.status || "open";
+      document.getElementById("feedback").value = state.feedback || "";
+      document.getElementById("htmlFrame").srcdoc = state.html || "";
+      document.getElementById("freemarker").textContent = state.freemarker || "Approve the HTML preview to generate the FreeMarker output here.";
+      const ref = document.getElementById("reference");
+      ref.textContent = "";
+      const src = state.referenceImageDataUrl || state.referenceImageUrl || "";
+      if (src) {
+        const img = document.createElement("img");
+        img.src = src;
+        ref.appendChild(img);
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "empty-reference";
+        empty.textContent = "No reference image was passed. The agent should pass referenceImagePath, referenceImageDataUrl, or referenceImageUrl from the prompt attachment.";
+        ref.appendChild(empty);
+      }
+    }
+    window.__magicTemplateReviewSet = function(next) {
+      state = Object.assign({}, state, next || {});
+      render();
+    };
+    document.getElementById("fixes").addEventListener("click", function() {
+      const feedback = document.getElementById("feedback").value || "";
+      state.status = "needs_changes";
+      state.feedback = feedback;
+      render();
+      window.__magicTemplateReviewAction({ status: "needs_changes", feedback });
+    });
+    document.getElementById("approve").addEventListener("click", function() {
+      const feedback = document.getElementById("feedback").value || "";
+      state.status = "approved";
+      state.feedback = feedback;
+      render();
+      window.__magicTemplateReviewAction({ status: "approved", feedback });
+    });
+    render();
+  </script>
+</body>
+</html>`;
+}
+
 export type PwCookie = {
   name: string;
   value: string;
@@ -284,6 +492,98 @@ export type ControlResult = {
 
 export const playwrightController = {
   profileDir: PROFILE_DIR,
+
+  async previewHtml(html: string, label = "FreeMarker Preview"): Promise<ControlResult> {
+    if (!html.trim()) throw new Error("HTML is required for the Playwright preview.");
+    const p = await ensurePage();
+    await p.setContent(html, { waitUntil: "load", timeout: NAV_TIMEOUT });
+    await p.setViewportSize({ width: 1100, height: 1400 }).catch(() => {});
+    await p.emulateMedia({ media: "screen" }).catch(() => {});
+    await settlePage(p);
+    await brandTab(p, `${BRAND_TITLE_PREFIX} ${label}`.trim(), FAVICON_DATA_URI);
+    const info = await p.evaluate(() => ({
+      title: document.title,
+      url: location.href,
+      bodyTextLength: document.body?.innerText?.length ?? 0,
+      documentHeight: Math.ceil(document.documentElement.scrollHeight),
+      documentWidth: Math.ceil(document.documentElement.scrollWidth),
+    }));
+    return { ok: true, ...info, screenshot: await screenshotB64(p) };
+  },
+
+  async openTemplateReview(opts: {
+    html: string;
+    title?: string;
+    referenceImageDataUrl?: string;
+    referenceImageUrl?: string;
+    freemarker?: string;
+  }): Promise<ControlResult> {
+    if (!opts.html.trim()) throw new Error("HTML is required for the template review.");
+    const p = await ensurePage();
+    await ensureTemplateReviewBinding(p);
+    const state = applyTemplateReviewUpdate({
+      reviewId: templateReviewState?.reviewId || makeReviewId(),
+      title: opts.title || "NetSuite Template Review",
+      html: opts.html,
+      freemarker: opts.freemarker || "",
+      referenceImageDataUrl: opts.referenceImageDataUrl || "",
+      referenceImageUrl: opts.referenceImageUrl || "",
+      feedback: "",
+      status: "open",
+    });
+    await p.setViewportSize({ width: 1920, height: 980 }).catch(() => {});
+    await p.setContent(buildTemplateReviewHtml(state), { waitUntil: "load", timeout: NAV_TIMEOUT });
+    await settlePage(p);
+    await brandTab(p, `${BRAND_TITLE_PREFIX} ${state.title}`.trim(), FAVICON_DATA_URI);
+    return { ok: true, ...state, screenshot: await screenshotB64(p) };
+  },
+
+  async updateTemplateReview(opts: {
+    html?: string;
+    title?: string;
+    referenceImageDataUrl?: string;
+    referenceImageUrl?: string;
+    freemarker?: string;
+    feedback?: string;
+    status?: TemplateReviewStatus;
+  }): Promise<ControlResult> {
+    const p = await ensurePage();
+    const state = applyTemplateReviewUpdate(opts);
+    const pushed = await p.evaluate((next) => {
+      const w = window as unknown as { __magicTemplateReviewSet?: (value: unknown) => void };
+      if (!w.__magicTemplateReviewSet) return false;
+      w.__magicTemplateReviewSet(next);
+      return true;
+    }, state).catch(() => false);
+    if (!pushed) {
+      await p.setContent(buildTemplateReviewHtml(state), { waitUntil: "load", timeout: NAV_TIMEOUT });
+    }
+    await settlePage(p);
+    return { ok: true, ...state, screenshot: await screenshotB64(p) };
+  },
+
+  async waitTemplateReview(timeoutMs = 900000): Promise<ControlResult> {
+    const existing = currentReviewSnapshot();
+    if (existing.status === "approved" || existing.status === "needs_changes") {
+      return { ok: true, ...existing };
+    }
+    const state = await new Promise<TemplateReviewState>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        templateReviewWaiters.delete(done);
+        reject(new Error("Timed out waiting for template review action."));
+      }, Math.max(1000, timeoutMs));
+      const done = (value: TemplateReviewState) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      templateReviewWaiters.add(done);
+    });
+    return { ok: true, ...state };
+  },
+
+  templateReviewState(): ControlResult {
+    return { ok: true, ...currentReviewSnapshot() };
+  },
 
   async open(url: string, cookies?: PwCookie[], label?: string): Promise<ControlResult> {
     if (!url) throw new Error("A Suitelet URL is required to open in Playwright.");

@@ -2026,6 +2026,8 @@ async function handleNativeBridgeMessage(port, message) {
 // -----------------------------
 // MCP Tool Definitions
 // -----------------------------
+const freemarkerPreviewSessions = new Map();
+
 const MCP_TOOL_DEFINITIONS = [
   {
     name: "ping",
@@ -3327,6 +3329,63 @@ const MCP_TOOL_DEFINITIONS = [
     }
   },
   {
+    name: "netsuite_freemarker_preview_html",
+    description:
+      "Guarded FreeMarker renderer workflow, not the first step for template recreation. Use only after local BFO-safe template work and Playwright screenshot review, or when the user explicitly asks for renderer approval. If required server components are missing, this returns needsDeploymentApproval and the agent must ask the user before retrying with deployIfMissing:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "The proposed HTML preview to show to the user before FreeMarker conversion." },
+        title: { type: "string", description: "Optional preview title." },
+        recordType: { type: "string", description: "NetSuite record type to use later for the FreeMarker render, e.g. invoice." },
+        recordId: { type: "string", description: "NetSuite internal ID to use later for the FreeMarker render." },
+        deployIfMissing: { type: "boolean", description: "Only true after explicit user approval to deploy/repair renderer server components." }
+      },
+      required: ["html"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_set_approval",
+    description:
+      "Mark a FreeMarker HTML preview session as approved or needing changes. Agents should only call this based on explicit user feedback from the MCP app preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Preview session ID returned by netsuite_freemarker_preview_html." },
+        approved: { type: "boolean", description: "True when the user approves the HTML preview; false when fixes are requested." },
+        feedback: { type: "string", description: "User fix notes when approved is false." }
+      },
+      required: ["sessionId", "approved"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_approval_status",
+    description:
+      "Read the current approval status and feedback for a FreeMarker preview session before converting.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Preview session ID." }
+      },
+      required: ["sessionId"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_convert_approved",
+    description:
+      "POST-APPROVAL ONLY. Convert an approved HTML preview session into a FreeMarker Advanced PDF template, optionally rendering it against the selected NetSuite record. Never call this as the first response to 'recreate this template for NetSuite'; it refuses to run until the session is approved.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Approved preview session ID." },
+        renderPdf: { type: "boolean", description: "Render the converted FreeMarker template immediately. Defaults to true." },
+        recordType: { type: "string", description: "Optional record type override for the render." },
+        recordId: { type: "string", description: "Optional record internal ID override for the render." }
+      },
+      required: ["sessionId"]
+    }
+  },
+  {
     name: "netsuite_server_info",
     description:
       "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in settings.",
@@ -3712,6 +3771,18 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteRunQuickScript(args);
         } else if (name === "magic_netsuite_deploy_server_components") {
           result = await handleMagicDeployServerComponents();
+        } else if (name === "netsuite_freemarker_preview_html") {
+          result = await handleFreemarkerPreviewHtml(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_set_approval") {
+          result = await handleFreemarkerSetApproval(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_approval_status") {
+          result = await handleFreemarkerApprovalStatus(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_convert_approved") {
+          result = await handleFreemarkerConvertApproved(args);
+          executionSide = "local";
         } else if (name === "netsuite_get_logs") {
           result = await handleNetsuiteGetLogs(args);
         } else if (name === "netsuite_suitelet_stream_start") {
@@ -5008,6 +5079,246 @@ async function handleMagicDeployServerComponents() {
     "Failed to deploy Magic NetSuite server components."
   );
   return asMcpTextResult(result);
+}
+
+function makeFreemarkerSessionId() {
+  return `fm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getFreemarkerSession(sessionId) {
+  const id = String(sessionId ?? "").trim();
+  if (!id) throw new Error("sessionId is required.");
+  const session = freemarkerPreviewSessions.get(id);
+  if (!session) throw new Error(`FreeMarker preview session "${id}" was not found.`);
+  return session;
+}
+
+function summarizeFreemarkerSession(session, includeHtml = false) {
+  return {
+    sessionId: session.sessionId,
+    title: session.title,
+    recordType: session.recordType,
+    recordId: session.recordId,
+    status: session.status,
+    approved: session.approved,
+    feedback: session.feedback,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    ...(includeHtml ? { html: session.html } : {}),
+    ...(session.freemarker ? { freemarker: session.freemarker } : {}),
+    ...(session.renderResult ? { renderResult: session.renderResult } : {})
+  };
+}
+
+function normalizePreviewHtml(html, title = "FreeMarker Preview") {
+  const source = String(html ?? "").trim();
+  if (!source) throw new Error("html is required.");
+  if (/<!doctype\s+html|<html[\s>]/i.test(source)) return source;
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtmlText(title)}</title>
+</head>
+<body>
+${source}
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function extractHtmlBody(html) {
+  const bodyMatch = String(html).match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  return (bodyMatch ? bodyMatch[1] : String(html))
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .trim();
+}
+
+function extractHtmlStyles(html) {
+  const styles = [];
+  const re = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let match;
+  while ((match = re.exec(String(html)))) {
+    if (match[1]?.trim()) styles.push(match[1].trim());
+  }
+  return styles.join("\n\n");
+}
+
+function htmlToFreemarkerPdf(html, { title = "FreeMarker Template" } = {}) {
+  const body = extractHtmlBody(html) || "<div></div>";
+  const styles = extractHtmlStyles(html);
+  return `<?xml version="1.0"?>
+<!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
+<pdf>
+  <head>
+    <title>${escapeHtmlText(title)}</title>${styles ? `
+    <style type="text/css">
+${styles}
+    </style>` : ""}
+  </head>
+  <body size="Letter">
+${body}
+  </body>
+</pdf>`;
+}
+
+function isRendererReady(status) {
+  if (!status || typeof status !== "object") return false;
+  if (status.allReady === true || status.ready === true || status.isReady === true) return true;
+  const components = Array.isArray(status.components) ? status.components : [];
+  return components.length > 0 && components.every(component =>
+    component?.ready === true ||
+    component?.exists === true ||
+    component?.status === "ready" ||
+    component?.status === "deployed"
+  );
+}
+
+async function ensureFreemarkerRendererReady(deployIfMissing) {
+  const before = await callNetsuiteRoute(
+    "CHECK_SERVER_COMPONENTS",
+    {},
+    "Failed to check Magic NetSuite server components."
+  );
+
+  if (isRendererReady(before)) return { ready: true, before, after: before };
+
+  if (!deployIfMissing) {
+    return {
+      ready: false,
+      needsDeploymentApproval: true,
+      before,
+      message:
+        "FreeMarker renderer server components are not deployed. Ask the user whether to deploy them. If the user refuses, stop. If approved, call this tool again with deployIfMissing:true."
+    };
+  }
+
+  const deployed = await callNetsuiteRoute(
+    "DEPLOY_SERVER_COMPONENTS",
+    {},
+    "Failed to deploy Magic NetSuite server components."
+  );
+  const after = await callNetsuiteRoute(
+    "CHECK_SERVER_COMPONENTS",
+    {},
+    "Failed to verify Magic NetSuite server components after deployment."
+  );
+  return { ready: isRendererReady(after), before, deployed, after };
+}
+
+async function handleFreemarkerPreviewHtml(args = {}) {
+  const title = String(args.title ?? "FreeMarker Preview").trim() || "FreeMarker Preview";
+  const readiness = await ensureFreemarkerRendererReady(args.deployIfMissing === true);
+
+  if (!readiness.ready) {
+    return asMcpTextResult({
+      ok: false,
+      needsDeploymentApproval: true,
+      message: readiness.message || "FreeMarker renderer server components are not ready.",
+      readiness
+    });
+  }
+
+  const html = normalizePreviewHtml(args.html, title);
+  const now = new Date().toISOString();
+  const session = {
+    sessionId: makeFreemarkerSessionId(),
+    title,
+    html,
+    recordType: String(args.recordType ?? "").trim(),
+    recordId: String(args.recordId ?? "").trim(),
+    status: "pending_approval",
+    approved: false,
+    feedback: "",
+    createdAt: now,
+    updatedAt: now
+  };
+  freemarkerPreviewSessions.set(session.sessionId, session);
+
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session, true),
+    instructions:
+      "Show this HTML preview to the user. If approved, call netsuite_freemarker_set_approval with approved:true, then netsuite_freemarker_convert_approved. If fixes are requested, set approved:false with feedback and regenerate the HTML preview."
+  });
+}
+
+async function handleFreemarkerSetApproval(args = {}) {
+  const session = getFreemarkerSession(args.sessionId);
+  const approved = args.approved === true;
+  const feedback = String(args.feedback ?? "").trim();
+  session.approved = approved;
+  session.feedback = feedback;
+  session.status = approved ? "approved" : "needs_changes";
+  session.updatedAt = new Date().toISOString();
+  freemarkerPreviewSessions.set(session.sessionId, session);
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session),
+    nextStep: approved
+      ? "Call netsuite_freemarker_convert_approved to convert the approved HTML."
+      : "Use feedback to revise the HTML, then create a new preview session."
+  });
+}
+
+async function handleFreemarkerApprovalStatus(args = {}) {
+  const session = getFreemarkerSession(args.sessionId);
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session, true)
+  });
+}
+
+async function handleFreemarkerConvertApproved(args = {}) {
+  const session = getFreemarkerSession(args.sessionId);
+  if (!session.approved || session.status !== "approved") {
+    return asMcpTextResult({
+      ok: false,
+      sessionId: session.sessionId,
+      status: session.status,
+      approved: session.approved,
+      feedback: session.feedback,
+      message: "Conversion is blocked until the user approves the HTML preview."
+    });
+  }
+
+  const recordType = String(args.recordType ?? session.recordType ?? "").trim();
+  const recordId = String(args.recordId ?? session.recordId ?? "").trim();
+  const renderPdf = args.renderPdf !== false;
+  const freemarker = htmlToFreemarkerPdf(session.html, { title: session.title });
+  let renderResult = null;
+
+  if (renderPdf) {
+    if (!recordType || !recordId) {
+      throw new Error("recordType and recordId are required to render the approved FreeMarker template.");
+    }
+    renderResult = await callNetsuiteRoute(
+      "RENDER_FREEMARKER_TEMPLATE",
+      { template: freemarker, recordType, recordId },
+      "Failed to render approved FreeMarker template."
+    );
+  }
+
+  session.freemarker = freemarker;
+  session.renderResult = renderResult;
+  session.recordType = recordType;
+  session.recordId = recordId;
+  session.status = renderPdf ? "rendered" : "converted";
+  session.updatedAt = new Date().toISOString();
+  freemarkerPreviewSessions.set(session.sessionId, session);
+
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session),
+    freemarker,
+    renderResult
+  });
 }
 
 async function handleNetsuiteGetDeployedScripts(args) {

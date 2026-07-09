@@ -2,7 +2,7 @@
   <div class="context-modal-overlay">
     <section class="context-modal">
       <header class="context-modal-header">
-        <h2>{{ mode === "suitelet" ? "Suitelet Viewer" : "NetSuite Context Picker" }}</h2>
+        <h2>{{ appTitle }}</h2>
         <div class="context-header-actions">
           <span class="status-pill" :class="connectionClass">
             <span class="status-dot" />
@@ -158,6 +158,58 @@
                   <p v-if="suiteletLogs.length === 0" class="suitelet-log-empty">No diagnostics yet.</p>
                 </div>
               </section>
+            </main>
+          </section>
+        </template>
+
+        <template v-else-if="mode === 'freemarker'">
+          <section class="freemarker-preview-panel">
+            <main class="freemarker-main">
+              <div class="freemarker-toolbar">
+                <div class="freemarker-title">
+                  <strong>{{ freemarkerTitle || "FreeMarker Preview" }}</strong>
+                  <span v-if="freemarkerSessionId">{{ freemarkerSessionId }}</span>
+                </div>
+                <span class="freemarker-state" :class="`freemarker-state--${freemarkerStatus}`">
+                  {{ freemarkerStatusLabel }}
+                </span>
+                <button
+                  class="agent-primary-btn"
+                  type="button"
+                  :disabled="freemarkerSubmitting || !freemarkerSessionId"
+                  @click="approveFreemarkerPreview"
+                >
+                  <span :class="freemarkerSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-check'" aria-hidden="true" />
+                  Approve
+                </button>
+                <button
+                  class="agent-secondary-btn"
+                  type="button"
+                  :disabled="freemarkerSubmitting || !freemarkerSessionId"
+                  @click="sendFreemarkerFeedback"
+                >
+                  <span :class="freemarkerSubmitting ? 'pi pi-spin pi-spinner' : 'pi pi-pencil'" aria-hidden="true" />
+                  Fixes
+                </button>
+              </div>
+
+              <div class="freemarker-preview-layout">
+                <iframe
+                  class="freemarker-preview-frame"
+                  :srcdoc="freemarkerHtml"
+                  sandbox="allow-same-origin"
+                />
+                <aside class="freemarker-feedback-panel">
+                  <label for="freemarker-feedback">Fix notes</label>
+                  <textarea
+                    id="freemarker-feedback"
+                    v-model="freemarkerFeedback"
+                    class="agent-textarea freemarker-feedback-textarea"
+                    placeholder="What should change?"
+                  />
+                  <p v-if="freemarkerRecordLabel" class="freemarker-record-label">{{ freemarkerRecordLabel }}</p>
+                </aside>
+              </div>
             </main>
           </section>
         </template>
@@ -480,7 +532,7 @@ import { App } from "@modelcontextprotocol/ext-apps";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 type Tab = "records" | "files";
-type AppMode = "picker" | "suitelet";
+type AppMode = "picker" | "suitelet" | "freemarker";
 type RecordType = { id: string; name: string };
 type RecordRow = { id: string; label: string; meta: string; raw?: Record<string, unknown> };
 type FolderRow = {
@@ -579,6 +631,15 @@ const suitelets = ref<SuiteletOption[]>([]);
 const suiteletsLoading = ref(false);
 const suiteletLogsOpen = ref(true);
 const suiteletLogs = ref<SuiteletLogEntry[]>([]);
+const freemarkerSessionId = ref("");
+const freemarkerTitle = ref("");
+const freemarkerHtml = ref("");
+const freemarkerStatus = ref("pending_approval");
+const freemarkerFeedback = ref("");
+const freemarkerApproved = ref(false);
+const freemarkerSubmitting = ref(false);
+const freemarkerRecordType = ref("");
+const freemarkerRecordId = ref("");
 let suiteletFrameTimer: number | undefined;
 let suiteletFrameInFlight = false;
 let suiteletLogId = 0;
@@ -632,6 +693,25 @@ const connectionClass = computed(() => {
 const canRequestFullscreen = computed(() =>
   availableDisplayModes.value.includes("fullscreen") && displayMode.value !== "fullscreen",
 );
+
+const appTitle = computed(() => {
+  if (mode.value === "suitelet") return "Suitelet Viewer";
+  if (mode.value === "freemarker") return "FreeMarker Renderer";
+  return "NetSuite Context Picker";
+});
+
+const freemarkerStatusLabel = computed(() => {
+  if (freemarkerStatus.value === "approved") return "Approved";
+  if (freemarkerStatus.value === "needs_changes") return "Needs changes";
+  if (freemarkerStatus.value === "rendered") return "Rendered";
+  if (freemarkerStatus.value === "converted") return "Converted";
+  return "Pending approval";
+});
+
+const freemarkerRecordLabel = computed(() => {
+  if (!freemarkerRecordType.value && !freemarkerRecordId.value) return "";
+  return [freemarkerRecordType.value, freemarkerRecordId.value].filter(Boolean).join(" ");
+});
 
 const visibleSuitelets = computed<SuiteletOption[]>(() => {
   const query = suiteletQuery.value.trim().toLowerCase();
@@ -1375,8 +1455,102 @@ function handleSuiteletKey(event: KeyboardEvent): void {
   });
 }
 
+async function publishFreemarkerContext(payload: Record<string, unknown>): Promise<void> {
+  try {
+    await app.updateModelContext({
+      content: [{
+        type: "text",
+        text: JSON.stringify(payload, null, 2),
+      }],
+      structuredContent: payload,
+    });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function approveFreemarkerPreview(): Promise<void> {
+  if (!freemarkerSessionId.value) return;
+  freemarkerSubmitting.value = true;
+  error.value = "";
+  try {
+    await callTool("magic_netsuite_freemarker_set_approval", {
+      sessionId: freemarkerSessionId.value,
+      approved: true,
+      feedback: "",
+    });
+    freemarkerApproved.value = true;
+    freemarkerStatus.value = "approved";
+    status.value = "Converting approved preview...";
+    const convertResult = await callTool("magic_netsuite_freemarker_convert_approved", {
+      sessionId: freemarkerSessionId.value,
+      renderPdf: Boolean(freemarkerRecordType.value && freemarkerRecordId.value),
+      recordType: freemarkerRecordType.value || undefined,
+      recordId: freemarkerRecordId.value || undefined,
+    });
+    const converted = readStructuredObject(convertResult);
+    freemarkerStatus.value = String(converted.status ?? (freemarkerRecordType.value && freemarkerRecordId.value ? "rendered" : "converted"));
+    status.value = freemarkerStatus.value === "rendered" ? "Preview approved and rendered" : "Preview approved and converted";
+    await publishFreemarkerContext({
+      type: "freemarker_preview_converted",
+      sessionId: freemarkerSessionId.value,
+      approved: true,
+      status: freemarkerStatus.value,
+      recordType: freemarkerRecordType.value,
+      recordId: freemarkerRecordId.value,
+      freemarker: converted.freemarker,
+      renderResult: converted.renderResult,
+    });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    freemarkerSubmitting.value = false;
+  }
+}
+
+async function sendFreemarkerFeedback(): Promise<void> {
+  if (!freemarkerSessionId.value) return;
+  freemarkerSubmitting.value = true;
+  error.value = "";
+  try {
+    await callTool("magic_netsuite_freemarker_set_approval", {
+      sessionId: freemarkerSessionId.value,
+      approved: false,
+      feedback: freemarkerFeedback.value,
+    });
+    freemarkerApproved.value = false;
+    freemarkerStatus.value = "needs_changes";
+    status.value = "Preview needs changes";
+    await publishFreemarkerContext({
+      type: "freemarker_preview_approval",
+      sessionId: freemarkerSessionId.value,
+      approved: false,
+      status: "needs_changes",
+      feedback: freemarkerFeedback.value,
+    });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    freemarkerSubmitting.value = false;
+  }
+}
+
 app.ontoolresult = (result) => {
-  const structured = (result as { structuredContent?: { initialTab?: Tab; mode?: AppMode; url?: string } })?.structuredContent;
+  const structured = (result as {
+    structuredContent?: {
+      initialTab?: Tab;
+      mode?: AppMode;
+      url?: string;
+      sessionId?: string;
+      title?: string;
+      html?: string;
+      status?: string;
+      approved?: boolean;
+      feedback?: string;
+      recordType?: string;
+      recordId?: string;
+    }
+  })?.structuredContent;
   if (structured?.mode === "suitelet") {
     mode.value = "suitelet";
     suiteletUrl.value = structured.url ?? "";
@@ -1386,6 +1560,19 @@ app.ontoolresult = (result) => {
       if (suiteletUrl.value.trim()) openSuiteletInline();
       void loadSuitelets();
     }, 350);
+    return;
+  }
+  if (structured?.mode === "freemarker") {
+    mode.value = "freemarker";
+    freemarkerSessionId.value = structured.sessionId ?? "";
+    freemarkerTitle.value = structured.title ?? "FreeMarker Preview";
+    freemarkerHtml.value = structured.html ?? "";
+    freemarkerStatus.value = structured.status ?? "pending_approval";
+    freemarkerApproved.value = structured.approved === true;
+    freemarkerFeedback.value = structured.feedback ?? "";
+    freemarkerRecordType.value = structured.recordType ?? "";
+    freemarkerRecordId.value = structured.recordId ?? "";
+    void requestLargerDisplayMode();
     return;
   }
   if (structured?.initialTab) tab.value = structured.initialTab;
