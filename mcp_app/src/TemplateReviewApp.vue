@@ -123,7 +123,7 @@
                 <svg v-else viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
                 <p>
                   <strong>{{ activeFtl ? "FreeMarker generation enabled." : "FreeMarker generation is locked." }}</strong>
-                  {{ activeFtl ? "Review the rendered output, send fixes, or end the workflow." : "Approve this HTML to enable FreeMarker generation." }}
+                  {{ activeFtl ? "Review the rendered output, send fixes, or end the workflow." : "Approve the design, then authorize conversion or rendering separately in chat." }}
                 </p>
               </div>
 
@@ -144,7 +144,7 @@
               <div v-show="activeFtl && state.renderedResult" class="result-frame-wrap" id="resultFrameWrap">
                 <iframe id="resultFrame" sandbox="allow-same-origin" :srcdoc="state.renderedResult" />
               </div>
-              <pre v-show="activeFtl" id="freemarker">{{ state.freemarker || "Approve the HTML preview to generate the rendered FreeMarker result here." }}</pre>
+              <pre v-show="activeFtl" id="freemarker">{{ state.freemarker || "Approve the design, then authorize FreeMarker conversion/render separately in chat." }}</pre>
             </div>
           </section>
         </div>
@@ -179,9 +179,9 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
               <span>Send Fixes</span>
             </button>
-            <button type="button" class="action-btn approve" id="approve" @click="approve">
+            <button v-if="state.status !== 'ftl_approved'" type="button" class="action-btn approve" id="approve" @click="approve">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5" /></svg>
-              <span id="approveLabel">{{ activeFtl ? "Approve FTL" : "Approve & Generate FreeMarker" }}</span>
+              <span id="approveLabel">{{ activeFtl ? "Approve FTL" : "Approve Design" }}</span>
             </button>
             <button v-show="activeFtl" type="button" class="action-btn end" id="end" @click="endReview">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
@@ -209,7 +209,7 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
-type ReviewStatus = "open" | "needs_changes" | "approved" | "ftl_review" | "done";
+type ReviewStatus = "open" | "needs_changes" | "approved" | "ftl_review" | "ftl_approved" | "done";
 type ReviewComment = {
   initials: string;
   name: string;
@@ -349,7 +349,7 @@ const statusCollapsed = ref(false);
 const toast = ref("");
 let toastTimer = 0;
 
-const activeFtl = computed(() => state.status === "ftl_review");
+const activeFtl = computed(() => state.status === "ftl_review" || state.status === "ftl_approved");
 const referenceSrc = computed(() => state.referenceImageDataUrl || state.referenceImageUrl || "");
 const comments = computed(() => Array.isArray(state.comments) ? state.comments : []);
 const recordTypeSelectOptions = computed(() => unique(state.recordTypeOptions || [], state.recordType || "invoice").map((value) => ({
@@ -468,8 +468,9 @@ function sendFixes() {
 }
 
 function approve() {
-  state.status = "approved";
-  sendAction("approved");
+  const status: ReviewStatus = activeFtl.value ? "ftl_approved" : "approved";
+  state.status = status;
+  sendAction(status);
 }
 
 function endReview() {

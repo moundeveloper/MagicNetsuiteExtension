@@ -496,14 +496,79 @@ function asSdfResult(result) {
   };
 }
 
+const sdfLoginPromises = new Map();
+
+function normalizeSdfAccountId(accountId) {
+  return String(accountId || "").trim().toUpperCase().replace(/-/g, "_");
+}
+
+function parseMcpTextPayload(result) {
+  const text = result?.content?.find?.((item) => item?.type === "text")?.text;
+  if (typeof text !== "string") return null;
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+function beginSdfLogin(accountId) {
+  const normalized = normalizeSdfAccountId(accountId);
+  if (sdfLoginPromises.has(normalized)) return sdfLoginPromises.get(normalized);
+
+  const pending = runSdfCompanion(["resolve-account", normalized])
+    .catch((error) => ({ ok: false, error: error.message }))
+    .finally(() => sdfLoginPromises.delete(normalized));
+  sdfLoginPromises.set(normalized, pending);
+  return pending;
+}
+
+/**
+ * Synchronize the SuiteCloud/SDF identity when the MCP environment changes.
+ * Known auth IDs are bound immediately. Missing auth starts one background
+ * login prompt and returns promptly so MCP clients do not time out and retry.
+ */
+async function prepareSdfAccountOnSwitch(accountId) {
+  const normalized = normalizeSdfAccountId(accountId);
+  const probe = await runSdfCompanion([
+    "resolve-account", normalized, "--no-interactive-auth"
+  ]);
+  if (probe?.ok) {
+    return { status: "ready", accountId: probe.accountId, authId: probe.authId };
+  }
+
+  if (/no suitecloud authid found/i.test(String(probe?.error || ""))) {
+    beginSdfLogin(normalized);
+    return {
+      status: "login_pending",
+      accountId: normalized,
+      message: "Complete the SuiteCloud browser login in the single console that was opened. SDF commands will use this environment after login."
+    };
+  }
+
+  return {
+    status: "unavailable",
+    accountId: normalized,
+    error: probe?.error || "Could not prepare SuiteCloud authentication."
+  };
+}
+
+async function waitForPendingSdfLogin(accountId) {
+  const normalized = normalizeSdfAccountId(accountId);
+  const pending = sdfLoginPromises.get(normalized);
+  if (!pending) return;
+  const auth = await pending;
+  if (!auth?.ok) {
+    throw new Error(auth?.error || `SuiteCloud login for ${normalized} did not complete.`);
+  }
+}
+
 async function sdfDeployViaCompanion(args = {}) {
   const accountId = await resolveSdfAccountId(args.accountId);
+  await waitForPendingSdfLogin(accountId);
   const spec = { ...args, accountId };
   return asSdfResult(await runSdfCompanion(["deploy", "-"], spec));
 }
 
 async function sdfListObjectsViaCompanion(args = {}) {
   const accountId = await resolveSdfAccountId(args.accountId);
+  await waitForPendingSdfLogin(accountId);
   const argv = ["list-objects", "--account", accountId];
   if (Array.isArray(args.type) && args.type.length) argv.push("--type", ...args.type);
   else if (typeof args.type === "string" && args.type) argv.push("--type", args.type);
@@ -513,6 +578,7 @@ async function sdfListObjectsViaCompanion(args = {}) {
 
 async function sdfImportObjectViaCompanion(args = {}) {
   const accountId = await resolveSdfAccountId(args.accountId);
+  await waitForPendingSdfLogin(accountId);
   if (!args.type) throw new Error("type is required.");
   const ids = Array.isArray(args.scriptId) ? args.scriptId : [args.scriptId].filter(Boolean);
   if (!ids.length) throw new Error("scriptId is required.");
@@ -972,7 +1038,9 @@ async function handleMcp(req) {
             name: "netsuite_switch_environment",
             description:
               "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
-              "Pass an account ID such as 1964539 or 9937091_SB1. Empty accountId restores active-tab routing.",
+              "This also switches the SDF project authentication. If the account has no SuiteCloud login, " +
+              "one login console/browser prompt is opened in the background. Pass an account ID such as " +
+              "1964539 or 9937091_SB1. Empty accountId restores active-tab routing.",
             inputSchema: {
               type: "object",
               properties: {
@@ -2262,6 +2330,31 @@ async function handleMcp(req) {
       if (shouldRequireLocalSkillSearchBeforeDocs(params)) {
         const query = String(params.arguments?.query || "");
         result = localSkillSearchRequiredResult(query);
+      }
+      if (params?.name === "netsuite_switch_environment") {
+        const extensionResult = await callExtension("tools/call", params);
+        const requestedAccount = normalizeSdfAccountId(params.arguments?.accountId);
+        if (requestedAccount) {
+          // The extension switch succeeded, so keep local SDF routing in lockstep
+          // even if the native bridge response did not include account metadata.
+          currentAccount = requestedAccount;
+          const sdfAuth = await prepareSdfAccountOnSwitch(requestedAccount);
+          const extensionPayload = parseMcpTextPayload(extensionResult);
+          result = {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                ...(extensionPayload && typeof extensionPayload === "object" ? extensionPayload : { switched: true, accountId: requestedAccount }),
+                sdfAuth
+              }, null, 2)
+            }],
+            // The NetSuite environment switch itself succeeded. Surface SDF
+            // setup problems as structured status without misreporting the
+            // whole switch as failed.
+          };
+        } else {
+          result = extensionResult;
+        }
       }
       if (params?.name === "netsuite_upload_file") {
         result = await uploadLocalFilesViaExtension(params.arguments || {});

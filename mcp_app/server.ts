@@ -97,14 +97,16 @@ const NETSUITE_TEMPLATE_RECREATION_WORKFLOW = `MANDATORY WORKFLOW for "recreate 
    - Avoid browser-only CSS: flex, grid, box-shadow, gradients, CSS variables, unsupported selectors.
    - Bind invoice fields with record.*, companyInformation.*, and <#list record.item as item>.
 
-4. Preview locally with Playwright:
+4. Preview locally with Playwright (non-blocking):
    - Call magic_netsuite_template_preview_playwright with the local HTML/FTL-safe preview.
    - Inspect the screenshot returned by the tool.
-   - Iterate until the screenshot matches the source design.
+   - Call magic_netsuite_template_review_wait only after the review is open.
+   - Iterate with magic_netsuite_template_review_update until the screenshot matches the source design.
 
 5. Ask for explicit approval:
    - If user requests fixes, revise locally and preview again.
-   - If user approves, then ask whether they want NetSuite render/deploy.
+   - Local approval does NOT convert, render, upload, or deploy by default.
+   - If user approves, then ask separately whether they want conversion/render and whether they want deployment.
 
 6. Only after approval:
    - Use renderer/conversion/render tools, or SDF deployment tools, only for the specific action the user approved.`;
@@ -669,8 +671,9 @@ export function createServer(): McpServer {
       recordType,
       designName,
       workflow: NETSUITE_TEMPLATE_RECREATION_WORKFLOW,
-      requiredNextTool: "magic_netsuite_search_skills",
+      requiredNextAction: "Load the most relevant skill from skillMatches before writing the local template.",
       previewTool: "magic_netsuite_template_preview_playwright",
+      reviewWaitTool: "magic_netsuite_template_review_wait",
       forbiddenUntilApproval: [
         "magic_netsuite_freemarker_convert_approved",
         "netsuite_sdf_deploy",
@@ -678,7 +681,7 @@ export function createServer(): McpServer {
         "NetSuite upload/deploy/render",
       ],
       skillMatches,
-    }, "Start with the NetSuite FreeMarker/BFO skill, then build and preview a local template via Playwright before any conversion, render, upload, or deploy.");
+    }, "Skill search is complete. Load the best matching NetSuite FreeMarker/BFO skill, then build and preview a local template before any conversion, render, upload, or deploy.");
   });
 
   async function finishTemplateReviewAction(opts: {
@@ -691,9 +694,9 @@ export function createServer(): McpServer {
   }): Promise<CallToolResult> {
     const {
       timeoutMs = 900000,
-      convertOnApprove = true,
+      convertOnApprove = false,
       deployIfMissing = false,
-      renderPdf = true,
+      renderPdf = false,
       recordType = "",
       recordId = "",
     } = opts;
@@ -709,6 +712,20 @@ export function createServer(): McpServer {
           freemarker: review.freemarker,
         },
         "Template review ended by the user.",
+      );
+    }
+
+    if (review.status === "ftl_approved") {
+      return toolResult(
+        {
+          ok: true,
+          reviewId: review.reviewId,
+          status: review.status,
+          feedback: review.feedback,
+          freemarker: review.freemarker,
+          renderedResult: review.renderedResult,
+        },
+        "The user approved the generated FreeMarker output. The review workflow is complete; deployment still requires separate explicit permission.",
       );
     }
 
@@ -734,7 +751,7 @@ export function createServer(): McpServer {
           feedback: review.feedback,
           html: review.html,
         },
-        "User approved the local HTML preview. Conversion was not requested.",
+        "User approved the local preview. Ask separately whether they want FreeMarker conversion/render and whether they want NetSuite deployment; do not infer either permission.",
       );
     }
 
@@ -827,11 +844,11 @@ export function createServer(): McpServer {
       referenceImagePath: z.string().optional().describe("Optional local image path for the source image used in the prompt."),
       referenceImageDataUrl: z.string().optional().describe("Optional data URL for the source image used in the prompt."),
       referenceImageUrl: z.string().optional().describe("Optional URL/path for the source image used in the prompt."),
-      waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to true."),
+      waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to false so the initial call returns a screenshot and review ID without MCP timeout/retry duplication."),
       timeoutMs: z.number().optional(),
-      convertOnApprove: z.boolean().optional().describe("When true, convert after approval. Defaults to true."),
+      convertOnApprove: z.boolean().optional().describe("When true, convert after approval. Defaults to false; set true only after explicit conversion/render permission."),
       deployIfMissing: z.boolean().optional(),
-      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to true."),
+      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to false and requires explicit render permission."),
       recordType: z.string().optional(),
       recordId: z.string().optional(),
       recordTypeOptions: z.array(z.string()).optional(),
@@ -844,11 +861,11 @@ export function createServer(): McpServer {
     referenceImagePath = "",
     referenceImageDataUrl = "",
     referenceImageUrl = "",
-    waitForAction = true,
+    waitForAction = false,
     timeoutMs = 900000,
-    convertOnApprove = true,
+    convertOnApprove = false,
     deployIfMissing = false,
-    renderPdf = true,
+    renderPdf = false,
     recordType = "",
     recordId = "",
     recordTypeOptions,
@@ -909,7 +926,7 @@ export function createServer(): McpServer {
       freemarker: z.string().optional(),
       renderedResult: z.string().optional(),
       feedback: z.string().optional(),
-      waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to true."),
+      waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to false."),
       timeoutMs: z.number().optional(),
       convertOnApprove: z.boolean().optional(),
       deployIfMissing: z.boolean().optional(),
@@ -938,7 +955,7 @@ export function createServer(): McpServer {
       feedback: args.feedback,
       status: "open",
     });
-    if (args.waitForAction !== false) {
+    if (args.waitForAction === true) {
       return finishTemplateReviewAction({
         timeoutMs: args.timeoutMs,
         convertOnApprove: args.convertOnApprove,
@@ -970,13 +987,13 @@ export function createServer(): McpServer {
       "Wait until the user clicks Approve or Send Fixes in the Playwright review window. If fixes are sent, returns the feedback for the agent to apply. If approved, optionally creates the guarded FreeMarker session, converts it, and live-updates the FreeMarker/result pane.",
     inputSchema: {
       timeoutMs: z.number().optional(),
-      convertOnApprove: z.boolean().optional().describe("When true, create/approve/convert the FreeMarker session after the user approves. Defaults to true."),
+      convertOnApprove: z.boolean().optional().describe("When true, create/approve/convert the FreeMarker session after the user approves. Defaults to false and requires explicit permission."),
       deployIfMissing: z.boolean().optional(),
-      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to true."),
+      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to false and requires explicit render permission."),
       recordType: z.string().optional(),
       recordId: z.string().optional(),
     },
-  }, async ({ timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = true, recordType = "", recordId = "" }) =>
+  }, async ({ timeoutMs = 900000, convertOnApprove = false, deployIfMissing = false, renderPdf = false, recordType = "", recordId = "" }) =>
     finishTemplateReviewAction({
       timeoutMs,
       convertOnApprove,

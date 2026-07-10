@@ -44,7 +44,7 @@ let context: BrowserContext | null = null;
 let page: Page | null = null;
 let launching: Promise<Page> | null = null;
 
-type TemplateReviewStatus = "open" | "needs_changes" | "approved" | "ftl_review" | "done";
+type TemplateReviewStatus = "open" | "needs_changes" | "approved" | "ftl_review" | "ftl_approved" | "done";
 type TemplateReviewComment = {
   initials: string;
   name: string;
@@ -346,6 +346,7 @@ function normalizeTemplateReviewState(value: unknown): TemplateReviewState | nul
   const status = input.status === "needs_changes" ||
     input.status === "approved" ||
     input.status === "ftl_review" ||
+    input.status === "ftl_approved" ||
     input.status === "done"
     ? input.status
     : "open";
@@ -411,7 +412,7 @@ function persistTemplateReviewState(state: TemplateReviewState): void {
       comments: state.comments,
       version: state.version,
       updatedAt: state.updatedAt,
-      pending: state.status !== "done",
+      pending: state.status === "open" || state.status === "needs_changes" || state.status === "ftl_review",
     }, null, 2));
   } catch {
     /* hook state is best-effort */
@@ -432,6 +433,7 @@ function applyTemplateReviewUpdate(patch: Partial<TemplateReviewState>): Templat
   persistTemplateReviewState(templateReviewState);
   if (
     templateReviewState.status === "approved" ||
+    templateReviewState.status === "ftl_approved" ||
     templateReviewState.status === "needs_changes" ||
     templateReviewState.status === "done"
   ) {
@@ -446,6 +448,7 @@ async function ensureTemplateReviewBinding(p: Page): Promise<void> {
     await p.exposeBinding("__magicTemplateReviewAction", async (_source, payload: Record<string, unknown>) => {
       const status =
         payload.status === "approved" ? "approved" :
+        payload.status === "ftl_approved" ? "ftl_approved" :
         payload.status === "done" ? "done" :
         "needs_changes";
       applyTemplateReviewUpdate({
@@ -763,7 +766,7 @@ function buildTemplateReviewHtml(state: TemplateReviewState): string {
               </div>
               <div class="lockbox" id="lockbox">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
-                <p><strong>FreeMarker generation is locked.</strong>Approve this HTML to enable FreeMarker generation.</p>
+                <p><strong>FreeMarker generation is locked.</strong>Approve the design, then authorize conversion or rendering separately in chat.</p>
               </div>
               <div class="comments-title"><h3>Comments History</h3><span class="count" id="count">0</span></div>
               <div class="comments" id="comments"></div>
@@ -940,7 +943,7 @@ function buildTemplateReviewHtml(state: TemplateReviewState): string {
       const reviewStep = qs("#reviewStep");
       const ftlStep = qs("#ftlStep");
       const previewStep = qs("#previewStep");
-      const activeFtl = state.status === "ftl_review";
+      const activeFtl = state.status === "ftl_review" || state.status === "ftl_approved";
       reviewStep.classList.toggle("active", !activeFtl && state.status !== "done");
       ftlStep.classList.toggle("active", activeFtl);
       ftlStep.classList.toggle("locked", !activeFtl && state.status !== "done");
@@ -1076,7 +1079,7 @@ function buildTemplateReviewHtml(state: TemplateReviewState): string {
       setCustomSelect(qs("#recordId").closest("[data-custom-select]"), state.recordId || "", state.recordId || "Select record");
       qs("#updated").textContent = "Last updated: " + formatDate(state.updatedAt);
       qs("#status").textContent = state.status || "open";
-      const activeFtl = state.status === "ftl_review";
+      const activeFtl = state.status === "ftl_review" || state.status === "ftl_approved";
       qs("#statusInline").textContent = activeFtl ? "FTL Review" : "In Review";
       qs("#reviewStepNumber").textContent = activeFtl ? "4 of 5" : "3 of 5";
       qs("#lockedUntil").textContent = activeFtl ? "Unlocked" : "Approval";
@@ -1088,12 +1091,13 @@ function buildTemplateReviewHtml(state: TemplateReviewState): string {
       const renderedResult = state.renderedResult || "";
       setResultPreview(renderedResult, activeFtl);
       qs("#freemarker").style.display = activeFtl ? "block" : "none";
-      qs("#freemarker").textContent = state.freemarker || "Approve the HTML preview to generate the rendered FreeMarker result here.";
-      qs("#approveLabel").textContent = state.status === "ftl_review" ? "Approve FTL" : "Approve & Generate FreeMarker";
+      qs("#freemarker").textContent = state.freemarker || "Approve the design, then authorize FreeMarker conversion/render separately in chat.";
+      qs("#approveLabel").textContent = activeFtl ? "Approve FTL" : "Approve Design";
+      qs("#approve").style.display = state.status === "ftl_approved" ? "none" : "inline-flex";
       qs("#end").style.display = state.status === "ftl_review" ? "inline-flex" : "none";
       qs("#lockbox").innerHTML = activeFtl
         ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 6-11 11-5-5" fill="none" stroke="currentColor" stroke-width="2"/></svg><p><strong>FreeMarker generation enabled.</strong>Review the rendered output, send fixes, or end the workflow.</p>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4" fill="none" stroke="currentColor" stroke-width="2"/></svg><p><strong>FreeMarker generation is locked.</strong>Approve this HTML to enable FreeMarker generation.</p>';
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4" fill="none" stroke="currentColor" stroke-width="2"/></svg><p><strong>FreeMarker generation is locked.</strong>Approve the design, then authorize conversion or rendering separately in chat.</p>';
       renderComments();
       const ref = qs("#reference");
       ref.textContent = "";
@@ -1186,7 +1190,7 @@ function buildTemplateReviewHtml(state: TemplateReviewState): string {
       window.__magicTemplateReviewAction(payload);
     });
     qs("#approve").addEventListener("click", function() {
-      const payload = actionPayload("approved");
+      const payload = actionPayload(state.status === "ftl_review" ? "ftl_approved" : "approved");
       state.status = payload.status;
       state.feedback = payload.feedback;
       state.recordType = payload.recordType;
@@ -1332,7 +1336,7 @@ export const playwrightController = {
 
   async waitTemplateReview(timeoutMs = 900000): Promise<ControlResult> {
     const existing = currentReviewSnapshot();
-    if (existing.status === "approved" || existing.status === "needs_changes" || existing.status === "done") {
+    if (existing.status === "approved" || existing.status === "ftl_approved" || existing.status === "needs_changes" || existing.status === "done") {
       return { ok: true, ...existing };
     }
     const state = await new Promise<TemplateReviewState>((resolve, reject) => {

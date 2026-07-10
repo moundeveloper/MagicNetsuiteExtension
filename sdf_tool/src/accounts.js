@@ -18,6 +18,8 @@ const { baseDir, projectDir, nodeBin, suitecloudEntry } = require('./env');
 const { suitecloud, log } = require('./runner');
 
 const CACHE_FILE = () => path.join(baseDir(), 'accounts.json');
+const LOGIN_LOCK_FILE = (accountId) => path.join(baseDir(), `auth-login-${normalizeAccountId(accountId)}.lock`);
+const LOGIN_LOCK_MAX_AGE_MS = 10 * 60 * 1000;
 
 /** Canonical form: uppercase, hyphens to underscores. "9937091-sb1" -> "9937091_SB1" */
 function normalizeAccountId(id) {
@@ -31,6 +33,53 @@ function readCache() {
 
 function writeCache(cache) {
     fs.writeFileSync(CACHE_FILE(), JSON.stringify(cache, null, 2) + '\n');
+}
+
+function processIsAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try { process.kill(pid, 0); return true; }
+    catch (_) { return false; }
+}
+
+/**
+ * Only one companion process may open an account:setup console for an account.
+ * MCP clients often time out/retry tool calls, and several MCP server processes
+ * may be running at once; without this cross-process lock every retry opens a
+ * new, apparently empty terminal.
+ */
+function acquireLoginLock(accountId) {
+    const lockPath = LOGIN_LOCK_FILE(accountId);
+    const payload = { pid: process.pid, accountId: normalizeAccountId(accountId), createdAt: Date.now() };
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const fd = fs.openSync(lockPath, 'wx');
+            fs.writeFileSync(fd, JSON.stringify(payload));
+            fs.closeSync(fd);
+            return { owned: true, lockPath };
+        } catch (e) {
+            if (e.code !== 'EEXIST') throw e;
+            let existing = null;
+            try { existing = JSON.parse(fs.readFileSync(lockPath, 'utf8')); } catch (_) { /* stale/broken */ }
+            const stale = !existing || !processIsAlive(Number(existing.pid)) ||
+                Date.now() - Number(existing.createdAt || 0) > LOGIN_LOCK_MAX_AGE_MS;
+            if (!stale) return { owned: false, lockPath, ownerPid: existing.pid };
+            try { fs.unlinkSync(lockPath); } catch (_) { return { owned: false, lockPath }; }
+        }
+    }
+    return { owned: false, lockPath };
+}
+
+function launchInteractiveConsole(accountId) {
+    // `start "" ...` supplies the mandatory empty title argument. The old
+    // windowsVerbatimArguments + nested `cmd /k` command was parsed
+    // inconsistently and left behind blank consoles. /wait keeps the detached
+    // launcher alive only as long as the real SuiteCloud login process.
+    const child = spawn('cmd.exe', [
+        '/d', '/c', 'start', '', '/wait',
+        nodeBin(), suitecloudEntry(), 'account:setup'
+    ], { cwd: projectDir(), detached: true, stdio: 'ignore' });
+    child.unref();
+    log(`SuiteCloud login prompt opened for account ${normalizeAccountId(accountId)} (launcher pid ${child.pid}).`);
 }
 
 /** Parse `account:manageauth --list` -> [authId, ...] */
@@ -89,36 +138,37 @@ function findAuthId(accountId) {
  */
 async function interactiveSetup(accountId, timeoutMs) {
     const wanted = normalizeAccountId(accountId);
-    const before = new Set(listAuthIds());
+    const lock = acquireLoginLock(wanted);
 
-    log(`No authid for account ${wanted}. Opening SuiteCloud login console...`);
-    // Visible window: cmd /k keeps it open so the user can see prompts/errors.
-    const child = spawn('cmd.exe', [
-        '/c', 'start', `"SuiteCloud Login - account ${wanted}"`, 'cmd', '/k',
-        `"${nodeBin()}" "${suitecloudEntry()}" account:setup`
-    ], { cwd: projectDir(), windowsVerbatimArguments: true, detached: true, stdio: 'ignore' });
-    child.unref();
+    if (lock.owned) {
+        log(`No authid for account ${wanted}. Opening one SuiteCloud login console...`);
+        launchInteractiveConsole(wanted);
+    } else {
+        log(`SuiteCloud login for account ${wanted} is already pending in another process${lock.ownerPid ? ` (${lock.ownerPid})` : ''}; waiting without opening another console...`);
+    }
 
-    const deadline = Date.now() + (timeoutMs || 5 * 60 * 1000);
-    while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 5000));
-        const now = listAuthIds();
-        const fresh = now.filter(id => !before.has(id));
-        for (const id of fresh) {
-            const acct = accountIdOf(id);
-            if (acct) {
-                const cache = readCache();
-                cache[id] = { accountId: acct };
-                writeCache(cache);
-                if (acct === wanted) return { authId: id, accountId: wanted };
-                log(`New authid "${id}" is for account ${acct}, not ${wanted}; still waiting...`);
-            }
+    try {
+        const deadline = Date.now() + (timeoutMs || 5 * 60 * 1000);
+        while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 3000));
+            // Re-resolve all known authids rather than only IDs created after
+            // this process started. This also lets lock waiters observe the
+            // auth/cache written by the lock owner.
+            const hit = findAuthId(wanted);
+            if (hit) return hit;
+        }
+        throw new Error(
+            `Timed out waiting for SuiteCloud login for account ${wanted}. ` +
+            `Complete the open "suitecloud account:setup" login and retry.`
+        );
+    } finally {
+        if (lock.owned) {
+            try {
+                const current = JSON.parse(fs.readFileSync(lock.lockPath, 'utf8'));
+                if (Number(current.pid) === process.pid) fs.unlinkSync(lock.lockPath);
+            } catch (_) { /* already removed */ }
         }
     }
-    throw new Error(
-        `Timed out waiting for SuiteCloud login for account ${wanted}. ` +
-        `Complete "suitecloud account:setup" for that account and retry.`
-    );
 }
 
 /** Full resolution: existing authid or interactive login. */
