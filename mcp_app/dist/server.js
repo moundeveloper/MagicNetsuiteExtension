@@ -541,8 +541,18 @@ export function createServer() {
         }, "Start with the NetSuite FreeMarker/BFO skill, then build and preview a local template via Playwright before any conversion, render, upload, or deploy.");
     });
     async function finishTemplateReviewAction(opts) {
-        const { timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = false, recordType = "", recordId = "", } = opts;
+        const { timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = true, recordType = "", recordId = "", } = opts;
         const review = await playwrightController.waitTemplateReview(timeoutMs);
+        if (review.status === "done") {
+            return toolResult({
+                ok: true,
+                reviewId: review.reviewId,
+                status: "done",
+                feedback: review.feedback,
+                html: review.html,
+                freemarker: review.freemarker,
+            }, "Template review ended by the user.");
+        }
         if (review.status !== "approved") {
             return toolResult({
                 ok: true,
@@ -561,11 +571,13 @@ export function createServer() {
                 html: review.html,
             }, "User approved the local HTML preview. Conversion was not requested.");
         }
+        const effectiveRecordType = recordType || String(review.recordType ?? "");
+        const effectiveRecordId = recordId || String(review.recordId ?? "");
         const previewData = parseToolJson(await callExtensionTool("netsuite_freemarker_preview_html", {
             html: String(review.html ?? ""),
             title: String(review.title ?? "NetSuite Template Preview"),
-            recordType,
-            recordId,
+            recordType: effectiveRecordType,
+            recordId: effectiveRecordId,
             deployIfMissing,
         }));
         const previewStructured = isRecord(previewData) ? previewData : { value: previewData };
@@ -581,28 +593,57 @@ export function createServer() {
         const convertedData = parseToolJson(await callExtensionTool("netsuite_freemarker_convert_approved", {
             sessionId,
             renderPdf,
-            recordType,
-            recordId,
+            recordType: effectiveRecordType,
+            recordId: effectiveRecordId,
         }));
         const converted = isRecord(convertedData) ? convertedData : { value: convertedData };
         const freemarker = typeof converted.freemarker === "string" ? converted.freemarker : JSON.stringify(converted, null, 2);
+        const renderedResult = typeof converted.renderResult === "string"
+            ? converted.renderResult
+            : converted.renderResult
+                ? JSON.stringify(converted.renderResult, null, 2)
+                : "";
         const updated = await playwrightController.updateTemplateReview({
             freemarker,
-            status: "approved",
+            renderedResult,
+            status: "ftl_review",
             feedback: String(review.feedback ?? ""),
         });
         const result = toolResult({
             ok: true,
             reviewId: review.reviewId,
-            status: "approved",
+            status: "ftl_review",
             sessionId,
+            recordType: effectiveRecordType,
+            recordId: effectiveRecordId,
             freemarker,
+            renderedResult,
             renderResult: converted.renderResult,
-        }, "User approved. FreeMarker output was generated and pushed into the Playwright review pane.");
+        }, "User approved the HTML. FreeMarker output was generated and pushed into the Playwright review pane. Continue waiting for Send Fixes or End.");
         if (updated.screenshot) {
             result.content.push({ type: "image", data: updated.screenshot, mimeType: "image/jpeg" });
         }
         return result;
+    }
+    function templateReviewOptionContext(recordType = "", recordId = "") {
+        const recordTypes = new Set();
+        const recordIds = new Set();
+        if (recordType)
+            recordTypes.add(recordType);
+        if (recordId)
+            recordIds.add(recordId);
+        for (const item of selectedContext?.selectedItems ?? []) {
+            if (item.recordType)
+                recordTypes.add(item.recordType);
+            if (item.id)
+                recordIds.add(item.id);
+        }
+        if (!recordTypes.size)
+            recordTypes.add("invoice");
+        return {
+            recordTypeOptions: [...recordTypes],
+            recordIdOptions: [...recordIds],
+        };
     }
     server.registerTool("magic_netsuite_template_preview_playwright", {
         title: "Review Local NetSuite Template in Playwright",
@@ -610,6 +651,7 @@ export function createServer() {
         inputSchema: {
             html: z.string().describe("Self-contained local preview HTML or BFO-safe template preview."),
             title: z.string().optional(),
+            templateFile: z.string().optional().describe("Template file name to show in the review header."),
             referenceImagePath: z.string().optional().describe("Optional local image path for the source image used in the prompt."),
             referenceImageDataUrl: z.string().optional().describe("Optional data URL for the source image used in the prompt."),
             referenceImageUrl: z.string().optional().describe("Optional URL/path for the source image used in the prompt."),
@@ -617,15 +659,23 @@ export function createServer() {
             timeoutMs: z.number().optional(),
             convertOnApprove: z.boolean().optional().describe("When true, convert after approval. Defaults to true."),
             deployIfMissing: z.boolean().optional(),
-            renderPdf: z.boolean().optional(),
+            renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to true."),
             recordType: z.string().optional(),
             recordId: z.string().optional(),
+            recordTypeOptions: z.array(z.string()).optional(),
+            recordIdOptions: z.array(z.string()).optional(),
         },
-    }, async ({ html, title = "NetSuite Template Preview", referenceImagePath = "", referenceImageDataUrl = "", referenceImageUrl = "", waitForAction = true, timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = false, recordType = "", recordId = "", }) => {
+    }, async ({ html, title = "NetSuite Template Preview", templateFile = "invoice_template.ftl", referenceImagePath = "", referenceImageDataUrl = "", referenceImageUrl = "", waitForAction = true, timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = true, recordType = "", recordId = "", recordTypeOptions, recordIdOptions, }) => {
         const resolvedReferenceImageDataUrl = referenceImageDataUrl || (referenceImagePath ? await imagePathToDataUrl(referenceImagePath) : "");
+        const optionContext = templateReviewOptionContext(recordType, recordId);
         const preview = await playwrightController.openTemplateReview({
             html,
             title,
+            templateFile,
+            recordType,
+            recordId,
+            recordTypeOptions: recordTypeOptions?.length ? recordTypeOptions : optionContext.recordTypeOptions,
+            recordIdOptions: recordIdOptions?.length ? recordIdOptions : optionContext.recordIdOptions,
             referenceImageDataUrl: resolvedReferenceImageDataUrl,
             referenceImageUrl,
         });
@@ -657,10 +707,12 @@ export function createServer() {
         inputSchema: {
             html: z.string().optional(),
             title: z.string().optional(),
+            templateFile: z.string().optional(),
             referenceImagePath: z.string().optional(),
             referenceImageDataUrl: z.string().optional(),
             referenceImageUrl: z.string().optional(),
             freemarker: z.string().optional(),
+            renderedResult: z.string().optional(),
             feedback: z.string().optional(),
             waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to true."),
             timeoutMs: z.number().optional(),
@@ -669,15 +721,25 @@ export function createServer() {
             renderPdf: z.boolean().optional(),
             recordType: z.string().optional(),
             recordId: z.string().optional(),
+            recordTypeOptions: z.array(z.string()).optional(),
+            recordIdOptions: z.array(z.string()).optional(),
         },
     }, async (args) => {
         const resolvedReferenceImageDataUrl = args.referenceImageDataUrl || (args.referenceImagePath ? await imagePathToDataUrl(args.referenceImagePath) : undefined);
+        const hasOptionSource = Boolean(args.recordType || args.recordId || args.recordTypeOptions?.length || args.recordIdOptions?.length || selectedContext?.selectedItems?.length);
+        const optionContext = hasOptionSource ? templateReviewOptionContext(args.recordType, args.recordId) : { recordTypeOptions: [], recordIdOptions: [] };
         const preview = await playwrightController.updateTemplateReview({
             html: args.html,
             title: args.title,
+            templateFile: args.templateFile,
+            recordType: args.recordType,
+            recordId: args.recordId,
+            recordTypeOptions: args.recordTypeOptions?.length ? args.recordTypeOptions : (hasOptionSource ? optionContext.recordTypeOptions : undefined),
+            recordIdOptions: args.recordIdOptions?.length ? args.recordIdOptions : (hasOptionSource ? optionContext.recordIdOptions : undefined),
             referenceImageDataUrl: resolvedReferenceImageDataUrl,
             referenceImageUrl: args.referenceImageUrl,
             freemarker: args.freemarker,
+            renderedResult: args.renderedResult,
             feedback: args.feedback,
             status: "open",
         });
@@ -710,11 +772,11 @@ export function createServer() {
             timeoutMs: z.number().optional(),
             convertOnApprove: z.boolean().optional().describe("When true, create/approve/convert the FreeMarker session after the user approves. Defaults to true."),
             deployIfMissing: z.boolean().optional(),
-            renderPdf: z.boolean().optional(),
+            renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to true."),
             recordType: z.string().optional(),
             recordId: z.string().optional(),
         },
-    }, async ({ timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = false, recordType = "", recordId = "" }) => finishTemplateReviewAction({
+    }, async ({ timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = true, recordType = "", recordId = "" }) => finishTemplateReviewAction({
         timeoutMs,
         convertOnApprove,
         deployIfMissing,

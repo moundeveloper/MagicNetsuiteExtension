@@ -34,11 +34,17 @@ process.stdin.on("end", () => {
     return;
   }
 
-  if (state?.pending === true || state?.status === "open") {
+  if (
+    state?.pending === true ||
+    state?.status === "open" ||
+    state?.status === "needs_changes" ||
+    state?.status === "approved" ||
+    state?.status === "ftl_review"
+  ) {
     console.log(JSON.stringify({
       decision: "block",
       reason:
-        "The NetSuite template review is still pending in Playwright. Call magic_netsuite_template_review_wait and continue after the user clicks Approve or Send Fixes.",
+        "The NetSuite template review is still pending in Playwright. Call magic_netsuite_template_review_wait and continue after the user clicks Send Fixes, Approve, or End.",
     }));
     return;
   }
