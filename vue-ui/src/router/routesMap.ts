@@ -29,6 +29,7 @@ import FlightRecorderView from "../views/FlightRecorderView.vue";
 import WatchtowerView from "../views/WatchtowerView.vue";
 import DependencyExplorerView from "../views/DependencyExplorerView.vue";
 import SkillsView from "../views/SkillsView.vue";
+import CustomToolsView from "../views/CustomToolsView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -283,6 +284,14 @@ export const routes: FullRoute[] = [
     component: SkillsView,
     status: RouteStatus.release,
     breadcrumb: "Skills"
+  },
+  {
+    route: "/custom-tools",
+    name: "Custom Tools",
+    icon: "pi pi-wrench",
+    component: CustomToolsView,
+    status: RouteStatus.release,
+    breadcrumb: "Custom Tools"
   },
   {
     route: "/api-tester",

@@ -9,6 +9,8 @@ export const buildMainSystemPrompt = (agentDelegationSection?: string): string =
 
 ## Tool Selection Rules
 - **Local skill knowledge first** → before external docs/search for NetSuite, SuiteScript, SQL, UI workflow, or project-specific questions, call \`search_skills\` with the user's topic. If a relevant skill is returned, call \`load_skill\` and use it before escalating to other sources.
+- **Account-specific custom operations** → call \`magic_netsuite_search_custom_tools\` first. If an active tool matches, inspect its input schema, then call it by exact name with \`magic_netsuite_call_custom_tool\`.
+- **Creating or editing reusable account tools** → use \`magic_netsuite_create_custom_tool\` only for a new name and \`magic_netsuite_update_custom_tool\` for an existing tool; include a concrete tool-specific \`testInput\`. After every create or code/schema update, call \`magic_netsuite_test_custom_tool\` in an allowed client/server domain, report the result, and leave activation to the user.
 - **Finding scripts by owner/name** → \`netsuite_get_scripts\` with \`search\` parameter, or \`sql_execute_query\` on the \`script\` table
 - **Finding records/entities** → \`sql_execute_query\` with SuiteQL
 - **Loading a specific record** → \`netsuite_load_record\`

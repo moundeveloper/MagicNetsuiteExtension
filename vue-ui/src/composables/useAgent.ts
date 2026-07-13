@@ -9,6 +9,12 @@ import {
   toolTelemetry,
   type ToolTelemetryEntry,
 } from "../utils/toolRoutingPolicy";
+import {
+  getSkillContent,
+  searchSkills,
+  SKILL_AUTO_ROUTE_THRESHOLD,
+  SKILL_MULTI_MATCH_DELTA,
+} from "../utils/skillsDb";
 
 export interface ToolCall {
   id: string;
@@ -1972,6 +1978,53 @@ export const useAgent = (options: AgentOptions = {}) => {
     try {
       await loadMCPTools();
 
+      // Skill preflight runs before the first completion, so local guidance is
+      // considered before documentation or web/search tools can be selected.
+      let routedSystemPrompt = systemPrompt;
+      try {
+        const matches = await searchSkills(prompt, { routing: true });
+        const top = matches[0];
+        if (top && top.score >= SKILL_AUTO_ROUTE_THRESHOLD) {
+          const strongMatches = matches.filter(
+            (match) =>
+              match.score >= SKILL_AUTO_ROUTE_THRESHOLD &&
+              top.score - match.score <= SKILL_MULTI_MATCH_DELTA
+          );
+          const loadSkillAllowed =
+            toolRegistry.value.has("load_skill") &&
+            (!allowedTools || allowedTools.includes("load_skill")) &&
+            !blockedTools?.includes("load_skill");
+
+          if (strongMatches.length === 1) {
+            if (loadSkillAllowed) {
+              routedSystemPrompt +=
+                `\n\n[Local skill preflight]\nRelevant local skill: ${top.name} (ID ${top.id}, ${top.matchType} match, priority ${top.priority}). ` +
+                "Call load_skill for this skill before using external documentation or search sources.";
+            } else {
+              const loaded = await getSkillContent(top.id);
+              if (loaded) {
+                routedSystemPrompt +=
+                  `\n\n[Local skill preflight]\nRelevant local skill: ${loaded.name}. Use this before external sources.\n` +
+                  loaded.content.slice(0, 6000);
+              }
+            }
+          } else {
+            const metadata = strongMatches.slice(0, 5).map((match) =>
+              `- ${match.name} (ID ${match.id}; ${match.matchType}; score ${match.score}; priority ${match.priority}; reviewed ${match.lastReviewedAt ?? "unknown"})`
+            ).join("\n");
+            routedSystemPrompt +=
+              `\n\n[Local skill preflight]\nMultiple relevant local skills matched:\n${metadata}\n` +
+              (loadSkillAllowed
+                ? "Choose the most specific skill and call load_skill before external documentation or search sources."
+                : "Prefer the most specific local skill metadata before external sources.");
+          }
+          console.log(`[useAgent] Skill preflight matched "${top.name}" (${top.score}, ${top.matchType})`);
+        }
+      } catch (skillPreflightError) {
+        // Local skill storage must never prevent an otherwise valid agent run.
+        console.warn("[useAgent] Skill preflight failed:", skillPreflightError);
+      }
+
       pushMessage({ role: "user", content: prompt, attachments });
 
       const toolFilters = (allowedTools || blockedTools || blockDestructive)
@@ -1993,7 +2046,7 @@ export const useAgent = (options: AgentOptions = {}) => {
 
         // ── Guard against runaway loops (weak models doing excessive tool calls) ──
         if (iterations > MAX_ITERATIONS) {
-          const finalMessages = buildMessages(systemPrompt, prompt);
+          const finalMessages = buildMessages(routedSystemPrompt, prompt);
           finalMessages.push({
             role: "user",
             content:
@@ -2033,9 +2086,9 @@ export const useAgent = (options: AgentOptions = {}) => {
         }
 
         // ── Check if context needs compaction ──
-        await compactIfNeeded(systemPrompt);
+        await compactIfNeeded(routedSystemPrompt);
 
-        const messages = buildMessages(systemPrompt, prompt);
+        const messages = buildMessages(routedSystemPrompt, prompt);
         const allTools = selectRelevantTools(prompt, toolFilters);
         contextTokens.value = estimateMessagesTokens(messages);
 
@@ -2131,7 +2184,7 @@ export const useAgent = (options: AgentOptions = {}) => {
             runMetrics.value.nudgeCount = cbNudgeCount;
             runMetrics.value.lastNudgeReason = "empty-response";
             if (cbNudgeCount > MAX_NUDGES) {
-              const finalMessages = buildMessages(systemPrompt, prompt);
+              const finalMessages = buildMessages(routedSystemPrompt, prompt);
               finalMessages.push({
                 role: "user",
                 content:

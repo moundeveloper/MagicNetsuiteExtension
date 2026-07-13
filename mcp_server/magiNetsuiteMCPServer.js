@@ -1035,6 +1035,72 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "magic_netsuite_search_custom_tools",
+            description: "Search active user-created Magic NetSuite tools. Returns metadata, execution domains, and input schemas without exposing implementation source.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: "Keywords describing the needed capability. Leave empty to list all active custom tools." }
+              }
+            }
+          },
+          {
+            name: "magic_netsuite_create_custom_tool",
+            description: "Create a new editable custom NetSuite tool as a draft. If the name already exists, use magic_netsuite_update_custom_tool.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                name: { type: "string" }, displayName: { type: "string" }, description: { type: "string" },
+                tags: { type: "array", items: { type: "string" } },
+                domain: { type: "string", enum: ["client", "server", "both"] },
+                modules: { type: "array", items: { type: "string" } },
+                inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string" },
+                risk: { type: "string", enum: ["read", "write"] }
+              },
+              required: ["name", "displayName", "description", "domain", "modules", "inputSchema", "testInput", "code", "risk"]
+            }
+          },
+          {
+            name: "magic_netsuite_update_custom_tool",
+            description: "Partially update an existing custom NetSuite tool by exact name. Omitted fields are preserved and AI edits return the tool to draft status for review.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                toolName: { type: "string" }, name: { type: "string" }, displayName: { type: "string" },
+                description: { type: "string" }, tags: { type: "array", items: { type: "string" } },
+                domain: { type: "string", enum: ["client", "server", "both"] },
+                modules: { type: "array", items: { type: "string" } }, inputSchema: { type: "object" }, testInput: { type: "object" },
+                code: { type: "string" }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
+              },
+              required: ["toolName"]
+            }
+          },
+          {
+            name: "magic_netsuite_test_custom_tool",
+            description: "Test a saved active or draft custom tool in an allowed domain. Uses its saved testInput when input is omitted and stores the latest result on that tool.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                toolName: { type: "string" }, input: { type: "object" },
+                executionDomain: { type: "string", enum: ["client", "server"] }
+              },
+              required: ["toolName", "executionDomain"]
+            }
+          },
+          {
+            name: "magic_netsuite_call_custom_tool",
+            description: "Execute an active user-created Magic NetSuite tool. Search first, then provide its exact toolName and an input object matching the returned inputSchema.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                toolName: { type: "string" },
+                input: { type: "object" },
+                executionDomain: { type: "string", enum: ["client", "server"] }
+              },
+              required: ["toolName", "input"]
+            }
+          },
+          {
             name: "netsuite_switch_environment",
             description:
               "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
@@ -1676,6 +1742,43 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_update_metadata_record",
+            description:
+              "Edit an existing NetSuite METADATA record in place with SuiteScript record.load -> setValue -> save. " +
+              "Destructive: this modifies customization metadata in the account. " +
+              "Handles four metadata record types via metadataType: 'customrecordtype' (custom record type definition, e.g. rename via recordname), " +
+              "'customrecordcustomfield' (a custom record's field, e.g. change label or fieldtype), " +
+              "'scriptcustomfield' (a script parameter), and 'script' (a script record). " +
+              "Identify the target by numeric internal id, OR by scriptId (resolved to the internal id via SuiteQL; scriptid is matched case-insensitively). " +
+              "Pass values as a map of metadata field id to new value, e.g. { recordname: 'New Name' } for a record type, " +
+              "or { label: 'New Label', fieldtype: 'CLOBTEXT' } for a field. Returns before/after values for the changed fields. " +
+              "PREFER this tool over netsuite_sdf_deploy for editing any of these four existing metadata types — it is faster and needs no object XML or redeploy. " +
+              "This edits existing objects only; use netsuite_sdf_deploy to CREATE new custom records/fields/scripts or to add/remove fields and make larger structural changes.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                metadataType: {
+                  type: "string",
+                  enum: ["customrecordtype", "customrecordcustomfield", "scriptcustomfield", "script"],
+                  description: "The SuiteScript record type to edit. Aliases accepted: customrecord->customrecordtype, customrecordfield/field->customrecordcustomfield, scriptparameter/scriptparam->scriptcustomfield."
+                },
+                id: {
+                  type: "string",
+                  description: "Numeric internal id of the metadata record. Provide this or scriptId."
+                },
+                scriptId: {
+                  type: "string",
+                  description: "Script id of the metadata record (e.g. customrecord_my_type, custrecord_my_field, custscript_my_param, customscript_my_script). Resolved to the internal id if id is omitted."
+                },
+                values: {
+                  type: "object",
+                  description: "Map of metadata field id to new value. Record type: { recordname, description, ... }. Field: { label, fieldtype, selectrecordtype, ... }. Script param: { label, fieldtype, ... }."
+                }
+              },
+              required: ["metadataType", "values"]
+            }
+          },
+          {
             name: "netsuite_list_bundles",
             description:
               "List SuiteApp bundles in the current NetSuite account. Returns each bundle's name, ID, version, app ID, abstract, creator, dates, and a `type` field ('installed' or 'created'). Use the `filter` parameter to narrow results: 'installed' returns only marketplace/3rd-party bundles, 'created' returns only bundles built and published in-house, 'all' (default) returns both.",
@@ -2019,7 +2122,8 @@ async function handleMcp(req) {
           {
             name: "netsuite_sdf_deploy",
             description:
-              "Deploy NetSuite customizations via the bundled SuiteCloud SDF deploy tool. THE tool for creating or updating scripts+deployments, CUSTOM RECORD TYPES (with all their fields in one shot), and advanced PDF/HTML TEMPLATES — do not create these piecemeal with other tools. Deploying again with the same script/object IDs UPDATES the existing objects (create-or-update semantics). " +
+              "Deploy NetSuite customizations via the bundled SuiteCloud SDF deploy tool. THE tool for CREATING scripts+deployments, CUSTOM RECORD TYPES (with all their fields in one shot), and advanced PDF/HTML TEMPLATES — do not create these piecemeal with other tools. Deploying again with the same script/object IDs UPDATES the existing objects (create-or-update semantics). " +
+              "For simply EDITING an already-existing customrecordtype, customrecordcustomfield, scriptcustomfield, or script (e.g. rename, change a field's label/type, tweak one property), PREFER netsuite_update_metadata_record — it is a fast in-place record.load/setValue/save that needs no object XML or full redeploy. Use SDF for those types when creating them, adding/removing fields, or making larger structural changes. " +
               "PREFER THE STRUCTURED PAYLOADS — do NOT hand-write SDF XML: (1) SCRIPT: scriptType + scriptFile + deployments; (2) customRecords: record types with their fields; (3) templates: advanced PDF/HTML templates with FreeMarker source. " +
               "The raw `objects` array (full SDF object XML) is ONLY for other object types or XML obtained from netsuite_sdf_import_object. " +
               "Runs locally against the currently selected MCP account; if that account has no SuiteCloud login yet, a browser login console opens and the user must authenticate (first call for a new account may take longer or time out — retry after login). " +

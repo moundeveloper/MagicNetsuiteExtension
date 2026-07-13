@@ -1,26 +1,37 @@
 // skillsDb.ts — IndexedDB-backed skill storage using Dexie.js
 import Dexie, { type EntityTable } from "dexie";
 
-// ─────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────
+export type SkillStatus = "active" | "deprecated" | "draft";
+export type SkillSource = "manual" | "ai_saved" | "imported" | "built_in";
+export type SkillConfidence = "low" | "medium" | "high";
+export type SkillMatchType = "trigger" | "metadata" | "content";
+
+export interface SkillConversationSource {
+  threadId?: string;
+  turnId?: string;
+  userPrompt: string;
+  assistantResponse: string;
+  savedAt: string;
+}
 
 export interface Skill {
   id?: number;
   name: string;
   description: string;
-  /** Comma-separated or space-separated tags for search */
+  /** Comma-separated or space-separated display/search tags. */
   tags: string;
-  /** The full skill content (instructions, code, docs, etc.) */
+  /** Newline-separated phrases used only by the router. */
+  triggers: string;
   content: string;
-  /** Whether this skill is active and visible to the AI agent. Defaults to true. */
   enabled: boolean;
-  /**
-   * Domain scope for the skill.
-   * - "global": available to all AI agents (default)
-   * - "sql": injected only into the SQL AI Editor system prompt
-   */
   domain?: "global" | "sql";
+  status: SkillStatus;
+  priority: number;
+  source: SkillSource;
+  supersedes: number[];
+  lastReviewedAt?: string;
+  confidence?: SkillConfidence;
+  sourceConversation?: SkillConversationSource;
   createdAt: string;
   updatedAt: string;
 }
@@ -30,199 +41,214 @@ export interface SkillSearchResult {
   name: string;
   description: string;
   tags: string;
+  triggers: string;
+  status: SkillStatus;
+  priority: number;
+  source: SkillSource;
+  lastReviewedAt?: string;
+  confidence?: SkillConfidence;
+  score: number;
+  matchType: SkillMatchType;
 }
 
-// ─────────────────────────────────────────────
-// Database
-// ─────────────────────────────────────────────
+export interface SkillSearchOptions {
+  /** Auto-routing only considers reviewed, active skills. */
+  routing?: boolean;
+  includeDeprecated?: boolean;
+}
+
+export const SKILL_AUTO_ROUTE_THRESHOLD = 70;
+export const SKILL_MULTI_MATCH_DELTA = 18;
 
 const db = new Dexie("MagicNetsuiteSkills") as Dexie & {
   skills: EntityTable<Skill, "id">;
 };
 
-db.version(1).stores({
-  // id is auto-incremented, name/tags/description are indexed for search
-  skills: "++id, name, tags, description"
+db.version(1).stores({ skills: "++id, name, tags, description" });
+db.version(2).stores({ skills: "++id, name, tags, description, enabled" }).upgrade((tx) =>
+  tx.table("skills").toCollection().modify((skill) => {
+    if (skill.enabled === undefined) skill.enabled = true;
+  })
+);
+db.version(3).stores({ skills: "++id, name, tags, description, enabled, domain" }).upgrade((tx) =>
+  tx.table("skills").toCollection().modify((skill) => {
+    if (skill.domain === undefined) skill.domain = "global";
+  })
+);
+db.version(4).stores({
+  skills: "++id, name, tags, description, enabled, domain, status, priority, source, lastReviewedAt"
+}).upgrade((tx) =>
+  tx.table("skills").toCollection().modify((skill) => {
+    skill.triggers ??= "";
+    skill.status ??= "active";
+    skill.priority ??= 50;
+    skill.source ??= "manual";
+    skill.supersedes ??= [];
+    skill.lastReviewedAt ??= skill.updatedAt ?? skill.createdAt;
+  })
+);
+
+const withDefaults = <T extends Partial<Skill>>(skill: T): T & Pick<Skill,
+  "triggers" | "status" | "priority" | "source" | "supersedes"
+> => ({
+  ...skill,
+  triggers: skill.triggers ?? "",
+  status: skill.status ?? "active",
+  priority: Math.min(100, Math.max(0, Number(skill.priority ?? 50))),
+  source: skill.source ?? "manual",
+  supersedes: Array.isArray(skill.supersedes) ? skill.supersedes : []
 });
 
-db.version(2).stores({
-  skills: "++id, name, tags, description, enabled"
-}).upgrade((tx) => {
-  return tx.table("skills").toCollection().modify((skill) => {
-    if (skill.enabled === undefined) {
-      skill.enabled = true;
-    }
-  });
-});
-
-db.version(3).stores({
-  skills: "++id, name, tags, description, enabled, domain"
-}).upgrade((tx) => {
-  return tx.table("skills").toCollection().modify((skill) => {
-    if (skill.domain === undefined) {
-      skill.domain = "global";
-    }
-  });
-});
-
-// ─────────────────────────────────────────────
-// CRUD operations
-// ─────────────────────────────────────────────
+export type NewSkill = Omit<
+  Skill,
+  "id" | "createdAt" | "updatedAt" | "triggers" | "status" | "priority" | "source" | "supersedes"
+> & Partial<Pick<Skill, "triggers" | "status" | "priority" | "source" | "supersedes">>;
 
 export const addSkill = async (
-  skill: Omit<Skill, "id" | "createdAt" | "updatedAt">
+  skill: NewSkill
 ): Promise<number> => {
   const now = new Date().toISOString();
-  const id = await db.skills.add({
-    ...skill,
+  return await db.skills.add({
+    ...withDefaults(skill),
     enabled: skill.enabled ?? true,
     createdAt: now,
     updatedAt: now
-  });
-  return id as number;
+  }) as number;
 };
 
 export const updateSkill = async (
   id: number,
   updates: Partial<Omit<Skill, "id" | "createdAt">>
 ): Promise<void> => {
-  await db.skills.update(id, {
-    ...updates,
-    updatedAt: new Date().toISOString()
-  });
+  const normalized = { ...updates };
+  if (updates.priority !== undefined) normalized.priority = Math.min(100, Math.max(0, Number(updates.priority)));
+  if (updates.supersedes !== undefined) normalized.supersedes = Array.isArray(updates.supersedes) ? updates.supersedes : [];
+  await db.skills.update(id, { ...normalized, updatedAt: new Date().toISOString() });
 };
 
-export const deleteSkill = async (id: number): Promise<void> => {
-  await db.skills.delete(id);
+export const deleteSkill = async (id: number): Promise<void> => { await db.skills.delete(id); };
+export const getSkill = async (id: number): Promise<Skill | undefined> => db.skills.get(id);
+export const getAllSkills = async (): Promise<Skill[]> => db.skills.toArray();
+export const getSkillsByDomain = async (domain: "global" | "sql"): Promise<Skill[]> =>
+  db.skills.filter((s) => s.enabled !== false && (s.domain ?? "global") === domain && (s.status ?? "active") === "active").toArray();
+export const getSkillCount = async (): Promise<number> =>
+  db.skills.filter((s) => s.enabled !== false && (s.status ?? "active") !== "deprecated").count();
+
+const normalize = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+const phrases = (value: string): string[] => value.split(/[\n,]+/).map(normalize).filter(Boolean);
+
+const scoreSkill = (skill: Skill, query: string): { score: number; matchType: SkillMatchType } => {
+  const normalizedQuery = normalize(query);
+  const terms = normalizedQuery.split(/\s+/).filter((term) => term.length > 1);
+  const triggerPhrases = phrases(skill.triggers ?? "");
+  let triggerScore = 0;
+  for (const trigger of triggerPhrases) {
+    if (normalizedQuery.includes(trigger)) {
+      triggerScore = Math.max(triggerScore, 110 + Math.min(trigger.split(" ").length * 8, 40));
+      continue;
+    }
+    const triggerTerms = trigger.split(" ");
+    const matched = triggerTerms.filter((term) => normalizedQuery.includes(term)).length;
+    if (matched >= 2 && matched / triggerTerms.length >= 0.6) {
+      triggerScore = Math.max(triggerScore, 55 + Math.round((matched / triggerTerms.length) * 35));
+    }
+  }
+
+  const metadata = normalize(`${skill.name} ${skill.description} ${skill.tags}`);
+  const content = normalize(skill.content);
+  const metadataMatches = terms.filter((term) => metadata.includes(term)).length;
+  const contentMatches = terms.filter((term) => content.includes(term)).length;
+  const nameExact = normalizedQuery.includes(normalize(skill.name)) ? 45 : 0;
+  const metadataScore = nameExact + metadataMatches * 12;
+  // Content is useful for ranking but never strong enough by itself to
+  // auto-route; explicit triggers and specific metadata must win preflight.
+  const contentScore = Math.min(contentMatches * 3, 45);
+
+  if (triggerScore > 0) return { score: triggerScore + Math.min(metadataScore, 20), matchType: "trigger" };
+  if (metadataScore > 0) return { score: metadataScore + Math.min(contentScore, 10), matchType: "metadata" };
+  return { score: contentScore, matchType: "content" };
 };
 
-export const getSkill = async (id: number): Promise<Skill | undefined> => {
-  return db.skills.get(id);
-};
+const reviewedTime = (skill: Skill): number =>
+  Date.parse(skill.lastReviewedAt ?? skill.updatedAt ?? skill.createdAt ?? "") || 0;
 
-export const getAllSkills = async (): Promise<Skill[]> => {
-  return db.skills.toArray();
-};
-
-export const getSkillsByDomain = async (
-  domain: "global" | "sql"
-): Promise<Skill[]> => {
-  return db.skills
-    .filter((s) => s.enabled !== false && (s.domain ?? "global") === domain)
-    .toArray();
-};
-
-export const getSkillCount = async (): Promise<number> => {
-  return db.skills.filter((s) => s.enabled !== false).count();
-};
-
-// ─────────────────────────────────────────────
-// Search — returns metadata only, NOT the full content
-// ─────────────────────────────────────────────
-
+/** Ranked metadata search. Trigger specificity dominates priority and recency. */
 export const searchSkills = async (
-  query: string
+  query: string,
+  options: SkillSearchOptions = {}
 ): Promise<SkillSearchResult[]> => {
-  const term = query.toLowerCase().trim();
+  const term = normalize(query);
+  let all = await db.skills.filter((skill) => skill.enabled !== false).toArray();
 
-  const all = await db.skills.filter((s) => s.enabled !== false).toArray();
+  all = all.filter((skill) => {
+    const status = skill.status ?? "active";
+    if (options.routing) return status === "active";
+    if (status !== "deprecated" || options.includeDeprecated) return true;
+    return term.includes(normalize(skill.name)) || /\bdeprecated\b/.test(term);
+  });
 
-  if (!term) {
-    // Return all skills (metadata only)
-    return all.map(({ id, name, description, tags }) => ({
-      id: id!,
-      name,
-      description,
-      tags
-    }));
-  }
+  // Active skills suppress anything they explicitly supersede.
+  const supersededIds = new Set(
+    all.filter((skill) => (skill.status ?? "active") === "active")
+      .flatMap((skill) => skill.supersedes ?? [])
+  );
+  all = all.filter((skill) => !skill.id || !supersededIds.has(skill.id));
 
-  const terms = term.split(/\s+/);
-
-  // Score each skill: +2 for each matching term, +1 for partial substring match
-  const scored = all
-    .map((skill) => {
-      const haystack =
-        `${skill.name} ${skill.description} ${skill.tags}`.toLowerCase();
-      let score = 0;
-      for (const t of terms) {
-        if (haystack.includes(t)) {
-          score += 2;
-        }
-      }
-      return { skill, score };
-    })
+  const ranked = all.map((skill) => ({ skill, ...(term ? scoreSkill(skill, term) : { score: 1, matchType: "metadata" as const }) }))
     .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) =>
+      b.score - a.score ||
+      (b.skill.priority ?? 50) - (a.skill.priority ?? 50) ||
+      reviewedTime(b.skill) - reviewedTime(a.skill)
+    );
 
-  // If specific query matched some skills, return them ranked by relevance
-  if (scored.length > 0) {
-    return scored.map(({ skill: { id, name, description, tags } }) => ({
-      id: id!,
-      name,
-      description,
-      tags
-    }));
-  }
-
-  // No matches — return empty array so the agent knows nothing is relevant
-  // and proceeds without loading skills. Returning all skills as a fallback
-  // caused the agent to load irrelevant skills for unrelated tasks.
-  return [];
+  return ranked.map(({ skill, score, matchType }) => ({
+    id: skill.id!, name: skill.name, description: skill.description, tags: skill.tags,
+    triggers: skill.triggers ?? "", status: skill.status ?? "active",
+    priority: skill.priority ?? 50, source: skill.source ?? "manual",
+    lastReviewedAt: skill.lastReviewedAt, confidence: skill.confidence, score, matchType
+  }));
 };
 
-/**
- * Retrieve the full content of a skill by ID.
- * This is the only way the AI can access skill content — by explicitly
- * requesting it after a search, keeping context lean.
- */
 export const getSkillContent = async (
-  id: number
+  id: number,
+  options: { includeDeprecated?: boolean } = {}
 ): Promise<{ name: string; content: string } | null> => {
   const skill = await db.skills.get(id);
-  if (!skill) return null;
+  if (
+    !skill ||
+    skill.enabled === false ||
+    ((skill.status ?? "active") === "deprecated" && !options.includeDeprecated)
+  ) return null;
   return { name: skill.name, content: skill.content };
 };
-
-// ─────────────────────────────────────────────
-// Bulk import / export for file uploads
-// ─────────────────────────────────────────────
 
 export interface SkillExport {
   name: string;
   description: string;
   tags: string;
+  triggers?: string;
   content: string;
   domain?: "global" | "sql";
+  status?: SkillStatus;
+  priority?: number;
+  source?: SkillSource;
+  supersedes?: number[];
+  lastReviewedAt?: string;
+  confidence?: SkillConfidence;
+  sourceConversation?: SkillConversationSource;
 }
 
-export const importSkills = async (
-  skills: SkillExport[]
-): Promise<number> => {
+export const importSkills = async (skills: SkillExport[]): Promise<number> => {
   const now = new Date().toISOString();
-  const records = skills.map((s) => ({
-    name: s.name,
-    description: s.description,
-    tags: s.tags,
-    content: s.content,
-    enabled: true,
-    domain: s.domain ?? "global",
-    createdAt: now,
-    updatedAt: now
-  }));
-  const lastKey = await db.skills.bulkAdd(records);
+  await db.skills.bulkAdd(skills.map((skill) => ({
+    ...withDefaults({ ...skill, source: skill.source ?? "imported" }),
+    enabled: true, domain: skill.domain ?? "global", createdAt: now, updatedAt: now
+  })) as Skill[]);
   return skills.length;
 };
 
-export const exportAllSkills = async (): Promise<SkillExport[]> => {
-  const all = await db.skills.toArray();
-  return all.map(({ name, description, tags, content, domain }) => ({
-    name,
-    description,
-    tags,
-    content,
-    domain: domain ?? "global"
-  }));
-};
+export const exportAllSkills = async (): Promise<SkillExport[]> =>
+  (await db.skills.toArray()).map(({ id: _id, enabled: _enabled, createdAt: _createdAt, updatedAt: _updatedAt, ...skill }) => skill);
 
 export { db };

@@ -18,6 +18,12 @@ const builtinSkills: Array<SkillSearchResult & { content: string }> = [
       "Instructions for rendering flowcharts and sequence diagrams in chat with ```diagram fences.",
     tags:
       "diagram diagrams flowchart flowcharts sequence visual workflow process architecture chart",
+    triggers: "draw a diagram\ncreate a flowchart\nsequence diagram\nvisualize the workflow",
+    status: "active",
+    priority: 50,
+    source: "built_in",
+    score: 0,
+    matchType: "metadata",
     content: DIAGRAM_DOCS
   }
 ];
@@ -26,12 +32,28 @@ const stripSkillContent = ({
   id,
   name,
   description,
-  tags
+  tags,
+  triggers,
+  status,
+  priority,
+  source,
+  lastReviewedAt,
+  confidence,
+  score,
+  matchType
 }: SkillSearchResult & { content?: string }): SkillSearchResult => ({
   id,
   name,
   description,
-  tags
+  tags,
+  triggers,
+  status,
+  priority,
+  source,
+  lastReviewedAt,
+  confidence,
+  score,
+  matchType
 });
 
 const searchBuiltinSkills = (query: string): SkillSearchResult[] => {
@@ -41,12 +63,15 @@ const searchBuiltinSkills = (query: string): SkillSearchResult[] => {
   const terms = term.split(/\s+/).filter(Boolean);
   return builtinSkills
     .map((skill) => {
+      const trigger = skill.triggers.toLowerCase();
       const haystack = `${skill.name} ${skill.description} ${skill.tags}`.toLowerCase();
-      const score = terms.reduce(
+      const triggerScore = trigger.split("\n").some((phrase) => phrase && term.includes(phrase)) ? 120 : 0;
+      const metadataScore = terms.reduce(
         (sum, t) => sum + (haystack.includes(t) ? 2 : 0),
         0
       );
-      return { skill, score };
+      const score = triggerScore || metadataScore;
+      return { skill: { ...skill, score, matchType: triggerScore ? "trigger" as const : "metadata" as const }, score };
     })
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score)
@@ -68,7 +93,7 @@ export const skillTools: ToolDefinition[] = [
   {
     name: "search_skills",
     description:
-      "Search through available skills (knowledge, instructions, code patterns, documentation, visual diagram guidance) stored in the local skill library. Returns matching skills with id, name, description, and tags, but NOT full content. Use 'load_skill' with the skill's id to retrieve instructions only when needed. Uses OR-based matching ranked by relevance.",
+      "Search local skills before external sources. Trigger phrases are weighted above metadata and content. Results include trust/status, priority, review date, score, and match type but not full content. Deprecated skills are ignored unless explicitly requested. Use load_skill for the selected skill.",
     parameters: {
       type: "object",
       properties: {
@@ -90,7 +115,11 @@ export const skillTools: ToolDefinition[] = [
         ...storedResults.filter(
           (result) => !builtins.some((builtin) => builtin.id === result.id)
         )
-      ];
+      ].sort((a, b) =>
+        b.score - a.score ||
+        b.priority - a.priority ||
+        (Date.parse(b.lastReviewedAt ?? "") || 0) - (Date.parse(a.lastReviewedAt ?? "") || 0)
+      );
 
       return {
         total: count + builtinSkills.length,
@@ -111,6 +140,11 @@ export const skillTools: ToolDefinition[] = [
           type: "number",
           description:
             "The numeric ID of the skill to load (from search_skills results)."
+        },
+        includeDeprecated: {
+          type: "boolean",
+          description:
+            "Set true only when the user explicitly asked for this deprecated skill."
         }
       },
       required: ["skillId"]
@@ -129,7 +163,9 @@ export const skillTools: ToolDefinition[] = [
         };
       }
 
-      const result = await getSkillContent(id);
+      const result = await getSkillContent(id, {
+        includeDeprecated: input.includeDeprecated === true
+      });
       if (!result) {
         return { error: `Skill with ID ${id} not found.` };
       }

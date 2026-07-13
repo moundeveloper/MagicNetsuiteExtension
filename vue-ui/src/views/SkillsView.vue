@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import InputText from "primevue/inputtext";
+import InputNumber from "primevue/inputnumber";
 import Textarea from "primevue/textarea";
+import MSelect from "../components/universal/input/MSelect.vue";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
@@ -13,7 +15,10 @@ import {
   importSkills,
   updateSkill,
   type Skill,
-  type SkillExport
+  type SkillExport,
+  type SkillStatus,
+  type SkillSource,
+  type SkillConfidence
 } from "../utils/skillsDb";
 
 const props = defineProps<{ vhOffset: number }>();
@@ -22,9 +27,23 @@ type SkillForm = {
   name: string;
   description: string;
   tags: string;
+  triggers: string;
   content: string;
   domain: "global" | "sql";
+  status: SkillStatus;
+  priority: number;
+  source: SkillSource;
+  supersedes: string;
+  lastReviewedAt: string;
+  confidence: SkillConfidence | "";
 };
+
+const statusOptions = ["active", "draft", "deprecated"];
+const sourceOptions = ["manual", "ai_saved", "imported", "built_in"];
+const confidenceOptions = ["", "low", "medium", "high"].map((value) => ({
+  value,
+  label: value || "Not set"
+}));
 
 const skills = ref<Skill[]>([]);
 const selectedId = ref<number | null>(null);
@@ -41,8 +60,15 @@ const emptyForm = (): SkillForm => ({
   name: "",
   description: "",
   tags: "",
+  triggers: "",
   content: "# New Skill\n\n## When To Use\n\n- \n\n## Instructions\n\n- ",
-  domain: "global"
+  domain: "global",
+  status: "active",
+  priority: 50,
+  source: "manual",
+  supersedes: "",
+  lastReviewedAt: new Date().toISOString().slice(0, 10),
+  confidence: ""
 });
 
 const form = ref<SkillForm>(emptyForm());
@@ -61,7 +87,7 @@ const filteredSkills = computed(() => {
     .filter((skill) => showDisabled.value || skill.enabled !== false)
     .filter((skill) => {
       if (!query) return true;
-      const haystack = `${skill.name} ${skill.description} ${skill.tags} ${skill.content}`.toLowerCase();
+      const haystack = `${skill.name} ${skill.description} ${skill.tags} ${skill.triggers ?? ""} ${skill.content}`.toLowerCase();
       return haystack.includes(query);
     })
     .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
@@ -115,8 +141,15 @@ const selectSkill = (skill: Skill) => {
     name: skill.name,
     description: skill.description,
     tags: skill.tags,
+    triggers: skill.triggers ?? "",
     content: skill.content,
-    domain: skill.domain ?? "global"
+    domain: skill.domain ?? "global",
+    status: skill.status ?? "active",
+    priority: skill.priority ?? 50,
+    source: skill.source ?? "manual",
+    supersedes: (skill.supersedes ?? []).join(", "),
+    lastReviewedAt: (skill.lastReviewedAt ?? "").slice(0, 10),
+    confidence: skill.confidence ?? ""
   };
   statusMessage.value = "";
 };
@@ -135,8 +168,17 @@ const saveSkill = async () => {
     name: form.value.name.trim(),
     description: form.value.description.trim(),
     tags: form.value.tags.trim(),
+    triggers: form.value.triggers.trim(),
     content: form.value.content.trim(),
-    domain: form.value.domain
+    domain: form.value.domain,
+    status: form.value.status,
+    priority: Math.min(100, Math.max(0, Number(form.value.priority) || 0)),
+    source: form.value.source,
+    supersedes: form.value.supersedes.split(/[\s,]+/).map(Number).filter((id) => Number.isInteger(id) && id > 0),
+    lastReviewedAt: form.value.lastReviewedAt
+      ? new Date(`${form.value.lastReviewedAt}T00:00:00`).toISOString()
+      : undefined,
+    confidence: form.value.confidence || undefined
   };
   try {
     if (selectedId.value !== null) {
@@ -188,9 +230,12 @@ const importSkillFiles = async (event: Event) => {
       name,
       description: `Imported from ${file.name}`,
       tags: "imported",
+      triggers: "",
       content: text,
       enabled: true,
-      domain: "global"
+      domain: "global",
+      status: "draft",
+      source: "imported"
     });
   }
   input.value = "";
@@ -344,6 +389,9 @@ onBeforeUnmount(() => {
                 <small>{{ skill.description || "No description" }}</small>
                 <span class="skill-tags">
                   <span v-if="skill.domain === 'sql'" class="skill-tag skill-tag--strong">SQL</span>
+                  <span class="skill-tag" :class="`skill-tag--${skill.status ?? 'active'}`">
+                    {{ skill.status ?? "active" }}
+                  </span>
                   <span v-for="tag in parseTags(skill.tags)" :key="`${skill.id}-${tag}`" class="skill-tag">
                     {{ tag }}
                   </span>
@@ -367,7 +415,7 @@ onBeforeUnmount(() => {
             <div class="editor-header">
               <div class="editor-title">
                 <strong>{{ selectedId === null ? "New Skill" : form.name || "Untitled Skill" }}</strong>
-                <span>{{ selectedSkill?.enabled === false ? "Disabled" : "Enabled" }}</span>
+                <span>{{ selectedSkill?.enabled === false ? "Disabled" : "Enabled" }} · {{ form.status }} · priority {{ form.priority }}</span>
               </div>
               <div class="editor-actions">
                 <button
@@ -410,6 +458,14 @@ onBeforeUnmount(() => {
                     </button>
                   </div>
                 </label>
+                <label>
+                  <span>Status</span>
+                  <MSelect v-model="form.status" :options="statusOptions" size="small" />
+                </label>
+                <label>
+                  <span>Priority (0–100)</span>
+                  <InputNumber v-model="form.priority" :min="0" :max="100" :use-grouping="false" class="skill-input" />
+                </label>
                 <label class="field-wide">
                   <span>Description</span>
                   <InputText v-model="form.description" class="skill-input" />
@@ -417,6 +473,26 @@ onBeforeUnmount(() => {
                 <label class="field-wide">
                   <span>Tags</span>
                   <InputText v-model="form.tags" class="skill-input" placeholder="suiteql, scripts, records" />
+                </label>
+                <label class="field-wide">
+                  <span>Routing triggers (one phrase per line)</span>
+                  <Textarea v-model="form.triggers" class="skill-input skill-triggers" rows="3" placeholder="characters spaced out&#10;advanced pdf spacing&#10;freemarker pdf layout" />
+                </label>
+                <label>
+                  <span>Source</span>
+                  <MSelect v-model="form.source" :options="sourceOptions" size="small" />
+                </label>
+                <label>
+                  <span>Confidence</span>
+                  <MSelect v-model="form.confidence" :options="confidenceOptions" option-label="label" option-value="value" size="small" />
+                </label>
+                <label>
+                  <span>Last reviewed</span>
+                  <InputText v-model="form.lastReviewedAt" type="date" class="skill-input" />
+                </label>
+                <label>
+                  <span>Supersedes skill IDs</span>
+                  <InputText v-model="form.supersedes" class="skill-input" placeholder="12, 18" />
                 </label>
               </div>
 
@@ -639,6 +715,17 @@ onBeforeUnmount(() => {
   color: #7b2ff7;
 }
 
+.skill-tag--draft {
+  border-color: var(--p-amber-200);
+  background: var(--p-amber-50);
+  color: var(--p-amber-700);
+}
+
+.skill-tag--deprecated {
+  text-decoration: line-through;
+  opacity: 0.72;
+}
+
 .skill-editor {
   display: flex;
   flex: 1 1 0;
@@ -730,13 +817,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .field-grid {
   display: grid;
   flex-shrink: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -772,6 +859,12 @@ onBeforeUnmount(() => {
   font-size: 0.82rem;
 }
 
+.skill-triggers {
+  resize: vertical;
+  min-height: 4.8rem;
+  padding: 8px 10px;
+}
+
 .skill-content {
   display: block;
   height: 100%;
@@ -785,7 +878,7 @@ onBeforeUnmount(() => {
 
 .content-panel {
   flex: 1;
-  min-height: 0;
+  min-height: 280px;
   overflow: hidden;
   border: 1px solid var(--p-slate-200);
   border-radius: 8px;

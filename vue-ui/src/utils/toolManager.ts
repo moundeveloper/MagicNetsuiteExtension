@@ -6,6 +6,7 @@ import { Parser } from "expr-eval";
 import { searchSkills, getSkillContent } from "./skillsDb";
 import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 import { agentCache } from "./agentCacheStore";
+import { customToolAgentTools } from "./customToolAgentTools";
 
 type SuiteqlTableRef = {
   id: string;
@@ -285,6 +286,7 @@ const fetchAndCacheFileContent = async (
 };
 
 export const tools: ToolDefinition[] = [
+  ...customToolAgentTools,
   {
     name: "calculate",
     description:

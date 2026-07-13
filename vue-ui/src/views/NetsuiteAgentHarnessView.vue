@@ -400,6 +400,17 @@
                           class="message-renderer"
                           :content="resolveViewPlaceholders(turn.finalItem.content)"
                         />
+                        <div v-if="turn.finalItem.content && turn.userItem" class="final-response-actions">
+                          <button
+                            type="button"
+                            class="save-skill-btn"
+                            title="Create an editable draft skill from this question and answer"
+                            @click="openSaveAnswerAsSkill(turn)"
+                          >
+                            <i class="pi pi-bookmark" />
+                            <span>Save as Skill</span>
+                          </button>
+                        </div>
                         <div
                           v-else-if="turn.finalItem.status === 'running' || turn.finalItem.status === 'pending'"
                           class="typing-line"
@@ -719,6 +730,10 @@
               </div>
               <div class="manager-chip-row">
                 <span v-if="skill.domain === 'sql'" class="manager-chip manager-chip--strong">SQL</span>
+                <span class="manager-chip" :class="`manager-chip--${skill.status ?? 'active'}`">
+                  {{ skill.status ?? "active" }}
+                </span>
+                <span class="manager-chip">P{{ skill.priority ?? 50 }}</span>
                 <span v-for="tag in parseSkillTags(skill.tags)" :key="`${skill.id}-${tag}`" class="manager-chip">
                   {{ tag }}
                 </span>
@@ -726,6 +741,8 @@
               <div class="manager-card-meta">
                 <span><i class="pi pi-clock" />{{ formatSkillDate(skill.updatedAt) }}</span>
                 <span><i class="pi pi-align-left" />{{ formatSkillSize(skill.content.length) }}</span>
+                <span><i class="pi pi-database" />{{ skill.source ?? "manual" }}</span>
+                <span v-if="skill.supersedes?.length"><i class="pi pi-arrow-up-right" />supersedes {{ skill.supersedes.join(", ") }}</span>
               </div>
               <div class="manager-card-actions">
                 <button type="button" class="agent-secondary-btn" @click="openEditSkillDialog(skill)">
@@ -945,12 +962,46 @@
             <InputText v-model="skillForm.tags" class="agent-input" placeholder="suiteql, records, scripts" />
           </label>
           <label>
+            <span>Routing triggers (one phrase per line)</span>
+            <Textarea v-model="skillForm.triggers" class="agent-textarea" rows="3" placeholder="characters spaced out&#10;advanced pdf spacing&#10;freemarker pdf layout" />
+          </label>
+          <label>
             <span>Domain</span>
             <div class="skill-domain-toggle">
               <button type="button" :class="{ active: skillForm.domain === 'global' }" @click="skillForm.domain = 'global'">Global</button>
               <button type="button" :class="{ active: skillForm.domain === 'sql' }" @click="skillForm.domain = 'sql'">SQL</button>
             </div>
           </label>
+          <div class="skill-trust-grid">
+            <label>
+              <span>Status</span>
+              <MSelect v-model="skillForm.status" :options="skillStatusOptions" size="small" />
+            </label>
+            <label>
+              <span>Priority (0–100)</span>
+              <InputNumber v-model="skillForm.priority" :min="0" :max="100" :use-grouping="false" class="agent-input" />
+            </label>
+            <label>
+              <span>Source</span>
+              <MSelect v-model="skillForm.source" :options="skillSourceOptions" size="small" />
+            </label>
+            <label>
+              <span>Confidence</span>
+              <MSelect v-model="skillForm.confidence" :options="skillConfidenceOptions" option-label="label" option-value="value" size="small" />
+            </label>
+            <label>
+              <span>Last reviewed</span>
+              <InputText v-model="skillForm.lastReviewedAt" type="date" class="agent-input" />
+            </label>
+            <label>
+              <span>Supersedes IDs</span>
+              <InputText v-model="skillForm.supersedes" class="agent-input" placeholder="12, 18" />
+            </label>
+          </div>
+          <div v-if="skillSourceConversation" class="skill-source-note">
+            <i class="pi pi-comments" />
+            Captured from conversation {{ skillSourceConversation.threadId || "metadata" }}
+          </div>
           <label>
             <span>Content</span>
             <Textarea v-model="skillForm.content" class="agent-textarea skill-content-textarea" rows="12" auto-resize />
@@ -1136,6 +1187,7 @@ import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import FileCabinetPane from "../components/FileCabinetPane.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
+import MSelect from "../components/universal/input/MSelect.vue";
 import MessageContentRenderer from "../components/MessageContentRenderer.vue";
 import ToolApprovalDialog from "../components/ToolApprovalDialog.vue";
 import {
@@ -1164,7 +1216,12 @@ import {
   updateSkill,
   type Skill,
   type SkillExport,
+  type SkillStatus,
+  type SkillSource,
+  type SkillConfidence,
+  type SkillConversationSource,
 } from "../utils/skillsDb";
+import { captureAnswerAsSkill } from "../utils/skillCapture";
 
 type HarnessItemView = Omit<Readonly<HarnessItemRecord>, "attachments"> & {
   readonly attachments?: readonly HarnessAttachment[];
@@ -1320,18 +1377,36 @@ const skillDeleteDialogVisible = ref(false);
 const skillEditingId = ref<number | null>(null);
 const skillDeleteTarget = ref<Skill | null>(null);
 const skillFileInputRef = ref<HTMLInputElement | null>(null);
+const skillSourceConversation = ref<SkillConversationSource | undefined>();
+const skillStatusOptions = ["active", "draft", "deprecated"];
+const skillSourceOptions = ["manual", "ai_saved", "imported", "built_in"];
+const skillConfidenceOptions = ["", "low", "medium", "high"].map((value) => ({ value, label: value || "Not set" }));
 const skillForm = ref<{
   name: string;
   description: string;
   tags: string;
+  triggers: string;
   content: string;
   domain: "global" | "sql";
+  status: SkillStatus;
+  priority: number;
+  source: SkillSource;
+  supersedes: string;
+  lastReviewedAt: string;
+  confidence: SkillConfidence | "";
 }>({
   name: "",
   description: "",
   tags: "",
+  triggers: "",
   content: "",
   domain: "global",
+  status: "active",
+  priority: 50,
+  source: "manual",
+  supersedes: "",
+  lastReviewedAt: new Date().toISOString().slice(0, 10),
+  confidence: "",
 });
 
 const ACCEPTED_TEXT_EXTENSIONS = new Set([
@@ -1773,12 +1848,20 @@ const openCreateSkillDialog = () => {
   skillGeneratePrompt.value = "";
   skillGenerateProgress.value = "";
   skillGenerateError.value = "";
+  skillSourceConversation.value = undefined;
   skillForm.value = {
     name: "",
     description: "",
     tags: "",
+    triggers: "",
     content: "",
     domain: "global",
+    status: "active",
+    priority: 50,
+    source: "manual",
+    supersedes: "",
+    lastReviewedAt: new Date().toISOString().slice(0, 10),
+    confidence: "",
   };
   skillDialogVisible.value = true;
 };
@@ -1789,12 +1872,20 @@ const openEditSkillDialog = (skill: Skill) => {
   skillGeneratePrompt.value = "";
   skillGenerateProgress.value = "";
   skillGenerateError.value = "";
+  skillSourceConversation.value = skill.sourceConversation;
   skillForm.value = {
     name: skill.name,
     description: skill.description,
     tags: skill.tags,
+    triggers: skill.triggers ?? "",
     content: skill.content,
     domain: skill.domain ?? "global",
+    status: skill.status ?? "active",
+    priority: skill.priority ?? 50,
+    source: skill.source ?? "manual",
+    supersedes: (skill.supersedes ?? []).join(", "),
+    lastReviewedAt: (skill.lastReviewedAt ?? "").slice(0, 10),
+    confidence: skill.confidence ?? "",
   };
   skillDialogVisible.value = true;
 };
@@ -1804,8 +1895,18 @@ const saveSkillForm = async () => {
     name: skillForm.value.name.trim(),
     description: skillForm.value.description.trim(),
     tags: skillForm.value.tags.trim(),
+    triggers: skillForm.value.triggers.trim(),
     content: skillForm.value.content.trim(),
     domain: skillForm.value.domain,
+    status: skillForm.value.status,
+    priority: Math.min(100, Math.max(0, Number(skillForm.value.priority) || 0)),
+    source: skillForm.value.source,
+    supersedes: skillForm.value.supersedes.split(/[\s,]+/).map(Number).filter((id) => Number.isInteger(id) && id > 0),
+    lastReviewedAt: skillForm.value.lastReviewedAt
+      ? new Date(`${skillForm.value.lastReviewedAt}T00:00:00`).toISOString()
+      : undefined,
+    confidence: skillForm.value.confidence || undefined,
+    sourceConversation: skillSourceConversation.value,
   };
   if (!payload.name || !payload.content) return;
 
@@ -1816,6 +1917,36 @@ const saveSkillForm = async () => {
   }
   skillDialogVisible.value = false;
   await refreshSkills();
+};
+
+const openSaveAnswerAsSkill = (turn: HarnessTurnView) => {
+  if (!turn.userItem?.content || !turn.finalItem?.content) return;
+  const captured = captureAnswerAsSkill(
+    turn.userItem.content,
+    turn.finalItem.content,
+    { threadId: harness.activeThread.value?.threadId, turnId: turn.turnId }
+  );
+  skillEditingId.value = null;
+  skillEditorMode.value = "manual";
+  skillGeneratePrompt.value = "";
+  skillGenerateProgress.value = "";
+  skillGenerateError.value = "";
+  skillSourceConversation.value = captured.sourceConversation;
+  skillForm.value = {
+    name: captured.name,
+    description: captured.description,
+    tags: captured.tags,
+    triggers: captured.triggers,
+    content: captured.content,
+    domain: "global",
+    status: "draft",
+    priority: 40,
+    source: "ai_saved",
+    supersedes: "",
+    lastReviewedAt: "",
+    confidence: "medium",
+  };
+  skillDialogVisible.value = true;
 };
 
 const toggleSkillEnabled = async (skill: Skill) => {
@@ -1859,8 +1990,16 @@ const importSkillFiles = async (event: Event) => {
               name: item.name,
               description: item.description || "",
               tags: item.tags || "",
+              triggers: item.triggers || "",
               content: item.content,
               domain: item.domain ?? "global",
+              status: item.status ?? "draft",
+              priority: item.priority ?? 50,
+              source: item.source ?? "imported",
+              supersedes: item.supersedes ?? [],
+              lastReviewedAt: item.lastReviewedAt,
+              confidence: item.confidence,
+              sourceConversation: item.sourceConversation,
             }))
         );
       } else {
@@ -1868,8 +2007,11 @@ const importSkillFiles = async (event: Event) => {
           name: file.name.replace(/\.(md|txt)$/i, ""),
           description: `Imported from ${file.name}`,
           tags: "",
+          triggers: "",
           content: text,
           enabled: true,
+          status: "draft",
+          source: "imported",
         });
       }
     } catch (err) {
@@ -2531,11 +2673,15 @@ Rules:
     }>;
 
     skillForm.value = {
+      ...skillForm.value,
       name: String(parsed.name || skillForm.value.name || "Generated NetSuite Skill"),
       description: String(parsed.description || skillForm.value.description || "Generated NetSuite operating guidance."),
       tags: String(parsed.tags || skillForm.value.tags || "netsuite"),
       domain: parsed.domain === "sql" ? "sql" : "global",
       content: String(parsed.content || skillForm.value.content || ""),
+      status: "draft",
+      source: "ai_saved",
+      lastReviewedAt: "",
     };
     skillEditorMode.value = "manual";
   } catch (err) {
@@ -3436,6 +3582,17 @@ onBeforeUnmount(() => {
   color: var(--harness-accent-strong);
 }
 
+.manager-chip--draft {
+  border-color: var(--p-amber-200);
+  background: var(--p-amber-50);
+  color: var(--p-amber-700);
+}
+
+.manager-chip--deprecated {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
 .skill-manager-card {
   gap: 8px;
 }
@@ -4166,6 +4323,34 @@ onBeforeUnmount(() => {
 
 .final-response {
   min-width: 0;
+}
+
+.final-response-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
+.save-skill-btn {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--harness-accent-border);
+  border-radius: 6px;
+  background: var(--harness-accent-soft);
+  color: var(--harness-accent-strong);
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.save-skill-btn:hover {
+  border-color: #c6a7ff;
+  background: #faf7ff;
 }
 
 .final-response--pending {
@@ -5030,6 +5215,28 @@ onBeforeUnmount(() => {
 
 .skill-editor-form {
   gap: 10px;
+}
+
+.skill-trust-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.skill-source-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #d8c6ff;
+  border-radius: 6px;
+  background: #faf7ff;
+  color: #62696e;
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-editor-form label {
