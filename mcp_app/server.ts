@@ -91,11 +91,11 @@ const NETSUITE_TEMPLATE_RECREATION_WORKFLOW = `MANDATORY WORKFLOW for "recreate 
    - Do NOT deploy or upload to NetSuite unless the user explicitly asks.
    - Do NOT call conversion/render tools before explicit user approval.
 
-3. Build a local, BFO-safe FreeMarker template file:
-   - Use a .ftl/.xml Advanced PDF/HTML <pdf> document.
+3. Build a faithful local HTML design using BFO-compatible constraints:
+   - Match the supplied reference image in HTML first; do not hand-write the final SDF object.
    - Use tables, inline widths, pt units, explicit <p align="..."> text wrappers, self-closing XML tags.
    - Avoid browser-only CSS: flex, grid, box-shadow, gradients, CSS variables, unsupported selectors.
-   - Bind invoice fields with record.*, companyInformation.*, and <#list record.item as item>.
+   - Use representative values during HTML matching; bind record.* fields during the guarded FreeMarker stage.
 
 4. Preview locally with Playwright (non-blocking):
    - Call magic_netsuite_template_preview_playwright with the local HTML/FTL-safe preview.
@@ -103,13 +103,15 @@ const NETSUITE_TEMPLATE_RECREATION_WORKFLOW = `MANDATORY WORKFLOW for "recreate 
    - Call magic_netsuite_template_review_wait only after the review is open.
    - Iterate with magic_netsuite_template_review_update until the screenshot matches the source design.
 
-5. Ask for explicit approval:
-   - If user requests fixes, revise locally and preview again.
-   - Local approval does NOT convert, render, upload, or deploy by default.
-   - If user approves, then ask separately whether they want conversion/render and whether they want deployment.
+5. Run the guarded review flow:
+   - HTML fixes return to the agent until the design is approved.
+   - Approving HTML automatically creates the guarded session, converts to BFO-safe FreeMarker, and renders a PDF with NetSuite print tooling.
+   - Rendering the PDF is never completion: remain in the same review wait until the user explicitly approves the final FreeMarker/PDF.
+   - FreeMarker/PDF fixes return to the agent for direct FTL revision and NetSuite rerendering.
+   - Final approval completes the review. Deployment remains a separate explicit action.
 
-6. Only after approval:
-   - Use renderer/conversion/render tools, or SDF deployment tools, only for the specific action the user approved.`;
+6. After final FreeMarker/PDF approval:
+   - Ask separately before SDF deployment or changing the NetSuite account.`;
 
 let bridgeSocket: net.Socket | null = null;
 let bridgeConnecting: Promise<net.Socket> | null = null;
@@ -417,6 +419,22 @@ async function imagePathToDataUrl(filePath: string): Promise<string> {
   return `data:${mime};base64,${buffer.toString("base64")}`;
 }
 
+async function resolveTemplateHtml(html: string | undefined, htmlPath?: string): Promise<string> {
+  const explicitPath = String(htmlPath || "").trim();
+  const value = String(html || "").trim();
+  const candidatePath = explicitPath || (!value.includes("<") && /\.html?$/i.test(value) ? value : "");
+  if (candidatePath) {
+    try {
+      return await fs.readFile(path.resolve(candidatePath), "utf8");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Could not load the HTML preview file "${candidatePath}": ${detail}`);
+    }
+  }
+  if (!value) throw new Error("HTML content or htmlPath is required.");
+  return value;
+}
+
 // Turn a Playwright ControlResult into an MCP tool result, attaching the
 // screenshot (if any) as an image block so Claude can see the Suitelet.
 function controlToolResult(data: ControlResult, okMessage: string): CallToolResult {
@@ -652,7 +670,7 @@ export function createServer(): McpServer {
   server.registerTool("magic_netsuite_recreate_template_workflow", {
     title: "Start NetSuite Template Recreation Workflow",
     description:
-      "CALL THIS FIRST whenever the user asks to recreate, clone, match, or build an invoice/template for NetSuite. Returns the mandatory step-by-step workflow: load NetSuite FreeMarker/BFO skill, build local .ftl first, preview via Playwright screenshot, wait for approval, then optionally render/deploy. This tool exists to prevent skipping straight to XML, SDF, upload, renderer, or deployment.",
+      "CALL THIS FIRST whenever the user asks to recreate, clone, match, or build an invoice/template for NetSuite. The guarded flow is: load the FreeMarker/BFO skill, reproduce the reference in compatible HTML, iterate visually, approve HTML, convert and print through NetSuite, iterate on FreeMarker/PDF, then approve final output before optional deployment.",
     inputSchema: {
       recordType: z.string().optional().describe("Target NetSuite record type, e.g. invoice."),
       designName: z.string().optional().describe("Short label for the source design/template."),
@@ -684,6 +702,27 @@ export function createServer(): McpServer {
     }, "Skill search is complete. Load the best matching NetSuite FreeMarker/BFO skill, then build and preview a local template before any conversion, render, upload, or deploy.");
   });
 
+  function pdfDataUrlFromRenderResult(value: unknown): { pdfDataUrl: string; renderError: string } {
+    if (!isRecord(value)) return { pdfDataUrl: "", renderError: value ? "NetSuite returned an invalid PDF render result." : "" };
+    if (value.success === false || value.error) {
+      return { pdfDataUrl: "", renderError: String(value.error || "NetSuite PDF rendering failed.") };
+    }
+    const pdf = typeof value.pdf === "string" ? value.pdf.trim() : "";
+    if (!pdf) return { pdfDataUrl: "", renderError: "NetSuite did not return PDF data." };
+    const mimeType = typeof value.mimeType === "string" && value.mimeType ? value.mimeType : "application/pdf";
+    return {
+      pdfDataUrl: pdf.startsWith("data:") ? pdf : `data:${mimeType};base64,${pdf}`,
+      renderError: "",
+    };
+  }
+
+  function appendTemplateArtifactImages(result: CallToolResult, preview: Record<string, unknown>): void {
+    const htmlScreenshot = typeof preview.htmlScreenshot === "string" ? preview.htmlScreenshot : "";
+    const pdfScreenshot = typeof preview.pdfScreenshot === "string" ? preview.pdfScreenshot : "";
+    if (htmlScreenshot) result.content.push({ type: "image", data: htmlScreenshot, mimeType: "image/jpeg" });
+    if (pdfScreenshot) result.content.push({ type: "image", data: pdfScreenshot, mimeType: "image/jpeg" });
+  }
+
   async function finishTemplateReviewAction(opts: {
     timeoutMs?: number;
     convertOnApprove?: boolean;
@@ -694,9 +733,9 @@ export function createServer(): McpServer {
   }): Promise<CallToolResult> {
     const {
       timeoutMs = 900000,
-      convertOnApprove = false,
+      convertOnApprove = true,
       deployIfMissing = false,
-      renderPdf = false,
+      renderPdf = true,
       recordType = "",
       recordId = "",
     } = opts;
@@ -715,7 +754,7 @@ export function createServer(): McpServer {
       );
     }
 
-    if (review.status === "ftl_approved") {
+    if (review.status === "freemarker_approved") {
       return toolResult(
         {
           ok: true,
@@ -723,13 +762,13 @@ export function createServer(): McpServer {
           status: review.status,
           feedback: review.feedback,
           freemarker: review.freemarker,
-          renderedResult: review.renderedResult,
+          pdfReady: Boolean(review.pdfDataUrl),
         },
         "The user approved the generated FreeMarker output. The review workflow is complete; deployment still requires separate explicit permission.",
       );
     }
 
-    if (review.status !== "approved") {
+    if (review.status === "html_changes_requested") {
       return toolResult(
         {
           ok: true,
@@ -738,80 +777,83 @@ export function createServer(): McpServer {
           feedback: review.feedback,
           html: review.html,
         },
-        "User requested fixes. Apply the feedback, then call magic_netsuite_template_review_update with the revised HTML.",
+        "The user requested HTML fixes. Apply them using the loaded NetSuite FreeMarker/BFO skill, then call magic_netsuite_template_review_update with the revised html.",
       );
     }
 
-    if (!convertOnApprove) {
+    if (review.status === "freemarker_changes_requested") {
       return toolResult(
         {
           ok: true,
           reviewId: review.reviewId,
           status: review.status,
           feedback: review.feedback,
-          html: review.html,
+          freemarker: review.freemarker,
+          sessionId: review.sessionId,
         },
-        "User approved the local preview. Ask separately whether they want FreeMarker conversion/render and whether they want NetSuite deployment; do not infer either permission.",
+        "The user requested FreeMarker/PDF fixes. Revise the BFO-safe FreeMarker using the loaded skill, then call magic_netsuite_template_review_update with freemarker and rerenderFreemarker:true.",
       );
+    }
+
+    if (review.status !== "html_approved") {
+      return toolResult({ ...review }, `Template review is currently ${review.status}.`);
+    }
+
+    if (!convertOnApprove) {
+      return toolResult({ ...review }, "HTML was approved. Call magic_netsuite_template_review_wait with convertOnApprove:true to continue to FreeMarker.");
     }
 
     const effectiveRecordType = recordType || String(review.recordType ?? "");
     const effectiveRecordId = recordId || String(review.recordId ?? "");
-    const previewData = parseToolJson(await callExtensionTool("netsuite_freemarker_preview_html", {
+    await playwrightController.updateTemplateReview({ status: "converting", renderError: "", feedback: "" });
+    try {
+      const previewData = parseToolJson(await callExtensionTool("netsuite_freemarker_preview_html", {
       html: String(review.html ?? ""),
       title: String(review.title ?? "NetSuite Template Preview"),
       recordType: effectiveRecordType,
       recordId: effectiveRecordId,
       deployIfMissing,
     }));
-    const previewStructured = isRecord(previewData) ? previewData : { value: previewData };
-    if (previewStructured.needsDeploymentApproval) {
-      const message = "Renderer server components are missing. Ask the user for deployment approval before converting.";
-      await playwrightController.updateTemplateReview({ freemarker: message, status: "approved" });
-      return toolResult(previewStructured, message);
-    }
+      const previewStructured = isRecord(previewData) ? previewData : { value: previewData };
+      if (previewStructured.needsDeploymentApproval) {
+        const message = "Renderer server components are missing. Ask the user for deployment approval before converting.";
+        await playwrightController.updateTemplateReview({ renderError: message, status: "render_error" });
+        return toolResult(previewStructured, message);
+      }
 
-    const sessionId = String(previewStructured.sessionId ?? "");
-    if (!sessionId) throw new Error("FreeMarker preview session did not return a sessionId.");
-    await callExtensionTool("netsuite_freemarker_set_approval", { sessionId, approved: true, feedback: String(review.feedback ?? "") });
-    const convertedData = parseToolJson(await callExtensionTool("netsuite_freemarker_convert_approved", {
+      const sessionId = String(previewStructured.sessionId ?? "");
+      if (!sessionId) throw new Error("FreeMarker preview session did not return a sessionId.");
+      await callExtensionTool("netsuite_freemarker_set_approval", { sessionId, approved: true, feedback: String(review.feedback ?? "") });
+      const convertedData = parseToolJson(await callExtensionTool("netsuite_freemarker_convert_approved", {
       sessionId,
-      renderPdf,
+      renderPdf: renderPdf && Boolean(effectiveRecordType && effectiveRecordId),
       recordType: effectiveRecordType,
       recordId: effectiveRecordId,
     }));
-    const converted = isRecord(convertedData) ? convertedData : { value: convertedData };
-    const freemarker = typeof converted.freemarker === "string" ? converted.freemarker : JSON.stringify(converted, null, 2);
-    const renderedResult =
-      typeof converted.renderResult === "string"
-        ? converted.renderResult
-        : converted.renderResult
-          ? JSON.stringify(converted.renderResult, null, 2)
-          : "";
-    const updated = await playwrightController.updateTemplateReview({
+      const converted = isRecord(convertedData) ? convertedData : { value: convertedData };
+      const freemarker = typeof converted.freemarker === "string" ? converted.freemarker : JSON.stringify(converted, null, 2);
+      const rendered = pdfDataUrlFromRenderResult(converted.renderResult);
+      if (!effectiveRecordId && renderPdf) rendered.renderError = "Select a NetSuite record ID to generate the PDF preview.";
+      await playwrightController.updateTemplateReview({
       freemarker,
-      renderedResult,
-      status: "ftl_review",
-      feedback: String(review.feedback ?? ""),
+      pdfDataUrl: rendered.pdfDataUrl,
+      renderError: rendered.renderError,
+      sessionId,
+      status: "freemarker_review",
+      feedback: "",
     });
-    const result = toolResult(
-      {
-        ok: true,
-        reviewId: review.reviewId,
-        status: "ftl_review",
-        sessionId,
+      // Rendering is not completion. Keep this same guarded request alive until
+      // the user explicitly approves the FreeMarker/PDF or asks for another fix.
+      return finishTemplateReviewAction({
+        ...opts,
         recordType: effectiveRecordType,
         recordId: effectiveRecordId,
-        freemarker,
-        renderedResult,
-        renderResult: converted.renderResult,
-      },
-      "User approved the HTML. FreeMarker output was generated and pushed into the Playwright review pane. Continue waiting for Send Fixes or End.",
-    );
-    if (updated.screenshot) {
-      result.content.push({ type: "image", data: updated.screenshot, mimeType: "image/jpeg" });
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await playwrightController.updateTemplateReview({ status: "render_error", renderError: message });
+      throw error;
     }
-    return result;
   }
 
   function templateReviewOptionContext(recordType = "", recordId = ""): {
@@ -833,22 +875,76 @@ export function createServer(): McpServer {
     };
   }
 
+  async function loadTemplateReviewRecordOptions(recordType = "invoice"): Promise<{
+    recordTypeOptions: string[];
+    recordIdOptions: string[];
+    recordTypeLabels: Record<string, string>;
+    recordIdLabels: Record<string, string>;
+  }> {
+    const fallback = templateReviewOptionContext(recordType, "");
+    const recordTypes = new Set(fallback.recordTypeOptions);
+    const recordIds = new Set<string>();
+    const recordTypeLabels: Record<string, string> = {};
+    const recordIdLabels: Record<string, string> = {};
+    try {
+      const data = parseToolJson(await callExtensionTool("netsuite_list_record_types"));
+      for (const row of rowsFrom(data)) {
+        const id = String(row.id ?? row.scriptId ?? "").trim().toLowerCase();
+        if (id) {
+          recordTypes.add(id);
+          recordTypeLabels[id] = String(row.name ?? row.label ?? row.id ?? id);
+        }
+      }
+    } catch {
+      /* Keep the current type available when the extension is temporarily offline. */
+    }
+    let lastError = "";
+    for (const sql of recordSearchQueries(recordType || "invoice", "", 100)) {
+      try {
+        const rows = await runSuiteQLRows(sql);
+        for (const row of rows) {
+          const id = String(row.id ?? row.ID ?? "").trim();
+          if (id) {
+            recordIds.add(id);
+            recordIdLabels[id] = toLabel(row);
+          }
+        }
+        if (rows.length || sql.includes("SELECT id FROM")) break;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+    }
+    if (!recordIds.size && lastError) {
+      // An empty list is valid; the editable ID input remains available.
+    }
+    return {
+      recordTypeOptions: [...recordTypes].sort((a, b) => a.localeCompare(b)),
+      recordIdOptions: [...recordIds],
+      recordTypeLabels,
+      recordIdLabels,
+    };
+  }
+
+  playwrightController.setTemplateRecordOptionsResolver(loadTemplateReviewRecordOptions);
+
   server.registerTool("magic_netsuite_template_preview_playwright", {
     title: "Review Local NetSuite Template in Playwright",
     description:
-      "Open the full Playwright review workflow: reference image on the left, rendered HTML in the middle, FreeMarker/result pane on the right, fixes textarea, and Approve/Fixes buttons. Use this for iterative design matching BEFORE approval. This does not deploy, upload, render in NetSuite, create a FreeMarker approval session, or touch server components.",
+      "Open the professional Reference → HTML → FreeMarker → NetSuite PDF → Final Approval workflow. For recreation from an image, forward the prompt attachment with referenceImagePath or referenceImageDataUrl; missing references are rejected by default instead of silently opening an empty panel.",
     inputSchema: {
       html: z.string().describe("Self-contained local preview HTML or BFO-safe template preview."),
+      htmlPath: z.string().optional().describe("Absolute path to a local HTML preview file. Prefer this over passing the path in html."),
       title: z.string().optional(),
       templateFile: z.string().optional().describe("Template file name to show in the review header."),
       referenceImagePath: z.string().optional().describe("Optional local image path for the source image used in the prompt."),
       referenceImageDataUrl: z.string().optional().describe("Optional data URL for the source image used in the prompt."),
       referenceImageUrl: z.string().optional().describe("Optional URL/path for the source image used in the prompt."),
+      allowMissingReference: z.boolean().optional().describe("Allow opening without a source reference. Defaults to false."),
       waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to false so the initial call returns a screenshot and review ID without MCP timeout/retry duplication."),
       timeoutMs: z.number().optional(),
-      convertOnApprove: z.boolean().optional().describe("When true, convert after approval. Defaults to false; set true only after explicit conversion/render permission."),
+      convertOnApprove: z.boolean().optional().describe("Convert automatically after HTML approval. Defaults to true."),
       deployIfMissing: z.boolean().optional(),
-      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to false and requires explicit render permission."),
+      renderPdf: z.boolean().optional().describe("Render the converted template with NetSuite print tooling. Defaults to true."),
       recordType: z.string().optional(),
       recordId: z.string().optional(),
       recordTypeOptions: z.array(z.string()).optional(),
@@ -856,31 +952,43 @@ export function createServer(): McpServer {
     },
   }, async ({
     html,
+    htmlPath = "",
     title = "NetSuite Template Preview",
     templateFile = "invoice_template.ftl",
     referenceImagePath = "",
     referenceImageDataUrl = "",
     referenceImageUrl = "",
+    allowMissingReference = false,
     waitForAction = false,
     timeoutMs = 900000,
-    convertOnApprove = false,
+    convertOnApprove = true,
     deployIfMissing = false,
-    renderPdf = false,
+    renderPdf = true,
     recordType = "",
     recordId = "",
     recordTypeOptions,
     recordIdOptions,
   }) => {
+    const resolvedHtml = await resolveTemplateHtml(html, htmlPath);
     const resolvedReferenceImageDataUrl = referenceImageDataUrl || (referenceImagePath ? await imagePathToDataUrl(referenceImagePath) : "");
+    if (!allowMissingReference && !resolvedReferenceImageDataUrl && !referenceImageUrl) {
+      throw new Error("A source reference image is required for template recreation. Forward the prompt attachment as referenceImagePath or referenceImageDataUrl (or set allowMissingReference:true for a reference-free workflow).");
+    }
     const optionContext = templateReviewOptionContext(recordType, recordId);
+    const selectedRecordType = recordType || (optionContext.recordTypeOptions.length === 1 ? optionContext.recordTypeOptions[0] : "invoice");
+    const selectedRecordId = recordId || (optionContext.recordIdOptions.length === 1 ? optionContext.recordIdOptions[0] : "");
+    const liveOptions = await loadTemplateReviewRecordOptions(selectedRecordType);
+    if (selectedRecordId && !liveOptions.recordIdOptions.includes(selectedRecordId)) liveOptions.recordIdOptions.unshift(selectedRecordId);
     const preview = await playwrightController.openTemplateReview({
-      html,
+      html: resolvedHtml,
       title,
       templateFile,
-      recordType,
-      recordId,
-      recordTypeOptions: recordTypeOptions?.length ? recordTypeOptions : optionContext.recordTypeOptions,
-      recordIdOptions: recordIdOptions?.length ? recordIdOptions : optionContext.recordIdOptions,
+      recordType: selectedRecordType,
+      recordId: selectedRecordId,
+      recordTypeOptions: recordTypeOptions?.length ? recordTypeOptions : liveOptions.recordTypeOptions,
+      recordIdOptions: recordIdOptions?.length ? recordIdOptions : liveOptions.recordIdOptions,
+      recordTypeLabels: liveOptions.recordTypeLabels,
+      recordIdLabels: liveOptions.recordIdLabels,
       referenceImageDataUrl: resolvedReferenceImageDataUrl,
       referenceImageUrl,
     });
@@ -891,8 +999,8 @@ export function createServer(): McpServer {
         convertOnApprove,
         deployIfMissing,
         renderPdf,
-        recordType,
-        recordId,
+        recordType: selectedRecordType,
+        recordId: selectedRecordId,
       });
     }
 
@@ -903,12 +1011,11 @@ export function createServer(): McpServer {
         title: preview.title,
         status: preview.status,
         feedback: preview.feedback,
+        referenceLoaded: preview.referenceLoaded,
       },
       "Template review opened in Playwright. Call magic_netsuite_template_review_wait next; it will return when the user clicks Approve or Send Fixes.",
     );
-    if (preview.screenshot) {
-      result.content.push({ type: "image", data: preview.screenshot, mimeType: "image/jpeg" });
-    }
+    appendTemplateArtifactImages(result, preview);
     return result;
   });
 
@@ -918,13 +1025,15 @@ export function createServer(): McpServer {
       "Live-update the already-open Playwright template review after applying fixes. Keeps the same browser window and refreshes the rendered HTML/reference/FreeMarker pane.",
     inputSchema: {
       html: z.string().optional(),
+      htmlPath: z.string().optional(),
       title: z.string().optional(),
       templateFile: z.string().optional(),
       referenceImagePath: z.string().optional(),
       referenceImageDataUrl: z.string().optional(),
       referenceImageUrl: z.string().optional(),
       freemarker: z.string().optional(),
-      renderedResult: z.string().optional(),
+      rerenderFreemarker: z.boolean().optional().describe("Render the supplied/current FreeMarker through NetSuite and return to FreeMarker/PDF review."),
+      changeSummary: z.string().optional().describe("Concise description of the changes applied from the user's feedback. Shown as the agent response in Review history."),
       feedback: z.string().optional(),
       waitForAction: z.boolean().optional().describe("Wait for Approve/Send Fixes before returning. Defaults to false."),
       timeoutMs: z.number().optional(),
@@ -937,11 +1046,71 @@ export function createServer(): McpServer {
       recordIdOptions: z.array(z.string()).optional(),
     },
   }, async (args) => {
+    const resolvedHtml = args.html !== undefined || args.htmlPath ? await resolveTemplateHtml(args.html, args.htmlPath) : undefined;
     const resolvedReferenceImageDataUrl = args.referenceImageDataUrl || (args.referenceImagePath ? await imagePathToDataUrl(args.referenceImagePath) : undefined);
     const hasOptionSource = Boolean(args.recordType || args.recordId || args.recordTypeOptions?.length || args.recordIdOptions?.length || selectedContext?.selectedItems?.length);
     const optionContext = hasOptionSource ? templateReviewOptionContext(args.recordType, args.recordId) : { recordTypeOptions: [], recordIdOptions: [] };
+    const current = playwrightController.templateReviewState();
+    const wasHtmlFix = current.status === "html_changes_requested" && Boolean(resolvedHtml);
+    const wasFreemarkerFix = current.status === "freemarker_changes_requested" && Boolean(args.freemarker || args.rerenderFreemarker);
+    let freemarker = args.freemarker;
+    let pdfDataUrl: string | undefined;
+    let renderError: string | undefined;
+    let sessionId = typeof current.sessionId === "string" ? current.sessionId : "";
+    let nextStatus: "html_review" | "freemarker_review" | undefined = resolvedHtml ? "html_review" : undefined;
+
+    if (args.rerenderFreemarker) {
+      freemarker = freemarker || (typeof current.freemarker === "string" ? current.freemarker : "");
+      if (!freemarker.trim()) throw new Error("freemarker is required for NetSuite rerendering.");
+      if (!sessionId) throw new Error("The approved FreeMarker session could not be recovered; approve the HTML stage again.");
+      const effectiveRecordType = args.recordType || String(current.recordType || "");
+      const effectiveRecordId = args.recordId || String(current.recordId || "");
+      if (!effectiveRecordType || !effectiveRecordId) throw new Error("recordType and recordId are required for NetSuite PDF rendering.");
+      try {
+        const rerenderedData = parseToolJson(await callExtensionTool("netsuite_freemarker_convert_approved", {
+          sessionId,
+          freemarker,
+          renderPdf: true,
+          recordType: effectiveRecordType,
+          recordId: effectiveRecordId,
+        }));
+        const rerendered = isRecord(rerenderedData) ? rerenderedData : { value: rerenderedData };
+        const rendered = pdfDataUrlFromRenderResult(rerendered.renderResult);
+        pdfDataUrl = rendered.pdfDataUrl;
+        renderError = rendered.renderError;
+        nextStatus = "freemarker_review";
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await playwrightController.updateTemplateReview({ freemarker, status: "render_error", renderError: message });
+        throw error;
+      }
+    } else if (args.freemarker) {
+      nextStatus = "freemarker_review";
+    }
+
+    const currentComments = (Array.isArray(current.comments) ? current.comments : []).map((comment, index) => {
+      if (!isRecord(comment) || typeof comment.id === "string") return comment;
+      return { ...comment, id: `history_${Date.now().toString(36)}_${index}` };
+    });
+    const responseText = String(args.changeSummary || "").trim() ||
+      (wasHtmlFix ? "Updated the HTML preview from your requested changes." :
+        wasFreemarkerFix ? "Updated the FreeMarker template and refreshed the NetSuite PDF preview." : "");
+    const parentComment = currentComments.find((comment) =>
+      isRecord(comment) && comment.isYou === true && typeof comment.id === "string" &&
+      !currentComments.some((candidate) => isRecord(candidate) && candidate.parentId === comment.id));
+    const comments = responseText ? [{
+      id: `response_${Date.now().toString(36)}`,
+      parentId: isRecord(parentComment) ? String(parentComment.id || "") : undefined,
+      initials: "AI",
+      name: "Magic AI",
+      time: new Date().toLocaleString(),
+      text: responseText,
+      color: "purple",
+      isYou: false,
+    }, ...currentComments] : undefined;
+
     const preview = await playwrightController.updateTemplateReview({
-      html: args.html,
+      html: resolvedHtml,
       title: args.title,
       templateFile: args.templateFile,
       recordType: args.recordType,
@@ -950,10 +1119,13 @@ export function createServer(): McpServer {
       recordIdOptions: args.recordIdOptions?.length ? args.recordIdOptions : (hasOptionSource ? optionContext.recordIdOptions : undefined),
       referenceImageDataUrl: resolvedReferenceImageDataUrl,
       referenceImageUrl: args.referenceImageUrl,
-      freemarker: args.freemarker,
-      renderedResult: args.renderedResult,
-      feedback: args.feedback,
-      status: "open",
+      freemarker,
+      pdfDataUrl,
+      renderError,
+      sessionId: sessionId || undefined,
+      feedback: args.feedback ?? "",
+      comments,
+      status: nextStatus,
     });
     if (args.waitForAction === true) {
       return finishTemplateReviewAction({
@@ -975,25 +1147,23 @@ export function createServer(): McpServer {
       },
       "Template review updated in the existing Playwright window.",
     );
-    if (preview.screenshot) {
-      result.content.push({ type: "image", data: preview.screenshot, mimeType: "image/jpeg" });
-    }
+    appendTemplateArtifactImages(result, preview);
     return result;
   });
 
   server.registerTool("magic_netsuite_template_review_wait", {
     title: "Wait for Template Review Action",
     description:
-      "Wait until the user clicks Approve or Send Fixes in the Playwright review window. If fixes are sent, returns the feedback for the agent to apply. If approved, optionally creates the guarded FreeMarker session, converts it, and live-updates the FreeMarker/result pane.",
+      "Wait for the current HTML or FreeMarker/PDF review action. HTML approval automatically advances through guarded conversion and NetSuite rendering, then this same call keeps waiting for explicit final FreeMarker/PDF approval. Rendering alone never completes the workflow; stage-specific fixes return the correct artifact and feedback to the agent.",
     inputSchema: {
       timeoutMs: z.number().optional(),
-      convertOnApprove: z.boolean().optional().describe("When true, create/approve/convert the FreeMarker session after the user approves. Defaults to false and requires explicit permission."),
+      convertOnApprove: z.boolean().optional().describe("Create/approve/convert the FreeMarker session after HTML approval. Defaults to true."),
       deployIfMissing: z.boolean().optional(),
-      renderPdf: z.boolean().optional().describe("Render the approved FreeMarker result after conversion. Defaults to false and requires explicit render permission."),
+      renderPdf: z.boolean().optional().describe("Render with NetSuite print tooling after conversion. Defaults to true."),
       recordType: z.string().optional(),
       recordId: z.string().optional(),
     },
-  }, async ({ timeoutMs = 900000, convertOnApprove = false, deployIfMissing = false, renderPdf = false, recordType = "", recordId = "" }) =>
+  }, async ({ timeoutMs = 900000, convertOnApprove = true, deployIfMissing = false, renderPdf = true, recordType = "", recordId = "" }) =>
     finishTemplateReviewAction({
       timeoutMs,
       convertOnApprove,
@@ -1093,17 +1263,22 @@ export function createServer(): McpServer {
     inputSchema: {
       sessionId: z.string(),
       renderPdf: z.boolean().optional(),
+      freemarker: z.string().optional().describe("Optional revised FreeMarker/BFO source to render instead of regenerating from HTML."),
       recordType: z.string().optional(),
       recordId: z.string().optional(),
     },
-  }, async ({ sessionId, renderPdf = true, recordType, recordId }) => {
+  }, async ({ sessionId, renderPdf = true, freemarker, recordType, recordId }) => {
     const data = parseToolJson(await callExtensionTool("netsuite_freemarker_convert_approved", {
       sessionId,
       renderPdf,
+      freemarker,
       recordType,
       recordId,
     }));
-    return toolResult(isRecord(data) ? data : { value: data }, "Approved FreeMarker preview converted.");
+    if (!isRecord(data)) return toolResult({ value: data }, "Approved FreeMarker preview converted.");
+    const { renderResult, ...structured } = data;
+    const rendered = pdfDataUrlFromRenderResult(renderResult);
+    return toolResult({ ...structured, pdfReady: Boolean(rendered.pdfDataUrl), renderError: rendered.renderError }, "Approved FreeMarker preview converted.");
   });
 
   server.registerTool("magic_netsuite_save_skill", {

@@ -3373,12 +3373,13 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_freemarker_convert_approved",
     description:
-      "POST-APPROVAL ONLY. Convert an approved HTML preview session into a FreeMarker Advanced PDF template, optionally rendering it against the selected NetSuite record. Never call this as the first response to 'recreate this template for NetSuite'; it refuses to run until the session is approved.",
+      "POST-APPROVAL ONLY. Convert an approved HTML preview session into a FreeMarker Advanced PDF template, or rerender a revised FreeMarker template from that approved session, against the selected NetSuite record.",
     inputSchema: {
       type: "object",
       properties: {
         sessionId: { type: "string", description: "Approved preview session ID." },
         renderPdf: { type: "boolean", description: "Render the converted FreeMarker template immediately. Defaults to true." },
+        freemarker: { type: "string", description: "Optional revised FreeMarker/BFO template to render instead of regenerating it from the approved HTML." },
         recordType: { type: "string", description: "Optional record type override for the render." },
         recordId: { type: "string", description: "Optional record internal ID override for the render." }
       },
@@ -5277,7 +5278,7 @@ async function handleFreemarkerApprovalStatus(args = {}) {
 
 async function handleFreemarkerConvertApproved(args = {}) {
   const session = getFreemarkerSession(args.sessionId);
-  if (!session.approved || session.status !== "approved") {
+  if (!session.approved) {
     return asMcpTextResult({
       ok: false,
       sessionId: session.sessionId,
@@ -5291,7 +5292,8 @@ async function handleFreemarkerConvertApproved(args = {}) {
   const recordType = String(args.recordType ?? session.recordType ?? "").trim();
   const recordId = String(args.recordId ?? session.recordId ?? "").trim();
   const renderPdf = args.renderPdf !== false;
-  const freemarker = htmlToFreemarkerPdf(session.html, { title: session.title });
+  const freemarkerOverride = String(args.freemarker ?? "").trim();
+  const freemarker = freemarkerOverride || htmlToFreemarkerPdf(session.html, { title: session.title });
   let renderResult = null;
 
   if (renderPdf) {

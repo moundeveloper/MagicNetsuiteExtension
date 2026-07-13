@@ -18,13 +18,13 @@ The hook reads:
 
 or the path in `MAGIC_NS_TEMPLATE_REVIEW_STATE`.
 
-When the review status still needs agent work (`open`, `needs_changes`, or `ftl_review`), the hook returns:
+When the workflow still needs agent work (`html_review`, `html_changes_requested`, `freemarker_review`, `freemarker_changes_requested`, or `render_error`), the hook blocks stopping.
 
 ```json
 {
   "decision": "block",
-  "reason": "The NetSuite template review still needs action. Call magic_netsuite_template_review_wait and continue after the user clicks Send Fixes, Approve Design, or End."
+  "reason": "The NetSuite template workflow is still active. Call magic_netsuite_template_review_wait; apply HTML fixes in the HTML stage, FreeMarker fixes with NetSuite rerendering in the FreeMarker/PDF stage, or finish after final approval."
 }
 ```
 
-It allows stopping when no review is open, when the design is approved (so the agent can ask separately about conversion/render/deploy), when the user clicks `End`, or when Claude Code reports `stop_hook_active`.
+It allows stopping when no review is open, after final FreeMarker/PDF approval, when the user ends the workflow, or when Claude Code reports `stop_hook_active`.

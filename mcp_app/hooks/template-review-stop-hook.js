@@ -36,14 +36,16 @@ process.stdin.on("end", () => {
 
   if (
     (state?.pending === true && !state?.status) ||
-    state?.status === "open" ||
-    state?.status === "needs_changes" ||
-    state?.status === "ftl_review"
+    state?.status === "html_review" ||
+    state?.status === "html_changes_requested" ||
+    state?.status === "freemarker_review" ||
+    state?.status === "freemarker_changes_requested" ||
+    state?.status === "render_error"
   ) {
     console.log(JSON.stringify({
       decision: "block",
       reason:
-        "The NetSuite template review still needs action. Call magic_netsuite_template_review_wait and continue after the user clicks Send Fixes, Approve Design, or End.",
+        "The NetSuite template workflow is still active. Call magic_netsuite_template_review_wait; apply HTML fixes in the HTML stage, FreeMarker fixes with NetSuite rerendering in the FreeMarker/PDF stage, or finish after final approval.",
     }));
     return;
   }
