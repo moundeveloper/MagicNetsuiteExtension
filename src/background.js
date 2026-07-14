@@ -334,7 +334,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     SWITCH_DASHBOARD_ACCOUNT: switchDashboardAccount,
     DASHBOARD_ENABLER_READY: dashboardEnablerReady,
     START_ELEMENT_SCREENSHOT_SELECTION: startElementScreenshotSelection,
-    CAPTURE_ELEMENT_SCREENSHOT: captureElementScreenshot
+    CAPTURE_ELEMENT_SCREENSHOT: captureElementScreenshot,
+    CLAUDE_CLI_START: handleClaudeCliStart,
+    CLAUDE_CLI_CANCEL: handleClaudeCliCancel,
+    CLAUDE_CLI_GET_STATE: handleClaudeCliGetState,
+    CLAUDE_CLI_CLEAR: handleClaudeCliClear
   };
 
   const messageHandler = messageMap[message.type];
@@ -1858,7 +1862,7 @@ function queryNativeHostDirect(message) {
     const timer = setTimeout(() => {
       mcpDirectQueryPending.delete(requestId);
       reject(new Error("Native host query timeout"));
-    }, 5000);
+    }, 10000);
 
     const pending = {
       resolve,
@@ -1876,6 +1880,176 @@ function queryNativeHostDirect(message) {
     }
   });
 }
+
+// ── Claude CLI runs ──
+// The native host starts the locally installed `claude -p` process. The
+// background worker only retains a compact, restorable view of its JSONL stream.
+const CLAUDE_CLI_RUNS_KEY = "magic_netsuite_claude_cli_runs";
+let claudeCliRuns = null;
+let claudeCliPersistTimer = null;
+
+async function ensureClaudeCliRuns() {
+  if (claudeCliRuns) return claudeCliRuns;
+  const stored = await chrome.storage.session.get([CLAUDE_CLI_RUNS_KEY]);
+  claudeCliRuns = stored?.[CLAUDE_CLI_RUNS_KEY] || {};
+  return claudeCliRuns;
+}
+
+function persistClaudeCliRunsSoon() {
+  clearTimeout(claudeCliPersistTimer);
+  claudeCliPersistTimer = setTimeout(() => {
+    chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: claudeCliRuns || {} }).catch(() => {});
+  }, 200);
+}
+
+function claudeTextDelta(event) {
+  if (event?.type !== "stream_event") return "";
+  const streamEvent = event.event;
+  if (streamEvent?.type === "content_block_delta" && streamEvent?.delta?.type === "text_delta") {
+    return String(streamEvent.delta.text || "");
+  }
+  return "";
+}
+
+function compactClaudeCliEvent(event) {
+  try {
+    const raw = JSON.stringify(event);
+    if (raw.length <= 60000) return event;
+    return {
+      type: event?.type || "large_event",
+      subtype: event?.subtype,
+      truncated: true,
+      preview: raw.slice(0, 60000),
+      message: "Event was truncated in restored history; the live event was still delivered to the open view."
+    };
+  } catch {
+    return { type: event?.type || "invalid_event", message: "Event could not be saved in run history." };
+  }
+}
+
+async function recordClaudeCliEvent(message) {
+  const runs = await ensureClaudeCliRuns();
+  const run = runs[message.runId];
+  if (!run) return;
+  const event = message.event || {};
+  const delta = claudeTextDelta(event);
+
+  if (delta) {
+    run.liveText = `${run.liveText || ""}${delta}`.slice(-500000);
+  } else if (event.type !== "stream_event") {
+    run.events = [...(run.events || []), compactClaudeCliEvent(event)].slice(-300);
+  }
+
+  if (event.type === "process_started") {
+    Object.assign(run, event, { status: "running" });
+  } else if (event.type === "system" && event.subtype === "init") {
+    run.sessionId = event.session_id || run.sessionId;
+    run.model = event.model || run.model;
+  } else if (event.type === "result") {
+    run.result = event.result || "";
+    run.sessionId = event.session_id || run.sessionId;
+    run.costUsd = event.total_cost_usd;
+    run.durationMs = event.duration_ms;
+    run.turns = event.num_turns;
+    run.status = event.is_error ? "failed" : "completed";
+  } else if (event.type === "process_error") {
+    run.error = event.message || "Claude CLI failed to start.";
+    run.status = "failed";
+  } else if (event.type === "process_exit") {
+    run.finishedAt = event.finishedAt || new Date().toISOString();
+    run.exitCode = event.exitCode;
+    run.status = event.cancelled ? "cancelled" : event.exitCode === 0 ? "completed" : "failed";
+  }
+  run.updatedAt = new Date().toISOString();
+  persistClaudeCliRunsSoon();
+}
+
+async function waitForNativeHost() {
+  await mcpConnect();
+  for (let attempt = 0; attempt < 20 && !mcpNativePort; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (!mcpNativePort) throw new Error(mcpNativeLastError || "Native host is not connected.");
+}
+
+const handleClaudeCliStart = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      await waitForNativeHost();
+      const runs = await ensureClaudeCliRuns();
+      const runId = `claude-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      runs[runId] = {
+        runId,
+        prompt: String(message.prompt || ""),
+        cwd: String(message.cwd || ""),
+        model: message.model || "default",
+        permissionMode: message.permissionMode || "plan",
+        maxTurns: Number(message.maxTurns) || 12,
+        status: "starting",
+        startedAt: new Date().toISOString(),
+        liveText: "",
+        events: []
+      };
+      await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+      const response = await queryNativeHostDirect({ ...message, type: "CLAUDE_CLI_START", runId });
+      if (response.success === false) {
+        runs[runId].status = "failed";
+        runs[runId].error = response.error || "Claude CLI failed to start.";
+        await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+        throw new Error(runs[runId].error);
+      }
+      sendResponse({ ok: true, runId, ...(response.result || {}) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  return true;
+};
+
+const handleClaudeCliCancel = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      await waitForNativeHost();
+      const response = await queryNativeHostDirect({ type: "CLAUDE_CLI_CANCEL", runId: message.runId });
+      sendResponse(response.success === false
+        ? { ok: false, error: response.error }
+        : { ok: true, ...(response.result || {}) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  return true;
+};
+
+const handleClaudeCliGetState = ({ sendResponse }) => {
+  (async () => {
+    const runs = await ensureClaudeCliRuns();
+    sendResponse({
+      ok: true,
+      runs: Object.values(runs).sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))),
+      nativeConnected: Boolean(mcpNativePort),
+      nativeError: mcpNativeLastError
+    });
+  })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+};
+
+const handleClaudeCliClear = ({ message, sendResponse }) => {
+  (async () => {
+    const runs = await ensureClaudeCliRuns();
+    if (message.runId) {
+      if (runs[message.runId]?.status === "running") throw new Error("Cancel the run before clearing it.");
+      delete runs[message.runId];
+    } else {
+      for (const [runId, run] of Object.entries(runs)) {
+        if (!['running', 'starting'].includes(run.status)) delete runs[runId];
+      }
+    }
+    await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+    sendResponse({ ok: true });
+  })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+};
 
 // -----------------------------
 // Entry point: check settings and connect if enabled
@@ -2238,14 +2412,18 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 async function handleNativeBridgeMessage(port, message) {
   console.debug("[MCP Native Bridge] ←", message);
 
+  if (message.type === "CLAUDE_CLI_EVENT") {
+    await recordClaudeCliEvent(message);
+    chrome.runtime.sendMessage(message).catch(() => {});
+    return;
+  }
+
   // Handle direct query responses (not MCP client pipeline)
-  if (message.type === "BASE_DIR" && message.requestId) {
+  if (message.requestId && mcpDirectQueryPending.has(message.requestId)) {
     const pending = mcpDirectQueryPending.get(message.requestId);
-    if (pending) {
-      mcpDirectQueryPending.delete(message.requestId);
-      clearTimeout(pending.timer);
-      pending.resolve(message);
-    }
+    mcpDirectQueryPending.delete(message.requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(message);
     return;
   }
 

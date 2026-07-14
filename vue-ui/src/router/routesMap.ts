@@ -30,6 +30,7 @@ import WatchtowerView from "../views/WatchtowerView.vue";
 import DependencyExplorerView from "../views/DependencyExplorerView.vue";
 import SkillsView from "../views/SkillsView.vue";
 import CustomToolsView from "../views/CustomToolsView.vue";
+import ClaudeTasksView from "../views/ClaudeTasksView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -292,6 +293,14 @@ export const routes: FullRoute[] = [
     component: CustomToolsView,
     status: RouteStatus.release,
     breadcrumb: "Custom Tools"
+  },
+  {
+    route: "/claude-cli",
+    name: "Claude CLI",
+    icon: "pi pi-terminal",
+    component: ClaudeTasksView,
+    status: RouteStatus.development,
+    breadcrumb: "Claude CLI"
   },
   {
     route: "/api-tester",
