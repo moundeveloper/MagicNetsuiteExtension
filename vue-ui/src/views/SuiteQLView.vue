@@ -475,8 +475,6 @@
                                 v-for="field in filteredSchemaFields"
                                 :key="`${field.tableId}_${field.id}`"
                                 class="schema-row"
-                                @click="insertAtCursor(field.id)"
-                                :title="`Click to insert '${field.id}' at cursor`"
                               >
                                 <td class="font-mono field-id-col">
                                   {{ field.id }}
@@ -547,8 +545,6 @@
                                 v-for="join in filteredSchemaJoins"
                                 :key="`${join.tableId}_${join.id}`"
                                 class="schema-row"
-                                @click="insertJoinAtCursor(join)"
-                                :title="`Click to insert JOIN for '${join.label}'`"
                               >
                                 <td class="join-label-col">{{ join.label }}</td>
                                 <td class="font-mono text-xs">
@@ -604,11 +600,10 @@
                   <SuiteQLSchemaPanel
                     :active-tab="schemaPanelTab"
                     :search="schemaSearch"
-                    :table-filter="tableFilter"
                     :tables="tables"
                     :fields="schemaFields"
                     :joins="schemaJoins"
-                    :query-table-ids="activeQueryTableIds"
+                    :query-table-ids="queryTableIds"
                     :selected-table-id="selectedTableId"
                     :is-loading-tables="isLoadingTables"
                     :is-loading-detail="isLoadingDetail"
@@ -616,10 +611,7 @@
                     :style="{ width: schemaPanelWidth + 'px' }"
                     @update:active-tab="schemaPanelTab = $event"
                     @update:search="schemaSearch = $event"
-                    @update:table-filter="tableFilter = $event"
                     @select-table="handleTableClick"
-                    @insert-field="insertAtCursor"
-                    @insert-join="insertJoinAtCursor"
                     @refresh="fetchTables"
                     @close="toggleSchemaPanel"
                   />
@@ -833,7 +825,9 @@ const onCustomLimitChange = (e: Event) => {
 // Schema documentation panel
 const showSchemaPanel = ref(true);
 const schemaPanelWidth = ref(380);
-const schemaPanelTab = ref<"tables" | "fields" | "joins">("tables");
+const schemaPanelTab = ref<"tables" | "overview" | "fields" | "joins">(
+  "tables"
+);
 
 const toggleSchemaPanel = () => {
   showSchemaPanel.value = !showSchemaPanel.value;
@@ -1157,7 +1151,7 @@ const handleTableClick = (table: TableInfo) => {
   tableFilter.value = table.id;
   schemaSearch.value = "";
   void loadTableDetail(table);
-  schemaPanelTab.value = "fields";
+  schemaPanelTab.value = "overview";
 };
 
 /** Extract ALL table names from FROM + every JOIN clause and load their details */
@@ -1188,24 +1182,6 @@ const detectAndLoadTablesFromQuery = async (sql: string) => {
 
   // Load details for any table not yet cached (in parallel)
   await Promise.all(resolved.map((t) => loadTableDetail(t)));
-};
-
-// ============================================================================
-// Insert at Cursor
-// ============================================================================
-
-const insertAtCursor = (text: string) => {
-  editorRefs.value[activeFileId.value]?.insertText(text);
-};
-
-const insertJoinAtCursor = (join: JoinRow) => {
-  if (!join.sourceTargetType) return;
-  const joinPair = join.sourceTargetType.joinPairs?.[0];
-  const joinKeyword = join.joinType === "INVERSE" ? "LEFT JOIN" : "INNER JOIN";
-  const clause = joinPair
-    ? `\n${joinKeyword} ${join.sourceTargetType.id}\n    ON ${joinPair.label}`
-    : `\n${joinKeyword} ${join.sourceTargetType.id}\n    ON -- ${join.label}`;
-  insertAtCursor(clause);
 };
 
 // ============================================================================
@@ -2249,7 +2225,6 @@ onBeforeUnmount(async () => {
 .schema-row td {
   padding: 5px 14px;
   border-bottom: 1px solid var(--p-slate-100);
-  cursor: pointer;
   color: var(--p-slate-700);
 }
 
@@ -2257,18 +2232,8 @@ onBeforeUnmount(async () => {
   background: #faf7ff;
 }
 
-/* Reserve space for ↵ hint so width never shifts */
 .schema-row td:first-child {
   white-space: nowrap;
-}
-.schema-row td:first-child::after {
-  content: " ↵";
-  font-size: 0.6rem;
-  color: #c6a7ff;
-  visibility: hidden;
-}
-.schema-row:hover td:first-child::after {
-  visibility: visible;
 }
 
 /* Field ID column — indigo/violet to contrast */
