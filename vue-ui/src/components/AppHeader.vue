@@ -177,7 +177,12 @@ const handleDashboardAccountSelected = (
 };
 
 const handleTabActivated = () => {
-  if (dashboardAccountSwitching.value) return;
+  if (
+    dashboardAccountSwitching.value ||
+    document.visibilityState !== "visible"
+  ) {
+    return;
+  }
   void refreshEnvironment();
   void loadDashboardAccounts();
 };
@@ -185,10 +190,21 @@ const handleTabActivated = () => {
 const handleTabUpdated: Parameters<
   typeof chrome.tabs.onUpdated.addListener
 >[0] = (_tabId, changeInfo) => {
-  if (dashboardAccountSwitching.value) return;
+  if (
+    dashboardAccountSwitching.value ||
+    document.visibilityState !== "visible"
+  ) {
+    return;
+  }
   if (changeInfo.status === "complete" || changeInfo.url) {
     void refreshEnvironment();
   }
+};
+
+const handleVisibilityChanged = () => {
+  if (document.visibilityState !== "visible") return;
+  void refreshEnvironment();
+  void loadDashboardAccounts();
 };
 
 const canAccess = (link: RouteItem) => {
@@ -310,6 +326,7 @@ const openNotebookEntry = (entry?: NotebookEntry) => {
 onMounted(() => {
   window.addEventListener("keydown", handleKeydown);
   window.addEventListener("focus", refreshEnvironment);
+  document.addEventListener("visibilitychange", handleVisibilityChanged);
   void refreshEnvironment();
 
   if (typeof chrome !== "undefined" && chrome.tabs) {
@@ -321,6 +338,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeydown);
   window.removeEventListener("focus", refreshEnvironment);
+  document.removeEventListener("visibilitychange", handleVisibilityChanged);
 
   if (typeof chrome !== "undefined" && chrome.tabs) {
     chrome.tabs.onActivated.removeListener(handleTabActivated);

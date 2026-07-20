@@ -158,12 +158,12 @@
                 />
                 <button
                   class="toolbar-btn"
-                  :class="showAiEditor ? 'toolbar-btn-active' : ''"
-                  @click="toggleAiEditor"
-                  title="Toggle AI SQL Editor"
+                  :class="showSchemaPanel ? 'toolbar-btn-active' : ''"
+                  @click="toggleSchemaPanel"
+                  title="Toggle SuiteQL schema documentation"
                 >
-                  <i class="pi pi-sparkles"></i>
-                  <span>AI Editor</span>
+                  <i class="pi pi-database"></i>
+                  <span>Schema</span>
                 </button>
 
                 <!-- Limit selector -->
@@ -290,29 +290,16 @@
                       <div
                         class="bottom-tabbar shrink-0 flex items-center border-b border-slate-200"
                       >
-                        <button
-                          v-for="btab in bottomTabDefs"
-                          :key="btab.id"
-                          class="bottom-tab"
-                          :class="
-                            bottomTab === btab.id
-                              ? 'tab-active'
-                              : 'tab-inactive'
-                          "
-                          @click="
-                            bottomTab = btab.id;
-                            schemaSearch = '';
-                            tableFilter = '';
-                          "
-                        >
-                          {{ btab.label }}
-                        </button>
+                        <div class="bottom-panel-title">
+                          <i class="pi pi-list" />
+                          <span>Results</span>
+                        </div>
 
                         <!-- Right side of tab bar -->
                         <div class="ml-auto flex items-center gap-2 px-3">
                           <span
                             v-if="
-                              file.results.length > 0 && bottomTab === 'results'
+                              file.results.length > 0
                             "
                             class="text-xs font-mono text-emerald-600 font-semibold"
                           >
@@ -325,13 +312,13 @@
                             rows
                           </span>
                           <span
-                            v-else-if="file.error && bottomTab === 'results'"
+                            v-else-if="file.error"
                             class="text-xs text-red-500 font-medium"
                             >Error</span
                           >
                           <template
                             v-if="
-                              bottomTab === 'results' && file.results.length > 0
+                              file.results.length > 0
                             "
                           >
                             <button
@@ -355,53 +342,13 @@
                             </button>
                           </template>
 
-                          <!-- Table filter pills for fields/joins tabs -->
-                          <template
-                            v-if="
-                              (bottomTab === 'fields' ||
-                                bottomTab === 'joins') &&
-                              queryTableIds.length > 1
-                            "
-                          >
-                            <button
-                              class="table-pill"
-                              :class="
-                                tableFilter === ''
-                                  ? 'table-pill-active'
-                                  : 'table-pill-inactive'
-                              "
-                              @click="tableFilter = ''"
-                            >
-                              All
-                            </button>
-                            <button
-                              v-for="tid in queryTableIds"
-                              :key="tid"
-                              class="table-pill"
-                              :class="
-                                tableFilter === tid
-                                  ? 'table-pill-active'
-                                  : 'table-pill-inactive'
-                              "
-                              @click="tableFilter = tid"
-                            >
-                              {{ tid }}
-                            </button>
-                          </template>
-
-                          <input
-                            v-if="bottomTab !== 'results'"
-                            v-model="schemaSearch"
-                            placeholder="Search…"
-                            class="schema-search-input"
-                          />
                         </div>
                       </div>
 
                       <!-- Tab content -->
                       <div class="flex-1 overflow-auto">
                         <!-- Results -->
-                        <div v-show="bottomTab === 'results'" class="h-full">
+                        <div class="h-full">
                           <table
                             v-if="file.results.length > 0"
                             class="results-table w-full"
@@ -494,7 +441,7 @@
                             <span class="text-sm">
                               Add a table to your query or select one from the
                               <button
-                                class="underline text-blue-500"
+                                class="schema-empty-link"
                                 @click="bottomTab = 'tables'"
                               >
                                 Tables
@@ -573,7 +520,7 @@
                             <span class="text-sm">
                               Add a table to your query or select one from the
                               <button
-                                class="underline text-blue-500"
+                                class="schema-empty-link"
                                 @click="bottomTab = 'tables'"
                               >
                                 Tables
@@ -648,17 +595,33 @@
                 </vue-splitter>
                 </div>
 
-                <!-- AI SQL Editor panel (drag-resizable) -->
-                <template v-if="showAiEditor">
+                <!-- SuiteQL schema documentation panel (drag-resizable) -->
+                <template v-if="showSchemaPanel">
                   <div
-                    class="ai-panel-resize-handle"
-                    @mousedown="startAiPanelResize"
+                    class="schema-panel-resize-handle"
+                    @mousedown="startSchemaPanelResize"
                   />
-                  <SqlAiEditor
-                    :get-editor-query="getEditorQuery"
-                    :file-id="activeFileId"
-                    class="sql-ai-editor-panel"
-                    :style="{ width: aiPanelWidth + 'px' }"
+                  <SuiteQLSchemaPanel
+                    :active-tab="schemaPanelTab"
+                    :search="schemaSearch"
+                    :table-filter="tableFilter"
+                    :tables="tables"
+                    :fields="schemaFields"
+                    :joins="schemaJoins"
+                    :query-table-ids="activeQueryTableIds"
+                    :selected-table-id="selectedTableId"
+                    :is-loading-tables="isLoadingTables"
+                    :is-loading-detail="isLoadingDetail"
+                    class="suiteql-schema-panel"
+                    :style="{ width: schemaPanelWidth + 'px' }"
+                    @update:active-tab="schemaPanelTab = $event"
+                    @update:search="schemaSearch = $event"
+                    @update:table-filter="tableFilter = $event"
+                    @select-table="handleTableClick"
+                    @insert-field="insertAtCursor"
+                    @insert-join="insertJoinAtCursor"
+                    @refresh="fetchTables"
+                    @close="toggleSchemaPanel"
                   />
                 </template>
               </div>
@@ -712,7 +675,7 @@ import { Button } from "primevue";
 import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
-import SqlAiEditor from "../components/SqlAiEditor.vue";
+import SuiteQLSchemaPanel from "../components/SuiteQLSchemaPanel.vue";
 import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
@@ -724,7 +687,6 @@ import {
   getAllQueryFiles,
   bulkUpsertQueryFiles,
   deleteQueryFile,
-  deleteChatSessionsForFile,
   getUiState,
   setUiState
 } from "../utils/suiteqlDb";
@@ -868,40 +830,29 @@ const onCustomLimitChange = (e: Event) => {
   isEditingCustom.value = false;
 };
 
-// AI Editor panel — per-tab open state
-const aiEditorOpenTabs = ref<Set<string>>(new Set());
-const aiPanelWidth = ref(340);
+// Schema documentation panel
+const showSchemaPanel = ref(true);
+const schemaPanelWidth = ref(380);
+const schemaPanelTab = ref<"tables" | "fields" | "joins">("tables");
 
-const showAiEditor = computed(
-  () => !!activeFileId.value && aiEditorOpenTabs.value.has(activeFileId.value)
-);
-
-const toggleAiEditor = () => {
-  if (!activeFileId.value) return;
-  const next = new Set(aiEditorOpenTabs.value);
-  if (next.has(activeFileId.value)) {
-    next.delete(activeFileId.value);
-  } else {
-    next.add(activeFileId.value);
-  }
-  aiEditorOpenTabs.value = next;
-  setUiState("aiEditorOpenTabs", [...next]);
-  setUiState("aiPanelWidth", aiPanelWidth.value);
+const toggleSchemaPanel = () => {
+  showSchemaPanel.value = !showSchemaPanel.value;
+  void setUiState("schemaPanelOpen", showSchemaPanel.value);
 };
 
-const startAiPanelResize = (e: MouseEvent) => {
+const startSchemaPanelResize = (e: MouseEvent) => {
   const startX = e.clientX;
-  const startWidth = aiPanelWidth.value;
+  const startWidth = schemaPanelWidth.value;
 
   const onMove = (moveEvent: MouseEvent) => {
     const delta = startX - moveEvent.clientX; // drag left = wider
-    aiPanelWidth.value = Math.max(240, Math.min(800, startWidth + delta));
+    schemaPanelWidth.value = Math.max(300, Math.min(620, startWidth + delta));
   };
 
   const onUp = () => {
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
-    setUiState("aiPanelWidth", aiPanelWidth.value);
+    void setUiState("schemaPanelWidth", schemaPanelWidth.value);
   };
 
   window.addEventListener("mousemove", onMove);
@@ -935,12 +886,13 @@ const currentFile = computed(() =>
   files.value.find((f) => f.id === activeFileId.value)
 );
 
-// The set of table IDs to show in Fields/Joins tabs:
-// prefer queryTableIds; fall back to the manually selected one from the Tables browser
+// Show every table referenced by the query plus any table selected manually.
 const activeQueryTableIds = computed((): string[] => {
-  if (queryTableIds.value.length > 0) return queryTableIds.value;
-  if (selectedTableId.value) return [selectedTableId.value];
-  return [];
+  const ids = [...queryTableIds.value];
+  if (selectedTableId.value && !ids.includes(selectedTableId.value)) {
+    ids.push(selectedTableId.value);
+  }
+  return ids;
 });
 
 const activeQueryTableCount = computed(() => activeQueryTableIds.value.length);
@@ -984,23 +936,25 @@ const filteredSchemaTables = computed(() => {
   );
 });
 
-const filteredSchemaFields = computed((): FieldRow[] => {
-  const sourceTables = tableFilter.value
-    ? [tableFilter.value]
-    : activeQueryTableIds.value;
-
+const schemaFields = computed((): FieldRow[] => {
   const all: FieldRow[] = [];
-  for (const tid of sourceTables) {
+  for (const tid of activeQueryTableIds.value) {
     const detail = tableDetailCache.value[tid];
     if (!detail) continue;
     for (const f of detail.fields.filter((f) => f.isColumn)) {
       all.push({ ...f, tableId: detail.id });
     }
   }
+  return all;
+});
 
+const filteredSchemaFields = computed((): FieldRow[] => {
+  const fields = tableFilter.value
+    ? schemaFields.value.filter((field) => field.tableId === tableFilter.value)
+    : schemaFields.value;
   const term = schemaSearch.value.toLowerCase();
-  if (!term) return all;
-  return all.filter(
+  if (!term) return fields;
+  return fields.filter(
     (f) =>
       f.id.toLowerCase().includes(term) ||
       f.label.toLowerCase().includes(term) ||
@@ -1009,23 +963,25 @@ const filteredSchemaFields = computed((): FieldRow[] => {
   );
 });
 
-const filteredSchemaJoins = computed((): JoinRow[] => {
-  const sourceTables = tableFilter.value
-    ? [tableFilter.value]
-    : activeQueryTableIds.value;
-
+const schemaJoins = computed((): JoinRow[] => {
   const all: JoinRow[] = [];
-  for (const tid of sourceTables) {
+  for (const tid of activeQueryTableIds.value) {
     const detail = tableDetailCache.value[tid];
     if (!detail) continue;
     for (const j of detail.joins ?? []) {
       all.push({ ...j, tableId: detail.id });
     }
   }
+  return all;
+});
 
+const filteredSchemaJoins = computed((): JoinRow[] => {
+  const joins = tableFilter.value
+    ? schemaJoins.value.filter((join) => join.tableId === tableFilter.value)
+    : schemaJoins.value;
   const term = schemaSearch.value.toLowerCase();
-  if (!term) return all;
-  return all.filter(
+  if (!term) return joins;
+  return joins.filter(
     (j) =>
       j.id.toLowerCase().includes(term) ||
       j.label.toLowerCase().includes(term) ||
@@ -1106,14 +1062,6 @@ const removeFile = (fileId: string) => {
   }
   // Clean up from IndexedDB
   deleteQueryFile(fileId);
-  deleteChatSessionsForFile(fileId);
-  // Remove from ai editor open tabs
-  if (aiEditorOpenTabs.value.has(fileId)) {
-    const next = new Set(aiEditorOpenTabs.value);
-    next.delete(fileId);
-    aiEditorOpenTabs.value = next;
-    setUiState("aiEditorOpenTabs", [...next]);
-  }
 };
 
 const removeFileByTab = ({
@@ -1206,8 +1154,10 @@ const loadTableDetail = async (table: TableInfo): Promise<void> => {
 /** Click in the Tables browser tab — select + switch to Fields */
 const handleTableClick = (table: TableInfo) => {
   selectedTableId.value = table.id;
-  loadTableDetail(table);
-  bottomTab.value = "fields";
+  tableFilter.value = table.id;
+  schemaSearch.value = "";
+  void loadTableDetail(table);
+  schemaPanelTab.value = "fields";
 };
 
 /** Extract ALL table names from FROM + every JOIN clause and load their details */
@@ -1892,13 +1842,9 @@ onMounted(async () => {
         ? storedActive
         : openTabs.value[0] || "";
 
-    // ── Restore AI editor per-tab open state ──
-    const storedAiTabs = await getUiState<string[]>("aiEditorOpenTabs", []);
-    aiEditorOpenTabs.value = new Set(storedAiTabs);
-
-    // ── Restore AI panel width ──
-    const storedWidth = await getUiState<number>("aiPanelWidth", 340);
-    aiPanelWidth.value = storedWidth;
+    // ── Restore schema documentation panel state ──
+    showSchemaPanel.value = await getUiState<boolean>("schemaPanelOpen", true);
+    schemaPanelWidth.value = await getUiState<number>("schemaPanelWidth", 380);
 
     // ── Open pending SQL query from AI assistant ──
     if (typeof chrome !== "undefined" && chrome.storage?.local) {
@@ -2118,6 +2064,21 @@ onBeforeUnmount(async () => {
   min-height: 34px;
 }
 
+.bottom-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.75rem;
+  color: #27323a;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.bottom-panel-title i {
+  color: #7b2ff7;
+  font-size: 0.68rem;
+}
+
 .bottom-tab {
   cursor: pointer;
   border: 0;
@@ -2165,14 +2126,14 @@ onBeforeUnmount(async () => {
 }
 
 .table-pill-inactive:hover {
-  border-color: var(--p-blue-400, #60a5fa);
-  color: var(--p-blue-600, #2563eb);
+  border-color: #c6a7ff;
+  color: #7b2ff7;
 }
 
 .table-pill-active {
-  background: #eff6ff;
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  background: #faf7ff;
+  border-color: #d8c6ff;
+  color: #7b2ff7;
   font-weight: 600;
 }
 
@@ -2192,7 +2153,12 @@ onBeforeUnmount(async () => {
   color: var(--p-slate-400);
 }
 .schema-search-input:focus {
-  border-color: #93c5fd;
+  border-color: #c6a7ff;
+}
+
+.schema-empty-link {
+  color: #7b2ff7;
+  text-decoration: underline;
 }
 
 /* ── Copy buttons ── */
@@ -2248,13 +2214,13 @@ onBeforeUnmount(async () => {
 }
 
 .results-table tr:hover td {
-  background: #eff6ff;
+  background: #faf7ff;
 }
 .results-table tr:nth-child(even) td {
   background: var(--p-slate-50);
 }
 .results-table tr:nth-child(even):hover td {
-  background: #eff6ff;
+  background: #faf7ff;
 }
 
 /* ── Schema tables (fields / joins) ── */
@@ -2288,7 +2254,7 @@ onBeforeUnmount(async () => {
 }
 
 .schema-row:hover td {
-  background: #eff6ff;
+  background: #faf7ff;
 }
 
 /* Reserve space for ↵ hint so width never shifts */
@@ -2298,7 +2264,7 @@ onBeforeUnmount(async () => {
 .schema-row td:first-child::after {
   content: " ↵";
   font-size: 0.6rem;
-  color: #93c5fd;
+  color: #c6a7ff;
   visibility: hidden;
 }
 .schema-row:hover td:first-child::after {
@@ -2307,13 +2273,13 @@ onBeforeUnmount(async () => {
 
 /* Field ID column — indigo/violet to contrast */
 .field-id-col {
-  color: #4f46e5;
+  color: #7b2ff7;
   font-weight: 600;
 }
 
 /* Join label column — blue */
 .join-label-col {
-  color: #1d4ed8;
+  color: #7b2ff7;
   font-weight: 500;
 }
 
@@ -2334,9 +2300,9 @@ onBeforeUnmount(async () => {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 3px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  border: 1px solid #bfdbfe;
+  background: #faf7ff;
+  color: #7b2ff7;
+  border: 1px solid #d8c6ff;
   font-size: 0.65rem;
   font-family: "Consolas", monospace;
 }
@@ -2378,13 +2344,13 @@ onBeforeUnmount(async () => {
 }
 
 .table-card:hover {
-  border-color: #93c5fd;
-  background: #eff6ff;
+  border-color: #c6a7ff;
+  background: #faf7ff;
 }
 
 .table-card-selected {
-  border-color: #3b82f6 !important;
-  background: #dbeafe !important;
+  border-color: #d8c6ff !important;
+  background: #faf7ff !important;
 }
 
 /* Tables that are referenced in the current query get a subtle accent */
@@ -2402,7 +2368,7 @@ onBeforeUnmount(async () => {
   font-family: "Consolas", monospace;
   font-size: 0.7rem;
   font-weight: 700;
-  color: #4f46e5;
+  color: #7b2ff7;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2429,34 +2395,34 @@ onBeforeUnmount(async () => {
   overflow: hidden;
 }
 
-/* ── AI Editor toggle ── */
+/* ── Schema documentation toggle ── */
 .toolbar-btn-active {
-  background: var(--p-blue-50, #eff6ff) !important;
-  color: var(--p-blue-600, #2563eb) !important;
-  border-color: var(--p-blue-300, #93c5fd) !important;
+  border-color: #d8c6ff !important;
+  background: #faf7ff !important;
+  color: #7b2ff7 !important;
 }
 
-/* ── AI Editor panel (drag-resizable) ── */
-.sql-ai-editor-panel {
+/* ── Schema documentation panel (drag-resizable) ── */
+.suiteql-schema-panel {
   flex-shrink: 0;
-  min-width: 240px;
-  max-width: 800px;
+  min-width: 300px;
+  max-width: 620px;
   overflow: hidden;
 }
 
-/* ── Drag handle between main editor and AI panel ── */
-.ai-panel-resize-handle {
+/* ── Drag handle between main editor and schema panel ── */
+.schema-panel-resize-handle {
   width: 5px;
   flex-shrink: 0;
   cursor: col-resize;
-  background: var(--p-slate-200);
+  background: #dbe3ea;
   transition: background 0.12s;
   position: relative;
   z-index: 1;
 }
 
-.ai-panel-resize-handle:hover,
-.ai-panel-resize-handle:active {
-  background: var(--p-slate-400);
+.schema-panel-resize-handle:hover,
+.schema-panel-resize-handle:active {
+  background: #c6a7ff;
 }
 </style>

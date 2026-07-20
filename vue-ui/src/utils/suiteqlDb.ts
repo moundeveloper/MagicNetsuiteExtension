@@ -13,13 +13,13 @@ export interface QueryFileRecord {
   updatedAt: string;
 }
 
-/** Generic key-value store for UI state (openTabs, activeTab, aiEditorOpenTabs, aiPanelWidth) */
+/** Generic key-value store for query tabs and schema-panel preferences. */
 export interface SuiteQLUiStateRecord {
   key: string;
   value: any;
 }
 
-export interface SqlChatSessionRecord {
+type LegacySqlChatSessionRecord = {
   sessionId: string;
   fileId: string;
   name: string;
@@ -35,7 +35,7 @@ export interface SqlChatSessionRecord {
 const db = new Dexie("MagicNetsuiteSuiteQL") as Dexie & {
   queryFiles: EntityTable<QueryFileRecord, "fileId">;
   uiState: EntityTable<SuiteQLUiStateRecord, "key">;
-  chatSessions: EntityTable<SqlChatSessionRecord, "sessionId">;
+  chatSessions: EntityTable<LegacySqlChatSessionRecord, "sessionId">;
 };
 
 db.version(1).stores({
@@ -79,37 +79,6 @@ export const getUiState = async <T>(key: string, defaultValue: T): Promise<T> =>
 
 export const setUiState = async (key: string, value: any): Promise<void> => {
   await db.uiState.put({ key, value });
-};
-
-// ─────────────────────────────────────────────
-// Chat Sessions CRUD
-// ─────────────────────────────────────────────
-
-export const getChatSessionsForFile = async (
-  fileId: string
-): Promise<SqlChatSessionRecord[]> => {
-  return db.chatSessions
-    .where("fileId")
-    .equals(fileId)
-    .reverse()
-    .sortBy("createdAt")
-    .then((sessions) => sessions.reverse());
-};
-
-export const upsertChatSession = async (
-  session: SqlChatSessionRecord
-): Promise<void> => {
-  await db.chatSessions.put(session);
-};
-
-export const deleteChatSession = async (sessionId: string): Promise<void> => {
-  await db.chatSessions.delete(sessionId);
-};
-
-export const deleteChatSessionsForFile = async (
-  fileId: string
-): Promise<void> => {
-  await db.chatSessions.where("fileId").equals(fileId).delete();
 };
 
 export { db as suiteqlDb };

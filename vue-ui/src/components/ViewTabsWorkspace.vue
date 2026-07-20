@@ -83,6 +83,7 @@ let workspaceEnvironment = "unknown";
 let workspaceReady = false;
 let workspaceDisposed = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let workspaceTransitionQueue: Promise<void> = Promise.resolve();
 const closedTabs = ref<Array<{ tab: ViewTab; group: TabGroup | null; index: number }>>([]);
 
 const isSplit = computed(() => leftTabIds.value.length > 0 && rightTabIds.value.length > 0);
@@ -520,13 +521,18 @@ const applySavedWorkspace = async (value: unknown) => {
 const scheduleWorkspaceSave = () => {
   if (!workspaceReady) return;
   if (saveTimer) clearTimeout(saveTimer);
+  const environment = workspaceEnvironment;
+  const workspace = serializeWorkspace();
   saveTimer = setTimeout(() => {
-    void saveWorkspaceState(
-      "dashboard",
-      workspaceEnvironment,
-      serializeWorkspace()
-    );
+    saveTimer = null;
+    void saveWorkspaceState("dashboard", environment, workspace);
   }, 250);
+};
+
+const cancelScheduledWorkspaceSave = () => {
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
 };
 
 const restoreWorkspace = async (environment?: string) => {
@@ -645,12 +651,10 @@ const formatSnapshotDate = (timestamp: number) =>
     minute: "2-digit"
   });
 
-const handleWorkspaceEnvironmentChanged = async (event: Event) => {
-  const nextEnvironment =
-    (event as CustomEvent<string>).detail ||
-    (await getNetsuiteEnvironment().catch(() => "unknown"));
-  if (nextEnvironment === workspaceEnvironment) return;
+const switchWorkspaceEnvironment = async (nextEnvironment: string) => {
+  if (workspaceDisposed || nextEnvironment === workspaceEnvironment) return;
 
+  cancelScheduledWorkspaceSave();
   const previousEnvironment = workspaceEnvironment;
   const previousWorkspace = workspaceReady ? serializeWorkspace() : null;
   workspaceReady = false;
@@ -692,6 +696,18 @@ const handleWorkspaceEnvironmentChanged = async (event: Event) => {
     workspaceReady = true;
     workspaceSwitching.value = false;
   }
+};
+
+const handleWorkspaceEnvironmentChanged = (event: Event) => {
+  const requestedEnvironment = (event as CustomEvent<string>).detail;
+  workspaceTransitionQueue = workspaceTransitionQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const nextEnvironment =
+        requestedEnvironment ||
+        (await getNetsuiteEnvironment().catch(() => "unknown"));
+      await switchWorkspaceEnvironment(nextEnvironment);
+    });
 };
 
 const newHomeTab = async (group?: TabGroup) => {
@@ -908,10 +924,15 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  const environment = workspaceEnvironment;
+  const workspace = workspaceReady ? serializeWorkspace() : null;
   workspaceDisposed = true;
   workspaceReady = false;
   stopSplitResize();
-  if (saveTimer) clearTimeout(saveTimer);
+  cancelScheduledWorkspaceSave();
+  if (workspace) {
+    void saveWorkspaceState("dashboard", environment, workspace);
+  }
   window.removeEventListener("keydown", handleWorkspaceShortcut);
   window.removeEventListener("mousedown", hideTabContextMenu);
   window.removeEventListener(
