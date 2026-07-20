@@ -85,6 +85,8 @@ const LOG_FILE = path.join(BASE_DIR, `magiNetsuiteMCPServer_${process.pid}.log`)
 
 // Also maintain a rolling "latest" symlink-style copy for quick tailing.
 const LOG_FILE_LATEST = path.join(BASE_DIR, "magiNetsuiteMCPServer.log");
+const CUSTOM_TOOLS_MANIFEST_PATH = path.join(BASE_DIR, "custom-tools-manifest.json");
+const CUSTOM_TOOL_PREFIX = "magic_custom_";
 
 function log(...args) {
   if (!shouldLog) return;
@@ -100,6 +102,73 @@ function log(...args) {
     // Best-effort write to the shared latest log; ignore lock conflicts.
     try { fs.appendFileSync(LOG_FILE_LATEST, line); } catch {}
   } catch {}
+}
+
+function readCustomToolsManifest() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CUSTOM_TOOLS_MANIFEST_PATH, "utf8").replace(/^\uFEFF/, ""));
+    return Array.isArray(parsed?.tools) ? parsed.tools : [];
+  } catch (error) {
+    if (error?.code !== "ENOENT") log("failed reading custom tools manifest", error.message || String(error));
+    return [];
+  }
+}
+
+function customToolDefinition(tool) {
+  return {
+    name: `${CUSTOM_TOOL_PREFIX}${tool.name}`,
+    title: tool.displayName || tool.name,
+    description:
+      `${tool.description} This is an active user-created Magic NetSuite tool ` +
+      `executed in the ${tool.domain || "both"} domain.`,
+    inputSchema:
+      tool.inputSchema && typeof tool.inputSchema === "object" && !Array.isArray(tool.inputSchema)
+        ? tool.inputSchema
+        : { type: "object", properties: {} },
+    annotations: {
+      readOnlyHint: tool.risk !== "write"
+    }
+  };
+}
+
+function mergeCustomToolDefinitions(staticTools) {
+  const existingNames = new Set(staticTools.map((tool) => tool.name));
+  const customTools = readCustomToolsManifest()
+    .filter((tool) => /^[a-z][a-z0-9_]{2,63}$/.test(String(tool?.name || "")))
+    .map(customToolDefinition)
+    .filter((tool) => !existingNames.has(tool.name));
+  return [...staticTools, ...customTools];
+}
+
+function findCustomToolByExposedName(name) {
+  if (!String(name || "").startsWith(CUSTOM_TOOL_PREFIX)) return null;
+  return readCustomToolsManifest().find(
+    (tool) => `${CUSTOM_TOOL_PREFIX}${tool.name}` === name
+  ) || null;
+}
+
+let mcpInitialized = false;
+let customToolsNotificationTimer = null;
+
+function notifyCustomToolsListChanged() {
+  if (!mcpInitialized) return;
+  clearTimeout(customToolsNotificationTimer);
+  customToolsNotificationTimer = setTimeout(() => {
+    const notification = { jsonrpc: "2.0", method: "notifications/tools/list_changed" };
+    process.stdout.write(JSON.stringify(notification) + "\n");
+    log("→ OpenCode", notification);
+  }, 100);
+}
+
+try {
+  const watcher = fs.watch(BASE_DIR, (_eventType, filename) => {
+    if (String(filename || "").toLowerCase() === path.basename(CUSTOM_TOOLS_MANIFEST_PATH).toLowerCase()) {
+      notifyCustomToolsListChanged();
+    }
+  });
+  watcher.unref();
+} catch (error) {
+  log("custom tools manifest watcher unavailable", error.message || String(error));
 }
 
 // -----------------------------------------------
@@ -932,10 +1001,11 @@ async function handleMcp(req) {
     // REQUIRED MCP METHODS
     // -------------------------
     if (method === "initialize") {
+      mcpInitialized = true;
       result = {
         protocolVersion: params.protocolVersion,
         capabilities: {
-          tools: {},
+          tools: { listChanged: true },
           prompts: {}
         },
         serverInfo: {
@@ -2414,6 +2484,7 @@ async function handleMcp(req) {
           }
         ]
       };
+      result.tools = mergeCustomToolDefinitions(result.tools);
     }
 
     // suiteql_get_guide is handled locally — no extension needed
@@ -2428,6 +2499,16 @@ async function handleMcp(req) {
 
     // ✅ ONLY HERE we depend on extension
     else if (method === "tools/call") {
+      const customTool = findCustomToolByExposedName(params?.name);
+      if (customTool) {
+        result = await callExtension("tools/call", {
+          name: "magic_netsuite_call_custom_tool",
+          arguments: {
+            toolName: customTool.name,
+            input: params.arguments || {}
+          }
+        });
+      }
       if (params?.name === "magic_netsuite_search_skills") {
         lastLocalSkillSearchAt = Date.now();
       }

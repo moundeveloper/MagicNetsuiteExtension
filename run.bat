@@ -119,6 +119,12 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+copy /y "%~dp0mcp_server\installClaudeMcpServer.ps1" "%MCP_DEST%\"
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to copy installClaudeMcpServer.ps1!
+    exit /b 1
+)
+
 echo.
 echo ====================================
 echo Step 2.6: Packaging MCP Apps for Claude
@@ -174,6 +180,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST_FOLDER%\mcpServer\ins
 
 if %ERRORLEVEL% NEQ 0 (
     echo ERROR: Failed to install native messaging host
+    exit /b 1
+)
+
+echo.
+echo ====================================
+echo Step 5.5: Installing MCP Server for Claude Desktop
+echo ====================================
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST_FOLDER%\mcpServer\installClaudeMcpServer.ps1"
+
+if %ERRORLEVEL% NEQ 0 (
+    echo ERROR: Failed to install MCP Server for Claude Desktop
     exit /b 1
 )
 

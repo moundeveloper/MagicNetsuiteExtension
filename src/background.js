@@ -1600,6 +1600,25 @@ async function saveStoredCustomTools(tools) {
   await chrome.storage.local.set({ [CUSTOM_TOOLS_STORAGE_KEY]: tools });
 }
 
+async function syncCustomToolsManifest(port = mcpNativePort) {
+  if (!port) return;
+  const tools = await getStoredCustomTools();
+  port.postMessage({
+    type: "CUSTOM_TOOLS_SYNC",
+    tools: tools.map((tool) => ({
+      id: tool.id,
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      domain: tool.domain,
+      risk: tool.risk,
+      enabled: tool.enabled,
+      status: tool.status,
+      inputSchema: tool.inputSchema
+    }))
+  });
+}
+
 async function saveStoredCustomToolTestState(id, testInput, result, domain) {
   const tools = await getStoredCustomTools();
   await saveStoredCustomTools(tools.map((tool) => tool.id === id ? {
@@ -2104,6 +2123,7 @@ async function mcpConnect() {
       name: "Magic Netsuite",
       version: chrome.runtime.getManifest?.().version || "unknown"
     });
+    await syncCustomToolsManifest(port);
 
     console.log("[MCP Native Bridge] connected to native host");
   } catch (err) {
@@ -2387,6 +2407,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Listen for account preference changes to reset the dedicated tab
 chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[CUSTOM_TOOLS_STORAGE_KEY]) {
+    syncCustomToolsManifest().catch((error) => {
+      console.warn("[MCP Native Bridge] failed to sync custom tools manifest", error);
+    });
+    return;
+  }
   if (areaName !== "sync") return;
   const settingsChange = changes.magic_netsuite_settings;
   if (!settingsChange) return;

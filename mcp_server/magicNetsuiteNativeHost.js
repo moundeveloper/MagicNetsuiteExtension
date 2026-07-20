@@ -34,6 +34,7 @@ for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
 
 const LOG_FILE = path.join(BASE_DIR, `magicNetsuiteNativeHost_${process.pid}.log`);
 const LOG_FILE_LATEST = path.join(BASE_DIR, "magicNetsuiteNativeHost.log");
+const CUSTOM_TOOLS_MANIFEST_PATH = path.join(BASE_DIR, "custom-tools-manifest.json");
 
 function log(...args) {
   if (!shouldLog) return;
@@ -401,11 +402,70 @@ function sendToExtension(message) {
   }
 }
 
+function normalizeCustomToolsManifest(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .filter((tool) => tool && tool.enabled !== false && tool.status === "active")
+    .map((tool) => ({
+      id: String(tool.id || ""),
+      name: String(tool.name || "").trim().toLowerCase(),
+      displayName: String(tool.displayName || tool.name || "").trim(),
+      description: String(tool.description || "").trim(),
+      domain: ["client", "server", "both"].includes(tool.domain) ? tool.domain : "both",
+      risk: tool.risk === "write" ? "write" : "read",
+      inputSchema:
+        tool.inputSchema && typeof tool.inputSchema === "object" && !Array.isArray(tool.inputSchema)
+          ? tool.inputSchema
+          : { type: "object", properties: {} }
+    }))
+    .filter((tool) => /^[a-z][a-z0-9_]{2,63}$/.test(tool.name) && tool.description)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function readCustomToolsManifest() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CUSTOM_TOOLS_MANIFEST_PATH, "utf8").replace(/^\uFEFF/, ""));
+    return Array.isArray(parsed?.tools) ? parsed.tools : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCustomToolsManifest(tools) {
+  const normalized = normalizeCustomToolsManifest(tools);
+  if (JSON.stringify(readCustomToolsManifest()) === JSON.stringify(normalized)) return false;
+
+  const payload = JSON.stringify({
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    tools: normalized
+  }, null, 2) + "\n";
+  const temporaryPath = `${CUSTOM_TOOLS_MANIFEST_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, payload, "utf8");
+  try {
+    fs.renameSync(temporaryPath, CUSTOM_TOOLS_MANIFEST_PATH);
+  } catch (error) {
+    try { fs.unlinkSync(CUSTOM_TOOLS_MANIFEST_PATH); } catch {}
+    fs.renameSync(temporaryPath, CUSTOM_TOOLS_MANIFEST_PATH);
+  }
+  log("custom tools manifest updated", CUSTOM_TOOLS_MANIFEST_PATH, normalized.length);
+  return true;
+}
+
 function handleExtensionMessage(message) {
   log("extension -> native host", message);
 
   if (message.type === "extensionReady") {
     extensionReady = true;
+    return;
+  }
+
+  if (message.type === "CUSTOM_TOOLS_SYNC") {
+    try {
+      writeCustomToolsManifest(message.tools);
+    } catch (error) {
+      log("failed writing custom tools manifest", error.message || String(error));
+    }
     return;
   }
 

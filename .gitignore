@@ -30,3 +30,7 @@ node_modules
 # SDF deploy tool runtime state (machine-specific)
 sdf_tool/sdf-project
 sdf_tool/accounts.json
+
+# Runtime MCP cache generated beside the native host executable
+mcp_server/custom-tools-manifest.json
+mcp_server/custom-tools-manifest.json.*.tmp
