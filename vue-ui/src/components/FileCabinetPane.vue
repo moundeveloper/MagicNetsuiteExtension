@@ -33,6 +33,16 @@
               size="small"
               severity="secondary"
               outlined
+              title="Download this file"
+              @click="downloadFile(openedFile)"
+            >
+              <i class="pi pi-download text-xs mr-1"></i>
+              Download
+            </Button>
+            <Button
+              size="small"
+              severity="secondary"
+              outlined
               @click="closeFile"
             >
               <i class="pi pi-arrow-left text-xs mr-1"></i>
@@ -842,6 +852,16 @@
           >
             <i class="pi pi-eye text-xs mr-1"></i>
             Open File
+          </Button>
+          <Button
+            size="small"
+            severity="secondary"
+            outlined
+            class="w-full"
+            @click="downloadFile(detailItem as FileItem)"
+          >
+            <i class="pi pi-download text-xs mr-1"></i>
+            Download
           </Button>
         </div>
         <div class="fc-detail-fields">
@@ -1968,6 +1988,46 @@ const fetchFileContent = async (file: FileItem) => {
   return result;
 };
 
+const downloadFile = async (file: FileItem) => {
+  if (!file.url) {
+    toast.add({
+      severity: "warn",
+      summary: "Download unavailable",
+      detail: "NetSuite did not return a media URL for this file.",
+      life: 3000
+    });
+    return;
+  }
+
+  try {
+    const environment =
+      props.currentEnvironment && props.currentEnvironment !== "unknown"
+        ? props.currentEnvironment
+        : "system.netsuite.com";
+    const downloadUrl = new URL(file.url, `https://${environment}`).href;
+    const response = await chrome.runtime.sendMessage({
+      type: "DOWNLOAD_FILE_CABINET_FILE",
+      url: downloadUrl
+    });
+    if (!response?.ok) {
+      throw new Error(response?.error || "Chrome could not start the download.");
+    }
+    toast.add({
+      severity: "success",
+      summary: "Download started",
+      detail: file.name,
+      life: 2200
+    });
+  } catch (error) {
+    toast.add({
+      severity: "error",
+      summary: "Download failed",
+      detail: error instanceof Error ? error.message : String(error),
+      life: 4500
+    });
+  }
+};
+
 const searchResultToFileItem = (
   result: (typeof globalSearchResults.value)[0]
 ): FileItem => ({
@@ -2360,6 +2420,11 @@ const handleItemContext = (item: CabinetItem, event: MouseEvent) => {
         label: "Open File",
         icon: "pi pi-eye",
         handler: () => openFile(item as FileItem)
+      });
+      actions.push({
+        label: "Download",
+        icon: "pi pi-download",
+        handler: () => downloadFile(item as FileItem)
       });
       actions.push({
         label: "Open in NetSuite",
@@ -4273,6 +4338,9 @@ defineExpose({
 }
 .fc-detail-actions {
   margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
 }
 .fc-detail-bookmark {
   background: none;

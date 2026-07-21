@@ -7,6 +7,7 @@ import SettingsView from "../views/SettingsView.vue";
 import LogSearchView from "../views/LogSearchView.vue";
 import BundleSearchView from "../views/BundleSearchView.vue";
 import BundleDetailView from "../views/BundleDetailView.vue";
+import BundleSdfProjectView from "../views/BundleSdfProjectView.vue";
 import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
 import PlaygroundView from "../views/PlaygroundView.vue";
 import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
@@ -31,6 +32,7 @@ import DependencyExplorerView from "../views/DependencyExplorerView.vue";
 import SkillsView from "../views/SkillsView.vue";
 import CustomToolsView from "../views/CustomToolsView.vue";
 import ClaudeTasksView from "../views/ClaudeTasksView.vue";
+import DownloadAnalyzerView from "../views/DownloadAnalyzerView.vue";
 
 export enum RouteStatus {
   development = "development",
@@ -134,6 +136,14 @@ export const routes: FullRoute[] = [
     breadcrumb: "Dependency Explorer"
   },
   {
+    route: "/download-analyzer",
+    name: "Download Analyzer",
+    icon: "pi pi-download",
+    component: DownloadAnalyzerView,
+    status: RouteStatus.release,
+    breadcrumb: "Download Analyzer"
+  },
+  {
     route: "/bundles",
     name: "Bundles",
     icon: "pi pi-box",
@@ -146,6 +156,14 @@ export const routes: FullRoute[] = [
         name: "BundleDetail",
         component: BundleDetailView,
         breadcrumb: "Bundle Detail",
+        breadcrumbParents: [{ label: "Bundles", route: "/bundles" }]
+      },
+      {
+        route: "/bundles/:bundleId/sdf",
+        name: "BundleSdfProject",
+        component: BundleSdfProjectView,
+        breadcrumb: "SDF Project",
+        tabLabel: "SDF Project",
         breadcrumbParents: [{ label: "Bundles", route: "/bundles" }]
       }
     ]

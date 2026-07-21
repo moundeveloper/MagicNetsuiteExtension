@@ -16,9 +16,11 @@ import MLoader from "./universal/patterns/MLoader.vue";
 import CommandPalette from "./CommandPalette.vue";
 import { getNetsuiteEnvironment } from "../utils/api";
 import { hasAdminAccess } from "../utils/adminAccess";
+import { useToast } from "primevue/usetoast";
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 const { settings, isSettingsLoaded } = useSettings();
 const visibleBottom = ref(false);
 const search = ref("");
@@ -150,6 +152,33 @@ const handleDashboardAccountSelected = (
   selectedDashboardTabId.value =
     tabId === null || tabId === "" ? null : Number(tabId);
   void switchDashboardAccount();
+};
+
+const selectedDashboardAccountId = computed(() =>
+  dashboardAccounts.value.find(
+    (account) => account.tabId === selectedDashboardTabId.value
+  )?.accountId ?? (environmentAccount.value === "No account" ? "" : environmentAccount.value)
+);
+
+const copyDashboardAccountId = async () => {
+  const accountId = selectedDashboardAccountId.value;
+  if (!accountId) return;
+  try {
+    await navigator.clipboard.writeText(accountId);
+    toast.add({
+      severity: "success",
+      summary: "Account ID copied",
+      detail: accountId,
+      life: 2000,
+    });
+  } catch (error: any) {
+    toast.add({
+      severity: "error",
+      summary: "Copy failed",
+      detail: String(error?.message ?? error),
+      life: 3500,
+    });
+  }
 };
 
 const handleTabActivated = () => {
@@ -353,13 +382,16 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="isDashboardPreview" class="dashboard-account-selector">
-      <i
-        :class="
-          dashboardAccountSwitching
-            ? 'pi pi-spin pi-spinner'
-            : 'pi pi-clone'
-        "
-      ></i>
+      <button
+        type="button"
+        class="dashboard-account-selector__copy"
+        :disabled="dashboardAccountSwitching || !selectedDashboardAccountId"
+        :title="selectedDashboardAccountId ? `Copy account ID ${selectedDashboardAccountId}` : 'No account ID to copy'"
+        aria-label="Copy selected account ID"
+        @click="copyDashboardAccountId"
+      >
+        <i :class="dashboardAccountSwitching ? 'pi pi-spin pi-spinner' : 'pi pi-copy'"></i>
+      </button>
       <MSelect
         :model-value="selectedDashboardTabId"
         :options="dashboardAccounts"
@@ -649,6 +681,32 @@ onBeforeUnmount(() => {
 
 .dashboard-account-selector__select {
   width: 12rem;
+  cursor: pointer;
+}
+
+.dashboard-account-selector__copy {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--p-slate-700);
+  cursor: pointer;
+}
+
+.dashboard-account-selector__copy:hover:not(:disabled) {
+  border-color: #d8c6ff;
+  background: #faf7ff;
+  color: #7b2ff7;
+}
+
+.dashboard-account-selector__copy:disabled {
+  color: var(--p-slate-400);
+  cursor: not-allowed;
 }
 
 .dashboard-account-selector__refresh {
@@ -666,6 +724,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   font-weight: 700;
   box-shadow: none;
+  cursor: pointer;
 }
 
 .dashboard-account-selector__select :deep(.m-select-trigger:hover),

@@ -1,6 +1,7 @@
 // bundleTools.ts — AI agent tools for listing and inspecting NetSuite bundles
 import type { ToolDefinition } from "../composables/useAgent";
-import { getNetsuiteEnvironment } from "./api";
+import { RequestRoutes } from "../types/request";
+import { ApiRequestType, callApi, getNetsuiteEnvironment } from "./api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,40 @@ export interface BundleComponent {
   isLocked: boolean;
   category: string;
   subCategory: string;
+}
+
+export interface BundleSdfConversionStatus {
+  buttonFound: boolean;
+  disabled: boolean;
+  canConvert: boolean;
+  inProgress: boolean;
+  detailsUrl: string;
+}
+
+/**
+ * State of the SDF conversion result file in the File Cabinet
+ * (SuiteBundles/SDF_Conversions/sdf_conversion_<bundleId>.zip).
+ * lastModified carries the FULL timestamp from SuiteQL — the File
+ * Cabinet UI only shows the date, but the DB column has HH:MI:SS.
+ */
+export interface BundleSdfFileState {
+  exists: boolean;
+  fileId: number | null;
+  fileName: string;
+  fileUrl: string | null;
+  fileSize: number | null;
+  /** "YYYY-MM-DD HH24:MI:SS" in the account timezone, or null if absent */
+  lastModified: string | null;
+}
+
+export interface SdfConversionCompletion {
+  completed: boolean;
+  /** File appeared where none existed before */
+  created: boolean;
+  /** Existing file's lastModified advanced past the baseline */
+  updated: boolean;
+  fileId: number | null;
+  lastModified: string | null;
 }
 
 // ── CSV helpers ────────────────────────────────────────────────────────────
@@ -176,6 +211,130 @@ const fetchCSV = async (url: string): Promise<string> => {
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
   return res.text();
+};
+
+export const fetchBundleSdfConversionStatus = async (
+  domain: string,
+  bundleId: string
+): Promise<BundleSdfConversionStatus> => {
+  const response = await callApi(
+    RequestRoutes.CHECK_BUNDLE_SDF_CONVERSION,
+    { domain, bundleId },
+    ApiRequestType.NORMAL
+  );
+  if (response.status === "error") throw new Error(String(response.message));
+  return response.message as BundleSdfConversionStatus;
+};
+
+export const startBundleSdfConversion = async (
+  domain: string,
+  bundleId: string,
+  detailsUrl?: string
+): Promise<void> => {
+  const response = await callApi(
+    RequestRoutes.START_BUNDLE_SDF_CONVERSION,
+    { domain, bundleId, detailsUrl },
+    ApiRequestType.NORMAL
+  );
+  if (response.status === "error") throw new Error(String(response.message));
+};
+
+const normalizeSuiteqlRows = (payload: any): Record<string, any>[] => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  return [];
+};
+
+const sdfConversionFileName = (bundleId: string): string =>
+  `sdf_conversion_${bundleId}.zip`;
+
+/**
+ * Read the current state of the SDF conversion result file via SuiteQL.
+ * This is the reliable completion signal: after a conversion, NetSuite
+ * either creates this file (first run) or bumps its lastmodifieddate
+ * (re-run). The bundle-details "Convert" button state only says whether a
+ * conversion is running, not whether THIS run finished.
+ */
+export const fetchBundleSdfFileState = async (
+  bundleId: string
+): Promise<BundleSdfFileState> => {
+  const fileName = sdfConversionFileName(bundleId);
+  const sql =
+    "SELECT f.id, f.url, f.filesize, " +
+    "TO_CHAR(f.lastmodifieddate, 'YYYY-MM-DD HH24:MI:SS') AS lastmodified " +
+    "FROM file f " +
+    "INNER JOIN MediaItemFolder conversions ON f.folder = conversions.id " +
+    "INNER JOIN MediaItemFolder suitebundles ON conversions.parent = suitebundles.id " +
+    `WHERE f.name = '${fileName}' ` +
+    "AND conversions.name = 'SDF_Conversions' " +
+    "AND suitebundles.name = 'SuiteBundles' AND ROWNUM <= 1";
+  const response = await callApi(
+    RequestRoutes.RUN_SUITEQL_QUERY,
+    { sql, limit: 1 },
+    ApiRequestType.NORMAL
+  );
+  if (response.status === "error") throw new Error(String(response.message));
+  const row = normalizeSuiteqlRows(response.message)[0];
+  return {
+    exists: Boolean(row),
+    fileId: row ? Number(row.id) : null,
+    fileName,
+    fileUrl: row?.url ? String(row.url) : null,
+    fileSize: row?.filesize != null ? Number(row.filesize) : null,
+    lastModified: row ? String(row.lastmodified) : null,
+  };
+};
+
+/** Fetch the converted SDF ZIP as bytes using the authenticated NetSuite tab. */
+export const fetchBundleSdfArchive = async (
+  fileState: BundleSdfFileState
+): Promise<Uint8Array> => {
+  if (!fileState.exists || !fileState.fileId || !fileState.fileUrl) {
+    throw new Error("The converted SDF archive is not available in the File Cabinet.");
+  }
+  const response = await callApi(
+    RequestRoutes.FETCH_FILE_CONTENT,
+    { fileUrl: fileState.fileUrl },
+    ApiRequestType.NORMAL
+  );
+  if (response.status === "error") throw new Error(String(response.message));
+  const result = response.message as { content?: string; binary?: boolean };
+  if (!result?.binary || !result.content) {
+    throw new Error("NetSuite returned an invalid SDF ZIP response.");
+  }
+  const encoded = result.content.replace(/^data:[^;]*;base64,/, "");
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+};
+
+/**
+ * Compare a baseline file state (captured before starting the conversion)
+ * against the current state to decide whether this conversion run finished.
+ * Timestamp strings are "YYYY-MM-DD HH24:MI:SS" — lexicographically ordered,
+ * so a plain string comparison is monotonic in time. Comparing server-side
+ * values (not the client clock) avoids any timezone/skew issues.
+ */
+export const detectSdfConversionCompletion = (
+  baseline: BundleSdfFileState,
+  current: BundleSdfFileState
+): SdfConversionCompletion => {
+  const created = !baseline.exists && current.exists;
+  const updated =
+    baseline.exists &&
+    current.exists &&
+    !!baseline.lastModified &&
+    !!current.lastModified &&
+    current.lastModified > baseline.lastModified;
+  return {
+    completed: created || updated,
+    created,
+    updated,
+    fileId: current.fileId,
+    lastModified: current.lastModified,
+  };
 };
 
 export const fetchBundleList = async (

@@ -238,6 +238,7 @@ onMounted(async () => {
     find: { addExtraSpaceOnTop: true },
     value: formatted,
     language: props.language,
+    theme: props.theme,
     readOnly: props.readonly,
     automaticLayout: true,
     minimap: { enabled: props.config.minimap },

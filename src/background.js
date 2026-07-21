@@ -68,6 +68,328 @@ const dashboardTabGroupsUpdate = (groupId, updateProperties) =>
 const dashboardWindowsUpdate = (windowId, updateInfo) =>
   chromeCallback((done) => chrome.windows.update(windowId, updateInfo, done));
 
+// ── Download Analyzer ────────────────────────────────────────────────────────
+// Listeners remain registered so MV3 can wake the service worker, but they only
+// retain data while the user has explicitly enabled capture in the analyzer UI.
+const DOWNLOAD_ANALYZER_STORAGE_KEY = "magic_netsuite_download_analyzer";
+const DOWNLOAD_ANALYZER_MAX_ENTRIES = 250;
+const DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH = 32000;
+let downloadAnalyzerState = { enabled: false, entries: [] };
+let downloadAnalyzerMutation = Promise.resolve();
+
+const downloadAnalyzerReady = chrome.storage.local
+  .get(DOWNLOAD_ANALYZER_STORAGE_KEY)
+  .then((stored) => {
+    const saved = stored[DOWNLOAD_ANALYZER_STORAGE_KEY];
+    downloadAnalyzerState = {
+      enabled: Boolean(saved?.enabled),
+      entries: Array.isArray(saved?.entries)
+        ? saved.entries.slice(0, DOWNLOAD_ANALYZER_MAX_ENTRIES)
+        : []
+    };
+  })
+  .catch((error) => {
+    console.warn("[Download Analyzer] Could not restore state", error);
+  });
+
+const notifyDownloadAnalyzerChanged = () => {
+  chrome.runtime.sendMessage({ type: "DOWNLOAD_ANALYZER_UPDATED" }).catch(() => {});
+};
+
+const queueDownloadAnalyzerMutation = (mutation) => {
+  downloadAnalyzerMutation = downloadAnalyzerMutation
+    .then(() => downloadAnalyzerReady)
+    .then(async () => {
+      const changed = await mutation(downloadAnalyzerState);
+      if (changed === false) return;
+      downloadAnalyzerState.entries = downloadAnalyzerState.entries
+        .sort((a, b) => Number(b.startedAt || 0) - Number(a.startedAt || 0))
+        .slice(0, DOWNLOAD_ANALYZER_MAX_ENTRIES);
+      await chrome.storage.local.set({
+        [DOWNLOAD_ANALYZER_STORAGE_KEY]: downloadAnalyzerState
+      });
+      notifyDownloadAnalyzerChanged();
+    })
+    .catch((error) => {
+      console.error("[Download Analyzer] Failed to record event", error);
+    });
+  return downloadAnalyzerMutation;
+};
+
+const isNetSuiteUrl = (value) => {
+  if (!value) return false;
+  try {
+    return new URL(value).hostname.toLowerCase().endsWith(".netsuite.com");
+  } catch {
+    return false;
+  }
+};
+
+const isNetSuiteDownload = (item) =>
+  isNetSuiteUrl(item?.url) ||
+  isNetSuiteUrl(item?.finalUrl) ||
+  isNetSuiteUrl(item?.referrer);
+
+const truncateAnalyzerValue = (value, maxLength = DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH) => {
+  const text = String(value ?? "");
+  return text.length > maxLength
+    ? `${text.slice(0, maxLength)}\n[truncated ${text.length - maxLength} characters]`
+    : text;
+};
+
+const sanitizeHeaders = (headers = []) =>
+  headers.map(({ name, value, binaryValue }) => {
+    const lowerName = String(name || "").toLowerCase();
+    const hidden =
+      lowerName === "cookie" ||
+      lowerName === "set-cookie" ||
+      lowerName === "authorization";
+    return {
+      name,
+      value: hidden
+        ? "[redacted]"
+        : truncateAnalyzerValue(
+            value ?? (binaryValue ? `[${binaryValue.length} binary bytes]` : ""),
+            8000
+          )
+    };
+  });
+
+const serializeRequestBody = (requestBody) => {
+  if (!requestBody) return null;
+  if (requestBody.formData) {
+    return {
+      formData: Object.fromEntries(
+        Object.entries(requestBody.formData).map(([key, values]) => [
+          key,
+          values.map((value) => truncateAnalyzerValue(value, 8000))
+        ])
+      )
+    };
+  }
+  const raw = (requestBody.raw || []).map((part) => {
+    if (!part.bytes) return { file: part.file || null };
+    try {
+      return { text: truncateAnalyzerValue(new TextDecoder("utf-8").decode(part.bytes)) };
+    } catch {
+      return { text: "[unreadable request body]" };
+    }
+  });
+  return raw.length ? { raw } : null;
+};
+
+const upsertDownloadAnalyzerEntry = (id, createEntry, updateEntry) =>
+  queueDownloadAnalyzerMutation((state) => {
+    if (!state.enabled) return false;
+    const index = state.entries.findIndex((entry) => entry.id === id);
+    if (index < 0) {
+      const created = createEntry?.();
+      if (created) state.entries.unshift(created);
+      return Boolean(created);
+    }
+    state.entries[index] = updateEntry
+      ? updateEntry(state.entries[index])
+      : state.entries[index];
+    return Boolean(updateEntry);
+  });
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    const requestBody = serializeRequestBody(details.requestBody);
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      () => isNetSuiteUrl(details.url) ? ({
+        id: `request:${details.requestId}`,
+        kind: "request",
+        requestId: details.requestId,
+        startedAt: details.timeStamp,
+        state: "pending",
+        method: details.method,
+        url: details.url,
+        finalUrl: details.url,
+        requestUrls: [details.url],
+        requestType: details.type,
+        tabId: details.tabId,
+        frameId: details.frameId,
+        parentFrameId: details.parentFrameId,
+        initiator: details.initiator || null,
+        documentUrl: details.documentUrl || null,
+        requestBody,
+        requestHeaders: [],
+        responseHeaders: [],
+        redirects: []
+      }) : null,
+      (entry) => ({
+        ...entry,
+        requestBody: requestBody || entry.requestBody,
+        finalUrl: details.url,
+        requestUrls: Array.from(new Set([...(entry.requestUrls || []), details.url]))
+      })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["requestBody"]
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({ ...entry, requestHeaders: sanitizeHeaders(details.requestHeaders) })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["requestHeaders", "extraHeaders"]
+);
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        statusCode: details.statusCode,
+        statusLine: details.statusLine,
+        ip: details.ip || null,
+        fromCache: Boolean(details.fromCache),
+        responseHeaders: sanitizeHeaders(details.responseHeaders)
+      })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders", "extraHeaders"]
+);
+
+chrome.webRequest.onBeforeRedirect.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        statusCode: details.statusCode,
+        redirects: [
+          ...(entry.redirects || []),
+          {
+            at: details.timeStamp,
+            from: details.url,
+            to: details.redirectUrl,
+            statusCode: details.statusCode
+          }
+        ]
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        state: "complete",
+        completedAt: details.timeStamp,
+        statusCode: details.statusCode,
+        fromCache: Boolean(details.fromCache),
+        ip: details.ip || entry.ip || null
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        state: "error",
+        completedAt: details.timeStamp,
+        error: details.error
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.downloads.onCreated.addListener((item) => {
+  if (!isNetSuiteDownload(item)) return;
+  void upsertDownloadAnalyzerEntry(`download:${item.id}`, () => ({
+    id: `download:${item.id}`,
+    kind: "download",
+    downloadId: item.id,
+    startedAt: Date.parse(item.startTime) || Date.now(),
+    state: item.state || "in_progress",
+    url: item.url,
+    finalUrl: item.finalUrl || item.url,
+    referrer: item.referrer || null,
+    filename: item.filename || "",
+    mime: item.mime || "",
+    totalBytes: item.totalBytes,
+    bytesReceived: item.bytesReceived,
+    fileSize: item.fileSize,
+    danger: item.danger,
+    incognito: item.incognito,
+    byExtensionId: item.byExtensionId || null,
+    byExtensionName: item.byExtensionName || null,
+    paused: item.paused,
+    canResume: item.canResume,
+    error: item.error || null
+  }));
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  void upsertDownloadAnalyzerEntry(
+    `download:${delta.id}`,
+    null,
+    (entry) => {
+      const next = { ...entry };
+      for (const key of [
+        "state", "filename", "url", "finalUrl", "mime", "totalBytes",
+        "bytesReceived", "fileSize", "danger", "paused", "canResume", "error",
+        "endTime", "exists"
+      ]) {
+        if (delta[key]?.current !== undefined) next[key] = delta[key].current;
+      }
+      return next;
+    }
+  );
+});
+
+chrome.downloads.onErased.addListener((downloadId) => {
+  void upsertDownloadAnalyzerEntry(
+    `download:${downloadId}`,
+    null,
+    (entry) => ({ ...entry, erased: true })
+  );
+});
+
+const handleDownloadAnalyzerGetState = ({ sendResponse }) => {
+  downloadAnalyzerReady.then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
+const handleDownloadAnalyzerSetEnabled = ({ message, sendResponse }) => {
+  queueDownloadAnalyzerMutation((state) => {
+    state.enabled = Boolean(message.enabled);
+  }).then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
+const handleDownloadAnalyzerClear = ({ sendResponse }) => {
+  queueDownloadAnalyzerMutation((state) => {
+    state.entries = [];
+  }).then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
 // ── MCP: SuiteQL Agent Guide ──
 // Returned by the suiteql_get_guide tool so AI agents know exactly
 // how to use these tools without guessing or producing invalid SQL.
@@ -338,7 +660,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     CLAUDE_CLI_START: handleClaudeCliStart,
     CLAUDE_CLI_CANCEL: handleClaudeCliCancel,
     CLAUDE_CLI_GET_STATE: handleClaudeCliGetState,
-    CLAUDE_CLI_CLEAR: handleClaudeCliClear
+    CLAUDE_CLI_CLEAR: handleClaudeCliClear,
+    DOWNLOAD_ANALYZER_GET_STATE: handleDownloadAnalyzerGetState,
+    DOWNLOAD_ANALYZER_SET_ENABLED: handleDownloadAnalyzerSetEnabled,
+    DOWNLOAD_ANALYZER_CLEAR: handleDownloadAnalyzerClear,
+    DOWNLOAD_FILE_CABINET_FILE: handleDownloadFileCabinetFile
   };
 
   const messageHandler = messageMap[message.type];
@@ -1205,6 +1531,35 @@ const handleMcpGetTools = ({ sendResponse }) => {
   // Return ALL tool definitions — the UI needs to see disabled tools too so users can re-enable them.
   const tools = MCP_TOOL_DEFINITIONS.map(({ name, description }) => ({ name, description }));
   sendResponse(tools);
+  return true;
+};
+
+const handleDownloadFileCabinetFile = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      const targetUrl = new URL(String(message.url || ""));
+      if (!targetUrl.hostname.toLowerCase().endsWith(".netsuite.com")) {
+        throw new Error("Blocked download outside NetSuite.");
+      }
+
+      const downloadId = await chromeCallback((done) =>
+        chrome.downloads.download(
+          {
+            url: targetUrl.href,
+            saveAs: false,
+            conflictAction: "uniquify"
+          },
+          done
+        )
+      );
+      sendResponse({ ok: true, downloadId });
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
   return true;
 };
 

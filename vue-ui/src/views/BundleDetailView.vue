@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Button } from "primevue";
+import { useToast } from "primevue/usetoast";
 import MCard from "../components/universal/card/MCard.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MTabs from "../components/universal/tabs/MTabs.vue";
@@ -10,8 +11,14 @@ import MTableColumnStatic from "../components/universal/table/MTableColumnStatic
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import {
   fetchBundleComponents,
+  fetchBundleSdfConversionStatus,
+  fetchBundleSdfFileState,
+  detectSdfConversionCompletion,
+  startBundleSdfConversion,
   type Bundle,
   type BundleComponent,
+  type BundleSdfConversionStatus,
+  type BundleSdfFileState,
 } from "../utils/bundleTools";
 import { getNetsuiteEnvironment } from "../utils/api";
 
@@ -19,6 +26,7 @@ const props = defineProps<{ vhOffset: number }>();
 
 const route = useRoute();
 const router = useRouter();
+const toast = useToast();
 
 // ── State ──────────────────────────────────────────────────────────────────
 const bundle = ref<Bundle | null>(null);
@@ -27,6 +35,29 @@ const loading = ref(false);
 const errorMsg = ref("");
 const domain = ref("");
 const activeCategory = ref("");
+const sdfStatus = ref<BundleSdfConversionStatus | null>(null);
+const sdfStatusLoading = ref(false);
+const sdfConversionStarting = ref(false);
+const sdfStatusError = ref("");
+const sdfFileState = ref<BundleSdfFileState | null>(null);
+
+// ── SDF completion tracking (File Cabinet result file) ──────────────────────
+const SDF_POLL_INTERVAL_MS = 5000;
+const SDF_POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min
+const sdfConverting = ref(false);
+const sdfBaseline = ref<BundleSdfFileState | null>(null);
+let sdfPollTimer: ReturnType<typeof setTimeout> | null = null;
+let sdfPollDeadline = 0;
+
+const stopSdfPolling = () => {
+  if (sdfPollTimer !== null) {
+    clearTimeout(sdfPollTimer);
+    sdfPollTimer = null;
+  }
+  sdfConverting.value = false;
+};
+
+onBeforeUnmount(stopSdfPolling);
 
 // ── Parse bundle from route query ──────────────────────────────────────────
 onMounted(async () => {
@@ -61,15 +92,195 @@ const loadComponents = async () => {
         "No active NetSuite tab found. Open a NetSuite page and try again.";
       return;
     }
+    const statusRequest = bundle.value.type === "created"
+      ? Promise.all([loadSdfStatus(), loadSdfFileState()])
+      : Promise.resolve();
     components.value = await fetchBundleComponents(
       domain.value,
       bundle.value.bundleId
     );
+    await statusRequest;
   } catch (err: any) {
     errorMsg.value = String(err?.message ?? err);
   } finally {
     loading.value = false;
   }
+};
+
+const loadSdfFileState = async () => {
+  if (!bundle.value || bundle.value.type !== "created") return;
+  try {
+    sdfFileState.value = await fetchBundleSdfFileState(bundle.value.bundleId);
+  } catch (err: any) {
+    sdfStatusError.value = String(err?.message ?? err);
+  }
+};
+
+const loadSdfStatus = async () => {
+  if (!bundle.value || bundle.value.type !== "created" || !domain.value) return;
+
+  sdfStatusLoading.value = true;
+  sdfStatusError.value = "";
+  try {
+    sdfStatus.value = await fetchBundleSdfConversionStatus(
+      domain.value,
+      bundle.value.bundleId
+    );
+  } catch (err: any) {
+    sdfStatus.value = null;
+    sdfStatusError.value = String(err?.message ?? err);
+  } finally {
+    sdfStatusLoading.value = false;
+  }
+};
+
+const startSdfConversion = async () => {
+  if (
+    !bundle.value ||
+    bundle.value.type !== "created" ||
+    !sdfStatus.value?.canConvert
+  ) return;
+
+  const bundleId = bundle.value.bundleId;
+  sdfConversionStarting.value = true;
+  try {
+    // Snapshot the result file BEFORE starting so completion is a pure
+    // server-side comparison (created, or lastModified advanced).
+    sdfBaseline.value = await fetchBundleSdfFileState(bundleId);
+
+    await startBundleSdfConversion(
+      domain.value,
+      bundleId,
+      sdfStatus.value.detailsUrl
+    );
+    sdfStatus.value = {
+      ...sdfStatus.value,
+      disabled: true,
+      canConvert: false,
+      inProgress: true,
+    };
+    toast.add({
+      severity: "success",
+      summary: "SDF conversion started",
+      detail: `Bundle ${bundleId} is being converted. Watching SuiteBundles/SDF_Conversions for the result.`,
+      life: 5000,
+    });
+
+    // Poll the File Cabinet result file until this run finishes.
+    sdfConverting.value = true;
+    sdfPollDeadline = Date.now() + SDF_POLL_TIMEOUT_MS;
+    scheduleSdfPoll(bundleId);
+  } catch (err: any) {
+    stopSdfPolling();
+    toast.add({
+      severity: "error",
+      summary: "Conversion failed",
+      detail: String(err?.message ?? err),
+      life: 5000,
+    });
+  } finally {
+    sdfConversionStarting.value = false;
+  }
+};
+
+const scheduleSdfPoll = (bundleId: string) => {
+  sdfPollTimer = setTimeout(() => pollSdfCompletion(bundleId), SDF_POLL_INTERVAL_MS);
+};
+
+const pollSdfCompletion = async (bundleId: string) => {
+  if (!sdfConverting.value) return;
+  try {
+    const current = await fetchBundleSdfFileState(bundleId);
+    const result = detectSdfConversionCompletion(
+      sdfBaseline.value ?? {
+        exists: false,
+        fileId: null,
+        fileName: current.fileName,
+        fileUrl: null,
+        fileSize: null,
+        lastModified: null,
+      },
+      current
+    );
+    if (result.completed) {
+      stopSdfPolling();
+      sdfFileState.value = current;
+      if (sdfStatus.value) {
+        sdfStatus.value = {
+          ...sdfStatus.value,
+          disabled: false,
+          canConvert: true,
+          inProgress: false,
+        };
+      }
+      toast.add({
+        severity: "success",
+        summary: "SDF conversion complete",
+        detail: `${current.fileName} ${result.created ? "created" : "updated"} (${result.lastModified}).`,
+        life: 6000,
+      });
+      return;
+    }
+  } catch (err: any) {
+    // Transient query error — keep polling until the deadline.
+    console.warn("SDF completion poll failed:", err?.message ?? err);
+  }
+
+  if (Date.now() >= sdfPollDeadline) {
+    stopSdfPolling();
+    toast.add({
+      severity: "warn",
+      summary: "SDF conversion still pending",
+      detail: "Stopped watching after 10 minutes. Reopen the bundle to check again.",
+      life: 6000,
+    });
+    return;
+  }
+  scheduleSdfPoll(bundleId);
+};
+
+const sdfButtonLabel = computed(() => {
+  if (sdfStatusLoading.value) return "Checking SDF status";
+  if (sdfConversionStarting.value) return "Starting conversion";
+  if (sdfConverting.value) return "Converting… watching result file";
+  if (sdfStatus.value?.inProgress) return "SDF conversion in progress";
+  if (sdfStatus.value?.canConvert) return "Convert to SDF Project";
+  return "SDF conversion unavailable";
+});
+
+const sdfButtonTitle = computed(() => {
+  if (sdfStatusError.value) return sdfStatusError.value;
+  if (sdfStatus.value?.inProgress) {
+    return "NetSuite has disabled conversion while this bundle is being converted.";
+  }
+  if (!sdfStatus.value?.buttonFound && !sdfStatusLoading.value) {
+    return "NetSuite did not expose the Convert to SDF Project action for this bundle.";
+  }
+  return sdfButtonLabel.value;
+});
+
+const sdfProjectUpdating = computed(
+  () =>
+    sdfStatusLoading.value ||
+    sdfConversionStarting.value ||
+    sdfConverting.value ||
+    Boolean(sdfStatus.value?.inProgress)
+);
+
+const openSdfProject = () => {
+  if (
+    !bundle.value ||
+    bundle.value.type !== "created" ||
+    !sdfFileState.value?.fileId ||
+    sdfProjectUpdating.value
+  ) return;
+  router.push({
+    path: `/bundles/${bundle.value.bundleId}/sdf`,
+    query: {
+      data: JSON.stringify(bundle.value),
+      fileId: String(sdfFileState.value.fileId),
+    },
+  });
 };
 
 // ── Category / subcategory grouping ────────────────────────────────────────
@@ -251,6 +462,27 @@ const navigateBack = () => {
           </div>
           <div class="detail-header-right">
             <Button
+              v-if="bundle?.type === 'created' && sdfFileState?.exists && sdfFileState.fileId"
+              icon="pi pi-folder-open"
+              size="small"
+              label="Open SDF Project"
+              :title="sdfProjectUpdating ? 'The SDF project is being updated' : `Open ${sdfFileState.fileName}`"
+              :disabled="sdfProjectUpdating"
+              class="sdf-project-btn"
+              @click="openSdfProject"
+            />
+            <Button
+              v-if="bundle?.type === 'created'"
+              icon="pi pi-box"
+              size="small"
+              :label="sdfButtonLabel"
+              :title="sdfButtonTitle"
+              :loading="sdfStatusLoading || sdfConversionStarting || sdfConverting"
+              :disabled="!sdfStatus?.canConvert || sdfStatusLoading || sdfConversionStarting || sdfConverting"
+              class="sdf-convert-btn"
+              @click="startSdfConversion"
+            />
+            <Button
               icon="pi pi-refresh"
               size="small"
               :loading="loading"
@@ -393,6 +625,17 @@ const navigateBack = () => {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.sdf-convert-btn,
+.sdf-project-btn {
+  white-space: nowrap;
+  max-width: 230px;
+}
+
+.sdf-convert-btn :deep(.p-button-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .detail-title {
