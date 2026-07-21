@@ -14,7 +14,6 @@ import MPanel from "./universal/panels/MPanel.vue";
 import MSelect from "./universal/input/MSelect.vue";
 import MLoader from "./universal/patterns/MLoader.vue";
 import CommandPalette from "./CommandPalette.vue";
-import { getNotebookEntries, type NotebookEntry } from "../utils/notebookDb";
 import { getNetsuiteEnvironment } from "../utils/api";
 import { hasAdminAccess } from "../utils/adminAccess";
 
@@ -23,9 +22,6 @@ const router = useRouter();
 const { settings, isSettingsLoaded } = useSettings();
 const visibleBottom = ref(false);
 const search = ref("");
-const notebookSearchOpen = ref(false);
-const notebookSearch = ref("");
-const notebookEntries = ref<NotebookEntry[]>([]);
 const environmentHost = ref("unknown");
 const environmentLoading = ref(true);
 const dashboardSessionId = new URLSearchParams(window.location.search).get(
@@ -65,26 +61,6 @@ const preferredLinks = computed(() => {
 const nonPreferredLinks = computed(() => {
   const prefs = settings.preferredFeatures || [];
   return allLinks.value.filter((l) => !prefs.includes(l.route));
-});
-
-const notebookSearchResults = computed(() => {
-  const q = notebookSearch.value.trim().toLowerCase();
-  return notebookEntries.value
-    .filter((entry) => {
-      if (!q) return !entry.archived;
-      return !entry.archived && [
-        entry.title,
-        entry.summary,
-        entry.body,
-        entry.group,
-        entry.scriptId,
-        entry.netsuiteId,
-        entry.filePath,
-        entry.url,
-        entry.tags.join(" ")
-      ].join(" ").toLowerCase().includes(q);
-    })
-    .slice(0, 8);
 });
 
 const isAdmin = computed(() => privilegeLevel === "ADMIN");
@@ -278,20 +254,6 @@ const breadcrumbs = computed(() => {
 };
 
 const handleKeydown = (e: KeyboardEvent) => {
-  const notebookShortcut = parseShortcut(settings.modulesSearch || "ctrl+m");
-  const notebookCtrlPressed = e.ctrlKey || e.metaKey;
-  const notebookMatch =
-    (!notebookShortcut.modifiers.includes("ctrl") || notebookCtrlPressed) &&
-    (!notebookShortcut.modifiers.includes("alt") || e.altKey) &&
-    (!notebookShortcut.modifiers.includes("shift") || e.shiftKey) &&
-    e.key.toLowerCase() === notebookShortcut.key;
-
-  if (notebookMatch) {
-    e.preventDefault();
-    openNotebookSearch();
-    return;
-  }
-
   const { modifiers, key } = parseShortcut(settings.drawerOpen);
   const ctrlPressed = e.ctrlKey || e.metaKey;
   const altPressed = e.altKey;
@@ -307,20 +269,6 @@ const handleKeydown = (e: KeyboardEvent) => {
     e.preventDefault();
     visibleBottom.value = !visibleBottom.value;
   }
-};
-
-const openNotebookSearch = async () => {
-  notebookEntries.value = await getNotebookEntries();
-  notebookSearchOpen.value = true;
-  setTimeout(() => {
-    document.querySelector<HTMLInputElement>(".notebook-global-search input")?.focus();
-  }, 0);
-};
-
-const openNotebookEntry = (entry?: NotebookEntry) => {
-  notebookSearchOpen.value = false;
-  const query = entry ? `?q=${encodeURIComponent(entry.title)}` : notebookSearch.value ? `?q=${encodeURIComponent(notebookSearch.value)}` : "";
-  router.push(`/notebook${query}`);
 };
 
 onMounted(() => {
@@ -620,46 +568,6 @@ onBeforeUnmount(() => {
     </div>
   </Drawer>
 
-  <Teleport to="body">
-    <div
-      v-if="notebookSearchOpen"
-      class="notebook-search-backdrop"
-      @click="notebookSearchOpen = false"
-    >
-      <div class="notebook-global-search" @click.stop>
-        <div class="notebook-global-input">
-          <i class="pi pi-search"></i>
-          <input
-            v-model="notebookSearch"
-            placeholder="Search Notebook notes, scripts, files, IDs..."
-            @keydown.enter.prevent="openNotebookEntry(notebookSearchResults[0])"
-            @keydown.escape.prevent="notebookSearchOpen = false"
-          />
-          <kbd>{{ settings.modulesSearch.toUpperCase() }}</kbd>
-        </div>
-        <div class="notebook-global-results">
-          <button
-            v-for="entry in notebookSearchResults"
-            :key="entry.id"
-            @click="openNotebookEntry(entry)"
-          >
-            <span>
-              <strong>{{ entry.title }}</strong>
-              <small>{{ entry.group || entry.type }} · {{ entry.summary || entry.scriptId || entry.filePath || entry.netsuiteId }}</small>
-            </span>
-            <i class="pi pi-arrow-right"></i>
-          </button>
-          <button v-if="notebookSearchResults.length === 0" @click="openNotebookEntry()">
-            <span>
-              <strong>Search Notebook</strong>
-              <small>Open the Notebook archive with this query</small>
-            </span>
-            <i class="pi pi-arrow-right"></i>
-          </button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>
@@ -976,100 +884,4 @@ onBeforeUnmount(() => {
   color: var(--p-amber-500);
 }
 
-.notebook-search-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 12vh;
-  background: rgba(15, 23, 42, 0.32);
-}
-
-.notebook-global-search {
-  width: min(680px, calc(100vw - 2rem));
-  border-radius: 8px;
-  background: #f8fafc;
-  outline: 1px solid #cbd5e1;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.24);
-  overflow: hidden;
-}
-
-.notebook-global-input {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  height: 3rem;
-  padding: 0 0.85rem;
-  background: white;
-  border-bottom: 1px solid #dbe3ee;
-  color: #64748b;
-}
-
-.notebook-global-input input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #0f172a;
-  font: inherit;
-}
-
-.notebook-global-input kbd {
-  padding: 0.15rem 0.4rem;
-  border-radius: 5px;
-  color: #475569;
-  background: #e2e8f0;
-  font-size: 0.68rem;
-}
-
-.notebook-global-results {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  max-height: 48vh;
-  overflow: auto;
-  padding: 0.55rem;
-}
-
-.notebook-global-results button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border: 0;
-  border-radius: 6px;
-  padding: 0.55rem 0.65rem;
-  background: white;
-  color: #334155;
-  outline: 1px solid #e2e8f0;
-  cursor: pointer;
-  text-align: left;
-}
-
-.notebook-global-results button:hover {
-  background: #eff6ff;
-  outline-color: #93c5fd;
-}
-
-.notebook-global-results span {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  min-width: 0;
-}
-
-.notebook-global-results strong,
-.notebook-global-results small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.notebook-global-results small {
-  color: #64748b;
-  font-size: 0.72rem;
-}
 </style>

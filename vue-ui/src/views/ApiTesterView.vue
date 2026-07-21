@@ -336,7 +336,7 @@
               </div>
 
               <!-- Logs -->
-              <div v-else-if="historyViewerTab === 'Logs'" class="response-content">
+              <div v-else-if="historyViewerTab === 'Logs'" class="response-content logs-content">
                 <div v-if="selectedHistoryEntry.logsLoading" class="response-empty">
                   <i class="pi pi-spin pi-spinner text-2xl text-indigo-400 mb-2"></i>
                   <p class="text-gray-400 text-sm">Fetching logs…</p>
@@ -345,25 +345,36 @@
                   <i class="pi pi-list text-3xl text-gray-300 mb-2"></i>
                   <p class="text-gray-400 text-sm">No logs found for this request.</p>
                 </div>
-                <div v-else class="logs-list">
-                  <div
-                    v-for="log in selectedHistoryEntry.logs"
-                    :key="log.id"
-                    class="log-entry"
-                    :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
-                  >
-                    <div class="log-entry-header" @click="toggleLog(log.id)">
-                      <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
-                      <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
-                      <span class="log-title">{{ log.title || '(no title)' }}</span>
-                      <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
-                      <i class="pi pi-chevron-down log-chevron" />
-                    </div>
-                    <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
-                      <pre class="log-message">{{ log.message }}</pre>
+                <template v-else>
+                  <div class="log-search-bar">
+                    <i class="pi pi-search" />
+                    <input v-model="historyLogSearch" type="search" placeholder="Search level, title, message, or script…" />
+                    <button v-if="historyLogSearch" title="Clear log search" @click="historyLogSearch = ''">
+                      <i class="pi pi-times" />
+                    </button>
+                    <span>{{ filteredHistoryLogs.length }} / {{ selectedHistoryEntry.logs?.length ?? 0 }}</span>
+                  </div>
+                  <div v-if="filteredHistoryLogs.length === 0" class="log-no-match">No logs match “{{ historyLogSearch }}”.</div>
+                  <div v-else class="logs-list">
+                    <div
+                      v-for="log in filteredHistoryLogs"
+                      :key="log.id"
+                      class="log-entry"
+                      :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
+                    >
+                      <div class="log-entry-header" @click="toggleLog(log.id)">
+                        <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
+                        <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
+                        <span class="log-title">{{ log.title || '(no title)' }}</span>
+                        <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                        <i class="pi pi-chevron-down log-chevron" />
+                      </div>
+                      <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
+                        <pre class="log-message">{{ log.message }}</pre>
+                      </div>
                     </div>
                   </div>
-                </div>
+                </template>
               </div>
             </div>
 
@@ -603,7 +614,7 @@
                 </div>
 
                 <!-- Logs tab -->
-                <div v-else-if="req.activeResponseTab === 'Logs'" class="response-content">
+                <div v-else-if="req.activeResponseTab === 'Logs'" class="response-content logs-content">
                   <div v-if="req.isLoadingLogs" class="response-empty">
                     <i class="pi pi-spin pi-spinner text-2xl text-indigo-400 mb-2"></i>
                     <p class="text-gray-400 text-sm">Fetching logs…</p>
@@ -612,25 +623,45 @@
                     <i class="pi pi-list text-3xl text-gray-300 mb-2"></i>
                     <p class="text-gray-400 text-sm">No logs found for this request.</p>
                   </div>
-                  <div v-else class="logs-list">
-                    <div
-                      v-for="log in req.logs"
-                      :key="log.id"
-                      class="log-entry"
-                      :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
-                    >
-                      <div class="log-entry-header" @click="toggleLog(log.id)">
-                        <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
-                        <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
-                        <span class="log-title">{{ log.title || '(no title)' }}</span>
-                        <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
-                        <i class="pi pi-chevron-down log-chevron" />
-                      </div>
-                      <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
-                        <pre class="log-message">{{ log.message }}</pre>
+                  <template v-else>
+                    <div class="log-search-bar">
+                      <i class="pi pi-search" />
+                      <input
+                        :value="logSearchByRequest[req.id] ?? ''"
+                        type="search"
+                        placeholder="Search level, title, message, or script…"
+                        @input="setRequestLogSearch(req.id, ($event.target as HTMLInputElement).value)"
+                      />
+                      <button
+                        v-if="logSearchByRequest[req.id]"
+                        title="Clear log search"
+                        @click="setRequestLogSearch(req.id, '')"
+                      ><i class="pi pi-times" /></button>
+                      <span>{{ logsForRequest(req).length }} / {{ req.logs?.length ?? 0 }}</span>
+                    </div>
+                    <div v-if="logsForRequest(req).length === 0" class="log-no-match">
+                      No logs match “{{ logSearchByRequest[req.id] }}”.
+                    </div>
+                    <div v-else class="logs-list">
+                      <div
+                        v-for="log in logsForRequest(req)"
+                        :key="log.id"
+                        class="log-entry"
+                        :class="{ 'log-entry--expanded': expandedLogIds.has(log.id) }"
+                      >
+                        <div class="log-entry-header" @click="toggleLog(log.id)">
+                          <span class="log-level-badge" :class="logLevelClass(log.level)">{{ log.level }}</span>
+                          <span class="log-datetime">{{ formatLogDatetime(log.datetime) }}</span>
+                          <span class="log-title">{{ log.title || '(no title)' }}</span>
+                          <span v-if="log.scriptName" class="log-script">{{ log.scriptName }}</span>
+                          <i class="pi pi-chevron-down log-chevron" />
+                        </div>
+                        <div v-if="expandedLogIds.has(log.id)" class="log-entry-body">
+                          <pre class="log-message">{{ log.message }}</pre>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </template>
                 </div>
               </div>
             </div>
@@ -1005,6 +1036,7 @@ const requests = ref<ApiRequest[]>([]);
 const openTabs = ref<string[]>([]);
 const activeRequestId = ref("");
 const requestSearch = ref("");
+const logSearchByRequest = ref<Record<string, string>>({});
 const isRestoring = ref(true);
 
 // ── Computed ──────────────────────────────────────────────────────────────────
@@ -1184,6 +1216,31 @@ const logLevelClass = (level: string): string => {
     EMERGENCY: "log-level-emergency"
   };
   return map[level?.toUpperCase()] ?? "log-level-debug";
+};
+
+const filterLogs = (logs: LogEntry[] | null | undefined, query: string): LogEntry[] => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return logs ?? [];
+  return (logs ?? []).filter((log) =>
+    [
+      log.level,
+      log.datetime,
+      log.title,
+      log.message,
+      log.scriptName,
+      log.deploymentName
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(needle)
+  );
+};
+
+const logsForRequest = (req: ApiRequest): LogEntry[] =>
+  filterLogs(req.logs, logSearchByRequest.value[req.id] ?? "");
+
+const setRequestLogSearch = (requestId: string, value: string) => {
+  logSearchByRequest.value = { ...logSearchByRequest.value, [requestId]: value };
 };
 
 // ── Split pane ────────────────────────────────────────────────────────────────
@@ -1371,6 +1428,10 @@ const historyViewerTab = ref("Body");
 const historyViewerFormat = ref<"pretty" | "raw">("pretty");
 const historyViewerPreviewSrc = ref<string | null>(null);
 const historyViewerPreviewLoading = ref(false);
+const historyLogSearch = ref("");
+const filteredHistoryLogs = computed(() =>
+  filterLogs(selectedHistoryEntry.value?.logs, historyLogSearch.value)
+);
 
 const viewHistoryEntry = (entry: HistoryEntry) => {
   selectedHistoryEntry.value = entry;
@@ -1378,6 +1439,7 @@ const viewHistoryEntry = (entry: HistoryEntry) => {
   historyViewerFormat.value = "pretty";
   historyViewerPreviewSrc.value = null;
   historyViewerPreviewLoading.value = false;
+  historyLogSearch.value = "";
 };
 
 const reuseHistoryEntry = (entry: HistoryEntry) => {
@@ -3243,10 +3305,83 @@ onBeforeUnmount(async () => {
 .status-unknown      { background: var(--p-slate-200); color: var(--p-slate-600); }
 
 /* ── Logs tab ────────────────────────────────────────────────────────────── */
+.logs-content {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.log-search-bar {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0.2rem;
+  border: 1px solid var(--p-slate-300);
+  border-radius: 0.25rem;
+  background: white;
+  padding: 0 0.5rem;
+  color: var(--p-slate-400);
+}
+
+.log-search-bar:focus-within {
+  border-color: #c6a7ff;
+  box-shadow: 0 0 0 2px #faf7ff;
+}
+
+.log-search-bar > i { font-size: 0.68rem; }
+
+.log-search-bar input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--p-slate-700);
+  font-size: 0.72rem;
+}
+
+.log-search-bar button {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.2rem;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+}
+
+.log-search-bar button:hover { background: #faf7ff; color: #7b2ff7; }
+.log-search-bar button i { font-size: 0.62rem; }
+
+.log-search-bar > span {
+  flex: 0 0 auto;
+  color: var(--p-slate-400);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+.log-no-match {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--p-slate-400);
+  font-size: 0.72rem;
+}
+
 .logs-list {
   display: flex;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: 0.3rem;
+  overflow-y: auto;
   padding: 0.4rem 0;
 }
 

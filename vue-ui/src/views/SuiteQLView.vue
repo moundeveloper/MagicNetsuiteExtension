@@ -144,20 +144,6 @@
                 </button>
                 <button
                   class="toolbar-btn"
-                  @click="saveQueryToNotebook(file)"
-                  title="Save query to Notebook"
-                >
-                  <i class="pi pi-bookmark"></i>
-                  <span>Notebook</span>
-                </button>
-                <NotebookContextPanel
-                  v-if="currentFile?.id === file.id"
-                  :context="currentNotebookContext"
-                  compact
-                  class="toolbar-notebook-context"
-                />
-                <button
-                  class="toolbar-btn"
                   :class="showSchemaPanel ? 'toolbar-btn-active' : ''"
                   @click="toggleSchemaPanel"
                   title="Toggle SuiteQL schema documentation"
@@ -278,6 +264,7 @@
                       v-model="file.code"
                       :schema="sqlSchema"
                       :readonly="file.isExecuting"
+                      :diagnostics="currentLintIssues"
                       :ref="(el: any) => setEditorRef(file.id, el)"
                       @change="onCodeChange(file.id, $event)"
                       @ctrl-enter="runCurrentQuery"
@@ -342,6 +329,45 @@
                             </button>
                           </template>
 
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="currentLintIssues.length"
+                        class="query-diagnostics shrink-0"
+                      >
+                        <div class="query-diagnostics__summary">
+                          <strong>Query diagnostics</strong>
+                          <span v-if="lintIssueSummary.errors">
+                            {{ lintIssueSummary.errors }} errors
+                          </span>
+                          <span v-if="lintIssueSummary.warnings">
+                            {{ lintIssueSummary.warnings }} warnings
+                          </span>
+                          <span v-if="lintIssueSummary.suggestions">
+                            {{ lintIssueSummary.suggestions }} suggestions
+                          </span>
+                        </div>
+                        <div class="query-diagnostics__list">
+                          <button
+                            v-for="issue in currentLintIssues.slice(0, 6)"
+                            :key="`${issue.code}-${issue.start}-${issue.message}`"
+                            type="button"
+                            :class="`query-diagnostic--${issue.severity}`"
+                            :title="issue.message"
+                            @click="focusLintIssue(issue)"
+                          >
+                            <i :class="lintIssueIcon(issue.severity)" />
+                            <code>{{ issue.line }}:{{ issue.column }}</code>
+                            <strong>{{ issue.code }}</strong>
+                            <span>{{ issue.message }}</span>
+                          </button>
+                          <span
+                            v-if="currentLintIssues.length > 6"
+                            class="query-diagnostics__more"
+                          >
+                            +{{ currentLintIssues.length - 6 }} more
+                          </span>
                         </div>
                       </div>
 
@@ -561,10 +587,20 @@
                                 <td
                                   class="font-mono text-xs schema-col-truncate schema-col-muted"
                                 >
-                                  {{
-                                    join.sourceTargetType?.joinPairs?.[0]
-                                      ?.label || "–"
-                                  }}
+                                  <div
+                                    v-if="join.sourceTargetType?.joinPairs?.length"
+                                    class="flex flex-col gap-1"
+                                  >
+                                    <span
+                                      v-for="pair in join.sourceTargetType.joinPairs"
+                                      :key="pair.id"
+                                      :title="pair.id"
+                                    >
+                                      {{ pair.label }}
+                                      <small v-if="pair.id !== pair.label">({{ pair.id }})</small>
+                                    </span>
+                                  </div>
+                                  <span v-else>{{ join.fieldId || "–" }}</span>
                                 </td>
                                 <td
                                   v-if="activeQueryTableCount > 1"
@@ -604,6 +640,7 @@
                     :fields="schemaFields"
                     :joins="schemaJoins"
                     :query-table-ids="queryTableIds"
+                    :query-structure="currentQueryStructure"
                     :selected-table-id="selectedTableId"
                     :is-loading-tables="isLoadingTables"
                     :is-loading-detail="isLoadingDetail"
@@ -668,7 +705,6 @@ import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
 import SuiteQLSchemaPanel from "../components/SuiteQLSchemaPanel.vue";
-import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
@@ -685,10 +721,11 @@ import {
 import {
   explainSuiteQLError,
   getSuiteQLReferencedFields,
-  lintSuiteQL
+  lintSuiteQL,
+  type SuiteQLLintIssue
 } from "../utils/suiteqlLinter";
 import type { SuiteQLSchemaContext } from "../utils/suiteqlLinter";
-import { upsertNotebookEntry } from "../utils/notebookDb";
+import { parseSuiteQLQueryStructure } from "../utils/suiteqlQueryStructure";
 
 const router = useRouter();
 const toast = useToast();
@@ -785,6 +822,7 @@ const runtimeFieldTypeCache = ref<
   Record<string, Record<string, RuntimeFieldTypeInfo>>
 >({});
 const runtimeFieldTypeLoadErrors = ref<Record<string, string>>({});
+const lintIssuesByFile = ref<Record<string, SuiteQLLintIssue[]>>({});
 
 // Bottom panel
 const bottomTab = ref("results");
@@ -825,7 +863,7 @@ const onCustomLimitChange = (e: Event) => {
 // Schema documentation panel
 const showSchemaPanel = ref(true);
 const schemaPanelWidth = ref(380);
-const schemaPanelTab = ref<"tables" | "overview" | "fields" | "joins">(
+const schemaPanelTab = ref<"tables" | "fields" | "joins">(
   "tables"
 );
 
@@ -879,6 +917,36 @@ const filteredFiles = computed(() => {
 const currentFile = computed(() =>
   files.value.find((f) => f.id === activeFileId.value)
 );
+
+const currentLintIssues = computed(
+  () => lintIssuesByFile.value[activeFileId.value] ?? []
+);
+
+const lintIssueSummary = computed(() => ({
+  errors: currentLintIssues.value.filter((issue) => issue.severity === "error")
+    .length,
+  warnings: currentLintIssues.value.filter(
+    (issue) => issue.severity === "warning"
+  ).length,
+  suggestions: currentLintIssues.value.filter(
+    (issue) => issue.severity === "suggestion"
+  ).length
+}));
+
+const currentQueryStructure = computed(() =>
+  parseSuiteQLQueryStructure(currentFile.value?.code ?? "")
+);
+
+const lintIssueIcon = (severity: SuiteQLLintIssue["severity"]) =>
+  severity === "error"
+    ? "pi pi-times-circle"
+    : severity === "warning"
+      ? "pi pi-exclamation-triangle"
+      : "pi pi-info-circle";
+
+const focusLintIssue = (issue: SuiteQLLintIssue) => {
+  editorRefs.value[activeFileId.value]?.focusOffset?.(issue.start);
+};
 
 // Show every table referenced by the query plus any table selected manually.
 const activeQueryTableIds = computed((): string[] => {
@@ -1014,14 +1082,6 @@ const getEditorQuery = (): string => {
   return editorEl?.getValue() ?? file.code;
 };
 
-const currentNotebookContext = computed(() => ({
-  type: "query" as const,
-  title: currentFile.value?.name || "SuiteQL query",
-  summary: "SuiteQL editor query",
-  code: getEditorQuery(),
-  tags: ["suiteql"]
-}));
-
 // ============================================================================
 // File Management
 // ============================================================================
@@ -1094,7 +1154,10 @@ const fetchTables = async () => {
     console.log(`[SuiteQLView] fetchTables — loaded ${tables.value.length} tables`);
     // Now that table list is loaded, detect tables in the current active file
     const activeFile = files.value.find((f) => f.id === activeFileId.value);
-    if (activeFile?.code) await detectAndLoadTablesFromQuery(activeFile.code);
+    if (activeFile?.code) {
+      await detectAndLoadTablesFromQuery(activeFile.code);
+      refreshLintIssues(activeFile.id, activeFile.code);
+    }
   } catch (error) {
     console.error("[SuiteQLView] fetchTables — error:", error);
   } finally {
@@ -1138,6 +1201,8 @@ const loadTableDetail = async (table: TableInfo): Promise<void> => {
     const colCount = detail.fields.filter((f) => f.isColumn).length;
     console.log(`[SuiteQLView] loadTableDetail — "${table.id}" OK: ${colCount} columns, ${detail.joins.length} joins`);
     tableDetailCache.value[table.id] = detail;
+    const activeFile = currentFile.value;
+    if (activeFile) refreshLintIssues(activeFile.id, activeFile.code);
   } catch (error) {
     console.error(`[SuiteQLView] loadTableDetail — error for "${table.id}":`, error);
   } finally {
@@ -1151,7 +1216,7 @@ const handleTableClick = (table: TableInfo) => {
   tableFilter.value = table.id;
   schemaSearch.value = "";
   void loadTableDetail(table);
-  schemaPanelTab.value = "overview";
+  schemaPanelTab.value = "fields";
 };
 
 /** Extract ALL table names from FROM + every JOIN clause and load their details */
@@ -1393,6 +1458,65 @@ const getSuiteQLSchemaContext = (): SuiteQLSchemaContext => ({
   )
 });
 
+const getLineColumnAtOffset = (sql: string, offset: number) => {
+  const before = sql.slice(0, offset);
+  const lines = before.split("\n");
+  return { line: lines.length, column: (lines[lines.length - 1]?.length ?? 0) + 1 };
+};
+
+const getQueryStructureIssues = (sql: string): SuiteQLLintIssue[] => {
+  const structure = parseSuiteQLQueryStructure(sql);
+  let searchFrom = 0;
+  return structure.edges.flatMap<SuiteQLLintIssue>((edge) => {
+    const joinPattern = new RegExp(
+      `\\bJOIN\\s+${edge.targetTable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "i"
+    );
+    const match = joinPattern.exec(sql.slice(searchFrom));
+    const start = match ? searchFrom + match.index : 0;
+    if (match) searchFrom = start + match[0].length;
+    const position = getLineColumnAtOffset(sql, start);
+
+    if (!edge.hasCondition) {
+      return [
+        {
+          severity: "error" as const,
+          code: "MISSING_JOIN_CONDITION",
+          message: `${edge.joinType} JOIN ${edge.targetTable} has no ON condition and may create a Cartesian result.`,
+          start,
+          end: start + (match?.[0].length ?? 1),
+          ...position
+        }
+      ];
+    }
+
+    if (edge.joinType !== "CROSS" && edge.condition && edge.fieldPairs.length === 0) {
+      return [
+        {
+          severity: "warning" as const,
+          code: "UNRESOLVED_JOIN_MAPPING",
+          message: `Could not identify a qualified field-to-field mapping for JOIN ${edge.targetTable}. Qualify both sides with table aliases.`,
+          start,
+          end: start + (match?.[0].length ?? 1),
+          ...position
+        }
+      ];
+    }
+
+    return [];
+  });
+};
+
+const refreshLintIssues = (fileId: string, sql: string) => {
+  const lintIssues = lintSuiteQL(sql, getSuiteQLSchemaContext()).issues;
+  lintIssuesByFile.value = {
+    ...lintIssuesByFile.value,
+    [fileId]: [...lintIssues, ...getQueryStructureIssues(sql)].sort(
+      (a, b) => a.start - b.start
+    )
+  };
+};
+
 const normalizeRuntimeFieldTypeInfo = (
   fieldId: string,
   rawInfo: unknown
@@ -1484,16 +1608,35 @@ const validateSuiteQLBeforeExecution = async (
   await hydrateRuntimeFieldTypesForQuery(file.code);
   const schemaContext = getSuiteQLSchemaContext();
   const lintResult = lintSuiteQL(file.code, schemaContext);
-  if (lintResult.ok) return true;
+  const structureIssues = getQueryStructureIssues(file.code);
+  const combinedIssues = [...lintResult.issues, ...structureIssues].sort(
+    (a, b) => a.start - b.start
+  );
+  lintIssuesByFile.value = {
+    ...lintIssuesByFile.value,
+    [file.id]: combinedIssues
+  };
+  const blockingIssues = combinedIssues.filter((issue) => issue.severity === "error");
+  if (blockingIssues.length === 0) return true;
 
   file.results = [];
   file.columns = [];
   file.totalCount = 0;
-  file.error = explainSuiteQLError(
-    file.code,
-    "Query was not sent to NetSuite because local validation found errors.",
-    schemaContext
-  );
+  const standardErrors = lintResult.issues.some((issue) => issue.severity === "error");
+  file.error = standardErrors
+    ? explainSuiteQLError(
+        file.code,
+        "Query was not sent to NetSuite because local validation found errors.",
+        schemaContext
+      )
+    : [
+        "Query was not sent to NetSuite because local validation found errors.",
+        "",
+        ...blockingIssues.map(
+          (issue) =>
+            `[${issue.code}] Line ${issue.line}, column ${issue.column}: ${issue.message}`
+        )
+      ].join("\n");
   bottomTab.value = "results";
   return false;
 };
@@ -1587,26 +1730,6 @@ console.log('${file.name} results:', results.length, results);`;
   }
 };
 
-const saveQueryToNotebook = async (file: QueryFile) => {
-  const editorEl = editorRefs.value[file.id];
-  const code = editorEl?.getValue() ?? file.code;
-  await upsertNotebookEntry({
-    type: "query",
-    title: file.name || "SuiteQL query",
-    summary: "Saved from the SuiteQL editor",
-    body: file.error ? `Last error:\n${file.error}` : "",
-    code,
-    tags: ["suiteql"],
-    pinned: false
-  });
-  toast.add({
-    severity: "success",
-    summary: "Saved to Notebook",
-    detail: "SuiteQL query added to your knowledge base",
-    life: 2400
-  });
-};
-
 // ============================================================================
 // Code Change Handler
 // ============================================================================
@@ -1616,9 +1739,10 @@ let detectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const onCodeChange = (fileId: string, newCode: string) => {
   if (fileId !== activeFileId.value) return;
   if (detectDebounceTimer !== null) clearTimeout(detectDebounceTimer);
-  detectDebounceTimer = setTimeout(() => {
+  detectDebounceTimer = setTimeout(async () => {
     detectDebounceTimer = null;
-    detectAndLoadTablesFromQuery(newCode);
+    await detectAndLoadTablesFromQuery(newCode);
+    refreshLintIssues(fileId, newCode);
   }, 400);
 };
 
@@ -1723,12 +1847,15 @@ watch(
 watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
 
 // When switching tabs, detect tables in the newly active file's SQL
-watch(activeFileId, (id) => {
+watch(activeFileId, async (id) => {
   if (!id) return;
   queryTableIds.value = [];
   tableFilter.value = "";
   const file = files.value.find((f) => f.id === id);
-  if (file?.code) detectAndLoadTablesFromQuery(file.code);
+  if (file?.code) {
+    await detectAndLoadTablesFromQuery(file.code);
+    refreshLintIssues(id, file.code);
+  }
 });
 
 // ============================================================================
@@ -1928,26 +2055,6 @@ onBeforeUnmount(async () => {
   font-size: 0.7rem;
 }
 
-.toolbar-notebook-context {
-  margin-left: -0.2rem;
-  position: relative;
-  z-index: 70;
-}
-
-.toolbar-notebook-context :deep(.notebook-peek) {
-  width: 1.65rem;
-  height: 1.65rem;
-  border-radius: 4px;
-  color: var(--p-slate-600);
-  outline-color: var(--p-slate-200);
-}
-
-.toolbar-notebook-context :deep(.notebook-peek strong) {
-  position: absolute;
-  top: -0.35rem;
-  right: -0.35rem;
-}
-
 /* ── Limit pills ── */
 .limit-pill {
   font-size: 0.68rem;
@@ -2051,8 +2158,100 @@ onBeforeUnmount(async () => {
 }
 
 .bottom-panel-title i {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
   font-size: 0.68rem;
+}
+
+.query-diagnostics {
+  max-height: 8.5rem;
+  overflow-y: auto;
+  border-bottom: 1px solid #dbe3ea;
+  background: #fbfcfd;
+}
+
+.query-diagnostics__summary {
+  display: flex;
+  min-height: 1.8rem;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid #eef3f7;
+  padding: 0 0.65rem;
+  color: #62696e;
+  font-size: 0.58rem;
+}
+
+.query-diagnostics__summary strong {
+  margin-right: 0.2rem;
+  color: #27323a;
+  font-size: 0.64rem;
+}
+
+.query-diagnostics__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.2rem 0.35rem;
+}
+
+.query-diagnostics__list button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 0.8rem 2.4rem minmax(5rem, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: #62696e;
+  cursor: pointer;
+  padding: 0.25rem 0.35rem;
+  text-align: left;
+}
+
+.query-diagnostics__list button:hover {
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
+}
+
+.query-diagnostics__list button i {
+  font-size: 0.62rem;
+}
+
+.query-diagnostics__list button code,
+.query-diagnostics__list button strong,
+.query-diagnostics__list button span {
+  overflow: hidden;
+  font-size: 0.57rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-diagnostics__list button code {
+  color: #8a949b;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.query-diagnostics__list button strong {
+  color: #27323a;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.query-diagnostic--error i {
+  color: #b42318;
+}
+
+.query-diagnostic--warning i {
+  color: #b26a00;
+}
+
+.query-diagnostic--suggestion i {
+  color: var(--p-slate-500);
+}
+
+.query-diagnostics__more {
+  color: #8a949b;
+  padding: 0.2rem 0.35rem;
+  font-size: 0.55rem;
 }
 
 .bottom-tab {
@@ -2102,14 +2301,14 @@ onBeforeUnmount(async () => {
 }
 
 .table-pill-inactive:hover {
-  border-color: #c6a7ff;
-  color: #7b2ff7;
+  border-color: var(--p-slate-400);
+  color: var(--p-slate-900);
 }
 
 .table-pill-active {
-  background: #faf7ff;
-  border-color: #d8c6ff;
-  color: #7b2ff7;
+  background: var(--m-slate-250);
+  border-color: var(--p-slate-400);
+  color: var(--p-slate-900);
   font-weight: 600;
 }
 
@@ -2129,11 +2328,11 @@ onBeforeUnmount(async () => {
   color: var(--p-slate-400);
 }
 .schema-search-input:focus {
-  border-color: #c6a7ff;
+  border-color: var(--p-slate-400);
 }
 
 .schema-empty-link {
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   text-decoration: underline;
 }
 
@@ -2190,13 +2389,13 @@ onBeforeUnmount(async () => {
 }
 
 .results-table tr:hover td {
-  background: #faf7ff;
+  background: var(--m-slate-150);
 }
 .results-table tr:nth-child(even) td {
   background: var(--p-slate-50);
 }
 .results-table tr:nth-child(even):hover td {
-  background: #faf7ff;
+  background: var(--m-slate-150);
 }
 
 /* ── Schema tables (fields / joins) ── */
@@ -2229,7 +2428,7 @@ onBeforeUnmount(async () => {
 }
 
 .schema-row:hover td {
-  background: #faf7ff;
+  background: var(--m-slate-150);
 }
 
 .schema-row td:first-child {
@@ -2238,13 +2437,13 @@ onBeforeUnmount(async () => {
 
 /* Field ID column — indigo/violet to contrast */
 .field-id-col {
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   font-weight: 600;
 }
 
 /* Join label column — blue */
 .join-label-col {
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   font-weight: 500;
 }
 
@@ -2265,17 +2464,17 @@ onBeforeUnmount(async () => {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 3px;
-  background: #faf7ff;
-  color: #7b2ff7;
-  border: 1px solid #d8c6ff;
+  background: var(--m-slate-150);
+  color: var(--p-slate-600);
+  border: 1px solid var(--p-slate-300);
   font-size: 0.65rem;
   font-family: "Consolas", monospace;
 }
 
 .table-badge-source {
-  background: #faf5ff;
-  color: #7c3aed;
-  border-color: #ddd6fe;
+  background: var(--m-slate-250);
+  color: var(--p-slate-900);
+  border-color: var(--p-slate-400);
 }
 
 /* Utility column helpers */
@@ -2309,31 +2508,31 @@ onBeforeUnmount(async () => {
 }
 
 .table-card:hover {
-  border-color: #c6a7ff;
-  background: #faf7ff;
+  border-color: var(--p-slate-400);
+  background: var(--m-slate-150);
 }
 
 .table-card-selected {
-  border-color: #d8c6ff !important;
-  background: #faf7ff !important;
+  border-color: var(--p-slate-400) !important;
+  background: var(--m-slate-250) !important;
 }
 
 /* Tables that are referenced in the current query get a subtle accent */
 .table-card-in-query {
-  border-color: #a5b4fc;
-  background: #f5f3ff;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
 }
 
 .table-card-in-query:hover {
-  border-color: #818cf8;
-  background: #ede9fe;
+  border-color: var(--p-slate-400);
+  background: var(--m-slate-250);
 }
 
 .table-card-id {
   font-family: "Consolas", monospace;
   font-size: 0.7rem;
   font-weight: 700;
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2362,9 +2561,9 @@ onBeforeUnmount(async () => {
 
 /* ── Schema documentation toggle ── */
 .toolbar-btn-active {
-  border-color: #d8c6ff !important;
-  background: #faf7ff !important;
-  color: #7b2ff7 !important;
+  border-color: var(--p-slate-400) !important;
+  background: var(--m-slate-250) !important;
+  color: var(--p-slate-900) !important;
 }
 
 /* ── Schema documentation panel (drag-resizable) ── */
@@ -2388,6 +2587,6 @@ onBeforeUnmount(async () => {
 
 .schema-panel-resize-handle:hover,
 .schema-panel-resize-handle:active {
-  background: #c6a7ff;
+  background: var(--p-slate-400);
 }
 </style>

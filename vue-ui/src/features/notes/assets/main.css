@@ -1,0 +1,148 @@
+body {
+  --notes-bg: #ffffff;
+  --notes-bg-sidebar: #f7f7f5;
+  --notes-bg-hover: rgba(0, 0, 0, 0.05);
+  --notes-bg-active: rgba(0, 0, 0, 0.08);
+  --notes-bg-modal: #ffffff;
+  --notes-bg-code: #f6f6f4;
+  --notes-bg-callout: #f1f1ef;
+  --notes-text: #37352f;
+  --notes-text-secondary: #787774;
+  --notes-text-faint: #b3b2af;
+  --notes-border: #e9e9e7;
+  --notes-accent: #2e75cc;
+  --notes-accent-soft: rgba(46, 117, 204, 0.12);
+  --notes-danger: #d44c47;
+  --notes-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --notes-radius: 6px;
+}
+
+body[data-notes-theme='dark'] {
+  --notes-bg: #191919;
+  --notes-bg-sidebar: #202020;
+  --notes-bg-hover: rgba(255, 255, 255, 0.055);
+  --notes-bg-active: rgba(255, 255, 255, 0.1);
+  --notes-bg-modal: #252525;
+  --notes-bg-code: #2a2a2a;
+  --notes-bg-callout: #262626;
+  --notes-text: #d4d4d4;
+  --notes-text-secondary: #9b9b9b;
+  --notes-text-faint: #5f5f5f;
+  --notes-border: #333333;
+  --notes-accent: #5a9fe0;
+  --notes-accent-soft: rgba(90, 159, 224, 0.15);
+  --notes-danger: #e06661;
+  --notes-shadow: 0 4px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+:where(.notes-workspace, .notes-portal),
+:where(.notes-workspace, .notes-portal) * {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.notes-workspace {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  color: var(--notes-text);
+  background: var(--notes-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+:where(.notes-workspace, .notes-portal) button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+:where(.notes-workspace, .notes-portal) input,
+:where(.notes-workspace, .notes-portal) select,
+:where(.notes-workspace, .notes-portal) textarea { font: inherit; color: inherit; }
+
+:where(.notes-workspace, .notes-portal) ::selection { background: var(--notes-accent-soft); }
+
+:where(.notes-workspace, .notes-portal) a { color: var(--notes-accent); }
+
+:where(.notes-workspace, .notes-portal) code {
+  font-family: 'SFMono-Regular', Consolas, 'Cascadia Code', monospace;
+  font-size: 0.85em;
+  background: var(--notes-bg-code);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: #eb5757;
+}
+
+:where(.notes-workspace, .notes-portal)::-webkit-scrollbar,
+:where(.notes-workspace, .notes-portal) *::-webkit-scrollbar { width: 10px; height: 10px; }
+:where(.notes-workspace, .notes-portal)::-webkit-scrollbar-thumb,
+:where(.notes-workspace, .notes-portal) *::-webkit-scrollbar-thumb { background: var(--notes-border); border-radius: 5px; }
+:where(.notes-workspace, .notes-portal)::-webkit-scrollbar-track,
+:where(.notes-workspace, .notes-portal) *::-webkit-scrollbar-track { background: transparent; }
+
+.notes-workspace .icon-btn,
+.notes-portal .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--notes-text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.notes-workspace .icon-btn:hover,
+.notes-portal .icon-btn:hover { background: var(--notes-bg-hover); }
+
+.notes-workspace .menu,
+.notes-portal.menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--notes-bg-modal);
+  border-radius: var(--notes-radius);
+  box-shadow: var(--notes-shadow);
+  padding: 4px;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.notes-workspace .menu-item,
+.notes-portal .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 4px;
+  text-align: left;
+  font-size: 14px;
+}
+.notes-workspace .menu-item:hover,
+.notes-workspace .menu-item.selected,
+.notes-portal .menu-item:hover,
+.notes-portal .menu-item.selected { background: var(--notes-bg-hover); }
+.notes-workspace .menu-item .mi-icon,
+.notes-portal .menu-item .mi-icon { width: 22px; text-align: center; font-size: 15px; }
+.notes-workspace .menu-item .mi-hint,
+.notes-portal .menu-item .mi-hint { margin-left: auto; color: var(--notes-text-faint); font-size: 12px; }
+.notes-workspace .menu-sep,
+.notes-portal .menu-sep { height: 1px; background: var(--notes-border); margin: 4px 0; }
+.notes-workspace .menu-label,
+.notes-portal .menu-label {
+  padding: 6px 10px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--notes-text-faint);
+}
+

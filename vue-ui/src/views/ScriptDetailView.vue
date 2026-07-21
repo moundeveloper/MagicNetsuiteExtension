@@ -9,7 +9,6 @@ import MCard from "../components/universal/card/MCard.vue";
 import FileCodeEditor from "../components/FileCodeEditor.vue";
 import FileCabinetPane from "../components/FileCabinetPane.vue";
 import DiffViewer from "../components/DiffViewer.vue";
-import NotebookContextPanel from "../components/NotebookContextPanel.vue";
 import MContextMenu from "../components/universal/contextMenu/MContextMenu.vue";
 import {
   useMContextMenu,
@@ -25,7 +24,6 @@ import {
   saveVersion,
   type FileVersion
 } from "../utils/fileVersionsDb";
-import { upsertNotebookEntry } from "../utils/notebookDb";
 
 interface ScriptItem {
   id: number;
@@ -247,21 +245,6 @@ const selectedSuiteletDeployment = computed(
 const shouldShowSuiteletPreviewPanel = computed(
   () => isSuiteletScript.value && showSuiteletPreviewPanel.value
 );
-
-const notebookContext = computed(() => ({
-  type: "script" as const,
-  title: script.value?.name || `Script #${scriptId.value}`,
-  summary: `${script.value?.scriptType || "Script"} · ${script.value?.scriptid || scriptId.value}`,
-  netsuiteId: scriptId.value,
-  scriptId: script.value?.scriptid ?? "",
-  filePath: script.value?.scriptfile ?? "",
-  code: code.value,
-  tags: [
-    "script",
-    script.value?.scriptType ?? "",
-    script.value?.scriptid ?? ""
-  ].filter(Boolean)
-}));
 
 const deploymentOptions = computed(() =>
   deployments.value.map((deployment) => ({
@@ -891,51 +874,6 @@ const openScriptInNetSuite = async () => {
   if (response.message) window.open(response.message, "_blank");
 };
 
-const saveScriptToNotebook = async () => {
-  if (!script.value) return;
-  const urlResponse = await callApi(RequestRoutes.SCRIPT_URL, {
-    scriptId: scriptId.value
-  });
-  const deploymentLines = deployments.value
-    .map(
-      (deployment) =>
-        `- ${deployment.scriptid}${deployment.deploymentid ? ` (#${deployment.deploymentid})` : ""}${deployment.status ? `, ${deployment.status}` : ""}${deployment.recordtype ? `, ${deployment.recordtype}` : ""}`
-    )
-    .join("\n");
-
-  await upsertNotebookEntry({
-    type: "script",
-    title:
-      script.value.name || script.value.scriptid || `Script #${scriptId.value}`,
-    summary: `${script.value.scriptType || "Script"} · ${script.value.scriptid}`,
-    body: [
-      `Internal ID: ${scriptId.value}`,
-      `Script ID: ${script.value.scriptid}`,
-      script.value.owner ? `Owner: ${script.value.owner}` : "",
-      script.value.scriptfile ? `File: ${script.value.scriptfile}` : "",
-      deploymentLines ? `\nDeployments:\n${deploymentLines}` : ""
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    url: String(urlResponse.message ?? ""),
-    netsuiteId: String(scriptId.value),
-    scriptId: script.value.scriptid,
-    filePath: script.value.scriptfile ?? "",
-    code: code.value,
-    tags: ["script", script.value.scriptType, script.value.scriptid].filter(
-      Boolean
-    ),
-    pinned: true
-  });
-
-  toast.add({
-    severity: "success",
-    summary: "Saved to Notebook",
-    detail: "Script, deployments, link, and current code captured",
-    life: 2600
-  });
-};
-
 const openDependencyExplorer = () => {
   void router.push({
     path: "/dependency-explorer",
@@ -1249,26 +1187,12 @@ onMounted(loadScript);
               type="button"
               class="secondary-btn"
               :disabled="!script"
-              @click="saveScriptToNotebook"
-            >
-              <i class="pi pi-bookmark" />
-              <span>Notebook</span>
-            </button>
-            <button
-              type="button"
-              class="secondary-btn"
-              :disabled="!script"
               title="Inspect dependencies and change impact"
               @click="openDependencyExplorer"
             >
               <i class="pi pi-share-alt" />
               <span>Impact</span>
             </button>
-            <NotebookContextPanel
-              :context="notebookContext"
-              compact
-              class="header-notebook-context"
-            />
             <button
               v-if="isSuiteletScript"
               type="button"
@@ -1934,26 +1858,6 @@ onMounted(loadScript);
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.header-notebook-context {
-  margin-left: -4px;
-  position: relative;
-  z-index: 70;
-}
-
-.header-notebook-context :deep(.notebook-peek) {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  color: var(--p-slate-600);
-  outline-color: var(--p-slate-200);
-}
-
-.header-notebook-context :deep(.notebook-peek strong) {
-  position: absolute;
-  top: -5px;
-  right: -5px;
 }
 
 .script-detail-header {

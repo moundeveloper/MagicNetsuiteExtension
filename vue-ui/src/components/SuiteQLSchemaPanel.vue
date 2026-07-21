@@ -41,25 +41,54 @@
       <strong :title="selectedTable.id">{{ selectedTable.id }}</strong>
     </div>
 
-    <div v-if="activeTab !== 'overview'" class="schema-panel__search">
-      <i class="pi pi-search" />
-      <input
-        :value="search"
-        type="search"
-        :placeholder="searchPlaceholder"
-        aria-label="Search SuiteQL schema"
-        @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
+    <div class="schema-panel__controls">
+      <div class="schema-panel__search">
+        <i class="pi pi-search" />
+        <input
+          :value="search"
+          type="search"
+          :placeholder="searchPlaceholder"
+          aria-label="Search SuiteQL schema"
+          @input="$emit('update:search', ($event.target as HTMLInputElement).value)"
+        />
+        <button
+          v-if="search"
+          type="button"
+          title="Clear search"
+          aria-label="Clear schema search"
+          @click="$emit('update:search', '')"
+        >
+          <i class="pi pi-times" />
+        </button>
+      </div>
+      <MSelect
+        v-if="activeTab === 'fields'"
+        v-model="fieldTypeFilter"
+        class="schema-panel__filter"
+        :options="fieldTypeOptions"
+        option-label="label"
+        option-value="value"
+        size="small"
+        aria-label="Filter fields by data type"
       />
-      <button
-        v-if="search"
-        type="button"
-        title="Clear search"
-        aria-label="Clear schema search"
-        @click="$emit('update:search', '')"
-      >
-        <i class="pi pi-times" />
-      </button>
+      <MSelect
+        v-else-if="activeTab === 'joins'"
+        v-model="relationshipTypeFilter"
+        class="schema-panel__filter"
+        :options="relationshipTypeOptions"
+        option-label="label"
+        option-value="value"
+        size="small"
+        aria-label="Filter joins by relationship type"
+      />
     </div>
+
+    <Transition name="copy-feedback">
+      <div v-if="copyFeedback" class="schema-copy-feedback" role="status" aria-live="polite">
+        <i class="pi pi-check-circle" />
+        <span>{{ copyFeedback }}</span>
+      </div>
+    </Transition>
 
     <nav
       v-if="selectedTable"
@@ -82,33 +111,69 @@
     <div class="schema-panel__body">
       <section v-if="activeTab === 'tables' || !selectedTable" class="table-browser">
         <div
-          v-if="queryTables.length"
+          v-if="queryStructure.nodes.length"
           class="query-structure"
           aria-label="Tables referenced by the current query"
         >
           <div class="schema-section-heading">
             <span>Current query structure</span>
-            <small>{{ queryTables.length }} tables</small>
+            <small>
+              {{ queryStructure.nodes.length }} tables ·
+              {{ queryStructure.edges.length }} joins
+            </small>
           </div>
-          <div class="query-structure__flow">
-            <template v-for="(table, index) in queryTables" :key="table.id">
-              <button
-                type="button"
-                :title="`${table.id} — ${table.label}`"
-                @click="chooseTable(table)"
-              >
-                <i class="pi pi-table" />
-                <span>{{ table.id }}</span>
-              </button>
-              <i
-                v-if="index < queryTables.length - 1"
-                class="pi pi-arrow-right query-structure__arrow"
-              />
-            </template>
+          <div class="query-structure__source">
+            <span>FROM</span>
+            <button
+              type="button"
+              :title="queryStructure.nodes[0]?.table"
+              @click="openQueryNode(queryStructure.nodes[0])"
+            >
+              <strong>{{ queryStructure.nodes[0]?.table }}</strong>
+              <small v-if="queryStructure.nodes[0]?.alias !== queryStructure.nodes[0]?.table">
+                alias {{ queryStructure.nodes[0]?.alias }}
+              </small>
+            </button>
+          </div>
+          <div class="query-structure__joins">
+            <article
+              v-for="edge in queryStructure.edges"
+              :key="`${edge.sourceAlias}-${edge.targetAlias}`"
+              :class="{ 'query-join--warning': !edge.hasCondition }"
+            >
+              <div class="query-join__type">
+                <span>{{ edge.joinType }} JOIN</span>
+                <small v-if="!edge.hasCondition">Missing ON condition</small>
+              </div>
+              <div class="query-join__nodes">
+                <button type="button" @click="openQueryTable(edge.sourceTable)">
+                  <strong>{{ edge.sourceAlias }}</strong>
+                  <small>{{ edge.sourceTable }}</small>
+                </button>
+                <i class="pi pi-arrow-right" />
+                <button type="button" @click="openQueryTable(edge.targetTable)">
+                  <strong>{{ edge.targetAlias }}</strong>
+                  <small>{{ edge.targetTable }}</small>
+                </button>
+              </div>
+              <div v-if="edge.fieldPairs.length" class="query-join__mappings">
+                <div
+                  v-for="pair in edge.fieldPairs"
+                  :key="`${pair.leftAlias}.${pair.leftField}-${pair.rightAlias}.${pair.rightField}`"
+                >
+                  <code>{{ pair.leftAlias }}.{{ pair.leftField }}</code>
+                  <span>=</span>
+                  <code>{{ pair.rightAlias }}.{{ pair.rightField }}</code>
+                </div>
+              </div>
+              <code v-else-if="edge.condition" class="query-join__condition">
+                {{ edge.condition }}
+              </code>
+            </article>
           </div>
           <p>
-            These records appear in the active query. Select one to inspect its
-            columns and documented connections.
+            Aliases and field mappings above come directly from the active SQL.
+            Select a table to compare the query with NetSuite metadata.
           </p>
         </div>
 
@@ -155,115 +220,37 @@
         </div>
       </section>
 
-      <section v-else-if="activeTab === 'overview'" class="table-detail-view">
-        <div class="table-identity">
-          <div class="table-identity__icon"><i class="pi pi-table" /></div>
-          <div>
-            <strong :title="selectedTable.id">{{ selectedTable.id }}</strong>
-            <span :title="selectedTable.label">{{ selectedTable.label }}</span>
-          </div>
-          <span class="table-kind">{{ selectedTable.type || "Record" }}</span>
-        </div>
-
-        <div v-if="isLoadingDetail" class="schema-panel__empty">
-          <i class="pi pi-spin pi-spinner" />
-          <span>Loading table structure…</span>
-        </div>
-        <template v-else>
-          <div class="schema-stat-grid">
-            <button type="button" @click="selectDetailTab('fields')">
-              <i class="pi pi-list" />
-              <strong>{{ selectedFields.length }}</strong>
-              <span>Columns</span>
-            </button>
-            <button type="button" @click="selectDetailTab('joins')">
-              <i class="pi pi-sitemap" />
-              <strong>{{ selectedJoins.length }}</strong>
-              <span>Connections</span>
-            </button>
-          </div>
-
-          <div class="schema-section">
-            <div class="schema-section-heading">
-              <span>Field structure</span>
-              <small>{{ fieldTypeGroups.length }} data types</small>
-            </div>
-            <div v-if="fieldTypeGroups.length" class="field-type-groups">
-              <div v-for="group in fieldTypeGroups" :key="group.type">
-                <span>{{ group.type }}</span>
-                <div><i :style="{ width: `${group.percent}%` }" /></div>
-                <strong>{{ group.count }}</strong>
-              </div>
-            </div>
-            <p v-else class="schema-section__empty-copy">
-              No column metadata is available for this table.
-            </p>
-          </div>
-
-          <div class="schema-section relationship-map">
-            <div class="schema-section-heading">
-              <span>Relationship map</span>
-              <small>Source → target</small>
-            </div>
-            <div v-if="selectedJoins.length" class="relationship-map__list">
-              <button
-                v-for="join in selectedJoins.slice(0, 8)"
-                :key="`${join.tableId}_${join.id}`"
-                type="button"
-                :title="join.sourceTargetType?.label || join.sourceTargetType?.id"
-                @click="openJoinTarget(join)"
-              >
-                <span class="relationship-node source">{{ selectedTable.id }}</span>
-                <span class="relationship-edge">
-                  <small>{{ normalizedJoinType(join.joinType) }}</small>
-                  <i class="pi pi-arrow-right" />
-                </span>
-                <span class="relationship-node target">
-                  {{ join.sourceTargetType?.id || "Unknown" }}
-                </span>
-              </button>
-              <button
-                v-if="selectedJoins.length > 8"
-                type="button"
-                class="relationship-map__more"
-                @click="selectDetailTab('joins')"
-              >
-                View {{ selectedJoins.length - 8 }} more connections
-              </button>
-            </div>
-            <p v-else class="schema-section__empty-copy">
-              No documented joins originate from this table.
-            </p>
-          </div>
-        </template>
-      </section>
-
       <section v-else-if="activeTab === 'fields'" class="table-detail-view">
-        <div class="schema-section-intro">
-          <strong>Fields on {{ selectedTable.id }}</strong>
-          <span>
-            Column IDs are used in SELECT, WHERE, GROUP BY, and ORDER BY clauses.
-          </span>
-        </div>
         <div v-if="isLoadingDetail" class="schema-panel__empty">
           <i class="pi pi-spin pi-spinner" />
           <span>Loading fields…</span>
         </div>
         <div v-else class="schema-list field-list">
-          <article
+          <button
             v-for="field in filteredFields"
             :key="`${field.tableId}_${field.id}`"
+            type="button"
             class="schema-field-item"
+            :class="{ 'schema-field-item--copied': copiedValue === field.id }"
+            :title="`Copy ${field.id}`"
+            @click="copyValue(field.id)"
           >
             <div class="schema-field-item__topline">
               <code :title="field.id">{{ field.id }}</code>
-              <span>{{ field.dataType || "Unknown" }}</span>
+              <span>
+                <template v-if="copiedValue === field.id">
+                  <i class="pi pi-check" /> Copied
+                </template>
+                <template v-else>
+                  {{ field.dataType || "Unknown" }} <i class="pi pi-copy" />
+                </template>
+              </span>
             </div>
             <strong :title="field.label">{{ field.label }}</strong>
             <small v-if="field.fieldType && field.fieldType !== field.dataType">
               NetSuite field type: {{ field.fieldType }}
             </small>
-          </article>
+          </button>
         </div>
         <div
           v-if="!isLoadingDetail && filteredFields.length === 0"
@@ -276,13 +263,39 @@
       </section>
 
       <section v-else class="table-detail-view">
-        <div class="schema-section-intro">
-          <strong>Connections from {{ selectedTable.id }}</strong>
-          <span>
-            Each relationship shows its target record and the condition NetSuite
-            exposes for joining them.
-          </span>
-        </div>
+        <details class="relationship-legend">
+          <summary><i class="pi pi-info-circle" /> How relationships work</summary>
+          <div class="relationship-legend__content">
+            <p>
+              The relationship type tells you where NetSuite gets the field mapping.
+              Cardinality tells you whether a join can multiply rows. Neither one
+              chooses the SQL join type; use the copy buttons on a relationship to
+              decide which side's unmatched rows to keep.
+            </p>
+            <section>
+              <h4>Relationship types</h4>
+              <article v-for="item in relationshipLegend" :key="item.term">
+                <strong>{{ item.term }}</strong>
+                <span>{{ item.description }}</span>
+                <code>{{ item.example }}</code>
+              </article>
+            </section>
+            <section>
+              <h4>Cardinality and row count</h4>
+              <article v-for="item in cardinalityLegend" :key="item.term">
+                <strong>{{ item.term }}</strong>
+                <span>{{ item.description }}</span>
+              </article>
+            </section>
+            <section>
+              <h4>SQL join choice</h4>
+              <article v-for="item in sqlJoinLegend" :key="item.term">
+                <strong>{{ item.term }}</strong>
+                <span>{{ item.description }}</span>
+              </article>
+            </section>
+          </div>
+        </details>
         <div class="schema-list join-list">
           <article
             v-for="join in filteredJoins"
@@ -293,7 +306,7 @@
               <button
                 type="button"
                 :title="selectedTable.label"
-                @click="selectDetailTab('overview')"
+                @click="selectDetailTab('fields')"
               >
                 {{ selectedTable.id }}
               </button>
@@ -313,14 +326,51 @@
               <strong>{{ join.label }}</strong>
               <span>{{ readableCardinality(join.cardinality) }}</span>
             </div>
+            <div class="join-copy-actions" aria-label="Copy completed SQL join">
+              <span>Copy completed join</span>
+              <div>
+                <button
+                  v-for="joinKeyword in sqlJoinKeywords"
+                  :key="joinKeyword.value"
+                  type="button"
+                  :disabled="!canCopyJoin(join, joinKeyword.value)"
+                  :title="joinCopyTitle(join, joinKeyword.value)"
+                  :class="{
+                    copied: copiedValue === joinCopyKey(join, joinKeyword.value)
+                  }"
+                  @click="copyJoin(join, joinKeyword.value)"
+                >
+                  <i
+                    :class="
+                      copiedValue === joinCopyKey(join, joinKeyword.value)
+                        ? 'pi pi-check'
+                        : 'pi pi-copy'
+                    "
+                  />
+                  {{
+                    copiedValue === joinCopyKey(join, joinKeyword.value)
+                      ? "Copied"
+                      : joinKeyword.label
+                  }}
+                </button>
+              </div>
+            </div>
             <div class="join-condition">
-              <span>Join condition</span>
-              <code>
-                {{
-                  join.sourceTargetType?.joinPairs?.[0]?.label ||
-                  "Not documented by NetSuite"
-                }}
-              </code>
+              <span>Documented field mapping</span>
+              <template v-if="join.sourceTargetType?.joinPairs?.length">
+                <div
+                  v-for="pair in join.sourceTargetType.joinPairs"
+                  :key="pair.id"
+                  class="join-condition__pair"
+                >
+                  <code>{{ pair.label }}</code>
+                  <small v-if="pair.id">Metadata ID: {{ pair.id }}</small>
+                </div>
+              </template>
+              <code v-else>Not documented by NetSuite</code>
+              <small v-if="join.fieldId" class="join-condition__field">
+                Relationship field: {{ join.fieldId }}
+              </small>
             </div>
           </article>
         </div>
@@ -334,7 +384,6 @@
 
     <footer class="schema-panel__footer">
       <span v-if="activeTab === 'tables'">{{ tables.length }} tables available</span>
-      <span v-else-if="activeTab === 'overview'">Table overview</span>
       <span v-else-if="activeTab === 'fields'">{{ filteredFields.length }} columns</span>
       <span v-else>{{ filteredJoins.length }} connections</span>
       <span>Read-only documentation</span>
@@ -343,9 +392,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
+import MSelect from "./universal/input/MSelect.vue";
 
-type SchemaTab = "tables" | "overview" | "fields" | "joins";
+type SchemaTab = "tables" | "fields" | "joins";
 
 type TableInfo = {
   id: string;
@@ -377,6 +427,31 @@ type JoinRow = {
   };
 };
 
+type QueryNode = {
+  table: string;
+  alias: string;
+  role: "source" | "join";
+};
+
+type QueryStructure = {
+  nodes: QueryNode[];
+  edges: Array<{
+    sourceAlias: string;
+    targetAlias: string;
+    sourceTable: string;
+    targetTable: string;
+    joinType: string;
+    condition: string;
+    fieldPairs: Array<{
+      leftAlias: string;
+      leftField: string;
+      rightAlias: string;
+      rightField: string;
+    }>;
+    hasCondition: boolean;
+  }>;
+};
+
 const props = defineProps<{
   activeTab: SchemaTab;
   search: string;
@@ -384,6 +459,7 @@ const props = defineProps<{
   fields: FieldRow[];
   joins: JoinRow[];
   queryTableIds: string[];
+  queryStructure: QueryStructure;
   selectedTableId: string;
   isLoadingTables: boolean;
   isLoadingDetail: boolean;
@@ -401,12 +477,6 @@ const selectedTable = computed(
   () => props.tables.find((table) => table.id === props.selectedTableId) ?? null
 );
 
-const queryTables = computed(() =>
-  props.queryTableIds
-    .map((id) => props.tables.find((table) => table.id === id))
-    .filter((table): table is TableInfo => Boolean(table))
-);
-
 const selectedFields = computed(() =>
   props.fields.filter((field) => field.tableId === props.selectedTableId)
 );
@@ -414,6 +484,11 @@ const selectedFields = computed(() =>
 const selectedJoins = computed(() =>
   props.joins.filter((join) => join.tableId === props.selectedTableId)
 );
+
+const fieldTypeFilter = ref("all");
+const relationshipTypeFilter = ref("all");
+const copiedValue = ref("");
+const copyFeedback = ref("");
 
 const filteredTables = computed(() => {
   const term = props.search.trim().toLowerCase();
@@ -427,51 +502,117 @@ const filteredTables = computed(() => {
 
 const filteredFields = computed(() => {
   const term = props.search.trim().toLowerCase();
-  if (!term) return selectedFields.value;
   return selectedFields.value.filter(
     (field) =>
-      field.id.toLowerCase().includes(term) ||
-      field.label.toLowerCase().includes(term) ||
-      field.dataType.toLowerCase().includes(term) ||
-      field.fieldType.toLowerCase().includes(term)
+      (fieldTypeFilter.value === "all" ||
+        (field.dataType || field.fieldType || "Unknown") === fieldTypeFilter.value) &&
+      (!term ||
+        field.id.toLowerCase().includes(term) ||
+        field.label.toLowerCase().includes(term) ||
+        field.dataType.toLowerCase().includes(term) ||
+        field.fieldType.toLowerCase().includes(term))
   );
 });
 
 const filteredJoins = computed(() => {
   const term = props.search.trim().toLowerCase();
-  if (!term) return selectedJoins.value;
   return selectedJoins.value.filter(
     (join) =>
-      join.id.toLowerCase().includes(term) ||
-      join.label.toLowerCase().includes(term) ||
-      join.cardinality.toLowerCase().includes(term) ||
-      (join.sourceTargetType?.id ?? "").toLowerCase().includes(term) ||
-      (join.sourceTargetType?.label ?? "").toLowerCase().includes(term)
+      (relationshipTypeFilter.value === "all" ||
+        (join.joinType || "Unknown") === relationshipTypeFilter.value) &&
+      (!term ||
+        join.id.toLowerCase().includes(term) ||
+        join.label.toLowerCase().includes(term) ||
+        join.cardinality.toLowerCase().includes(term) ||
+        (join.sourceTargetType?.id ?? "").toLowerCase().includes(term) ||
+        (join.sourceTargetType?.label ?? "").toLowerCase().includes(term))
   );
 });
 
 const detailTabs = computed(() => [
-  { id: "overview" as const, label: "Overview", icon: "pi pi-th-large", count: null },
   { id: "fields" as const, label: "Fields", icon: "pi pi-list", count: selectedFields.value.length },
   { id: "joins" as const, label: "Joins", icon: "pi pi-sitemap", count: selectedJoins.value.length }
 ]);
 
-const fieldTypeGroups = computed(() => {
-  const counts = new Map<string, number>();
-  for (const field of selectedFields.value) {
-    const type = field.dataType || field.fieldType || "Unknown";
-    counts.set(type, (counts.get(type) ?? 0) + 1);
+const knownFieldDataTypes = [
+  "BOOLEAN",
+  "CURRENCY",
+  "DATE",
+  "DATETIME",
+  "DURATION",
+  "FLOAT",
+  "INTEGER",
+  "N/A",
+  "PERCENT",
+  "STRING",
+  "Unknown"
+];
+
+const knownRelationshipTypes = ["AUTOMATIC", "INVERSE", "POLYMORPHIC", "Unknown"];
+
+const fieldTypeOptions = computed(() => [
+  { label: "All field types", value: "all" },
+  ...[
+    ...new Set([
+      ...knownFieldDataTypes,
+      ...props.fields.map((field) => field.dataType || field.fieldType || "Unknown")
+    ])
+  ]
+    .sort((a, b) => a.localeCompare(b))
+    .map((value) => ({ label: value, value }))
+]);
+
+const relationshipTypeOptions = computed(() => [
+  { label: "All relationships", value: "all" },
+  ...[
+    ...new Set([
+      ...knownRelationshipTypes,
+      ...props.joins.map((join) => join.joinType || "Unknown")
+    ])
+  ]
+    .sort((a, b) => a.localeCompare(b))
+    .map((value) => ({ label: readableLabel(value), value }))
+]);
+
+const sqlJoinKeywords = [
+  { label: "Inner", value: "INNER JOIN" },
+  { label: "Left", value: "LEFT OUTER JOIN" },
+  { label: "Right", value: "RIGHT OUTER JOIN" },
+  { label: "Full", value: "FULL OUTER JOIN" },
+  { label: "Cross", value: "CROSS JOIN" }
+];
+
+const relationshipLegend = [
+  {
+    term: "Automatic",
+    description: "The source record owns a field that stores the target record's ID. This is the usual lookup/select-field relationship.",
+    example: "Transaction.entity = Customer.id"
+  },
+  {
+    term: "Inverse",
+    description: "The target record owns the reference back to the source. Joining it commonly returns child rows and can repeat the source row.",
+    example: "Customer.id = Transaction.entity"
+  },
+  {
+    term: "Polymorphic",
+    description: "One source field can refer to different record types. This entry is one valid target; use its exact documented mapping instead of assuming every stored ID belongs to that table.",
+    example: "TransactionLine.entity = Customer.id (one possible target)"
   }
-  const total = Math.max(selectedFields.value.length, 1);
-  return [...counts.entries()]
-    .map(([type, count]) => ({
-      type,
-      count,
-      percent: Math.max(4, Math.round((count / total) * 100))
-    }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 8);
-});
+];
+
+const cardinalityLegend = [
+  { term: "N:1", description: "Many source rows may match one target row. A source row normally produces at most one match." },
+  { term: "1:N", description: "One source row may match many target rows, so the join can duplicate that source row in the result." },
+  { term: "N:M", description: "Both sides may have multiple matches. Expect row multiplication and verify totals after joining." }
+];
+
+const sqlJoinLegend = [
+  { term: "Inner", description: "Keep only rows where the documented condition matches on both sides." },
+  { term: "Left", description: "Keep every row from the current source table, even when the target has no match." },
+  { term: "Right", description: "Keep every target row, even when the current source table has no match." },
+  { term: "Full", description: "Keep unmatched rows from both the source and target tables." },
+  { term: "Cross", description: "Pair every source row with every target row; it deliberately has no ON condition and can create a huge result." }
+];
 
 const searchPlaceholder = computed(() => {
   if (props.activeTab === "fields") return `Search fields in ${props.selectedTableId}…`;
@@ -481,6 +622,8 @@ const searchPlaceholder = computed(() => {
 
 const chooseTable = (table: TableInfo) => {
   emit("update:search", "");
+  fieldTypeFilter.value = "all";
+  relationshipTypeFilter.value = "all";
   emit("select-table", table);
 };
 
@@ -494,6 +637,92 @@ const selectDetailTab = (tab: Exclude<SchemaTab, "tables">) => {
   emit("update:activeTab", tab);
 };
 
+const writeClipboard = async (value: string) => {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const fallback = document.createElement("textarea");
+    fallback.value = value;
+    fallback.setAttribute("readonly", "");
+    fallback.style.position = "fixed";
+    fallback.style.opacity = "0";
+    document.body.appendChild(fallback);
+    fallback.select();
+    const copied = document.execCommand("copy");
+    fallback.remove();
+    return copied;
+  }
+};
+
+const showCopied = (key: string, message: string) => {
+  copiedValue.value = key;
+  copyFeedback.value = message;
+  window.setTimeout(() => {
+    if (copiedValue.value === key) copiedValue.value = "";
+    if (copyFeedback.value === message) copyFeedback.value = "";
+  }, 1800);
+};
+
+const copyValue = async (value: string) => {
+  if (!(await writeClipboard(value))) {
+    copyFeedback.value = "Could not copy to the clipboard";
+    return;
+  }
+  showCopied(value, `Field ${value} copied`);
+};
+
+const joinCondition = (join: JoinRow) => {
+  const documented = (join.sourceTargetType?.joinPairs ?? [])
+    .map((pair) => pair.label.trim())
+    .filter(Boolean);
+  if (documented.length) return documented.join(" AND ");
+
+  const targetId = join.sourceTargetType?.id;
+  if (!selectedTable.value || !targetId || !join.fieldId) return "";
+  if (join.joinType === "INVERSE") {
+    return `${selectedTable.value.id}.id = ${targetId}.${join.fieldId}`;
+  }
+  return `${selectedTable.value.id}.${join.fieldId} = ${targetId}.id`;
+};
+
+const completedJoin = (join: JoinRow, keyword: string) => {
+  const targetId = join.sourceTargetType?.id;
+  if (!targetId) return "";
+  if (keyword === "CROSS JOIN") return `${keyword} ${targetId}`;
+  const condition = joinCondition(join);
+  return condition ? `${keyword} ${targetId} ON ${condition}` : "";
+};
+
+const joinCopyKey = (join: JoinRow, keyword: string) =>
+  `${join.tableId}:${join.id}:${keyword}`;
+
+const canCopyJoin = (join: JoinRow, keyword: string) =>
+  Boolean(completedJoin(join, keyword));
+
+const joinCopyTitle = (join: JoinRow, keyword: string) => {
+  const clause = completedJoin(join, keyword);
+  return clause ? `Copy: ${clause}` : "NetSuite did not document enough information to build this join";
+};
+
+const copyJoin = async (join: JoinRow, keyword: string) => {
+  const clause = completedJoin(join, keyword);
+  if (!clause) return;
+  if (!(await writeClipboard(clause))) {
+    copyFeedback.value = "Could not copy to the clipboard";
+    return;
+  }
+  const key = joinCopyKey(join, keyword);
+  showCopied(key, `${readableLabel(keyword)} clause copied`);
+};
+
+function readableLabel(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/(^|\s)\S/g, (character) => character.toUpperCase());
+}
+
 const openJoinTarget = (join: JoinRow) => {
   const targetId = join.sourceTargetType?.id;
   if (!targetId) return;
@@ -501,6 +730,17 @@ const openJoinTarget = (join: JoinRow) => {
     (table) => table.id.toLowerCase() === targetId.toLowerCase()
   );
   if (target) chooseTable(target);
+};
+
+const openQueryTable = (tableId: string) => {
+  const table = props.tables.find(
+    (item) => item.id.toLowerCase() === tableId.toLowerCase()
+  );
+  if (table) chooseTable(table);
+};
+
+const openQueryNode = (node: QueryNode | undefined) => {
+  if (node) openQueryTable(node.table);
 };
 
 const normalizedJoinType = (value: string) => {
@@ -541,6 +781,14 @@ const readableCardinality = (value: string) => {
   align-items: center;
 }
 
+.schema-panel__controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0.65rem;
+}
+
 .schema-panel__header {
   min-height: 3rem;
   justify-content: space-between;
@@ -557,7 +805,7 @@ const readableCardinality = (value: string) => {
 .schema-panel__heading > i,
 .table-identity__icon,
 .bottom-panel-title i {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
 }
 
 .schema-panel__heading > div,
@@ -603,9 +851,9 @@ const readableCardinality = (value: string) => {
 
 .schema-panel__header-actions button:hover:not(:disabled),
 .schema-panel__search button:hover {
-  border-color: #d8c6ff;
-  background: #faf7ff;
-  color: #7b2ff7;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
+  color: var(--p-slate-900);
 }
 
 .schema-panel__header-actions button:disabled {
@@ -634,7 +882,7 @@ const readableCardinality = (value: string) => {
 }
 
 .schema-breadcrumb button:hover {
-  color: #7b2ff7;
+  color: var(--p-slate-900);
 }
 
 .schema-breadcrumb > i {
@@ -644,24 +892,75 @@ const readableCardinality = (value: string) => {
 
 .schema-breadcrumb strong {
   overflow: hidden;
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   font-family: "JetBrains Mono", monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .schema-panel__search {
+  min-width: 0;
+  flex: 1;
   gap: 0.4rem;
-  margin: 0.5rem 0.65rem;
   border: 1px solid #b4c4d3;
   border-radius: 0.25rem;
   background: white;
   padding-left: 0.55rem;
 }
 
+.schema-panel__filter {
+  width: 8.8rem;
+  flex: 0 0 8.8rem;
+}
+
+.schema-panel__filter :deep(.m-select-trigger) {
+  height: 2rem;
+  min-height: 2rem;
+  border-color: #b4c4d3;
+  border-radius: 0.25rem;
+  font-size: 0.66rem;
+}
+
+.schema-panel__filter :deep(.m-select-trigger:focus),
+.schema-panel__filter.is-open :deep(.m-select-trigger) {
+  border-color: var(--p-slate-400);
+  box-shadow: 0 0 0 2px var(--m-slate-150);
+}
+
+.schema-copy-feedback {
+  display: flex;
+  min-height: 1.8rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0.65rem 0.4rem;
+  border: 1px solid #d8c6ff;
+  border-radius: 0.25rem;
+  background: #faf7ff;
+  color: #7b2ff7;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+.schema-copy-feedback i {
+  font-size: 0.68rem;
+}
+
+.copy-feedback-enter-active,
+.copy-feedback-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.copy-feedback-enter-from,
+.copy-feedback-leave-to {
+  transform: translateY(-0.2rem);
+  opacity: 0;
+}
+
 .schema-panel__search:focus-within {
-  border-color: #c6a7ff;
-  box-shadow: 0 0 0 2px #faf7ff;
+  border-color: var(--p-slate-400);
+  box-shadow: 0 0 0 2px var(--m-slate-150);
 }
 
 .schema-panel__search > i {
@@ -683,6 +982,7 @@ const readableCardinality = (value: string) => {
 
 .schema-panel__tabs {
   gap: 0.25rem;
+  margin-top: 0.35rem;
   border-bottom: 1px solid #dbe3ea;
   padding: 0 0.65rem 0.5rem;
 }
@@ -706,9 +1006,9 @@ const readableCardinality = (value: string) => {
 
 .schema-panel__tabs button:hover,
 .schema-panel__tabs .schema-panel__tab--active {
-  border-color: #d8c6ff;
-  background: #faf7ff;
-  color: #7b2ff7;
+  border-color: var(--p-slate-400);
+  background: var(--m-slate-250);
+  color: var(--p-slate-900);
 }
 
 .schema-panel__tabs small {
@@ -749,44 +1049,161 @@ const readableCardinality = (value: string) => {
 }
 
 .query-structure {
-  border: 1px solid #d8c6ff;
+  border: 1px solid var(--p-slate-300);
   border-radius: 0.3rem;
-  background: #faf7ff;
+  background: var(--m-slate-150);
   padding: 0.55rem;
 }
 
-.query-structure__flow {
+.query-structure__source {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
-  overflow-x: auto;
+  gap: 0.45rem;
   padding: 0.5rem 0 0.35rem;
 }
 
-.query-structure__flow button {
+.query-structure__source > span {
+  width: 2.6rem;
+  flex: 0 0 auto;
+  color: #62696e;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem;
+  font-weight: 700;
+}
+
+.query-structure__source button,
+.query-join__nodes button {
   display: inline-flex;
   overflow: hidden;
-  max-width: 9rem;
-  height: 1.8rem;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 0.3rem;
-  border: 1px solid #d8c6ff;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid var(--p-slate-300);
   border-radius: 0.25rem;
   background: white;
-  color: #7b2ff7;
+  color: var(--p-slate-900);
   cursor: pointer;
-  padding: 0 0.45rem;
+  padding: 0.3rem 0.45rem;
   font-family: "JetBrains Mono", monospace;
-  font-size: 0.58rem;
+  text-align: left;
+}
+
+.query-structure__source button {
+  flex: 1;
+}
+
+.query-structure__source strong,
+.query-join__nodes strong {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 0.6rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.query-structure__arrow {
-  flex: 0 0 auto;
+.query-structure__source small,
+.query-join__nodes small {
+  overflow: hidden;
+  max-width: 100%;
   color: #8a949b;
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-structure__joins {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-bottom: 0.4rem;
+}
+
+.query-structure__joins article {
+  border: 1px solid #dbe3ea;
+  border-radius: 0.25rem;
+  background: white;
+  padding: 0.4rem;
+}
+
+.query-structure__joins article.query-join--warning {
+  border-color: #f3c77b;
+  background: #fffaf0;
+}
+
+.query-join__type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+  color: #62696e;
+  font-size: 0.52rem;
+  font-weight: 700;
+}
+
+.query-join__type small {
+  color: #9a6700;
+  font-weight: 500;
+}
+
+.query-join__nodes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.query-join__nodes button:last-child {
+  border-color: #b4c4d3;
+  color: #27323a;
+}
+
+.query-join__nodes > i {
+  color: var(--p-slate-500);
   font-size: 0.55rem;
+  text-align: center;
+}
+
+.query-join__mappings {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-top: 0.35rem;
+  border-top: 1px solid #eef3f7;
+  padding-top: 0.35rem;
+}
+
+.query-join__mappings > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.query-join__mappings code,
+.query-join__condition {
+  overflow: hidden;
+  color: #62696e;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-join__mappings code:last-child {
+  text-align: right;
+}
+
+.query-join__mappings span {
+  color: var(--p-slate-500);
+  font-size: 0.55rem;
+}
+
+.query-join__condition {
+  display: block;
+  margin-top: 0.35rem;
+  border-top: 1px solid #eef3f7;
+  padding-top: 0.35rem;
 }
 
 .query-structure p,
@@ -822,12 +1239,12 @@ const readableCardinality = (value: string) => {
 
 .schema-table-item:hover,
 .schema-table-item.referenced {
-  border-color: #d8c6ff;
-  background: #faf7ff;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
 }
 
 .schema-table-item > i:first-child {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
   font-size: 0.72rem;
 }
 
@@ -849,10 +1266,10 @@ const readableCardinality = (value: string) => {
 .schema-field-item__topline span,
 .join-summary span {
   flex: 0 0 auto;
-  border: 1px solid #d8c6ff;
+  border: 1px solid var(--p-slate-300);
   border-radius: 0.2rem;
-  background: #faf7ff;
-  color: #7b2ff7;
+  background: var(--m-slate-150);
+  color: var(--p-slate-600);
   padding: 0.12rem 0.3rem;
   font-size: 0.54rem;
 }
@@ -875,9 +1292,9 @@ const readableCardinality = (value: string) => {
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border: 1px solid #d8c6ff;
+  border: 1px solid var(--p-slate-300);
   border-radius: 0.3rem;
-  background: #faf7ff;
+  background: var(--m-slate-150);
 }
 
 .table-identity > div:nth-child(2) {
@@ -906,13 +1323,13 @@ const readableCardinality = (value: string) => {
 }
 
 .schema-stat-grid button:hover {
-  border-color: #d8c6ff;
-  background: #faf7ff;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
 }
 
 .schema-stat-grid i {
   grid-row: 1 / 3;
-  color: #7b2ff7;
+  color: var(--p-slate-500);
 }
 
 .schema-stat-grid strong {
@@ -963,7 +1380,7 @@ const readableCardinality = (value: string) => {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #c6a7ff;
+  background: var(--p-slate-400);
 }
 
 .field-type-groups strong {
@@ -992,8 +1409,8 @@ const readableCardinality = (value: string) => {
 }
 
 .relationship-map__list > button:hover {
-  border-color: #d8c6ff;
-  background: #faf7ff;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
 }
 
 .relationship-node {
@@ -1010,8 +1427,9 @@ const readableCardinality = (value: string) => {
 }
 
 .relationship-node.source {
-  border-color: #d8c6ff;
-  color: #7b2ff7;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
+  color: var(--p-slate-900);
 }
 
 .relationship-edge {
@@ -1031,16 +1449,16 @@ const readableCardinality = (value: string) => {
 }
 
 .relationship-edge i {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
   font-size: 0.55rem;
 }
 
 .relationship-map__more {
   height: 1.8rem;
-  border: 1px solid #d8c6ff;
+  border: 1px solid var(--p-slate-300);
   border-radius: 0.25rem;
-  background: #faf7ff;
-  color: #7b2ff7;
+  background: var(--m-slate-150);
+  color: var(--p-slate-900);
   cursor: pointer;
   font-size: 0.6rem;
 }
@@ -1066,12 +1484,172 @@ const readableCardinality = (value: string) => {
   padding-top: 0.4rem;
 }
 
+.relationship-legend {
+  border: 1px solid #dbe3ea;
+  border-radius: 0.25rem;
+  background: white;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.58rem;
+}
+
+.relationship-legend summary {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #62696e;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.relationship-legend summary::-webkit-details-marker {
+  display: none;
+}
+
+.relationship-legend summary::after {
+  margin-left: auto;
+  color: #8a949b;
+  content: "+";
+}
+
+.relationship-legend[open] summary::after {
+  content: "−";
+}
+
+.relationship-legend__content {
+  margin: 0.55rem 0 0;
+  border-top: 1px solid #eef3f7;
+  padding-top: 0.5rem;
+}
+
+.relationship-legend__content > p {
+  margin: 0 0 0.6rem;
+  color: #62696e;
+  line-height: 1.45;
+}
+
+.relationship-legend__content section + section {
+  margin-top: 0.65rem;
+}
+
+.relationship-legend__content h4 {
+  margin: 0 0 0.35rem;
+  color: #27323a;
+  font-size: 0.57rem;
+  text-transform: uppercase;
+}
+
+.relationship-legend__content article {
+  display: grid;
+  grid-template-columns: 4.8rem minmax(0, 1fr);
+  gap: 0.15rem 0.5rem;
+  padding: 0.3rem 0;
+}
+
+.relationship-legend__content article + article {
+  border-top: 1px solid #eef3f7;
+}
+
+.relationship-legend__content article strong {
+  color: #27323a;
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+}
+
+.relationship-legend__content article span {
+  color: #62696e;
+  line-height: 1.35;
+}
+
+.relationship-legend__content article code {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+  color: var(--p-slate-600);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.52rem;
+}
+
 .schema-field-item,
 .schema-join-item {
   border: 1px solid #dbe3ea;
   border-radius: 0.25rem;
   background: white;
   padding: 0.45rem 0.5rem;
+}
+
+.schema-field-item {
+  width: 100%;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.join-copy-actions {
+  margin-top: 0.4rem;
+  border-top: 1px solid #eef3f7;
+  padding-top: 0.4rem;
+}
+
+.join-copy-actions > span {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: #8a949b;
+  font-size: 0.52rem;
+  text-transform: uppercase;
+}
+
+.join-copy-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.22rem;
+}
+
+.join-copy-actions button {
+  display: inline-flex;
+  height: 1.55rem;
+  align-items: center;
+  gap: 0.22rem;
+  border: 1px solid #b4c4d3;
+  border-radius: 0.22rem;
+  background: white;
+  color: #27323a;
+  cursor: pointer;
+  padding: 0 0.35rem;
+  font-size: 0.52rem;
+  white-space: nowrap;
+}
+
+.join-copy-actions button:hover:not(:disabled),
+.join-copy-actions button.copied {
+  border-color: var(--p-slate-400);
+  background: var(--m-slate-150);
+}
+
+.join-copy-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.join-copy-actions button i {
+  color: var(--p-slate-500);
+  font-size: 0.5rem;
+}
+
+.schema-field-item:hover,
+.schema-field-item--copied {
+  border-color: var(--p-slate-400);
+  background: var(--m-slate-150);
+}
+
+.schema-field-item__topline span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.schema-field-item__topline span i {
+  font-size: 0.52rem;
 }
 
 .schema-field-item__topline,
@@ -1084,7 +1662,7 @@ const readableCardinality = (value: string) => {
 .schema-field-item code,
 .join-condition code {
   overflow: hidden;
-  color: #7b2ff7;
+  color: var(--p-slate-600);
   font-family: "JetBrains Mono", monospace;
   font-size: 0.64rem;
   font-weight: 600;
@@ -1133,9 +1711,9 @@ const readableCardinality = (value: string) => {
 }
 
 .join-direction button:first-child {
-  border-color: #d8c6ff;
-  background: #faf7ff;
-  color: #7b2ff7;
+  border-color: var(--p-slate-300);
+  background: var(--m-slate-150);
+  color: var(--p-slate-900);
 }
 
 .join-direction > span {
@@ -1155,7 +1733,7 @@ const readableCardinality = (value: string) => {
 }
 
 .join-direction i {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
   font-size: 0.55rem;
 }
 
@@ -1191,6 +1769,29 @@ const readableCardinality = (value: string) => {
   font-weight: 400;
 }
 
+.join-condition__pair {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.1rem;
+  border-left: 2px solid var(--p-slate-300);
+  padding-left: 0.4rem;
+}
+
+.join-condition__pair small,
+.join-condition__field {
+  overflow: hidden;
+  color: #8a949b;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.join-condition__field {
+  margin-top: 0.15rem;
+}
+
 .schema-panel__empty {
   display: flex;
   min-height: 10rem;
@@ -1205,7 +1806,7 @@ const readableCardinality = (value: string) => {
 }
 
 .schema-panel__empty > i {
-  color: #7b2ff7;
+  color: var(--p-slate-500);
   font-size: 1rem;
 }
 

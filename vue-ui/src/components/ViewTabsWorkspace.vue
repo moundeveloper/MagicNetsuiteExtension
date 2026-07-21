@@ -112,7 +112,7 @@ const routeLabel = (currentRoute: { path: string; name?: unknown }) => {
     topLevelRouteItems.find((item) => item.route === currentRoute.path) ??
     topLevelRouteItems.find((item) => pathMatchesPattern(currentRoute.path, item.route));
 
-  return match?.breadcrumb || match?.name || String(currentRoute.name ?? "View");
+  return match?.tabLabel || match?.breadcrumb || match?.name || String(currentRoute.name ?? "View");
 };
 
 const componentForRoute = (currentRoute: Pick<RouteLocationNormalizedLoaded, "matched">) => {

@@ -4,6 +4,8 @@
       ref="triggerRef"
       type="button"
       class="m-select-trigger"
+      :disabled="disabled"
+      :title="displayValue"
       :aria-expanded="isOpen"
       :aria-haspopup="true"
       @click="toggle"
@@ -43,7 +45,7 @@
             class="pi pi-check m-select-option-check"
             :style="{ visibility: opt.value === modelValue ? 'visible' : 'hidden' }"
           ></i>
-          <span>{{ opt.label }}</span>
+          <span :title="opt.label">{{ opt.label }}</span>
         </div>
         <div v-if="normalizedOptions.length === 0" class="m-select-empty">
           No options
@@ -265,13 +267,18 @@ onBeforeUnmount(() => {
 
 .m-select-trigger:focus {
   outline: none;
-  border-color: var(--p-indigo-400, #818cf8);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+  border-color: #c6a7ff;
+  box-shadow: 0 0 0 2px #faf7ff;
 }
 
 .is-open .m-select-trigger {
-  border-color: var(--p-indigo-400, #818cf8);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18);
+  border-color: #c6a7ff;
+  box-shadow: 0 0 0 2px #faf7ff;
+}
+
+.m-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* ── Value / Placeholder ───────────────────────────────────────────────────── */
@@ -338,23 +345,23 @@ onBeforeUnmount(() => {
 
 .m-select-option:hover,
 .m-select-option.is-highlighted {
-  background: var(--p-indigo-50, #eef2ff);
-  color: var(--p-indigo-800, #3730a3);
+  background: #faf7ff;
+  color: #7b2ff7;
 }
 
 .m-select-option.is-selected {
-  background: var(--p-indigo-50, #eef2ff);
-  color: var(--p-indigo-700, #4338ca);
+  background: #faf7ff;
+  color: #7b2ff7;
   font-weight: 500;
 }
 
 .m-select-option.is-selected.is-highlighted {
-  background: var(--p-indigo-100, #e0e7ff);
+  background: #f1eaff;
 }
 
 .m-select-option-check {
   font-size: 0.65rem;
-  color: var(--p-indigo-600, #4f46e5);
+  color: #7b2ff7;
   flex-shrink: 0;
   width: 0.75rem;
 }

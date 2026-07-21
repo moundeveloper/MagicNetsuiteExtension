@@ -33,6 +33,7 @@ const selectedIndex = ref(0);
 const recentViews = ref<RecentView[]>([]);
 const environment = ref("unknown");
 const inputRef = ref<HTMLInputElement | null>(null);
+const resultsRef = ref<HTMLElement | null>(null);
 
 const mode = import.meta.env.MODE;
 
@@ -290,6 +291,25 @@ const handleInputKeydown = (event: KeyboardEvent) => {
   }
 };
 
+const scrollSelectedIntoView = async () => {
+  await nextTick();
+  const container = resultsRef.value;
+  const selected = container?.querySelector<HTMLElement>(
+    `[data-palette-index="${selectedIndex.value}"]`
+  );
+  if (!container || !selected) return;
+
+  const containerRect = container.getBoundingClientRect();
+  const selectedRect = selected.getBoundingClientRect();
+  if (selectedRect.top < containerRect.top) {
+    container.scrollTop -= containerRect.top - selectedRect.top;
+  } else if (selectedRect.bottom > containerRect.bottom) {
+    container.scrollTop += selectedRect.bottom - containerRect.bottom;
+  }
+};
+
+watch([selectedIndex, results], scrollSelectedIntoView);
+
 watch(query, () => {
   selectedIndex.value = 0;
 });
@@ -321,11 +341,12 @@ defineExpose({ open: openPalette });
           <kbd>ESC</kbd>
         </header>
 
-        <div class="command-palette-results">
+        <div ref="resultsRef" class="command-palette-results">
           <button
             v-for="(item, index) in results"
             :key="item.id"
             type="button"
+            :data-palette-index="index"
             :class="{ selected: index === selectedIndex }"
             @mouseenter="selectedIndex = index"
             @click="selectItem(item)"

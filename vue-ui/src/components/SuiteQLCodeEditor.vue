@@ -38,7 +38,7 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { lintKeymap } from "@codemirror/lint";
+import { linter, lintKeymap, type Diagnostic } from "@codemirror/lint";
 
 // ── Props & Emits ──────────────────────────────────────────────────────────
 
@@ -46,6 +46,13 @@ const props = defineProps<{
   modelValue?: string;
   schema?: Record<string, string[]>;
   readonly?: boolean;
+  diagnostics?: Array<{
+    severity: "error" | "warning" | "suggestion";
+    code: string;
+    message: string;
+    start: number;
+    end: number;
+  }>;
 }>();
 
 const emit = defineEmits<{
@@ -61,6 +68,27 @@ let view: EditorView | null = null;
 
 const sqlCompartment = new Compartment();
 const editableCompartment = new Compartment();
+const diagnosticsCompartment = new Compartment();
+
+const buildDiagnosticsExtension = () =>
+  linter(
+    (editorView): Diagnostic[] => {
+      const documentLength = editorView.state.doc.length;
+      return (props.diagnostics ?? []).map((issue) => {
+        const from = Math.max(0, Math.min(documentLength, issue.start));
+        const requestedTo = Math.max(issue.end, issue.start + 1);
+        const to = Math.max(from, Math.min(documentLength, requestedTo));
+        return {
+          from,
+          to,
+          severity:
+            issue.severity === "suggestion" ? "info" : issue.severity,
+          message: `[${issue.code}] ${issue.message}`
+        };
+      });
+    },
+    { delay: 0 }
+  );
 
 // ── Nord Theme (matches Monaco monokai/Nord setup in theme.json) ───────────
 // Colors from theme.json:
@@ -294,6 +322,7 @@ onMounted(() => {
       highlightSelectionMatches(),
       syntaxHighlighting(nordHighlightStyle, { fallback: true }),
       sqlCompartment.of(buildSqlExtension(initialSchema)),
+      diagnosticsCompartment.of(buildDiagnosticsExtension()),
       autocompletion({ activateOnTyping: true, closeOnBlur: false }),
       editableCompartment.of(EditorState.readOnly.of(props.readonly ?? false)),
       keymap.of([
@@ -378,6 +407,17 @@ watch(
   }
 );
 
+watch(
+  () => props.diagnostics,
+  () => {
+    if (!view) return;
+    view.dispatch({
+      effects: diagnosticsCompartment.reconfigure(buildDiagnosticsExtension())
+    });
+  },
+  { deep: true }
+);
+
 // ── Exposed API ────────────────────────────────────────────────────────────
 
 const getValue = (): string => view?.state.doc.toString() ?? "";
@@ -404,9 +444,18 @@ const insertText = (text: string): void => {
 };
 
 const focus = (): void => view?.focus();
+const focusOffset = (offset: number): void => {
+  if (!view) return;
+  const position = Math.max(0, Math.min(view.state.doc.length, offset));
+  view.dispatch({
+    selection: { anchor: position },
+    scrollIntoView: true
+  });
+  view.focus();
+};
 const getEditor = (): EditorView | null => view;
 
-defineExpose({ getValue, setValue, insertText, focus, getEditor });
+defineExpose({ getValue, setValue, insertText, focus, focusOffset, getEditor });
 </script>
 
 <style scoped>

@@ -21,7 +21,7 @@ import MultiAgentView from "../views/MultiAgentView.vue";
 import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
 import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
-import NotebookView from "../views/NotebookView.vue";
+import NotesView from "../features/notes/NotesView.vue";
 import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
 import RecordsView from "../views/RecordsView.vue";
 import RecordDetailView from "../views/RecordDetailView.vue";
@@ -53,6 +53,7 @@ export type RouteItem = {
   icon: string;
   status: RouteStatus;
   breadcrumb?: string;
+  tabLabel?: string;
   breadcrumbParents?: Array<{ label: string; route: string }>;
   adminOnly?: boolean;
 };
@@ -65,6 +66,7 @@ export type Route = {
     name: string;
     component: any;
     breadcrumb?: string;
+    tabLabel?: string;
     breadcrumbParents?: Array<{ label: string; route: string }>;
   }>;
 };
@@ -76,6 +78,7 @@ type FullRoute = RouteItem & {
     name: string;
     component: any;
     breadcrumb?: string;
+    tabLabel?: string;
     breadcrumbParents?: Array<{ label: string; route: string }>;
   }>;
 };
@@ -320,12 +323,22 @@ export const routes: FullRoute[] = [
     breadcrumb: "Feedback"
   },
   {
-    route: "/notebook",
-    name: "Notebook",
-    icon: "pi pi-bookmark",
-    component: NotebookView,
+    route: "/notes",
+    name: "Notes",
+    icon: "pi pi-file-edit",
+    component: NotesView,
     status: RouteStatus.release,
-    breadcrumb: "Notebook"
+    breadcrumb: "Notes",
+    children: [
+      {
+        route: "/notes/page/:id",
+        name: "notes-page",
+        component: NotesView,
+        breadcrumb: "Page",
+        tabLabel: "Notes",
+        breadcrumbParents: [{ label: "Notes", route: "/notes" }]
+      }
+    ]
   },
   {
     route: "/multi-agent",

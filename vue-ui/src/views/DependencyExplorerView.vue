@@ -3,7 +3,6 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Background } from "@vue-flow/background";
 import { Controls } from "@vue-flow/controls";
-import { MiniMap } from "@vue-flow/minimap";
 import { VueFlow, type Edge, type Node } from "@vue-flow/core";
 import { Button, InputText, Tag, useToast } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
@@ -812,7 +811,6 @@ onMounted(async () => {
                 @node-click="handleGraphNodeClick($event.node)"
               >
                 <Background pattern-color="#cbd5e1" :gap="18" />
-                <MiniMap />
                 <Controls position="top-left" />
               </VueFlow>
             </div>
