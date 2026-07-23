@@ -721,6 +721,7 @@ import {
 import {
   explainSuiteQLError,
   getSuiteQLReferencedFields,
+  getSuiteQLReferencedTables,
   lintSuiteQL,
   type SuiteQLLintIssue
 } from "../utils/suiteqlLinter";
@@ -1226,8 +1227,12 @@ const detectAndLoadTablesFromQuery = async (sql: string) => {
     return;
   }
 
+  const parsedTables = getSuiteQLReferencedTables(sql);
   const matches = [...sql.matchAll(/\b(?:FROM|JOIN)\s+(\w+)/gi)];
-  const found = matches.map((m) => m[1]).filter((n): n is string => Boolean(n));
+  const fallbackTables = matches
+    .map((match) => match[1])
+    .filter((name): name is string => Boolean(name));
+  const found = parsedTables.length > 0 ? parsedTables : fallbackTables;
   const unique = [...new Set(found.map((n) => n.toLowerCase()))];
 
   const resolved = unique
@@ -1476,19 +1481,6 @@ const getQueryStructureIssues = (sql: string): SuiteQLLintIssue[] => {
     const start = match ? searchFrom + match.index : 0;
     if (match) searchFrom = start + match[0].length;
     const position = getLineColumnAtOffset(sql, start);
-
-    if (!edge.hasCondition) {
-      return [
-        {
-          severity: "error" as const,
-          code: "MISSING_JOIN_CONDITION",
-          message: `${edge.joinType} JOIN ${edge.targetTable} has no ON condition and may create a Cartesian result.`,
-          start,
-          end: start + (match?.[0].length ?? 1),
-          ...position
-        }
-      ];
-    }
 
     if (edge.joinType !== "CROSS" && edge.condition && edge.fieldPairs.length === 0) {
       return [

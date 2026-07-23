@@ -37,15 +37,38 @@ interface TableSource {
   table: string;
   alias: string | null;
   isCte: boolean;
+  isDerived: boolean;
+  outputFields: Set<string> | null;
+  node: Record<string, unknown>;
 }
 
 interface ColumnRef {
   table: string | null;
   column: string;
+  node?: Record<string, unknown>;
+  clause?: QueryClause;
+  scope?: QueryScope;
 }
 
 interface FunctionRef {
   name: string;
+}
+
+type QueryClause =
+  | "SELECT"
+  | "FROM"
+  | "WHERE"
+  | "GROUP BY"
+  | "HAVING"
+  | "ORDER BY";
+
+interface QueryScope {
+  statement: Record<string, unknown>;
+  parent: QueryScope | null;
+  tableSources: TableSource[];
+  aliasToSource: Map<string, TableSource>;
+  selectAliases: Set<string>;
+  columnRefs: ColumnRef[];
 }
 
 interface SuiteQLAnalysisContext {
@@ -53,6 +76,8 @@ interface SuiteQLAnalysisContext {
   maskedSql: string;
   ast: unknown[];
   parseError: string | null;
+  queryScopes: QueryScope[];
+  scopeByNode: WeakMap<object, QueryScope>;
   tableSources: TableSource[];
   aliasToTable: Map<string, string>;
   cteNames: Set<string>;
@@ -321,6 +346,77 @@ const walkAst = (node: unknown, visit: (node: Record<string, unknown>) => void) 
   walk(node);
 };
 
+const isSelectStatement = (value: unknown): boolean =>
+  Boolean(
+    value &&
+      typeof value === "object" &&
+      String((value as Record<string, unknown>).type ?? "").toLowerCase() ===
+        "select"
+  );
+
+const selectFromWrapper = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object") return null;
+  const ast = (value as Record<string, unknown>).ast;
+  return isSelectStatement(ast) ? (ast as Record<string, unknown>) : null;
+};
+
+/**
+ * Walks one SQL expression without crossing a SELECT boundary. Query blocks
+ * have independent name-resolution and aggregate scopes, so treating a
+ * scalar/EXISTS/IN subquery as part of its parent expression creates false
+ * ambiguity and GROUP BY diagnostics.
+ */
+const walkExpression = (
+  value: unknown,
+  visit: (node: Record<string, unknown>) => void
+) => {
+  const seen = new WeakSet<object>();
+
+  const walk = (current: unknown) => {
+    if (!current || typeof current !== "object" || seen.has(current)) return;
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    const node = current as Record<string, unknown>;
+    if (isSelectStatement(node) || selectFromWrapper(node)) return;
+    visit(node);
+    Object.values(node).forEach(walk);
+  };
+
+  walk(value);
+};
+
+interface NodeLocation {
+  start: { offset: number };
+  end: { offset: number };
+}
+
+const nodeLocation = (value: unknown): NodeLocation | null => {
+  if (!value || typeof value !== "object") return null;
+  const loc = (value as Record<string, unknown>).loc;
+  if (!loc || typeof loc !== "object") return null;
+  const start = (loc as Record<string, unknown>).start;
+  const end = (loc as Record<string, unknown>).end;
+  if (!start || typeof start !== "object" || !end || typeof end !== "object") {
+    return null;
+  }
+  const startOffset = (start as Record<string, unknown>).offset;
+  const endOffset = (end as Record<string, unknown>).offset;
+  return typeof startOffset === "number" && typeof endOffset === "number"
+    ? { start: { offset: startOffset }, end: { offset: endOffset } }
+    : null;
+};
+
+const nodeStart = (value: unknown, fallback = 0) =>
+  nodeLocation(value)?.start.offset ?? fallback;
+
+const nodeEnd = (value: unknown, fallback: number) =>
+  nodeLocation(value)?.end.offset ?? fallback;
+
 const indexOfRegex = (sql: string, regex: RegExp) => {
   const match = regex.exec(sql);
   return match?.index ?? 0;
@@ -402,10 +498,13 @@ const isStarExpression = (value: unknown): boolean => {
   );
 };
 
+const isGroupingAggregateNode = (node: Record<string, unknown>) =>
+  node.type === "aggr_func" && !node.over;
+
 const containsAggregateFunction = (value: unknown): boolean => {
   let found = false;
-  walkAst(value, (node) => {
-    if (node.type === "aggr_func") found = true;
+  walkExpression(value, (node) => {
+    if (isGroupingAggregateNode(node)) found = true;
   });
   return found;
 };
@@ -425,7 +524,10 @@ const containsNestedAggregateFunction = (value: unknown): boolean => {
     }
 
     const node = current as Record<string, unknown>;
-    const nextDepth = node.type === "aggr_func" ? aggregateDepth + 1 : aggregateDepth;
+    if (isSelectStatement(node) || selectFromWrapper(node)) return;
+    const nextDepth = isGroupingAggregateNode(node)
+      ? aggregateDepth + 1
+      : aggregateDepth;
     if (nextDepth > 1) {
       found = true;
       return;
@@ -453,15 +555,17 @@ const collectNonAggregateColumnRefs = (value: unknown): ColumnRef[] => {
     }
 
     const node = current as Record<string, unknown>;
-    const nextInsideAggregate = insideAggregate || node.type === "aggr_func";
+    if (isSelectStatement(node) || selectFromWrapper(node)) return;
+    const nextInsideAggregate =
+      insideAggregate || isGroupingAggregateNode(node);
 
     if (!nextInsideAggregate && node.type === "column_ref") {
       const table = identifierToString(node.table);
       const column = identifierToString(node.column);
-      if (column && column !== "*") refs.push({ table, column });
+      if (column && column !== "*") refs.push({ table, column, node });
     }
 
-    if (node.type === "aggr_func") return;
+    if (isGroupingAggregateNode(node)) return;
     Object.values(node).forEach((child) => visit(child, nextInsideAggregate));
   };
 
@@ -472,6 +576,8 @@ const collectNonAggregateColumnRefs = (value: unknown): ColumnRef[] => {
 const findExpressionStart = (sql: string, expr: unknown) => {
   if (!expr || typeof expr !== "object") return 0;
   const node = expr as Record<string, unknown>;
+  const location = nodeLocation(node);
+  if (location) return location.start.offset;
 
   if (isStarExpression(expr)) return indexOfRegex(sql, /\*/);
 
@@ -510,31 +616,324 @@ const columnRefFromNode = (value: unknown): ColumnRef | null => {
 
   return {
     table: identifierToString(node.table),
-    column
+    column,
+    node
   };
 };
 
 const isPlainUnqualifiedIdentifier = (ref: ColumnRef) =>
   !ref.table && /^[A-Za-z_][A-Za-z0-9_$]*$/.test(ref.column);
 
-const getReferencedTable = (context: SuiteQLAnalysisContext, ref: ColumnRef) =>
-  ref.table ? context.aliasToTable.get(ref.table.toLowerCase()) ?? null : null;
+const selectOutputFields = (
+  statement: Record<string, unknown>,
+  explicitColumns?: unknown
+): Set<string> | null => {
+  if (Array.isArray(explicitColumns) && explicitColumns.length > 0) {
+    const names = explicitColumns
+      .map(identifierToString)
+      .filter((name): name is string => Boolean(name));
+    return names.length === explicitColumns.length
+      ? new Set(names.map((name) => name.toLowerCase()))
+      : null;
+  }
+
+  const columns = Array.isArray(statement.columns) ? statement.columns : [];
+  const fields = new Set<string>();
+  for (const rawColumn of columns) {
+    const column = rawColumn as Record<string, unknown>;
+    const expr = column.expr ?? rawColumn;
+    if (isStarExpression(expr)) return null;
+
+    const alias = identifierToString(column.as);
+    const ref = columnRefFromNode(expr);
+    const outputName = alias ?? ref?.column ?? null;
+    if (outputName) fields.add(outputName.toLowerCase());
+  }
+  return fields;
+};
+
+const findSubqueryStatements = (value: unknown) => {
+  const statements: Record<string, unknown>[] = [];
+  const seen = new WeakSet<object>();
+
+  const walk = (current: unknown) => {
+    if (!current || typeof current !== "object" || seen.has(current)) return;
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+
+    const node = current as Record<string, unknown>;
+    const nested = selectFromWrapper(node);
+    if (nested) {
+      statements.push(nested);
+      return;
+    }
+    if (isSelectStatement(node)) {
+      statements.push(node);
+      return;
+    }
+    Object.values(node).forEach(walk);
+  };
+
+  walk(value);
+  return statements;
+};
+
+const collectQueryScopes = (ast: unknown[]) => {
+  const scopes: QueryScope[] = [];
+  const scopeByNode = new WeakMap<object, QueryScope>();
+  const builtStatements = new WeakSet<object>();
+
+  const buildScope = (
+    statement: Record<string, unknown>,
+    parent: QueryScope | null,
+    inheritedCtes: Map<string, Set<string> | null> = new Map()
+  ): QueryScope | null => {
+    if (builtStatements.has(statement)) return null;
+    builtStatements.add(statement);
+
+    const availableCtes = new Map(inheritedCtes);
+    const withEntries = Array.isArray(statement.with) ? statement.with : [];
+
+    // CTEs are query blocks, not correlated subqueries. Build them in
+    // declaration order so later CTEs can reference earlier ones.
+    for (const rawCte of withEntries) {
+      const cte = rawCte as Record<string, unknown>;
+      const name = identifierToString(cte.name);
+      const cteStatement = selectFromWrapper(cte.stmt);
+      if (!name || !cteStatement) continue;
+      buildScope(cteStatement, null, availableCtes);
+      availableCtes.set(
+        name.toLowerCase(),
+        selectOutputFields(cteStatement, cte.columns)
+      );
+    }
+
+    const tableSources: TableSource[] = [];
+    const aliasToSource = new Map<string, TableSource>();
+    for (const rawSource of Array.isArray(statement.from) ? statement.from : []) {
+      const sourceNode = rawSource as Record<string, unknown>;
+      const table = identifierToString(sourceNode.table);
+      const alias = identifierToString(sourceNode.as);
+      const derivedStatement = selectFromWrapper(sourceNode.expr);
+      const cteFields = table
+        ? availableCtes.get(table.toLowerCase())
+        : undefined;
+
+      if (!table && !derivedStatement) continue;
+      const source: TableSource = {
+        table: table ?? alias ?? "<derived>",
+        alias,
+        isCte: Boolean(table && availableCtes.has(table.toLowerCase())),
+        isDerived: Boolean(derivedStatement),
+        outputFields: derivedStatement
+          ? selectOutputFields(derivedStatement)
+          : cteFields ?? null,
+        node: sourceNode
+      };
+      tableSources.push(source);
+
+      // In Oracle/SuiteQL an alias replaces the table qualifier.
+      const qualifier = alias ?? table;
+      if (qualifier) aliasToSource.set(qualifier.toLowerCase(), source);
+    }
+
+    const selectColumns = Array.isArray(statement.columns)
+      ? statement.columns
+      : [];
+    const selectAliases = new Set(
+      selectColumns
+        .map((column) =>
+          identifierToString((column as Record<string, unknown>).as)
+        )
+        .filter((alias): alias is string => Boolean(alias))
+        .map((alias) => alias.toLowerCase())
+    );
+
+    const scope: QueryScope = {
+      statement,
+      parent,
+      tableSources,
+      aliasToSource,
+      selectAliases,
+      columnRefs: []
+    };
+    scopes.push(scope);
+
+    const collectRefs = (value: unknown, clause: QueryClause) => {
+      walkExpression(value, (node) => {
+        scopeByNode.set(node, scope);
+        if (node.type !== "column_ref") return;
+        const column = identifierToString(node.column);
+        if (!column) return;
+        scope.columnRefs.push({
+          table: identifierToString(node.table),
+          column,
+          node,
+          clause,
+          scope
+        });
+      });
+    };
+
+    selectColumns.forEach((column) =>
+      collectRefs((column as Record<string, unknown>).expr ?? column, "SELECT")
+    );
+    for (const source of Array.isArray(statement.from) ? statement.from : []) {
+      collectRefs((source as Record<string, unknown>).on, "FROM");
+    }
+    collectRefs(statement.where, "WHERE");
+    const groupBy = statement.groupby as Record<string, unknown> | null;
+    if (Array.isArray(groupBy?.columns)) {
+      groupBy.columns.forEach((expr) => collectRefs(expr, "GROUP BY"));
+    }
+    collectRefs(statement.having, "HAVING");
+    if (Array.isArray(statement.orderby)) {
+      statement.orderby.forEach((rawOrder) => {
+        const order = rawOrder as Record<string, unknown>;
+        collectRefs(order.expr ?? rawOrder, "ORDER BY");
+      });
+    }
+
+    // FROM subqueries are derived tables and cannot correlate in SuiteQL.
+    for (const rawSource of Array.isArray(statement.from) ? statement.from : []) {
+      const derivedStatement = selectFromWrapper(
+        (rawSource as Record<string, unknown>).expr
+      );
+      if (derivedStatement) buildScope(derivedStatement, null, availableCtes);
+    }
+
+    // Expression subqueries may be correlated to this query block.
+    const expressionRoots: unknown[] = [
+      ...selectColumns.map(
+        (column) => (column as Record<string, unknown>).expr ?? column
+      ),
+      statement.where,
+      statement.having,
+      ...(Array.isArray(groupBy?.columns) ? groupBy.columns : []),
+      ...(Array.isArray(statement.orderby)
+        ? statement.orderby.map(
+            (order) => (order as Record<string, unknown>).expr ?? order
+          )
+        : []),
+      ...(Array.isArray(statement.from)
+        ? statement.from.map((source) => (source as Record<string, unknown>).on)
+        : [])
+    ];
+    for (const nested of expressionRoots.flatMap(findSubqueryStatements)) {
+      buildScope(nested, scope, availableCtes);
+    }
+
+    const next = statement._next;
+    if (isSelectStatement(next)) {
+      buildScope(next as Record<string, unknown>, null, availableCtes);
+    }
+    return scope;
+  };
+
+  for (const statement of ast) {
+    if (isSelectStatement(statement)) {
+      buildScope(statement as Record<string, unknown>, null);
+    }
+  }
+
+  return { scopes, scopeByNode };
+};
+
+const scopeForRef = (
+  context: SuiteQLAnalysisContext,
+  ref: ColumnRef
+): QueryScope | null =>
+  ref.scope ??
+  (ref.node ? context.scopeByNode.get(ref.node) ?? null : null);
+
+const sourceFieldState = (
+  context: SuiteQLAnalysisContext,
+  source: TableSource,
+  columnLower: string
+): "yes" | "no" | "unknown" => {
+  if (source.isCte || source.isDerived) {
+    return source.outputFields === null
+      ? "unknown"
+      : source.outputFields.has(columnLower)
+        ? "yes"
+        : "no";
+  }
+
+  const fields = context.schema.fieldsByTable.get(source.table.toLowerCase());
+  if (!fields) return "unknown";
+  return fields.has(columnLower) ? "yes" : "no";
+};
+
+const resolveQualifiedSource = (
+  scope: QueryScope | null,
+  qualifier: string
+): TableSource | null => {
+  const key = qualifier.toLowerCase();
+  for (let current = scope; current; current = current.parent) {
+    const source = current.aliasToSource.get(key);
+    if (source) return source;
+  }
+  return null;
+};
+
+interface UnqualifiedResolution {
+  matches: TableSource[];
+  uncertain: boolean;
+  searchedSources: TableSource[];
+}
+
+const resolveUnqualifiedSources = (
+  context: SuiteQLAnalysisContext,
+  scope: QueryScope | null,
+  column: string
+): UnqualifiedResolution => {
+  const columnLower = column.toLowerCase();
+  const searchedSources: TableSource[] = [];
+
+  for (let current = scope; current; current = current.parent) {
+    const localSources = current.tableSources;
+    searchedSources.push(...localSources);
+    const matches = localSources.filter(
+      (source) => sourceFieldState(context, source, columnLower) === "yes"
+    );
+    if (matches.length > 0) {
+      return { matches, uncertain: false, searchedSources };
+    }
+    if (
+      localSources.some(
+        (source) => sourceFieldState(context, source, columnLower) === "unknown"
+      )
+    ) {
+      return { matches: [], uncertain: true, searchedSources };
+    }
+  }
+
+  return { matches: [], uncertain: false, searchedSources };
+};
 
 const knownFieldTables = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
   const columnLower = ref.column.toLowerCase();
-  const table = getReferencedTable(context, ref);
+  const scope = scopeForRef(context, ref);
 
-  if (table) {
-    return context.schema.fieldsByTable.get(table.toLowerCase())?.has(columnLower)
-      ? [table]
-      : [];
+  if (ref.table) {
+    const source = resolveQualifiedSource(scope, ref.table);
+    if (
+      source &&
+      !source.isCte &&
+      !source.isDerived &&
+      sourceFieldState(context, source, columnLower) === "yes"
+    ) {
+      return [source.table];
+    }
+    return [];
   }
 
-  return context.tableSources
-    .filter((source) => !source.isCte)
-    .filter((source) =>
-      context.schema.fieldsByTable.get(source.table.toLowerCase())?.has(columnLower)
-    )
+  return resolveUnqualifiedSources(context, scope, ref.column).matches
+    .filter((source) => !source.isCte && !source.isDerived)
     .map((source) => source.table);
 };
 
@@ -546,7 +945,6 @@ const isUnknownValueIdentifier = (
   ref: ColumnRef
 ) =>
   isPlainUnqualifiedIdentifier(ref) &&
-  !context.aliasToTable.has(ref.column.toLowerCase()) &&
   !isKnownFieldRef(context, ref);
 
 const fieldTypeForRef = (context: SuiteQLAnalysisContext, ref: ColumnRef) => {
@@ -604,6 +1002,23 @@ const regexIndex = (text: string, regex: RegExp) => {
   const match = regex.exec(text);
   if (!match) return null;
   return { start: match.index, end: match.index + match[0].length, text: match[0] };
+};
+
+const regexIndexInExpression = (
+  sql: string,
+  regex: RegExp,
+  expr: unknown
+) => {
+  const loc = nodeLocation(expr);
+  if (!loc) return null;
+  const segment = sql.slice(loc.start.offset, loc.end.offset);
+  const match = regex.exec(segment);
+  if (!match) return null;
+  return {
+    start: loc.start.offset + match.index,
+    end: loc.start.offset + match.index + match[0].length,
+    text: match[0]
+  };
 };
 
 const stringLiteralValue = (expr: unknown): string | null => {
@@ -667,11 +1082,18 @@ const flattenNumberChain = (
 };
 
 const nearestDateToken = (sql: string, maskedSql: string, expr: unknown) => {
-  const anchor = findExpressionStart(sql, expr);
+  const loc = nodeLocation(expr);
+  if (!loc) return null;
+  const anchor = loc.start.offset;
   const pattern =
     /\b(?:\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{1,2}-[A-Za-z]{3,9}-\d{2,4}|[A-Za-z]{3,9}-\d{1,2}-\d{2,4})\b/g;
   const matches = [...maskedSql.matchAll(pattern)]
     .filter((match) => match.index !== undefined)
+    .filter(
+      (match) =>
+        (match.index as number) >= loc.start.offset &&
+        (match.index as number) < loc.end.offset
+    )
     .map((match) => ({
       start: match.index as number,
       end: (match.index as number) + match[0].length,
@@ -728,7 +1150,7 @@ const dateLikeExpressionInfo = (sql: string, maskedSql: string, expr: unknown) =
     const pattern = new RegExp(
       `\\b${partPatterns.join(`\\s*\\${separator}\\s*`)}\\b`
     );
-    const match = regexIndex(sql, pattern);
+    const match = regexIndexInExpression(sql, pattern, expr);
     return {
       start: match?.start ?? findExpressionStart(sql, expr),
       end: match?.end ?? findExpressionStart(sql, expr) + 1,
@@ -739,7 +1161,11 @@ const dateLikeExpressionInfo = (sql: string, maskedSql: string, expr: unknown) =
   if (node.type === "number" && typeof node.value === "number") {
     const text = String(node.value);
     if (/^\d{6}(\d{2})?$/.test(text)) {
-      const match = regexIndex(sql, new RegExp(`\\b${text}\\b`));
+      const match = regexIndexInExpression(
+        sql,
+        new RegExp(`\\b${text}\\b`),
+        expr
+      );
       return {
         start: match?.start ?? findExpressionStart(sql, expr),
         end: match?.end ?? findExpressionStart(sql, expr) + text.length,
@@ -755,13 +1181,13 @@ const dateLikeExpressionInfo = (sql: string, maskedSql: string, expr: unknown) =
 };
 
 const collectUnquotedLiteralNames = (context: SuiteQLAnalysisContext) => {
-  const names = new Set<string>();
+  const nodes = new WeakSet<object>();
 
   const inspectValue = (field: ColumnRef | null, value: unknown) => {
     if (!field || !isKnownFieldRef(context, field)) return;
     const ref = columnRefFromNode(value);
-    if (ref && isUnknownValueIdentifier(context, ref)) {
-      names.add(ref.column.toLowerCase());
+    if (ref?.node && isUnknownValueIdentifier(context, ref)) {
+      nodes.add(ref.node);
       return;
     }
 
@@ -770,7 +1196,9 @@ const collectUnquotedLiteralNames = (context: SuiteQLAnalysisContext) => {
     if (dateInfo && (!compactDate || isDateLikeField(context, field))) {
       collectNonAggregateColumnRefs(value)
         .filter((valueRef) => isUnknownValueIdentifier(context, valueRef))
-        .forEach((valueRef) => names.add(valueRef.column.toLowerCase()));
+        .forEach((valueRef) => {
+          if (valueRef.node) nodes.add(valueRef.node);
+        });
     }
   };
 
@@ -792,7 +1220,7 @@ const collectUnquotedLiteralNames = (context: SuiteQLAnalysisContext) => {
     });
   }
 
-  return names;
+  return nodes;
 };
 
 const buildAnalysisContext = (
@@ -804,17 +1232,45 @@ const buildAnalysisContext = (
   let parseError: string | null = null;
 
   try {
-    const parsed = parser.astify(sql);
+    const parsed = parser.astify(sql, {
+      parseOptions: { includeLocations: true }
+    });
     ast = Array.isArray(parsed) ? parsed : [parsed];
+
+    // node-sql-parser trims leading whitespace before parsing but reports
+    // offsets as though the trimmed SQL started at index zero. Rebase every
+    // location so diagnostics point into the editor's original text.
+    const leadingWhitespace = sql.length - sql.trimStart().length;
+    if (leadingWhitespace > 0) {
+      for (const statement of ast) {
+        walkAst(statement, (node) => {
+          const loc = node.loc as
+            | {
+                start?: { offset?: number };
+                end?: { offset?: number };
+              }
+            | undefined;
+          if (typeof loc?.start?.offset === "number") {
+            loc.start.offset += leadingWhitespace;
+          }
+          if (typeof loc?.end?.offset === "number") {
+            loc.end.offset += leadingWhitespace;
+          }
+        });
+      }
+    }
   } catch (error) {
     parseError = normalizeErrorText(error);
   }
 
+  const { scopes: queryScopes, scopeByNode } = collectQueryScopes(ast);
   const cteNames = new Set<string>();
-  const tableSources: TableSource[] = [];
+  const tableSources = queryScopes.flatMap((scope) => scope.tableSources);
   const aliasToTable = new Map<string, string>();
-  const selectAliases = new Set<string>();
-  const columnRefs: ColumnRef[] = [];
+  const selectAliases = new Set(
+    queryScopes.flatMap((scope) => [...scope.selectAliases])
+  );
+  const columnRefs = queryScopes.flatMap((scope) => scope.columnRefs);
   const functionRefs: FunctionRef[] = [];
 
   for (const statement of ast) {
@@ -828,35 +1284,15 @@ const buildAnalysisContext = (
     });
   }
 
+  for (const scope of queryScopes) {
+    for (const [alias, source] of scope.aliasToSource) {
+      if (!source.isCte && !source.isDerived) {
+        aliasToTable.set(alias, source.table);
+      }
+    }
+  }
   for (const statement of ast) {
     walkAst(statement, (node) => {
-      if (Array.isArray(node.columns)) {
-        for (const column of node.columns) {
-          const alias = identifierToString((column as Record<string, unknown>).as);
-          if (alias) selectAliases.add(alias.toLowerCase());
-        }
-      }
-
-      if (Array.isArray(node.from)) {
-        for (const rawSource of node.from) {
-          const source = rawSource as Record<string, unknown>;
-          const table = identifierToString(source.table);
-          if (!table) continue;
-
-          const alias = identifierToString(source.as);
-          const isCte = cteNames.has(table.toLowerCase());
-          tableSources.push({ table, alias, isCte });
-          aliasToTable.set(table.toLowerCase(), table);
-          if (alias) aliasToTable.set(alias.toLowerCase(), table);
-        }
-      }
-
-      if (node.type === "column_ref") {
-        const table = identifierToString(node.table);
-        const column = identifierToString(node.column);
-        if (column) columnRefs.push({ table, column });
-      }
-
       if (node.type === "function" || node.type === "aggr_func") {
         const name = functionNameToString(node);
         if (name) functionRefs.push({ name });
@@ -869,6 +1305,8 @@ const buildAnalysisContext = (
     maskedSql: masked,
     ast,
     parseError,
+    queryScopes,
+    scopeByNode,
     tableSources,
     aliasToTable,
     cteNames,
@@ -921,7 +1359,13 @@ export const getSuiteQLReferencedFields = (
   for (const ref of context.columnRefs) {
     const columnLower = ref.column.toLowerCase();
     if (SPECIAL_COLUMNS.has(columnLower)) continue;
-    if (!ref.table && context.selectAliases.has(columnLower)) continue;
+    if (
+      !ref.table &&
+      ref.clause === "ORDER BY" &&
+      ref.scope?.selectAliases.has(columnLower)
+    ) {
+      continue;
+    }
 
     const source = ref.table ? "qualified" : "unqualified";
     for (const table of knownFieldTables(context, ref)) {
@@ -933,6 +1377,22 @@ export const getSuiteQLReferencedFields = (
   }
 
   return fields;
+};
+
+export const getSuiteQLReferencedTables = (sql: string): string[] => {
+  const context = buildAnalysisContext(sql ?? "");
+  const seen = new Set<string>();
+  const tables: string[] = [];
+
+  for (const source of context.tableSources) {
+    if (source.isCte || source.isDerived) continue;
+    const key = source.table.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tables.push(source.table);
+  }
+
+  return tables;
 };
 
 const lexicalCompatibilityRules: SuiteQLRule[] = [
@@ -1003,15 +1463,23 @@ const lexicalCompatibilityRules: SuiteQLRule[] = [
       )
   },
   {
-    id: "NO_TABLE_ALIAS_AS",
-    check: ({ sql, maskedSql }) =>
-      addRegexIssues(
-        sql,
-        maskedSql,
-        /\b(?:FROM|JOIN)\s+[A-Za-z_][A-Za-z0-9_$]*\s+AS\s+[A-Za-z_][A-Za-z0-9_$]*/gi,
-        "NO_TABLE_ALIAS_AS",
-        "SuiteQL does not allow AS before table aliases. Use FROM table alias instead of FROM table AS alias."
-      )
+    id: "NO_MIXED_JOIN_SYNTAX",
+    check: ({ sql, maskedSql }) => {
+      if (!/\(\s*\+\s*\)/.test(maskedSql) || !/\bJOIN\b/i.test(maskedSql)) {
+        return [];
+      }
+      const start = indexOfRegex(maskedSql, /\(\s*\+\s*\)/);
+      return [
+        makeIssue(
+          sql,
+          "error",
+          "MIXED_JOIN_SYNTAX",
+          "SuiteQL does not allow Oracle (+) outer-join syntax and ANSI JOIN syntax in the same query. Use ANSI JOIN clauses consistently.",
+          start,
+          start + 3
+        )
+      ];
+    }
   }
 ];
 
@@ -1256,10 +1724,8 @@ const astRules: SuiteQLRule[] = [
   },
   {
     id: "AGGREGATE_QUERY_REFERENCES",
-    check: ({ sql, ast }) =>
-      ast.flatMap((statement) => {
-        const selectStatement = statement as Record<string, unknown>;
-        if (String(selectStatement.type ?? "").toLowerCase() !== "select") return [];
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap(({ statement: selectStatement }) => {
 
         const groupBy = selectStatement.groupby as Record<string, unknown> | null;
         const groupExpressions = Array.isArray(groupBy?.columns)
@@ -1517,6 +1983,180 @@ const astRules: SuiteQLRule[] = [
           ...distinctOrderByIssues
         ];
       })
+  },
+  {
+    id: "CTE_COLUMN_LIST_UNSUPPORTED",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap(({ statement }) => {
+        if (!Array.isArray(statement.with)) return [];
+        return statement.with.flatMap((rawCte) => {
+          const cte = rawCte as Record<string, unknown>;
+          if (!Array.isArray(cte.columns) || cte.columns.length === 0) return [];
+          const name = identifierToString(cte.name) ?? "CTE";
+          const statementStart = nodeStart(statement);
+          const relativeStart = indexOfRegex(
+            sql.slice(statementStart),
+            new RegExp(`\\b${escapeRegex(name)}\\s*\\(`, "i")
+          );
+          const start = statementStart + relativeStart;
+          return [
+            makeIssue(
+              sql,
+              "error",
+              "CTE_COLUMN_LIST_UNSUPPORTED",
+              `SuiteQL does not support a column-name list after CTE "${name}". Alias the expressions inside the CTE SELECT instead.`,
+              start,
+              Math.min(sql.length, start + name.length)
+            )
+          ];
+        });
+      })
+  },
+  {
+    id: "DUPLICATE_TABLE_ALIAS",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap((scope) => {
+        const seen = new Set<string>();
+        return scope.tableSources.flatMap((source) => {
+          const qualifier = (source.alias ?? source.table).toLowerCase();
+          if (!seen.has(qualifier)) {
+            seen.add(qualifier);
+            return [];
+          }
+          const start = nodeStart(source.node);
+          return [
+            makeIssue(
+              sql,
+              "error",
+              "DUPLICATE_TABLE_ALIAS",
+              `Table alias or source name "${source.alias ?? source.table}" is defined more than once in the same query scope.`,
+              start,
+              nodeEnd(source.node, start + qualifier.length)
+            )
+          ];
+        });
+      })
+  },
+  {
+    id: "MISSING_JOIN_CONDITION",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap((scope) =>
+        scope.tableSources.flatMap((source) => {
+          const join = String(source.node.join ?? "").toUpperCase();
+          if (
+            !join ||
+            join.includes("CROSS") ||
+            source.node.on ||
+            source.node.using
+          ) {
+            return [];
+          }
+          const start = nodeStart(source.node);
+          return [
+            makeIssue(
+              sql,
+              "error",
+              "MISSING_JOIN_CONDITION",
+              `${join} requires an ON or USING condition.`,
+              start,
+              nodeEnd(source.node, start + source.table.length)
+            )
+          ];
+        })
+      )
+  },
+  {
+    id: "SET_OPERATION_COLUMN_COUNT",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap(({ statement }) => {
+        const next = statement._next as Record<string, unknown> | undefined;
+        if (!isSelectStatement(next)) return [];
+        const nextStatement = next as Record<string, unknown>;
+        const leftCount = Array.isArray(statement.columns)
+          ? statement.columns.length
+          : 0;
+        const rightCount = Array.isArray(nextStatement.columns)
+          ? nextStatement.columns.length
+          : 0;
+        if (leftCount === rightCount) return [];
+
+        const start = nodeStart(nextStatement);
+        return [
+          makeIssue(
+            sql,
+            "error",
+            "SET_OPERATION_COLUMN_COUNT",
+            `${String(statement.set_op ?? "set operation").toUpperCase()} combines ${leftCount} column(s) with ${rightCount}. Every branch must return the same number of columns.`,
+            start,
+            Math.min(sql.length, start + 6)
+          )
+        ];
+      })
+  },
+  {
+    id: "ORDER_BY_ORDINAL",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap(({ statement }) => {
+        const columnCount = Array.isArray(statement.columns)
+          ? statement.columns.length
+          : 0;
+        if (!Array.isArray(statement.orderby)) return [];
+        return statement.orderby.flatMap((rawOrder) => {
+          const expr = (rawOrder as Record<string, unknown>).expr as
+            | Record<string, unknown>
+            | undefined;
+          if (expr?.type !== "number" || typeof expr.value !== "number") return [];
+          if (expr.value >= 1 && expr.value <= columnCount) return [];
+          const start = nodeStart(expr, findExpressionStart(sql, expr));
+          return [
+            makeIssue(
+              sql,
+              "error",
+              "ORDER_BY_ORDINAL_OUT_OF_RANGE",
+              `ORDER BY position ${expr.value} is outside the SELECT list, which has ${columnCount} column(s).`,
+              start,
+              nodeEnd(expr, start + String(expr.value).length)
+            )
+          ];
+        });
+      })
+  },
+  {
+    id: "NULL_COMPARISON",
+    check: ({ sql, queryScopes }) =>
+      queryScopes.flatMap((scope) => {
+        const issues: SuiteQLLintIssue[] = [];
+        const inspect = (value: unknown) => {
+          walkExpression(value, (node) => {
+            if (
+              node.type !== "binary_expr" ||
+              !["=", "!=", "<>"].includes(String(node.operator ?? ""))
+            ) {
+              return;
+            }
+            const left = node.left as Record<string, unknown> | undefined;
+            const right = node.right as Record<string, unknown> | undefined;
+            const nullNode =
+              left?.type === "null" ? left : right?.type === "null" ? right : null;
+            if (!nullNode) return;
+            const start = nodeStart(nullNode, findExpressionStart(sql, node));
+            issues.push(
+              makeIssue(
+                sql,
+                "error",
+                "NULL_COMPARISON",
+                "Comparisons with NULL never evaluate to true. Use IS NULL or IS NOT NULL.",
+                start,
+                nodeEnd(nullNode, start + 4)
+              )
+            );
+          });
+        };
+        inspect(scope.statement.where);
+        inspect(scope.statement.having);
+        for (const source of scope.tableSources) inspect(source.node.on);
+        return issues;
+      })
   }
 ];
 
@@ -1526,7 +2166,7 @@ const metadataRules: SuiteQLRule[] = [
     check: ({ sql, schema, tableSources }) => {
       if (schema.tableIds.size === 0) return [];
       return tableSources
-        .filter((source) => !source.isCte)
+        .filter((source) => !source.isCte && !source.isDerived)
         .filter((source) => !schema.tableIds.has(source.table.toLowerCase()))
         .map((source) =>
           makeIssue(
@@ -1534,8 +2174,8 @@ const metadataRules: SuiteQLRule[] = [
             "error",
             "UNKNOWN_TABLE",
             `Unknown SuiteQL table "${source.table}". Check the exact table ID in the Tables tab.`,
-            indexOfRegex(sql, new RegExp(`\\b${escapeRegex(source.table)}\\b`, "i")),
-            indexOfRegex(sql, new RegExp(`\\b${escapeRegex(source.table)}\\b`, "i")) + source.table.length
+            nodeStart(source.node),
+            Math.min(nodeEnd(source.node, nodeStart(source.node) + source.table.length), sql.length)
           )
         );
     }
@@ -1543,80 +2183,95 @@ const metadataRules: SuiteQLRule[] = [
   {
     id: "UNKNOWN_ALIAS_OR_FIELD",
     check: (context) => {
-      const { sql, schema, tableSources, aliasToTable, selectAliases, columnRefs } = context;
-      if (schema.fieldsByTable.size === 0) return [];
+      const { sql, columnRefs } = context;
 
-      const realTables = tableSources.filter((source) => !source.isCte);
-      const unquotedLiteralNames = collectUnquotedLiteralNames(context);
+      const unquotedLiteralNodes = collectUnquotedLiteralNames(context);
       const issues: SuiteQLLintIssue[] = [];
 
       for (const ref of columnRefs) {
         const columnLower = ref.column.toLowerCase();
         if (SPECIAL_COLUMNS.has(columnLower)) continue;
-        if (!ref.table && selectAliases.has(columnLower)) continue;
-        if (!ref.table && unquotedLiteralNames.has(columnLower)) continue;
+        if (
+          !ref.table &&
+          ref.clause !== "SELECT" &&
+          ref.clause !== "FROM" &&
+          ref.scope?.selectAliases.has(columnLower)
+        ) {
+          continue;
+        }
+        if (ref.node && unquotedLiteralNodes.has(ref.node)) continue;
+
+        const start = nodeStart(ref.node);
+        const end = Math.max(start + 1, nodeEnd(ref.node, start + ref.column.length));
 
         if (ref.table) {
-          const table = aliasToTable.get(ref.table.toLowerCase());
-          if (!table) {
+          const source = resolveQualifiedSource(
+            scopeForRef(context, ref),
+            ref.table
+          );
+          if (!source) {
             issues.push(
               makeIssue(
                 sql,
                 "error",
                 "UNKNOWN_ALIAS",
                 `Alias "${ref.table}" is referenced in "${ref.table}.${ref.column}" but is not defined in a FROM or JOIN clause.`,
-                indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.table)}\\.${escapeRegex(ref.column)}\\b`, "i")),
-                indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.table)}\\.${escapeRegex(ref.column)}\\b`, "i")) + `${ref.table}.${ref.column}`.length
+                start,
+                end
               )
             );
             continue;
           }
 
-          const fields = schema.fieldsByTable.get(table.toLowerCase());
-          if (fields && !fields.has(columnLower)) {
+          if (sourceFieldState(context, source, columnLower) === "no") {
+            const sourceLabel =
+              source.isCte || source.isDerived
+                ? `query source "${ref.table}"`
+                : `table "${source.table}"`;
             issues.push(
               makeIssue(
                 sql,
                 "error",
                 "UNKNOWN_FIELD",
-                `Unknown field "${ref.column}" on table "${table}" from reference "${ref.table}.${ref.column}". Check the Fields tab for the exact field ID.`,
-                indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.table)}\\.${escapeRegex(ref.column)}\\b`, "i")),
-                indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.table)}\\.${escapeRegex(ref.column)}\\b`, "i")) + `${ref.table}.${ref.column}`.length
+                `Unknown field "${ref.column}" on ${sourceLabel} from reference "${ref.table}.${ref.column}". Check the Fields tab or the source query's SELECT list for the exact field ID.`,
+                start,
+                end
               )
             );
           }
           continue;
         }
 
-        const loadedTables = realTables.filter((source) =>
-          schema.fieldsByTable.has(source.table.toLowerCase())
+        const resolution = resolveUnqualifiedSources(
+          context,
+          scopeForRef(context, ref),
+          ref.column
         );
-        if (loadedTables.length === 0) continue;
-
-        const matchingTables = loadedTables.filter((source) =>
-          schema.fieldsByTable.get(source.table.toLowerCase())?.has(columnLower)
-        );
-
-        if (matchingTables.length === 0) {
+        if (resolution.uncertain) continue;
+        if (resolution.matches.length === 0) {
+          const checkedSources = resolution.searchedSources
+            .filter((source) => !source.isCte && !source.isDerived)
+            .map((source) => source.table);
+          if (checkedSources.length === 0) continue;
           issues.push(
             makeIssue(
               sql,
               "error",
               "UNKNOWN_FIELD",
-              `Unknown unqualified field "${ref.column}" on the loaded query table(s): ${loadedTables.map((source) => source.table).join(", ")}.`,
-              indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.column)}\\b`, "i")),
-              indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.column)}\\b`, "i")) + ref.column.length
+              `Unknown unqualified field "${ref.column}" in this query scope. Checked: ${[...new Set(checkedSources)].join(", ")}.`,
+              start,
+              end
             )
           );
-        } else if (matchingTables.length > 1) {
+        } else if (resolution.matches.length > 1) {
           issues.push(
             makeIssue(
               sql,
               "warning",
               "AMBIGUOUS_FIELD",
-              `Unqualified field "${ref.column}" exists on multiple joined tables (${matchingTables.map((source) => source.table).join(", ")}). Qualify it with a table alias.`,
-              indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.column)}\\b`, "i")),
-              indexOfRegex(sql, new RegExp(`\\b${escapeRegex(ref.column)}\\b`, "i")) + ref.column.length
+              `Unqualified field "${ref.column}" exists on multiple sources in the same query scope (${resolution.matches.map((source) => source.alias ?? source.table).join(", ")}). Qualify it with a table alias.`,
+              start,
+              end
             )
           );
         }
@@ -1629,7 +2284,7 @@ const metadataRules: SuiteQLRule[] = [
     id: "METADATA_NOT_LOADED",
     check: ({ sql, schema, tableSources }) => {
       const missing = tableSources
-        .filter((source) => !source.isCte)
+        .filter((source) => !source.isCte && !source.isDerived)
         .filter((source) => !schema.fieldsByTable.has(source.table.toLowerCase()))
         .map((source) => source.table);
 
