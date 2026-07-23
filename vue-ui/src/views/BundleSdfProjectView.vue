@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Button } from "primevue";
 import { useToast } from "primevue/usetoast";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync } from "fflate";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import {
@@ -12,6 +12,10 @@ import {
   type Bundle,
   type BundleSdfFileState,
 } from "../utils/bundleTools";
+import {
+  generateSdfManifest,
+  type SdfManifestAnalysis,
+} from "../utils/sdfManifest";
 
 defineProps<{ vhOffset: number }>();
 
@@ -20,6 +24,7 @@ interface ProjectEntry {
   name: string;
   parentPath: string;
   directory: boolean;
+  virtual: boolean;
   bytes: Uint8Array | null;
   children: ProjectEntry[];
 }
@@ -41,6 +46,7 @@ const loading = ref(true);
 const errorMessage = ref("");
 const filter = ref("");
 const previewUrl = ref<string | null>(null);
+const manifestAnalysis = ref<SdfManifestAnalysis | null>(null);
 
 const normalizePath = (path: string) =>
   path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -57,7 +63,7 @@ const sortEntries = (entries: ProjectEntry[]) => {
   entries.forEach((entry) => sortEntries(entry.children));
 };
 
-const buildTree = (archive: Record<string, Uint8Array>) => {
+const buildTree = (archive: Record<string, Uint8Array>, virtualPaths = new Set<string>()) => {
   const entries = new Map<string, ProjectEntry>();
   const ensureDirectory = (path: string): ProjectEntry | null => {
     if (!path) return null;
@@ -70,6 +76,7 @@ const buildTree = (archive: Record<string, Uint8Array>) => {
       name: baseName(path),
       parentPath: parent,
       directory: true,
+      virtual: false,
       bytes: null,
       children: [],
     };
@@ -86,6 +93,7 @@ const buildTree = (archive: Record<string, Uint8Array>) => {
     if (current) {
       if (!explicitDirectory) {
         current.directory = false;
+        current.virtual = virtualPaths.has(path);
         current.bytes = bytes;
       }
       continue;
@@ -95,6 +103,7 @@ const buildTree = (archive: Record<string, Uint8Array>) => {
       name: baseName(path),
       parentPath: parentPath(path),
       directory: explicitDirectory,
+      virtual: virtualPaths.has(path),
       bytes: explicitDirectory ? null : bytes,
       children: [],
     });
@@ -151,6 +160,9 @@ const textContentFor = (entry: ProjectEntry | null) => {
 const selectedContent = computed(() => textContentFor(selected.value));
 
 const selectedSize = computed(() => selected.value?.bytes?.byteLength ?? 0);
+const selectedIsManifest = computed(() => selected.value?.path === "manifest.xml");
+const requiredFeatureCount = computed(() => manifestAnalysis.value?.features.filter((feature) => feature.required).length ?? 0);
+const optionalFeatureCount = computed(() => manifestAnalysis.value?.features.filter((feature) => !feature.required).length ?? 0);
 
 const textExtensions = new Set([
   "xml", "js", "ts", "json", "html", "htm", "css", "scss", "txt", "md",
@@ -215,6 +227,7 @@ const selectEntry = (entry: ProjectEntry) => {
 
 const iconFor = (entry: ProjectEntry) => {
   if (entry.directory) return expanded.value.has(entry.path) ? "pi pi-folder-open" : "pi pi-folder";
+  if (entry.virtual) return "pi pi-sparkles";
   const ext = extension(entry);
   if (["js", "ts", "json"].includes(ext)) return "pi pi-code";
   if (["xml", "ftl", "html"].includes(ext)) return "pi pi-file-edit";
@@ -280,9 +293,26 @@ const loadProject = async () => {
     fileState.value = await fetchBundleSdfFileState(bundleId);
     if (!fileState.value.exists) throw new Error(`No sdf_conversion_${bundleId}.zip file was found.`);
     const bytes = await fetchBundleSdfArchive(fileState.value);
-    roots.value = buildTree(unzipSync(bytes));
+    const archive = unzipSync(bytes);
+    const textFiles = Object.entries(archive).flatMap(([rawPath, fileBytes]) => {
+      const path = normalizePath(rawPath);
+      if (!path || rawPath.endsWith("/") || fileBytes.subarray(0, 4096).some((byte) => byte === 0)) return [];
+      try {
+        return [{ path, content: strFromU8(fileBytes) }];
+      } catch {
+        return [];
+      }
+    });
+    manifestAnalysis.value = generateSdfManifest(
+      textFiles,
+      bundle.value.name || `Bundle ${bundleId}`,
+    );
+    archive["manifest.xml"] = strToU8(manifestAnalysis.value.xml);
+    roots.value = buildTree(archive, new Set(["manifest.xml"]));
     expanded.value = new Set(allEntries.value.filter((entry) => entry.directory).map((entry) => entry.path));
-    selected.value = allEntries.value.find((entry) => !entry.directory) ?? null;
+    selected.value = allEntries.value.find((entry) => entry.path === "manifest.xml")
+      ?? allEntries.value.find((entry) => !entry.directory)
+      ?? null;
   } catch (error: any) {
     errorMessage.value = String(error?.message ?? error);
   } finally {
@@ -345,6 +375,7 @@ onMounted(loadProject);
             <span v-else class="tree-caret"></span>
             <i :class="iconFor(row.entry)" class="entry-icon"></i>
             <span class="entry-name">{{ row.entry.name }}</span>
+            <span v-if="row.entry.virtual" class="virtual-badge">Virtual</span>
             <span v-if="!row.entry.directory" class="tree-row-actions">
               <button
                 type="button"
@@ -390,6 +421,31 @@ onMounted(loadProject);
                 @click="downloadFile()"
               />
             </div>
+          </div>
+          <div v-if="selectedIsManifest && manifestAnalysis" class="manifest-summary">
+            <div class="manifest-summary-copy">
+              <i class="pi pi-sparkles"></i>
+              <span>Generated from the unpacked project using SuiteCloud 2025.2 feature metadata.</span>
+              <span class="dependency-count required">{{ requiredFeatureCount }} required</span>
+              <span class="dependency-count optional">{{ optionalFeatureCount }} optional</span>
+            </div>
+            <div v-if="manifestAnalysis.features.length" class="feature-pills" aria-label="Detected feature dependencies">
+              <span
+                v-for="feature in manifestAnalysis.features"
+                :key="feature.id"
+                class="feature-pill"
+                :class="feature.required ? 'required' : 'optional'"
+                :title="feature.sources.join('\n')"
+              >
+                <i :class="feature.required ? 'pi pi-lock' : 'pi pi-eye'"></i>
+                {{ feature.id }}
+              </span>
+            </div>
+            <span v-else class="no-dependencies">No feature dependencies were detected.</span>
+            <span v-if="manifestAnalysis.unreadableXmlFiles.length" class="manifest-warning">
+              <i class="pi pi-exclamation-triangle"></i>
+              {{ manifestAnalysis.unreadableXmlFiles.length }} malformed XML file(s) could not be analyzed.
+            </span>
           </div>
           <div v-if="isTextEntry(selected)" class="editor-shell">
             <MonacoCodeEditor
@@ -464,15 +520,15 @@ onMounted(loadProject);
 .header-copy strong { font-size: 0.88rem; color: #243f52; }
 .header-copy span { font: 0.7rem Consolas, monospace; color: #6d8799; }
 
-.workspace-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 28%) minmax(0, 1fr); }
-.project-explorer { min-width: 0; display: flex; flex-direction: column; background: #f3f8fb; border-right: 1px solid #cddde8; }
+.workspace-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 28%) minmax(0, 1fr); overflow: hidden; }
+.project-explorer { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #f3f8fb; border-right: 1px solid #cddde8; }
 .explorer-title { height: 34px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #d7e5ef; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .archive-size { color: #7a91a1; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .tree-search { height: 34px; margin: 7px; padding: 0 8px; display: flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #c3d7e4; border-radius: 0.25rem; color: #7890a1; }
 .tree-search:focus-within { border-color: #8fb4ca; outline: 2px solid #dcecf6; }
 .tree-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #334e62; font-size: 0.75rem; }
 .tree-search button { border: 0; background: transparent; color: #7890a1; cursor: pointer; }
-.tree-scroll { min-height: 0; flex: 1; overflow: auto; padding: 0 5px 8px; }
+.tree-scroll { min-height: 0; flex: 1 1 0; overflow-x: auto; overflow-y: auto; overscroll-behavior: contain; padding: 0 5px 8px; }
 .tree-row { width: 100%; height: 27px; display: flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 0.25rem; background: transparent; color: #455f72; cursor: pointer; text-align: left; white-space: nowrap; }
 .tree-row:hover { background: #e7f1f7; }
 .tree-row.selected { background: #dcecf6; border-color: #a9c8da; color: #244e69; }
@@ -480,6 +536,7 @@ onMounted(loadProject);
 .entry-icon { width: 14px; font-size: 0.75rem; color: #668da7; }
 .tree-row .pi-folder, .tree-row .pi-folder-open { color: #6f9db8; }
 .entry-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 0.75rem; }
+.virtual-badge { padding: 1px 5px; border: 1px solid #9ec6dc; border-radius: 999px; color: #356982; background: #eef8fd; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; }
 .tree-row-actions { margin-left: auto; display: flex; flex: 0 0 auto; opacity: 0; }
 .tree-row:hover .tree-row-actions, .tree-row.selected .tree-row-actions { opacity: 1; }
 .tree-row-actions button { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 0.25rem; background: transparent; color: #668da7; cursor: pointer; }
@@ -495,6 +552,19 @@ onMounted(loadProject);
 .file-size { flex-shrink: 0; color: #7890a1; font-size: 0.7rem; }
 .file-actions { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
 .file-actions :deep(.p-button) { height: 1.75rem; padding: 0 0.45rem; white-space: nowrap; }
+.manifest-summary { padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; flex-shrink: 0; background: #f2f8fc; border-bottom: 1px solid #d7e5ef; }
+.manifest-summary-copy, .feature-pills { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.manifest-summary-copy { color: #49697f; font-size: 0.72rem; }
+.manifest-summary-copy > i { color: #4f8bab; }
+.dependency-count, .feature-pill { border-radius: 999px; font-weight: 700; }
+.dependency-count { padding: 2px 7px; font-size: 0.63rem; }
+.dependency-count.required, .feature-pill.required { color: #27607c; background: #dceef8; border: 1px solid #a8ccdf; }
+.dependency-count.optional, .feature-pill.optional { color: #60798a; background: #f8fbfd; border: 1px solid #c7d9e4; }
+.feature-pills { max-height: 56px; overflow: auto; align-content: flex-start; }
+.feature-pill { padding: 2px 7px; display: inline-flex; align-items: center; gap: 4px; font: 0.62rem Consolas, monospace; }
+.feature-pill i { font-size: 0.57rem; }
+.no-dependencies, .manifest-warning { color: #70899a; font-size: 0.68rem; }
+.manifest-warning { display: flex; align-items: center; gap: 5px; color: #925d2e; }
 .editor-shell, .visual-preview, .pdf-preview { flex: 1; min-height: 0; overflow: hidden; }
 .editor-shell :deep(.monaco-editor), .editor-shell :deep(.overflow-guard) { border-radius: 0; }
 .visual-preview { display: grid; place-items: center; padding: 18px; overflow: auto; background: #edf4f8; }
