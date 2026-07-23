@@ -81,13 +81,12 @@ const buildDiagnosticsExtension = () =>
         return {
           from,
           to,
-          severity:
-            issue.severity === "suggestion" ? "info" : issue.severity,
-          message: `[${issue.code}] ${issue.message}`
+          severity: issue.severity === "suggestion" ? "info" : issue.severity,
+          message: `[${issue.code}] ${issue.message}`,
         };
       });
     },
-    { delay: 0 }
+    { delay: 0 },
   );
 
 // ── Nord Theme (matches Monaco monokai/Nord setup in theme.json) ───────────
@@ -232,46 +231,49 @@ const nordTheme = EditorView.theme(
       background: "#4C566A",
     },
   },
-  { dark: true }
+  { dark: true },
 );
 
 // ── Nord Syntax Highlighting ───────────────────────────────────────────────
 
 const nordHighlightStyle = HighlightStyle.define([
-  { tag: tags.keyword,              color: "#81A1C1", fontWeight: "600" },
-  { tag: tags.operator,             color: "#81A1C1" },
-  { tag: tags.operatorKeyword,      color: "#81A1C1" },
-  { tag: tags.string,               color: "#A3BE8C" },
-  { tag: tags.number,               color: "#B48EAD" },
-  { tag: tags.bool,                 color: "#81A1C1" },
-  { tag: tags.null,                 color: "#81A1C1" },
-  { tag: tags.comment,              color: "#616E88", fontStyle: "italic" },
-  { tag: tags.name,                 color: "#D8DEE9" },
-  { tag: tags.variableName,         color: "#D8DEE9" },
+  { tag: tags.keyword, color: "#81A1C1", fontWeight: "600" },
+  { tag: tags.operator, color: "#81A1C1" },
+  { tag: tags.operatorKeyword, color: "#81A1C1" },
+  { tag: tags.string, color: "#A3BE8C" },
+  { tag: tags.number, color: "#B48EAD" },
+  { tag: tags.bool, color: "#81A1C1" },
+  { tag: tags.null, color: "#81A1C1" },
+  { tag: tags.comment, color: "#616E88", fontStyle: "italic" },
+  { tag: tags.name, color: "#D8DEE9" },
+  { tag: tags.variableName, color: "#D8DEE9" },
   { tag: tags.function(tags.variableName), color: "#88C0D0" },
-  { tag: tags.function(tags.name),  color: "#88C0D0" },
+  { tag: tags.function(tags.name), color: "#88C0D0" },
   { tag: tags.definition(tags.variableName), color: "#8FBCBB" },
-  { tag: tags.typeName,             color: "#8FBCBB" },
-  { tag: tags.className,            color: "#8FBCBB" },
-  { tag: tags.namespace,            color: "#8FBCBB" },
-  { tag: tags.propertyName,         color: "#88C0D0" },
-  { tag: tags.punctuation,          color: "#81A1C1" },
-  { tag: tags.separator,            color: "#4C566A" },
-  { tag: tags.bracket,              color: "#ECEFF4" },
+  { tag: tags.typeName, color: "#8FBCBB" },
+  { tag: tags.className, color: "#8FBCBB" },
+  { tag: tags.namespace, color: "#8FBCBB" },
+  { tag: tags.propertyName, color: "#88C0D0" },
+  { tag: tags.punctuation, color: "#81A1C1" },
+  { tag: tags.separator, color: "#4C566A" },
+  { tag: tags.bracket, color: "#ECEFF4" },
   { tag: tags.special(tags.string), color: "#EBCB8B" },
-  { tag: tags.escape,               color: "#EBCB8B" },
-  { tag: tags.regexp,               color: "#EBCB8B" },
-  { tag: tags.meta,                 color: "#616E88" },
-  { tag: tags.invalid,              color: "#BF616A" },
+  { tag: tags.escape, color: "#EBCB8B" },
+  { tag: tags.regexp, color: "#EBCB8B" },
+  { tag: tags.meta, color: "#616E88" },
+  { tag: tags.invalid, color: "#BF616A" },
 ]);
 
 // ── SQL Extension Builder ──────────────────────────────────────────────────
 
 const buildSqlExtension = (schema: Record<string, string[]> = {}) => {
   const tableCount = Object.keys(schema).length;
-  const colCount = Object.values(schema).reduce((s, cols) => s + cols.length, 0);
+  const colCount = Object.values(schema).reduce(
+    (s, cols) => s + cols.length,
+    0,
+  );
   console.log(
-    `[SuiteQLEditor] Building SQL extension — ${tableCount} tables, ${colCount} columns in schema`
+    `[SuiteQLEditor] Building SQL extension — ${tableCount} tables, ${colCount} columns in schema`,
   );
   return sql({ dialect: StandardSQL, schema, upperCaseKeywords: true });
 };
@@ -296,13 +298,14 @@ onMounted(() => {
           emit("ctrl-enter");
           return true;
         },
+        stopPropagation: true,
       },
-    ])
+    ]),
   );
 
   const initialSchema = props.schema ?? {};
   console.log(
-    `[SuiteQLEditor] Initial schema: ${Object.keys(initialSchema).length} tables`
+    `[SuiteQLEditor] Initial schema: ${Object.keys(initialSchema).length} tables`,
   );
 
   const state = EditorState.create({
@@ -369,16 +372,16 @@ watch(
     const tableCount = Object.keys(newSchema ?? {}).length;
     const colCount = Object.values(newSchema ?? {}).reduce(
       (s, cols) => s + cols.length,
-      0
+      0,
     );
     console.log(
-      `[SuiteQLEditor] Schema updated → ${tableCount} tables, ${colCount} columns — reconfiguring`
+      `[SuiteQLEditor] Schema updated → ${tableCount} tables, ${colCount} columns — reconfiguring`,
     );
     view.dispatch({
       effects: sqlCompartment.reconfigure(buildSqlExtension(newSchema ?? {})),
     });
   },
-  { deep: true }
+  { deep: true },
 );
 
 watch(
@@ -391,7 +394,7 @@ watch(
         changes: { from: 0, to: view.state.doc.length, insert: newVal ?? "" },
       });
     }
-  }
+  },
 );
 
 watch(
@@ -401,10 +404,10 @@ watch(
     console.log(`[SuiteQLEditor] readonly → ${val}`);
     view.dispatch({
       effects: editableCompartment.reconfigure(
-        EditorState.readOnly.of(val ?? false)
+        EditorState.readOnly.of(val ?? false),
       ),
     });
-  }
+  },
 );
 
 watch(
@@ -412,10 +415,10 @@ watch(
   () => {
     if (!view) return;
     view.dispatch({
-      effects: diagnosticsCompartment.reconfigure(buildDiagnosticsExtension())
+      effects: diagnosticsCompartment.reconfigure(buildDiagnosticsExtension()),
     });
   },
-  { deep: true }
+  { deep: true },
 );
 
 // ── Exposed API ────────────────────────────────────────────────────────────
@@ -440,7 +443,9 @@ const insertText = (text: string): void => {
     selection: { anchor: pos + text.length },
   });
   view.focus();
-  console.log(`[SuiteQLEditor] Inserted text at pos ${pos}: "${text.slice(0, 40)}"`);
+  console.log(
+    `[SuiteQLEditor] Inserted text at pos ${pos}: "${text.slice(0, 40)}"`,
+  );
 };
 
 const focus = (): void => view?.focus();
@@ -449,7 +454,7 @@ const focusOffset = (offset: number): void => {
   const position = Math.max(0, Math.min(view.state.doc.length, offset));
   view.dispatch({
     selection: { anchor: position },
-    scrollIntoView: true
+    scrollIntoView: true,
   });
   view.focus();
 };
@@ -476,14 +481,14 @@ defineExpose({ getValue, setValue, insertText, focus, focusOffset, getEditor });
 }
 
 .suiteql-editor :deep(.cm-selectionBackground) {
-  background-color: #4C566A !important;
+  background-color: #4c566a !important;
 }
 
 .suiteql-editor :deep(.cm-focused .cm-selectionBackground) {
-  background-color: #4C566A !important;
+  background-color: #4c566a !important;
 }
 
 .suiteql-editor :deep(.cm-content ::selection) {
-  background-color: #4C566A !important;
+  background-color: #4c566a !important;
 }
 </style>

@@ -32,7 +32,9 @@
                 class="w-full"
               >
                 <i class="pi pi-play font-medium"></i>
-                <span class="flex-1 text-left">{{ currentFile?.isExecuting ? "Running..." : "Run Query" }}</span>
+                <span class="flex-1 text-left">{{
+                  currentFile?.isExecuting ? "Running..." : "Run Query"
+                }}</span>
                 <kbd class="run-kbd">Ctrl+↵</kbd>
               </Button>
               <Button
@@ -258,373 +260,389 @@
               <div class="flex-1 min-h-0 flex flex-row">
                 <!-- Main editor area -->
                 <div class="flex-1 min-w-0 flex flex-col min-h-0">
-                <vue-splitter is-horizontal data-ignore class="flex-1 min-h-0">
-                  <template #top-pane>
-                    <SuiteQLCodeEditor
-                      v-model="file.code"
-                      :schema="sqlSchema"
-                      :readonly="file.isExecuting"
-                      :diagnostics="currentLintIssues"
-                      :ref="(el: any) => setEditorRef(file.id, el)"
-                      @change="onCodeChange(file.id, $event)"
-                      @ctrl-enter="runCurrentQuery"
-                    />
-                  </template>
-                  <template #bottom-pane>
-                    <!-- Bottom schema/results panel -->
-                    <div class="bottom-panel h-full flex flex-col">
-                      <!-- Tab bar -->
-                      <div
-                        class="bottom-tabbar shrink-0 flex items-center border-b border-slate-200"
-                      >
-                        <div class="bottom-panel-title">
-                          <i class="pi pi-list" />
-                          <span>Results</span>
-                        </div>
-
-                        <!-- Right side of tab bar -->
-                        <div class="ml-auto flex items-center gap-2 px-3">
-                          <span
-                            v-if="
-                              file.results.length > 0
-                            "
-                            class="text-xs font-mono text-emerald-600 font-semibold"
-                          >
-                            {{ file.results.length
-                            }}{{
-                              file.totalCount > file.results.length
-                                ? ` of ${file.totalCount.toLocaleString()}`
-                                : ""
-                            }}
-                            rows
-                          </span>
-                          <span
-                            v-else-if="file.error"
-                            class="text-xs text-red-500 font-medium"
-                            >Error</span
-                          >
-                          <template
-                            v-if="
-                              file.results.length > 0
-                            "
-                          >
-                            <button
-                              class="schema-action-btn"
-                              @click="copyResults(file)"
-                            >
-                              JSON
-                            </button>
-                            <button
-                              class="schema-action-btn"
-                              @click="copyResultsCSV(file)"
-                            >
-                              CSV
-                            </button>
-                            <button
-                              class="schema-action-btn schema-action-btn-danger"
-                              title="Clear results"
-                              @click="clearResults(file)"
-                            >
-                              <i class="pi pi-times" style="font-size: 0.65rem" />
-                            </button>
-                          </template>
-
-                        </div>
-                      </div>
-
-                      <div
-                        v-if="currentLintIssues.length"
-                        class="query-diagnostics shrink-0"
-                      >
-                        <div class="query-diagnostics__summary">
-                          <strong>Query diagnostics</strong>
-                          <span v-if="lintIssueSummary.errors">
-                            {{ lintIssueSummary.errors }} errors
-                          </span>
-                          <span v-if="lintIssueSummary.warnings">
-                            {{ lintIssueSummary.warnings }} warnings
-                          </span>
-                          <span v-if="lintIssueSummary.suggestions">
-                            {{ lintIssueSummary.suggestions }} suggestions
-                          </span>
-                        </div>
-                        <div class="query-diagnostics__list">
-                          <button
-                            v-for="issue in currentLintIssues.slice(0, 6)"
-                            :key="`${issue.code}-${issue.start}-${issue.message}`"
-                            type="button"
-                            :class="`query-diagnostic--${issue.severity}`"
-                            :title="issue.message"
-                            @click="focusLintIssue(issue)"
-                          >
-                            <i :class="lintIssueIcon(issue.severity)" />
-                            <code>{{ issue.line }}:{{ issue.column }}</code>
-                            <strong>{{ issue.code }}</strong>
-                            <span>{{ issue.message }}</span>
-                          </button>
-                          <span
-                            v-if="currentLintIssues.length > 6"
-                            class="query-diagnostics__more"
-                          >
-                            +{{ currentLintIssues.length - 6 }} more
-                          </span>
-                        </div>
-                      </div>
-
-                      <!-- Tab content -->
-                      <div class="flex-1 overflow-auto">
-                        <!-- Results -->
-                        <div class="h-full">
-                          <table
-                            v-if="file.results.length > 0"
-                            class="results-table w-full"
-                          >
-                            <thead>
-                              <tr>
-                                <th v-for="col in file.columns" :key="col">
-                                  {{ col }}
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr v-for="(row, idx) in file.results" :key="idx">
-                                <td v-for="col in file.columns" :key="col">
-                                  {{ row[col] ?? "" }}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <div
-                            v-else-if="file.error"
-                            class="p-4 text-sm font-mono whitespace-pre-wrap text-red-500"
-                          >
-                            {{ file.error }}
+                  <vue-splitter
+                    is-horizontal
+                    data-ignore
+                    class="flex-1 min-h-0"
+                  >
+                    <template #top-pane>
+                      <SuiteQLCodeEditor
+                        v-model="file.code"
+                        :schema="sqlSchema"
+                        :readonly="file.isExecuting"
+                        :diagnostics="currentLintIssues"
+                        :ref="(el: any) => setEditorRef(file.id, el)"
+                        @change="onCodeChange(file.id, $event)"
+                        @ctrl-enter="runCurrentQuery"
+                      />
+                    </template>
+                    <template #bottom-pane>
+                      <!-- Bottom schema/results panel -->
+                      <div class="bottom-panel h-full flex flex-col">
+                        <!-- Tab bar -->
+                        <div
+                          class="bottom-tabbar shrink-0 flex items-center border-b border-slate-200"
+                        >
+                          <div class="bottom-panel-title">
+                            <i class="pi pi-list" />
+                            <span>Results</span>
                           </div>
-                          <div
-                            v-else
-                            class="flex flex-col items-center justify-center h-full gap-2 text-slate-400"
-                          >
-                            <i class="pi pi-table text-2xl"></i>
-                            <span class="text-sm"
-                              >Run a query to see results</span
+
+                          <!-- Right side of tab bar -->
+                          <div class="ml-auto flex items-center gap-2 px-3">
+                            <span
+                              v-if="file.results.length > 0"
+                              class="text-xs font-mono text-emerald-600 font-semibold"
                             >
-                            <span class="text-xs opacity-60">Ctrl+Enter</span>
+                              {{ file.results.length
+                              }}{{
+                                file.totalCount > file.results.length
+                                  ? ` of ${file.totalCount.toLocaleString()}`
+                                  : ""
+                              }}
+                              rows
+                            </span>
+                            <span
+                              v-else-if="file.error"
+                              class="text-xs text-red-500 font-medium"
+                              >Error</span
+                            >
+                            <template v-if="file.results.length > 0">
+                              <button
+                                class="schema-action-btn"
+                                @click="copyResults(file)"
+                              >
+                                JSON
+                              </button>
+                              <button
+                                class="schema-action-btn"
+                                @click="copyResultsCSV(file)"
+                              >
+                                CSV
+                              </button>
+                              <button
+                                class="schema-action-btn schema-action-btn-danger"
+                                title="Clear results"
+                                @click="clearResults(file)"
+                              >
+                                <i
+                                  class="pi pi-times"
+                                  style="font-size: 0.65rem"
+                                />
+                              </button>
+                            </template>
                           </div>
                         </div>
 
-                        <!-- Tables browser -->
-                        <div v-show="bottomTab === 'tables'" class="p-3">
-                          <div
-                            v-if="isLoadingTables"
-                            class="flex items-center justify-center py-10 gap-2 text-slate-400"
-                          >
-                            <i class="pi pi-spin pi-spinner"></i>
-                            Loading tables…
+                        <div
+                          v-if="currentLintIssues.length"
+                          class="query-diagnostics shrink-0"
+                        >
+                          <div class="query-diagnostics__summary">
+                            <strong>Query diagnostics</strong>
+                            <span v-if="lintIssueSummary.errors">
+                              {{ lintIssueSummary.errors }} errors
+                            </span>
+                            <span v-if="lintIssueSummary.warnings">
+                              {{ lintIssueSummary.warnings }} warnings
+                            </span>
+                            <span v-if="lintIssueSummary.suggestions">
+                              {{ lintIssueSummary.suggestions }} suggestions
+                            </span>
                           </div>
-                          <div v-else class="tables-grid">
+                          <div class="query-diagnostics__list">
+                            <button
+                              v-for="issue in currentLintIssues.slice(0, 6)"
+                              :key="`${issue.code}-${issue.start}-${issue.message}`"
+                              type="button"
+                              :class="`query-diagnostic--${issue.severity}`"
+                              :title="issue.message"
+                              @click="focusLintIssue(issue)"
+                            >
+                              <i :class="lintIssueIcon(issue.severity)" />
+                              <code>{{ issue.line }}:{{ issue.column }}</code>
+                              <strong>{{ issue.code }}</strong>
+                              <span>{{ issue.message }}</span>
+                            </button>
+                            <span
+                              v-if="currentLintIssues.length > 6"
+                              class="query-diagnostics__more"
+                            >
+                              +{{ currentLintIssues.length - 6 }} more
+                            </span>
+                          </div>
+                        </div>
+
+                        <!-- Tab content -->
+                        <div class="flex-1 overflow-auto">
+                          <!-- Results -->
+                          <div class="h-full">
+                            <table
+                              v-if="file.results.length > 0"
+                              class="results-table w-full"
+                            >
+                              <thead>
+                                <tr>
+                                  <th v-for="col in file.columns" :key="col">
+                                    {{ col }}
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr
+                                  v-for="(row, idx) in file.results"
+                                  :key="idx"
+                                >
+                                  <td v-for="col in file.columns" :key="col">
+                                    {{ row[col] ?? "" }}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
                             <div
-                              v-for="table in filteredSchemaTables"
-                              :key="table.id"
-                              class="table-card"
-                              :class="{
-                                'table-card-selected':
-                                  selectedTableId === table.id,
-                                'table-card-in-query': queryTableIds.includes(
-                                  table.id
-                                )
-                              }"
-                              @click="handleTableClick(table)"
-                              :title="table.label"
+                              v-else-if="file.error"
+                              class="p-4 text-sm font-mono whitespace-pre-wrap text-red-500"
                             >
-                              <div class="table-card-id">{{ table.id }}</div>
-                              <div class="table-card-label">
-                                {{ table.label }}
-                              </div>
+                              {{ file.error }}
+                            </div>
+                            <div
+                              v-else
+                              class="flex flex-col items-center justify-center h-full gap-2 text-slate-400"
+                            >
+                              <i class="pi pi-table text-2xl"></i>
+                              <span class="text-sm"
+                                >Run a query to see results</span
+                              >
+                              <span class="text-xs opacity-60">Ctrl+Enter</span>
                             </div>
                           </div>
-                          <div
-                            v-if="
-                              !isLoadingTables &&
-                              filteredSchemaTables.length === 0
-                            "
-                            class="text-center py-10 text-sm text-slate-400"
-                          >
-                            No tables match "{{ schemaSearch }}"
-                          </div>
-                        </div>
 
-                        <!-- Fields -->
-                        <div v-show="bottomTab === 'fields'">
-                          <div
-                            v-if="
-                              queryTableIds.length === 0 &&
-                              !selectedTableId &&
-                              !isLoadingDetail
-                            "
-                            class="flex flex-col items-center justify-center py-10 gap-2 text-slate-400"
-                          >
-                            <i class="pi pi-table text-2xl"></i>
-                            <span class="text-sm">
-                              Add a table to your query or select one from the
-                              <button
-                                class="schema-empty-link"
-                                @click="bottomTab = 'tables'"
+                          <!-- Tables browser -->
+                          <div v-show="bottomTab === 'tables'" class="p-3">
+                            <div
+                              v-if="isLoadingTables"
+                              class="flex items-center justify-center py-10 gap-2 text-slate-400"
+                            >
+                              <i class="pi pi-spin pi-spinner"></i>
+                              Loading tables…
+                            </div>
+                            <div v-else class="tables-grid">
+                              <div
+                                v-for="table in filteredSchemaTables"
+                                :key="table.id"
+                                class="table-card"
+                                :class="{
+                                  'table-card-selected':
+                                    selectedTableId === table.id,
+                                  'table-card-in-query': queryTableIds.includes(
+                                    table.id,
+                                  ),
+                                }"
+                                @click="handleTableClick(table)"
+                                :title="table.label"
                               >
-                                Tables
-                              </button>
-                              tab
-                            </span>
+                                <div class="table-card-id">{{ table.id }}</div>
+                                <div class="table-card-label">
+                                  {{ table.label }}
+                                </div>
+                              </div>
+                            </div>
+                            <div
+                              v-if="
+                                !isLoadingTables &&
+                                filteredSchemaTables.length === 0
+                              "
+                              class="text-center py-10 text-sm text-slate-400"
+                            >
+                              No tables match "{{ schemaSearch }}"
+                            </div>
                           </div>
-                          <div
-                            v-else-if="isLoadingDetail"
-                            class="flex items-center justify-center py-10 gap-2 text-slate-400"
-                          >
-                            <i class="pi pi-spin pi-spinner"></i>
-                            Loading fields…
-                          </div>
-                          <table
-                            v-else-if="filteredSchemaFields.length > 0"
-                            class="schema-table w-full"
-                          >
-                            <thead>
-                              <tr>
-                                <th>Column ID</th>
-                                <th>Label</th>
-                                <th>Data Type</th>
-                                <th v-if="activeQueryTableCount > 1">
-                                  Source Table
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr
-                                v-for="field in filteredSchemaFields"
-                                :key="`${field.tableId}_${field.id}`"
-                                class="schema-row"
-                              >
-                                <td class="font-mono field-id-col">
-                                  {{ field.id }}
-                                </td>
-                                <td class="schema-col-secondary">
-                                  {{ field.label }}
-                                </td>
-                                <td class="font-mono text-xs">
-                                  <span class="datatype-badge">{{
-                                    field.dataType
-                                  }}</span>
-                                </td>
-                                <td
-                                  v-if="activeQueryTableCount > 1"
-                                  class="font-mono text-xs"
-                                >
-                                  <span class="table-badge">{{
-                                    field.tableId
-                                  }}</span>
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <div
-                            v-else-if="activeQueryTableCount > 0"
-                            class="text-center py-6 text-sm text-slate-400"
-                          >
-                            No fields match "{{ schemaSearch }}"
-                          </div>
-                        </div>
 
-                        <!-- Joins -->
-                        <div v-show="bottomTab === 'joins'">
-                          <div
-                            v-if="
-                              queryTableIds.length === 0 && !selectedTableId
-                            "
-                            class="flex flex-col items-center justify-center py-10 gap-2 text-slate-400"
-                          >
-                            <i class="pi pi-sitemap text-2xl"></i>
-                            <span class="text-sm">
-                              Add a table to your query or select one from the
-                              <button
-                                class="schema-empty-link"
-                                @click="bottomTab = 'tables'"
-                              >
-                                Tables
-                              </button>
-                              tab
-                            </span>
-                          </div>
-                          <table
-                            v-else-if="filteredSchemaJoins.length > 0"
-                            class="schema-table w-full"
-                          >
-                            <thead>
-                              <tr>
-                                <th>Join / Relation</th>
-                                <th>Target Table</th>
-                                <th>Cardinality</th>
-                                <th>Type</th>
-                                <th>Condition</th>
-                                <th v-if="activeQueryTableCount > 1">Source</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr
-                                v-for="join in filteredSchemaJoins"
-                                :key="`${join.tableId}_${join.id}`"
-                                class="schema-row"
-                              >
-                                <td class="join-label-col">{{ join.label }}</td>
-                                <td class="font-mono text-xs">
-                                  <span class="table-badge">{{
-                                    join.sourceTargetType?.id || "–"
-                                  }}</span>
-                                </td>
-                                <td class="text-xs schema-col-muted font-mono">
-                                  {{ join.cardinality }}
-                                </td>
-                                <td class="text-xs schema-col-muted">
-                                  {{ join.joinType }}
-                                </td>
-                                <td
-                                  class="font-mono text-xs schema-col-truncate schema-col-muted"
+                          <!-- Fields -->
+                          <div v-show="bottomTab === 'fields'">
+                            <div
+                              v-if="
+                                queryTableIds.length === 0 &&
+                                !selectedTableId &&
+                                !isLoadingDetail
+                              "
+                              class="flex flex-col items-center justify-center py-10 gap-2 text-slate-400"
+                            >
+                              <i class="pi pi-table text-2xl"></i>
+                              <span class="text-sm">
+                                Add a table to your query or select one from the
+                                <button
+                                  class="schema-empty-link"
+                                  @click="bottomTab = 'tables'"
                                 >
-                                  <div
-                                    v-if="join.sourceTargetType?.joinPairs?.length"
-                                    class="flex flex-col gap-1"
+                                  Tables
+                                </button>
+                                tab
+                              </span>
+                            </div>
+                            <div
+                              v-else-if="isLoadingDetail"
+                              class="flex items-center justify-center py-10 gap-2 text-slate-400"
+                            >
+                              <i class="pi pi-spin pi-spinner"></i>
+                              Loading fields…
+                            </div>
+                            <table
+                              v-else-if="filteredSchemaFields.length > 0"
+                              class="schema-table w-full"
+                            >
+                              <thead>
+                                <tr>
+                                  <th>Column ID</th>
+                                  <th>Label</th>
+                                  <th>Data Type</th>
+                                  <th v-if="activeQueryTableCount > 1">
+                                    Source Table
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr
+                                  v-for="field in filteredSchemaFields"
+                                  :key="`${field.tableId}_${field.id}`"
+                                  class="schema-row"
+                                >
+                                  <td class="font-mono field-id-col">
+                                    {{ field.id }}
+                                  </td>
+                                  <td class="schema-col-secondary">
+                                    {{ field.label }}
+                                  </td>
+                                  <td class="font-mono text-xs">
+                                    <span class="datatype-badge">{{
+                                      field.dataType
+                                    }}</span>
+                                  </td>
+                                  <td
+                                    v-if="activeQueryTableCount > 1"
+                                    class="font-mono text-xs"
+                                  >
+                                    <span class="table-badge">{{
+                                      field.tableId
+                                    }}</span>
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            <div
+                              v-else-if="activeQueryTableCount > 0"
+                              class="text-center py-6 text-sm text-slate-400"
+                            >
+                              No fields match "{{ schemaSearch }}"
+                            </div>
+                          </div>
+
+                          <!-- Joins -->
+                          <div v-show="bottomTab === 'joins'">
+                            <div
+                              v-if="
+                                queryTableIds.length === 0 && !selectedTableId
+                              "
+                              class="flex flex-col items-center justify-center py-10 gap-2 text-slate-400"
+                            >
+                              <i class="pi pi-sitemap text-2xl"></i>
+                              <span class="text-sm">
+                                Add a table to your query or select one from the
+                                <button
+                                  class="schema-empty-link"
+                                  @click="bottomTab = 'tables'"
+                                >
+                                  Tables
+                                </button>
+                                tab
+                              </span>
+                            </div>
+                            <table
+                              v-else-if="filteredSchemaJoins.length > 0"
+                              class="schema-table w-full"
+                            >
+                              <thead>
+                                <tr>
+                                  <th>Join / Relation</th>
+                                  <th>Target Table</th>
+                                  <th>Cardinality</th>
+                                  <th>Type</th>
+                                  <th>Condition</th>
+                                  <th v-if="activeQueryTableCount > 1">
+                                    Source
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr
+                                  v-for="join in filteredSchemaJoins"
+                                  :key="`${join.tableId}_${join.id}`"
+                                  class="schema-row"
+                                >
+                                  <td class="join-label-col">
+                                    {{ join.label }}
+                                  </td>
+                                  <td class="font-mono text-xs">
+                                    <span class="table-badge">{{
+                                      join.sourceTargetType?.id || "–"
+                                    }}</span>
+                                  </td>
+                                  <td
+                                    class="text-xs schema-col-muted font-mono"
+                                  >
+                                    {{ join.cardinality }}
+                                  </td>
+                                  <td class="text-xs schema-col-muted">
+                                    {{ join.joinType }}
+                                  </td>
+                                  <td
+                                    class="font-mono text-xs schema-col-truncate schema-col-muted"
+                                  >
+                                    <div
+                                      v-if="
+                                        join.sourceTargetType?.joinPairs?.length
+                                      "
+                                      class="flex flex-col gap-1"
+                                    >
+                                      <span
+                                        v-for="pair in join.sourceTargetType
+                                          .joinPairs"
+                                        :key="pair.id"
+                                        :title="pair.id"
+                                      >
+                                        {{ pair.label }}
+                                        <small v-if="pair.id !== pair.label"
+                                          >({{ pair.id }})</small
+                                        >
+                                      </span>
+                                    </div>
+                                    <span v-else>{{
+                                      join.fieldId || "–"
+                                    }}</span>
+                                  </td>
+                                  <td
+                                    v-if="activeQueryTableCount > 1"
+                                    class="font-mono text-xs"
                                   >
                                     <span
-                                      v-for="pair in join.sourceTargetType.joinPairs"
-                                      :key="pair.id"
-                                      :title="pair.id"
+                                      class="table-badge table-badge-source"
+                                      >{{ join.tableId }}</span
                                     >
-                                      {{ pair.label }}
-                                      <small v-if="pair.id !== pair.label">({{ pair.id }})</small>
-                                    </span>
-                                  </div>
-                                  <span v-else>{{ join.fieldId || "–" }}</span>
-                                </td>
-                                <td
-                                  v-if="activeQueryTableCount > 1"
-                                  class="font-mono text-xs"
-                                >
-                                  <span
-                                    class="table-badge table-badge-source"
-                                    >{{ join.tableId }}</span
-                                  >
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <div
-                            v-else-if="activeQueryTableCount > 0"
-                            class="text-center py-6 text-sm text-slate-400"
-                          >
-                            No joins match "{{ schemaSearch }}"
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                            <div
+                              v-else-if="activeQueryTableCount > 0"
+                              class="text-center py-6 text-sm text-slate-400"
+                            >
+                              No joins match "{{ schemaSearch }}"
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </template>
-                </vue-splitter>
+                    </template>
+                  </vue-splitter>
                 </div>
 
                 <!-- SuiteQL schema documentation panel (drag-resizable) -->
@@ -694,7 +712,7 @@ import {
   ref,
   watch,
   computed,
-  nextTick
+  nextTick,
 } from "vue";
 import { useRouter } from "vue-router";
 import { useToast } from "primevue/usetoast";
@@ -716,17 +734,17 @@ import {
   bulkUpsertQueryFiles,
   deleteQueryFile,
   getUiState,
-  setUiState
+  setUiState,
 } from "../utils/suiteqlDb";
 import {
   explainSuiteQLError,
-  getSuiteQLReferencedFields,
   getSuiteQLReferencedTables,
   lintSuiteQL,
-  type SuiteQLLintIssue
+  type SuiteQLLintIssue,
 } from "../utils/suiteqlLinter";
 import type { SuiteQLSchemaContext } from "../utils/suiteqlLinter";
 import { parseSuiteQLQueryStructure } from "../utils/suiteqlQueryStructure";
+import { runSuiteQLExecution } from "../utils/suiteqlExecution";
 
 const router = useRouter();
 const toast = useToast();
@@ -781,13 +799,6 @@ interface TableDetail {
   joins: JoinInfo[];
 }
 
-interface RuntimeFieldTypeInfo {
-  id: string;
-  label: string;
-  type: string;
-  error?: string;
-}
-
 // Enriched row types for aggregated display
 interface FieldRow extends FieldInfo {
   tableId: string;
@@ -819,10 +830,6 @@ const queryTableIds = ref<string[]>([]);
 
 // Detail cache keyed by table id (lowercase)
 const tableDetailCache = ref<Record<string, TableDetail>>({});
-const runtimeFieldTypeCache = ref<
-  Record<string, Record<string, RuntimeFieldTypeInfo>>
->({});
-const runtimeFieldTypeLoadErrors = ref<Record<string, string>>({});
 const lintIssuesByFile = ref<Record<string, SuiteQLLintIssue[]>>({});
 
 // Bottom panel
@@ -842,7 +849,7 @@ const pendingConfirmCount = ref(0);
 const isCustomLimit = computed(
   () =>
     limitValue.value !== null &&
-    !(LIMIT_OPTIONS as readonly number[]).includes(limitValue.value)
+    !(LIMIT_OPTIONS as readonly number[]).includes(limitValue.value),
 );
 
 const enterCustomEdit = async () => {
@@ -864,9 +871,7 @@ const onCustomLimitChange = (e: Event) => {
 // Schema documentation panel
 const showSchemaPanel = ref(true);
 const schemaPanelWidth = ref(380);
-const schemaPanelTab = ref<"tables" | "fields" | "joins">(
-  "tables"
-);
+const schemaPanelTab = ref<"tables" | "fields" | "joins">("tables");
 
 const toggleSchemaPanel = () => {
   showSchemaPanel.value = !showSchemaPanel.value;
@@ -905,7 +910,7 @@ const tabs = computed(() =>
       const file = files.value.find((f) => f.id === id);
       return file ? { name: file.id, label: file.name } : null;
     })
-    .filter((t): t is { name: string; label: string } => t !== null)
+    .filter((t): t is { name: string; label: string } => t !== null),
 );
 
 const filteredFiles = computed(() => {
@@ -916,26 +921,26 @@ const filteredFiles = computed(() => {
 });
 
 const currentFile = computed(() =>
-  files.value.find((f) => f.id === activeFileId.value)
+  files.value.find((f) => f.id === activeFileId.value),
 );
 
 const currentLintIssues = computed(
-  () => lintIssuesByFile.value[activeFileId.value] ?? []
+  () => lintIssuesByFile.value[activeFileId.value] ?? [],
 );
 
 const lintIssueSummary = computed(() => ({
   errors: currentLintIssues.value.filter((issue) => issue.severity === "error")
     .length,
   warnings: currentLintIssues.value.filter(
-    (issue) => issue.severity === "warning"
+    (issue) => issue.severity === "warning",
   ).length,
   suggestions: currentLintIssues.value.filter(
-    (issue) => issue.severity === "suggestion"
-  ).length
+    (issue) => issue.severity === "suggestion",
+  ).length,
 }));
 
 const currentQueryStructure = computed(() =>
-  parseSuiteQLQueryStructure(currentFile.value?.code ?? "")
+  parseSuiteQLQueryStructure(currentFile.value?.code ?? ""),
 );
 
 const lintIssueIcon = (severity: SuiteQLLintIssue["severity"]) =>
@@ -974,14 +979,14 @@ const bottomTabDefs = computed(() => {
     { id: "results", label: "Results" },
     {
       id: "tables",
-      label: `Tables${tables.value.length ? ` (${tables.value.length})` : ""}`
-    }
+      label: `Tables${tables.value.length ? ` (${tables.value.length})` : ""}`,
+    },
   ];
 
   if (activeQueryTableIds.value.length > 0) {
     defs.push({
       id: "fields",
-      label: `Fields${totalFields ? ` (${totalFields})` : ""}`
+      label: `Fields${totalFields ? ` (${totalFields})` : ""}`,
     });
     if (totalJoins > 0) {
       defs.push({ id: "joins", label: `Joins (${totalJoins})` });
@@ -995,7 +1000,7 @@ const filteredSchemaTables = computed(() => {
   if (!term) return tables.value;
   return tables.value.filter(
     (t) =>
-      t.id.toLowerCase().includes(term) || t.label.toLowerCase().includes(term)
+      t.id.toLowerCase().includes(term) || t.label.toLowerCase().includes(term),
   );
 });
 
@@ -1022,7 +1027,7 @@ const filteredSchemaFields = computed((): FieldRow[] => {
       f.id.toLowerCase().includes(term) ||
       f.label.toLowerCase().includes(term) ||
       f.tableId.toLowerCase().includes(term) ||
-      f.dataType.toLowerCase().includes(term)
+      f.dataType.toLowerCase().includes(term),
   );
 });
 
@@ -1049,7 +1054,7 @@ const filteredSchemaJoins = computed((): JoinRow[] => {
       j.id.toLowerCase().includes(term) ||
       j.label.toLowerCase().includes(term) ||
       (j.sourceTargetType?.id ?? "").toLowerCase().includes(term) ||
-      j.tableId.toLowerCase().includes(term)
+      j.tableId.toLowerCase().includes(term),
   );
 });
 
@@ -1057,12 +1062,16 @@ const filteredSchemaJoins = computed((): JoinRow[] => {
 const sqlSchema = computed((): Record<string, string[]> => {
   const out: Record<string, string[]> = {};
   for (const [tableId, detail] of Object.entries(tableDetailCache.value)) {
-    out[tableId.toLowerCase()] = detail.fields.filter((f) => f.isColumn).map((f) => f.id);
+    out[tableId.toLowerCase()] = detail.fields
+      .filter((f) => f.isColumn)
+      .map((f) => f.id);
   }
   const tableCount = Object.keys(out).length;
   const colCount = Object.values(out).reduce((s, cols) => s + cols.length, 0);
   if (tableCount > 0) {
-    console.log(`[SuiteQLView] sqlSchema — ${tableCount} tables, ${colCount} columns`);
+    console.log(
+      `[SuiteQLView] sqlSchema — ${tableCount} tables, ${colCount} columns`,
+    );
   }
   return out;
 });
@@ -1097,7 +1106,7 @@ const addNewFile = () => {
     columns: [],
     error: "",
     isExecuting: false,
-    totalCount: 0
+    totalCount: 0,
   });
   openTabs.value.push(newId);
   activeFileId.value = newId;
@@ -1121,7 +1130,7 @@ const removeFile = (fileId: string) => {
 
 const removeFileByTab = ({
   tabId,
-  nextTabId
+  nextTabId,
 }: {
   tabId: string;
   nextTabId: string | null;
@@ -1142,7 +1151,7 @@ const fetchTables = async () => {
   isLoadingTables.value = true;
   try {
     const response = (await callApi(
-      RequestRoutes.FETCH_SUITEQL_TABLES
+      RequestRoutes.FETCH_SUITEQL_TABLES,
     )) as ApiResponse;
     const data = response.message;
     const list: any[] = data?.data ?? (Array.isArray(data) ? data : []);
@@ -1150,14 +1159,15 @@ const fetchTables = async () => {
       id: t.id,
       label: t.label,
       type: t.type,
-      isAvailable: t.isAvailable
+      isAvailable: t.isAvailable,
     }));
-    console.log(`[SuiteQLView] fetchTables — loaded ${tables.value.length} tables`);
+    console.log(
+      `[SuiteQLView] fetchTables — loaded ${tables.value.length} tables`,
+    );
     // Now that table list is loaded, detect tables in the current active file
     const activeFile = files.value.find((f) => f.id === activeFileId.value);
     if (activeFile?.code) {
       await detectAndLoadTablesFromQuery(activeFile.code);
-      refreshLintIssues(activeFile.id, activeFile.code);
     }
   } catch (error) {
     console.error("[SuiteQLView] fetchTables — error:", error);
@@ -1166,49 +1176,74 @@ const fetchTables = async () => {
   }
 };
 
-/** Load detail for one table into the cache */
-const loadTableDetail = async (table: TableInfo): Promise<void> => {
+const tableDetailLoadPromises = new Map<string, Promise<void>>();
+
+/** Load detail for one table into the cache, sharing any in-flight request. */
+const loadTableDetail = (table: TableInfo): Promise<void> => {
   if (tableDetailCache.value[table.id]) {
-    console.log(`[SuiteQLView] loadTableDetail — "${table.id}" already cached, skipping`);
-    return;
+    console.log(
+      `[SuiteQLView] loadTableDetail — "${table.id}" already cached, skipping`,
+    );
+    return Promise.resolve();
   }
+
+  const existingRequest = tableDetailLoadPromises.get(table.id);
+  if (existingRequest) {
+    console.log(
+      `[SuiteQLView] loadTableDetail — "${table.id}" already loading, joining`,
+    );
+    return existingRequest;
+  }
+
   console.log(`[SuiteQLView] loadTableDetail — fetching "${table.id}"`);
   isLoadingDetail.value = true;
-  try {
-    const response = (await callApi(RequestRoutes.FETCH_SUITEQL_TABLE_DETAIL, {
-      tableName: table.id
-    })) as ApiResponse;
-    const data = response.message;
-    const raw = data?.data ?? data ?? {};
-    const detail: TableDetail = {
-      id: raw.id || table.id,
-      label: raw.label || table.label,
-      fields: (raw.fields ?? []).map((f: any) => ({
-        id: f.id,
-        label: f.label,
-        dataType: f.dataType,
-        fieldType: f.fieldType,
-        isColumn: f.isColumn
-      })),
-      joins: (raw.joins ?? []).map((j: any) => ({
-        id: j.id,
-        label: j.label,
-        joinType: j.joinType,
-        cardinality: j.cardinality,
-        fieldId: j.fieldId,
-        sourceTargetType: j.sourceTargetType
-      }))
-    };
-    const colCount = detail.fields.filter((f) => f.isColumn).length;
-    console.log(`[SuiteQLView] loadTableDetail — "${table.id}" OK: ${colCount} columns, ${detail.joins.length} joins`);
-    tableDetailCache.value[table.id] = detail;
-    const activeFile = currentFile.value;
-    if (activeFile) refreshLintIssues(activeFile.id, activeFile.code);
-  } catch (error) {
-    console.error(`[SuiteQLView] loadTableDetail — error for "${table.id}":`, error);
-  } finally {
-    isLoadingDetail.value = false;
-  }
+  const request = (async () => {
+    try {
+      const response = (await callApi(
+        RequestRoutes.FETCH_SUITEQL_TABLE_DETAIL,
+        {
+          tableName: table.id,
+        },
+      )) as ApiResponse;
+      const data = response.message;
+      const raw = data?.data ?? data ?? {};
+      const detail: TableDetail = {
+        id: raw.id || table.id,
+        label: raw.label || table.label,
+        fields: (raw.fields ?? []).map((f: any) => ({
+          id: f.id,
+          label: f.label,
+          dataType: f.dataType,
+          fieldType: f.fieldType,
+          isColumn: f.isColumn,
+        })),
+        joins: (raw.joins ?? []).map((j: any) => ({
+          id: j.id,
+          label: j.label,
+          joinType: j.joinType,
+          cardinality: j.cardinality,
+          fieldId: j.fieldId,
+          sourceTargetType: j.sourceTargetType,
+        })),
+      };
+      const colCount = detail.fields.filter((f) => f.isColumn).length;
+      console.log(
+        `[SuiteQLView] loadTableDetail — "${table.id}" OK: ${colCount} columns, ${detail.joins.length} joins`,
+      );
+      tableDetailCache.value[table.id] = detail;
+    } catch (error) {
+      console.error(
+        `[SuiteQLView] loadTableDetail — error for "${table.id}":`,
+        error,
+      );
+    }
+  })().finally(() => {
+    tableDetailLoadPromises.delete(table.id);
+    isLoadingDetail.value = tableDetailLoadPromises.size > 0;
+  });
+
+  tableDetailLoadPromises.set(table.id, request);
+  return request;
 };
 
 /** Click in the Tables browser tab — select + switch to Fields */
@@ -1216,7 +1251,10 @@ const handleTableClick = (table: TableInfo) => {
   selectedTableId.value = table.id;
   tableFilter.value = table.id;
   schemaSearch.value = "";
-  void loadTableDetail(table);
+  void loadTableDetail(table).then(() => {
+    const activeFile = currentFile.value;
+    if (activeFile) refreshLintIssues(activeFile.id, activeFile.code);
+  });
   schemaPanelTab.value = "fields";
 };
 
@@ -1240,18 +1278,23 @@ const detectAndLoadTablesFromQuery = async (sql: string) => {
     .filter((t): t is TableInfo => Boolean(t));
 
   const unresolved = unique.filter(
-    (name) => !tables.value.find((t) => t.id.toLowerCase() === name)
+    (name) => !tables.value.find((t) => t.id.toLowerCase() === name),
   );
 
   console.log(
     `[SuiteQLView] detectAndLoad — found: [${resolved.map((t) => t.id).join(", ")}]` +
-    (unresolved.length ? ` | unresolved: [${unresolved.join(", ")}]` : "")
+      (unresolved.length ? ` | unresolved: [${unresolved.join(", ")}]` : ""),
   );
 
   queryTableIds.value = resolved.map((t) => t.id);
 
   // Load details for any table not yet cached (in parallel)
   await Promise.all(resolved.map((t) => loadTableDetail(t)));
+
+  const activeFile = currentFile.value;
+  if (activeFile?.code === sql) {
+    refreshLintIssues(activeFile.id, activeFile.code);
+  }
 };
 
 // ============================================================================
@@ -1279,7 +1322,7 @@ const formatSQL = (sql: string): string => {
     "CROSS JOIN",
     "ORDER BY",
     "GROUP BY",
-    "UNION ALL"
+    "UNION ALL",
   ];
   multiWordKeywords.forEach((kw) => {
     result = result.replace(new RegExp(`\\b${kw}\\b`, "gi"), kw);
@@ -1326,7 +1369,7 @@ const formatSQL = (sql: string): string => {
     "DISTINCT",
     "EXISTS",
     "ALL",
-    "ANY"
+    "ANY",
   ];
   singleKeywords.forEach((kw) => {
     result = result.replace(new RegExp(`\\b(${kw})\\b`, "gi"), kw);
@@ -1342,7 +1385,7 @@ const formatSQL = (sql: string): string => {
     "LIMIT",
     "OFFSET",
     "UNION ALL",
-    "UNION"
+    "UNION",
   ].forEach((clause) => {
     result = result.replace(new RegExp(` (${clause})\\b`, "g"), "\n$1");
   });
@@ -1356,7 +1399,7 @@ const formatSQL = (sql: string): string => {
     "LEFT JOIN",
     "RIGHT JOIN",
     "CROSS JOIN",
-    "JOIN"
+    "JOIN",
   ].forEach((j) => {
     result = result.replace(new RegExp(` (${j})\\b`, "g"), "\n$1");
   });
@@ -1376,7 +1419,7 @@ const formatSQL = (sql: string): string => {
         return idx === 0 ? `\n    ${trimmed}` : `    ${trimmed}`;
       });
       return `${selectKw}${items.join(",\n")}`;
-    }
+    },
   );
 
   return result.trim();
@@ -1401,33 +1444,49 @@ const runCurrentQuery = async () => {
   if (!file || file.isExecuting) return;
 
   showLimitConfirm.value = false;
-  if (!(await validateSuiteQLBeforeExecution(file))) return;
-
-  // If unlimited, check count first
-  if (limitValue.value === null) {
-    try {
-      const countResp = (await callApi(RequestRoutes.GET_SUITEQL_COUNT, {
-        sql: file.code
-      })) as ApiResponse;
-      if (countResp.status === "ok") {
-        const count = countResp.message as number;
-        if (count > 4000) {
-          pendingConfirmCount.value = count;
-          showLimitConfirm.value = true;
-          return;
-        }
-      }
-    } catch {
-      // proceed anyway
-    }
+  if (detectDebounceTimer !== null) {
+    clearTimeout(detectDebounceTimer);
+    detectDebounceTimer = null;
   }
-
-  await executeQuery(file, limitValue.value);
+  const requestedLimit = limitValue.value;
+  await runSuiteQLExecution({
+    isBusy: () => file.isExecuting,
+    setBusy: (busy) => {
+      file.isExecuting = busy;
+    },
+    validate: () => validateSuiteQLBeforeExecution(file),
+    countRows:
+      requestedLimit === null
+        ? async () => {
+            try {
+              const response = (await callApi(RequestRoutes.GET_SUITEQL_COUNT, {
+                sql: file.code,
+              })) as ApiResponse;
+              return response.status === "ok" ? Number(response.message) : null;
+            } catch {
+              return null;
+            }
+          }
+        : undefined,
+    confirmationThreshold: 4000,
+    onConfirmationRequired: (count) => {
+      pendingConfirmCount.value = count;
+      showLimitConfirm.value = true;
+    },
+    execute: () => executeQuery(file, requestedLimit),
+  });
 };
 
 const confirmUnlimitedQuery = async (file: QueryFile) => {
   showLimitConfirm.value = false;
-  await executeQuery(file, null);
+  await runSuiteQLExecution({
+    isBusy: () => file.isExecuting,
+    setBusy: (busy) => {
+      file.isExecuting = busy;
+    },
+    validate: () => validateSuiteQLBeforeExecution(file),
+    execute: () => executeQuery(file, null),
+  });
 };
 
 const getSuiteQLSchemaContext = (): SuiteQLSchemaContext => ({
@@ -1435,8 +1494,8 @@ const getSuiteQLSchemaContext = (): SuiteQLSchemaContext => ({
   fieldsByTable: Object.fromEntries(
     Object.values(tableDetailCache.value).map((detail) => [
       detail.id,
-      detail.fields.filter((field) => field.isColumn).map((field) => field.id)
-    ])
+      detail.fields.filter((field) => field.isColumn).map((field) => field.id),
+    ]),
   ),
   fieldTypesByTable: Object.fromEntries(
     Object.values(tableDetailCache.value).map((detail) => [
@@ -1446,27 +1505,20 @@ const getSuiteQLSchemaContext = (): SuiteQLSchemaContext => ({
           .filter((field) => field.isColumn)
           .map((field) => [
             field.id,
-            [field.dataType, field.fieldType].filter(Boolean).join(" ")
-          ])
-      )
-    ])
+            [field.dataType, field.fieldType].filter(Boolean).join(" "),
+          ]),
+      ),
+    ]),
   ),
-  runtimeFieldTypesByTable: Object.fromEntries(
-    Object.entries(runtimeFieldTypeCache.value).map(([tableId, fields]) => [
-      tableId,
-      Object.fromEntries(
-        Object.entries(fields)
-          .filter(([, field]) => Boolean(field.type))
-          .map(([fieldId, field]) => [fieldId, field.type])
-      )
-    ])
-  )
 });
 
 const getLineColumnAtOffset = (sql: string, offset: number) => {
   const before = sql.slice(0, offset);
   const lines = before.split("\n");
-  return { line: lines.length, column: (lines[lines.length - 1]?.length ?? 0) + 1 };
+  return {
+    line: lines.length,
+    column: (lines[lines.length - 1]?.length ?? 0) + 1,
+  };
 };
 
 const getQueryStructureIssues = (sql: string): SuiteQLLintIssue[] => {
@@ -1475,14 +1527,18 @@ const getQueryStructureIssues = (sql: string): SuiteQLLintIssue[] => {
   return structure.edges.flatMap<SuiteQLLintIssue>((edge) => {
     const joinPattern = new RegExp(
       `\\bJOIN\\s+${edge.targetTable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-      "i"
+      "i",
     );
     const match = joinPattern.exec(sql.slice(searchFrom));
     const start = match ? searchFrom + match.index : 0;
     if (match) searchFrom = start + match[0].length;
     const position = getLineColumnAtOffset(sql, start);
 
-    if (edge.joinType !== "CROSS" && edge.condition && edge.fieldPairs.length === 0) {
+    if (
+      edge.joinType !== "CROSS" &&
+      edge.condition &&
+      edge.fieldPairs.length === 0
+    ) {
       return [
         {
           severity: "warning" as const,
@@ -1490,8 +1546,8 @@ const getQueryStructureIssues = (sql: string): SuiteQLLintIssue[] => {
           message: `Could not identify a qualified field-to-field mapping for JOIN ${edge.targetTable}. Qualify both sides with table aliases.`,
           start,
           end: start + (match?.[0].length ?? 1),
-          ...position
-        }
+          ...position,
+        },
       ];
     }
 
@@ -1504,137 +1560,60 @@ const refreshLintIssues = (fileId: string, sql: string) => {
   lintIssuesByFile.value = {
     ...lintIssuesByFile.value,
     [fileId]: [...lintIssues, ...getQueryStructureIssues(sql)].sort(
-      (a, b) => a.start - b.start
-    )
+      (a, b) => a.start - b.start,
+    ),
   };
 };
 
-const normalizeRuntimeFieldTypeInfo = (
-  fieldId: string,
-  rawInfo: unknown
-): RuntimeFieldTypeInfo => {
-  const info = rawInfo as Partial<RuntimeFieldTypeInfo> | null;
-  const error =
-    info?.error === undefined
-      ? undefined
-      : typeof info.error === "string"
-        ? info.error
-        : String(info.error);
+const validateSuiteQLBeforeExecution = (file: QueryFile): boolean => {
+  // Records Catalog metadata improves diagnostics when available, but loading
+  // it must never delay query dispatch. The completed request refreshes lint
+  // diagnostics once in detectAndLoadTablesFromQuery.
+  void detectAndLoadTablesFromQuery(file.code);
 
-  return {
-    id: String(info?.id ?? fieldId),
-    label: String(info?.label ?? ""),
-    type: String(info?.type ?? ""),
-    ...(error ? { error } : {})
-  };
-};
-
-const hydrateRuntimeFieldTypesForQuery = async (sql: string) => {
-  const referencedFields = getSuiteQLReferencedFields(sql, getSuiteQLSchemaContext());
-  if (referencedFields.length === 0) return;
-
-  const fieldsByTable = new Map<string, { tableId: string; fields: Set<string> }>();
-  for (const ref of referencedFields) {
-    const tableKey = ref.table.toLowerCase();
-    const fieldKey = ref.field.toLowerCase();
-    if (runtimeFieldTypeLoadErrors.value[tableKey]) continue;
-    if (runtimeFieldTypeCache.value[tableKey]?.[fieldKey]) continue;
-
-    const entry =
-      fieldsByTable.get(tableKey) ?? { tableId: ref.table, fields: new Set<string>() };
-    entry.fields.add(ref.field);
-    fieldsByTable.set(tableKey, entry);
-  }
-
-  await Promise.all(
-    [...fieldsByTable.entries()].map(async ([tableKey, entry]) => {
-      try {
-        const response = (await callApi(RequestRoutes.GET_RECORD_FIELD_TYPES, {
-          type: entry.tableId,
-          fieldIds: [...entry.fields]
-        })) as ApiResponse;
-
-        if (response.status === "error") {
-          throw new Error(
-            typeof response.message === "string"
-              ? response.message
-              : JSON.stringify(response.message)
-          );
-        }
-
-        const rawFields = (response.message?.fields ?? {}) as Record<string, unknown>;
-        const nextTableCache = {
-          ...(runtimeFieldTypeCache.value[tableKey] ?? {})
-        };
-
-        for (const [fieldId, rawInfo] of Object.entries(rawFields)) {
-          nextTableCache[fieldId.toLowerCase()] = normalizeRuntimeFieldTypeInfo(
-            fieldId,
-            rawInfo
-          );
-        }
-
-        runtimeFieldTypeCache.value = {
-          ...runtimeFieldTypeCache.value,
-          [tableKey]: nextTableCache
-        };
-      } catch (error: any) {
-        const message = error?.message ?? String(error);
-        runtimeFieldTypeLoadErrors.value = {
-          ...runtimeFieldTypeLoadErrors.value,
-          [tableKey]: message
-        };
-        console.warn(
-          `[SuiteQLView] runtime Field.type unavailable for "${entry.tableId}":`,
-          message
-        );
-      }
-    })
-  );
-};
-
-const validateSuiteQLBeforeExecution = async (
-  file: QueryFile
-): Promise<boolean> => {
-  await detectAndLoadTablesFromQuery(file.code);
-  await hydrateRuntimeFieldTypesForQuery(file.code);
   const schemaContext = getSuiteQLSchemaContext();
   const lintResult = lintSuiteQL(file.code, schemaContext);
   const structureIssues = getQueryStructureIssues(file.code);
   const combinedIssues = [...lintResult.issues, ...structureIssues].sort(
-    (a, b) => a.start - b.start
+    (a, b) => a.start - b.start,
   );
   lintIssuesByFile.value = {
     ...lintIssuesByFile.value,
-    [file.id]: combinedIssues
+    [file.id]: combinedIssues,
   };
-  const blockingIssues = combinedIssues.filter((issue) => issue.severity === "error");
+  const blockingIssues = combinedIssues.filter(
+    (issue) => issue.severity === "error",
+  );
   if (blockingIssues.length === 0) return true;
 
   file.results = [];
   file.columns = [];
   file.totalCount = 0;
-  const standardErrors = lintResult.issues.some((issue) => issue.severity === "error");
+  const standardErrors = lintResult.issues.some(
+    (issue) => issue.severity === "error",
+  );
   file.error = standardErrors
     ? explainSuiteQLError(
         file.code,
         "Query was not sent to NetSuite because local validation found errors.",
-        schemaContext
+        schemaContext,
       )
     : [
         "Query was not sent to NetSuite because local validation found errors.",
         "",
         ...blockingIssues.map(
           (issue) =>
-            `[${issue.code}] Line ${issue.line}, column ${issue.column}: ${issue.message}`
-        )
+            `[${issue.code}] Line ${issue.line}, column ${issue.column}: ${issue.message}`,
+        ),
       ].join("\n");
   bottomTab.value = "results";
   return false;
 };
 
 const executeQuery = async (file: QueryFile, limit: number | null) => {
-  console.log(`[SuiteQLView] executeQuery — file="${file.name}" limit=${limit ?? "none"}`);
+  console.log(
+    `[SuiteQLView] executeQuery — file="${file.name}" limit=${limit ?? "none"}`,
+  );
   console.log(`[SuiteQLView] SQL:\n${file.code}`);
   file.results = [];
   file.columns = [];
@@ -1642,23 +1621,24 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
   file.totalCount = 0;
   bottomTab.value = "results";
 
-  if (!(await validateSuiteQLBeforeExecution(file))) return;
-
-  file.isExecuting = true;
-
   try {
     const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
       sql: file.code,
-      limit
+      limit,
     })) as ApiResponse;
-    console.log(`[SuiteQLView] executeQuery — response status: ${response.status}`);
+    console.log(
+      `[SuiteQLView] executeQuery — response status: ${response.status}`,
+    );
     if (response.status === "error") {
       file.error = explainSuiteQLError(
         file.code,
         response.message || "Query execution failed",
-        getSuiteQLSchemaContext()
+        getSuiteQLSchemaContext(),
       );
-      console.error(`[SuiteQLView] executeQuery — error response:`, response.message);
+      console.error(
+        `[SuiteQLView] executeQuery — error response:`,
+        response.message,
+      );
       return;
     }
     const payload = response.message as
@@ -1671,7 +1651,9 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
     const totalCount = Array.isArray(payload)
       ? results.length
       : ((payload as any).totalCount ?? results.length);
-    console.log(`[SuiteQLView] executeQuery — got ${results.length} rows (total: ${totalCount}), payload shape: ${Array.isArray(payload) ? "array" : "object"}`);
+    console.log(
+      `[SuiteQLView] executeQuery — got ${results.length} rows (total: ${totalCount}), payload shape: ${Array.isArray(payload) ? "array" : "object"}`,
+    );
     if (results.length > 0) {
       file.columns = Object.keys(results[0]);
       file.results = results;
@@ -1680,7 +1662,7 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
       file.error = explainSuiteQLError(
         file.code,
         "Query returned 0 rows",
-        getSuiteQLSchemaContext()
+        getSuiteQLSchemaContext(),
       );
     }
   } catch (error: any) {
@@ -1688,10 +1670,8 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
     file.error = explainSuiteQLError(
       file.code,
       error?.message ?? error,
-      getSuiteQLSchemaContext()
+      getSuiteQLSchemaContext(),
     );
-  } finally {
-    file.isExecuting = false;
   }
 };
 
@@ -1734,7 +1714,6 @@ const onCodeChange = (fileId: string, newCode: string) => {
   detectDebounceTimer = setTimeout(async () => {
     detectDebounceTimer = null;
     await detectAndLoadTablesFromQuery(newCode);
-    refreshLintIssues(fileId, newCode);
   }, 400);
 };
 
@@ -1761,7 +1740,7 @@ const copyResultsCSV = async (file: QueryFile) => {
           ? `"${val.replace(/"/g, '""')}"`
           : val;
       })
-      .join(",")
+      .join(","),
   );
   try {
     await navigator.clipboard.writeText([header, ...rows].join("\n"));
@@ -1798,8 +1777,8 @@ const flushFileSave = async () => {
         name: f.name,
         code: f.code,
         createdAt: now,
-        updatedAt: now
-      }))
+        updatedAt: now,
+      })),
     );
     saveStatus.value = "saved";
     setTimeout(() => {
@@ -1832,11 +1811,19 @@ const saveTabState = async () => {
 
 watch(
   () => files.value.map((f) => ({ id: f.id, name: f.name, code: f.code })),
-  () => { saveFileContent(); },
-  { deep: true }
+  () => {
+    saveFileContent();
+  },
+  { deep: true },
 );
 
-watch([openTabs, activeFileId], () => { saveTabState(); }, { deep: true });
+watch(
+  [openTabs, activeFileId],
+  () => {
+    saveTabState();
+  },
+  { deep: true },
+);
 
 // When switching tabs, detect tables in the newly active file's SQL
 watch(activeFileId, async (id) => {
@@ -1846,7 +1833,6 @@ watch(activeFileId, async (id) => {
   const file = files.value.find((f) => f.id === id);
   if (file?.code) {
     await detectAndLoadTablesFromQuery(file.code);
-    refreshLintIssues(id, file.code);
   }
 });
 
@@ -1855,6 +1841,7 @@ watch(activeFileId, async (id) => {
 // ============================================================================
 
 const handleGlobalKeydown = (event: KeyboardEvent) => {
+  if (event.defaultPrevented) return;
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
     event.preventDefault();
     runCurrentQuery();
@@ -1867,7 +1854,10 @@ onMounted(async () => {
 
   const onHide = () => {
     if (document.visibilityState === "hidden") {
-      if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        saveTimeout = undefined;
+      }
       flushFileSave();
       saveTabState();
     }
@@ -1877,12 +1867,23 @@ onMounted(async () => {
   try {
     // ── Migrate from chrome.storage.local if needed (one-time) ──
     const existing = await getAllQueryFiles();
-    if (existing.length === 0 && typeof chrome !== "undefined" && chrome.storage?.local) {
+    if (
+      existing.length === 0 &&
+      typeof chrome !== "undefined" &&
+      chrome.storage?.local
+    ) {
       await new Promise<void>((resolve) => {
         chrome.storage.local.get(
-          ["suiteql_cachedFiles", "suiteql_cachedOpenTabs", "suiteql_cachedActiveTab"],
+          [
+            "suiteql_cachedFiles",
+            "suiteql_cachedOpenTabs",
+            "suiteql_cachedActiveTab",
+          ],
           async (result) => {
-            if (Array.isArray(result.suiteql_cachedFiles) && result.suiteql_cachedFiles.length > 0) {
+            if (
+              Array.isArray(result.suiteql_cachedFiles) &&
+              result.suiteql_cachedFiles.length > 0
+            ) {
               const now = new Date().toISOString();
               await bulkUpsertQueryFiles(
                 result.suiteql_cachedFiles.map((f: any) => ({
@@ -1890,8 +1891,8 @@ onMounted(async () => {
                   name: f.name || "query.sql",
                   code: f.code || "",
                   createdAt: now,
-                  updatedAt: now
-                }))
+                  updatedAt: now,
+                })),
               );
               if (Array.isArray(result.suiteql_cachedOpenTabs)) {
                 await setUiState("openTabs", result.suiteql_cachedOpenTabs);
@@ -1902,11 +1903,11 @@ onMounted(async () => {
               chrome.storage.local.remove([
                 "suiteql_cachedFiles",
                 "suiteql_cachedOpenTabs",
-                "suiteql_cachedActiveTab"
+                "suiteql_cachedActiveTab",
               ]);
             }
             resolve();
-          }
+          },
         );
       });
     }
@@ -1921,13 +1922,13 @@ onMounted(async () => {
       columns: [],
       error: "",
       isExecuting: false,
-      totalCount: 0
+      totalCount: 0,
     }));
     files.value = restoredFiles;
 
     const storedTabs = await getUiState<string[]>("openTabs", []);
     const validTabs = storedTabs.filter((id: string) =>
-      restoredFiles.some((file) => file.id === id)
+      restoredFiles.some((file) => file.id === id),
     );
     openTabs.value = validTabs;
 
@@ -1956,7 +1957,7 @@ onMounted(async () => {
             columns: [],
             error: "",
             isExecuting: false,
-            totalCount: 0
+            totalCount: 0,
           });
           openTabs.value.push(newId);
           activeFileId.value = newId;
@@ -1974,7 +1975,10 @@ onMounted(async () => {
 
 onBeforeUnmount(async () => {
   window.removeEventListener("keydown", handleGlobalKeydown);
-  if (saveTimeout) { clearTimeout(saveTimeout); saveTimeout = undefined; }
+  if (saveTimeout) {
+    clearTimeout(saveTimeout);
+    saveTimeout = undefined;
+  }
   await flushFileSave();
   await saveTabState();
 });
@@ -1996,11 +2000,11 @@ onBeforeUnmount(async () => {
 .run-kbd {
   font-size: 0.6rem;
   font-family: "JetBrains Mono", monospace;
-  background: rgba(255,255,255,0.15);
-  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 3px;
   padding: 1px 4px;
-  color: rgba(255,255,255,0.8);
+  color: rgba(255, 255, 255, 0.8);
   letter-spacing: 0.02em;
   flex-shrink: 0;
 }
