@@ -329,8 +329,7 @@ export const routes: FullRoute[] = [
     icon: "pi pi-send",
     component: ApiTesterView,
     status: RouteStatus.release,
-    breadcrumb: "API Tester",
-    adminOnly: true
+    breadcrumb: "API Tester"
   },
   {
     route: "/feature-feedback",
