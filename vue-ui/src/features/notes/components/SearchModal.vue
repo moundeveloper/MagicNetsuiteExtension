@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { inject, onMounted, ref, watch } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 import type { Page } from '../types'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
-const ws = useWorkspace()
-const router = useRouter()
+const ws = useNotesWorkspace()
+const navigatePage = inject<(id: string) => void>('navigatePage')!
 
 const query = ref('')
 const results = ref<{ page: Page; excerpt: string }[]>([])
@@ -23,7 +22,7 @@ watch(query, () => {
 })
 
 function open(page: Page) {
-  router.push({ name: 'notes-page', params: { id: page.id } })
+  navigatePage(page.id)
   emit('close')
 }
 
@@ -132,4 +131,3 @@ onMounted(() => input.value?.focus())
 .r-empty, .r-hint { padding: 18px; text-align: center; color: var(--notes-text-faint); font-size: 13px; }
 .r-hint { border-top: 1px solid var(--notes-border); }
 </style>
-

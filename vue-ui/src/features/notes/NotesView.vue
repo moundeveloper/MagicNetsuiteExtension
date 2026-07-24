@@ -1,14 +1,31 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useWorkspace } from './stores/workspace'
+import {
+  createWorkspaceStore,
+  NOTES_WORKSPACE_CHANGED_EVENT,
+  notesWorkspaceKey,
+  type NotesWorkspaceChange,
+} from './stores/workspace'
 import Sidebar from './components/Sidebar.vue'
 import SearchModal from './components/SearchModal.vue'
 import PageView from './components/PageView.vue'
 import EmptyState from './components/EmptyState.vue'
 import './assets/main.css'
 
-const ws = useWorkspace()
+const props = defineProps<{
+  tabId?: string
+  tabFullPath?: string
+  tabActive?: boolean
+  tabFocused?: boolean
+}>()
+const emit = defineEmits<{
+  (e: 'notes-navigate', navigation: { path: string; replace?: boolean }): void
+}>()
+
+const componentUid = getCurrentInstance()?.uid ?? crypto.randomUUID()
+const ws = createWorkspaceStore(props.tabId ?? `notes-${componentUid}`)
+provide(notesWorkspaceKey, ws)
 const router = useRouter()
 const route = useRoute()
 const appRoot = ref<HTMLElement | null>(null)
@@ -20,6 +37,42 @@ const theme = ref<'light' | 'dark'>('light')
 const tabIds = ref<string[]>([])
 const draggingTabId = ref<string | null>(null)
 const tabDrop = ref<{ id: string; side: 'before' | 'after' } | null>(null)
+const tabsRestored = ref(false)
+
+const activePageId = computed(() => {
+  if (props.tabFullPath) {
+    const id = router.resolve(props.tabFullPath).params.id
+    return typeof id === 'string' ? id : null
+  }
+  return typeof route.params.id === 'string' ? route.params.id : null
+})
+provide('notesActivePageId', activePageId)
+const tabFocused = computed(() => props.tabFocused ?? true)
+provide('notesTabFocused', tabFocused)
+
+const tabsStorageKey = computed(() =>
+  props.tabId ? `slate-page-tabs:${props.tabId}` : 'slate-page-tabs',
+)
+const activePageStorageKey = computed(() =>
+  props.tabId ? `slate-active-page:${props.tabId}` : 'slate-active-page',
+)
+
+function persistTabs() {
+  localStorage.setItem(tabsStorageKey.value, JSON.stringify(tabIds.value))
+  if (!props.tabId || tabFocused.value) {
+    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+  }
+}
+
+function persistActivePage(id: string | null) {
+  if (id) {
+    localStorage.setItem(activePageStorageKey.value, id)
+    if (!props.tabId || tabFocused.value) localStorage.setItem('slate-active-page', id)
+  } else {
+    localStorage.removeItem(activePageStorageKey.value)
+    if (!props.tabId || tabFocused.value) localStorage.removeItem('slate-active-page')
+  }
+}
 
 const pageTabs = computed(() =>
   tabIds.value
@@ -28,17 +81,20 @@ const pageTabs = computed(() =>
 )
 
 watch(
-  () => route.params.id,
+  activePageId,
   (id) => {
-    if (typeof id !== 'string') return
+    if (!tabsRestored.value || typeof id !== 'string') return
     if (!tabIds.value.includes(id)) tabIds.value = [...tabIds.value, id].slice(-12)
-    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+    persistTabs()
+    persistActivePage(id)
   },
 )
 
 provide('openSearch', () => (searchOpen.value = true))
 provide('openPageTab', openPageTab)
 provide('navigatePage', navigatePage)
+provide('closePageTab', closeTab)
+provide('navigateNotesRoot', () => navigatePath('/notes', true))
 provide('toggleTheme', toggleTheme)
 provide('theme', theme)
 
@@ -57,46 +113,62 @@ async function newPage() {
   openPageTab(p.id, true)
 }
 
+function navigatePath(path: string, replace = false) {
+  if (props.tabId) {
+    emit('notes-navigate', { path, replace })
+    return
+  }
+  if (replace) void router.replace(path)
+  else void router.push(path)
+}
+
+function navigateToPage(id: string, replace = false) {
+  navigatePath(router.resolve({ name: 'notes-page', params: { id } }).fullPath, replace)
+}
+
 function openTab(id: string) {
-  router.push({ name: 'notes-page', params: { id } })
+  navigateToPage(id)
 }
 
 function openPageTab(id: string, activate = false) {
   const existed = tabIds.value.includes(id)
   if (!existed) {
     tabIds.value = [...tabIds.value, id].slice(-12)
-    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+    persistTabs()
   }
-  if (activate || existed) router.push({ name: 'notes-page', params: { id } })
+  if (activate || existed) navigateToPage(id)
 }
 
 function navigatePage(id: string) {
   if (tabIds.value.includes(id)) {
-    router.push({ name: 'notes-page', params: { id } })
+    navigateToPage(id)
     return
   }
-  const currentId = typeof route.params.id === 'string' ? route.params.id : null
+  const currentId = activePageId.value
   const currentIndex = currentId ? tabIds.value.indexOf(currentId) : -1
   if (currentIndex >= 0) {
     const next = [...tabIds.value]
     next[currentIndex] = id
     tabIds.value = next
-    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+    persistTabs()
   } else {
     tabIds.value = [...tabIds.value, id].slice(-12)
-    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+    persistTabs()
   }
-  router.push({ name: 'notes-page', params: { id } })
+  navigateToPage(id)
 }
 
 function closeTab(id: string) {
   const index = tabIds.value.indexOf(id)
   tabIds.value = tabIds.value.filter((tabId) => tabId !== id)
-  localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
-  if (route.params.id !== id) return
+  persistTabs()
+  if (activePageId.value !== id) return
   const nextId = tabIds.value[Math.max(0, index - 1)] ?? tabIds.value[0]
-  if (nextId) router.push({ name: 'notes-page', params: { id: nextId } })
-  else router.push('/notes')
+  if (nextId) navigateToPage(nextId)
+  else {
+    persistActivePage(null)
+    navigatePath('/notes')
+  }
 }
 
 function onTabMouseup(e: MouseEvent, id: string) {
@@ -131,6 +203,22 @@ function onTabDragOver(id: string, e: DragEvent) {
   tabDrop.value = { id, side: e.clientX < rect.left + rect.width / 2 ? 'before' : 'after' }
 }
 
+function onTabDragLeave(id: string, e: DragEvent) {
+  const tab = e.currentTarget as HTMLElement
+  const nextTarget = e.relatedTarget
+  if (nextTarget instanceof Node && tab.contains(nextTarget)) return
+  const rect = tab.getBoundingClientRect()
+  if (
+    e.clientX >= rect.left &&
+    e.clientX <= rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY <= rect.bottom
+  ) {
+    return
+  }
+  if (tabDrop.value?.id === id) tabDrop.value = null
+}
+
 function onTabDrop(id: string, e: DragEvent) {
   e.preventDefault()
   const moving = draggingTabId.value ?? e.dataTransfer?.getData('slate/tab-id')
@@ -142,10 +230,11 @@ function onTabDrop(id: string, e: DragEvent) {
   const targetIndex = next.indexOf(drop.id)
   next.splice(drop.side === 'before' ? targetIndex : targetIndex + 1, 0, moving)
   tabIds.value = next
-  localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+  persistTabs()
 }
 
 function onKeydown(e: KeyboardEvent) {
+  if (!tabFocused.value) return
   const mod = e.ctrlKey || e.metaKey
   if (mod && e.key.toLowerCase() === 'k') {
     e.preventDefault()
@@ -178,23 +267,55 @@ function stopResize() {
   document.body.style.userSelect = ''
 }
 
+function onWorkspaceChanged(event: Event) {
+  const detail = (event as CustomEvent<NotesWorkspaceChange>).detail
+  if (!detail || detail.source === ws.$id) return
+  if (detail.pages) void ws.refreshPages()
+  if (detail.blocksPageId) void ws.refreshBlocks(detail.blocksPageId)
+}
+
 onMounted(async () => {
   const saved = localStorage.getItem('slate-theme') as 'light' | 'dark' | null
   applyTheme(saved ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'))
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('mousemove', onMouseMove)
   window.addEventListener('mouseup', stopResize)
+  window.addEventListener(NOTES_WORKSPACE_CHANGED_EVENT, onWorkspaceChanged)
   await ws.load()
   try {
-    const savedTabs = JSON.parse(localStorage.getItem('slate-page-tabs') ?? '[]')
-    if (Array.isArray(savedTabs)) tabIds.value = savedTabs.filter((id): id is string => typeof id === 'string')
+    const paneTabs = localStorage.getItem(tabsStorageKey.value)
+    const legacyTabs = props.tabId ? localStorage.getItem('slate-page-tabs') : null
+    const savedTabs = JSON.parse(paneTabs ?? legacyTabs ?? '[]')
+    if (Array.isArray(savedTabs)) {
+      tabIds.value = savedTabs
+        .filter((id): id is string => typeof id === 'string')
+        .filter((id) => ws.pages.some((page) => page.id === id && !page.trashedAt))
+        .slice(-12)
+    }
   } catch (err) {
     console.error('Failed to restore saved page tabs from localStorage.', err)
     tabIds.value = []
   }
-  if (typeof route.params.id === 'string' && !tabIds.value.includes(route.params.id)) {
-    tabIds.value = [...tabIds.value, route.params.id]
-    localStorage.setItem('slate-page-tabs', JSON.stringify(tabIds.value))
+  const currentId = activePageId.value
+  if (currentId && !tabIds.value.includes(currentId)) {
+    tabIds.value = [...tabIds.value, currentId]
+  }
+  tabsRestored.value = true
+  persistTabs()
+  if (currentId) {
+    persistActivePage(currentId)
+  } else {
+    const paneActivePage = localStorage.getItem(activePageStorageKey.value)
+    const legacyActivePage = props.tabId ? localStorage.getItem('slate-active-page') : null
+    const restoredActivePage = paneActivePage ?? legacyActivePage
+    const fallbackPageId =
+      restoredActivePage && tabIds.value.includes(restoredActivePage)
+        ? restoredActivePage
+        : tabIds.value[tabIds.value.length - 1]
+    if (fallbackPageId) {
+      persistActivePage(fallbackPageId)
+      navigateToPage(fallbackPageId, true)
+    }
   }
 })
 
@@ -202,7 +323,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', stopResize)
-  delete document.body.dataset.notesTheme
+  window.removeEventListener(NOTES_WORKSPACE_CHANGED_EVENT, onWorkspaceChanged)
+  ws.$dispose()
 })
 </script>
 
@@ -223,7 +345,7 @@ onBeforeUnmount(() => {
           :key="tab.id"
           class="page-tab"
           :class="{
-            active: route.params.id === tab.id,
+            active: activePageId === tab.id,
             'drop-before': tabDrop?.id === tab.id && tabDrop.side === 'before',
             'drop-after': tabDrop?.id === tab.id && tabDrop.side === 'after',
           }"
@@ -235,7 +357,7 @@ onBeforeUnmount(() => {
           @auxclick.stop.prevent="onTabMouseup($event, tab.id)"
           @dragstart="onTabDragStart(tab.id, $event)"
           @dragover="onTabDragOver(tab.id, $event)"
-          @dragleave="tabDrop = null"
+          @dragleave="onTabDragLeave(tab.id, $event)"
           @drop="onTabDrop(tab.id, $event)"
           @dragend="draggingTabId = null; tabDrop = null"
         >
@@ -246,7 +368,7 @@ onBeforeUnmount(() => {
         <button class="tab-add" title="New root page" @click="addRootTab">＋</button>
       </div>
       <div class="notes-page-scroll">
-        <PageView v-if="typeof route.params.id === 'string'" :id="route.params.id" />
+        <PageView v-if="activePageId" :id="activePageId" />
         <EmptyState v-else />
       </div>
     </main>

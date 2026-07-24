@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useWorkspace } from '../stores/workspace'
+import { useNotesWorkspace } from '../stores/workspace'
 
 const emit = defineEmits<{ (e: 'close'): void }>()
-const ws = useWorkspace()
+const ws = useNotesWorkspace()
 const query = ref('')
 
 const items = computed(() =>

@@ -18,6 +18,7 @@ import {
   recordWatchKey,
   removeWatchedRecord
 } from "../utils/recordWatchDb";
+import { openDashboardTab } from "../utils/dashboardTabs";
 
 type FieldValue = {
   value: unknown;
@@ -31,7 +32,11 @@ type RecordPayload = {
   sublists?: Record<string, Array<Record<string, FieldValue>>>;
 };
 
-const props = defineProps<{ vhOffset: number }>();
+const props = defineProps<{
+  vhOffset: number;
+  tabFullPath?: string;
+  tabActive?: boolean;
+}>();
 const route = useRoute();
 const router = useRouter();
 const toast = useToast();
@@ -51,8 +56,15 @@ const changingWatch = ref(false);
 const resolvedFieldCache = new Map<string, FieldValue>();
 const { showContextMenu } = useMContextMenu();
 
-const recordType = computed(() => String(route.params.recordType ?? ""));
-const recordId = computed(() => String(route.params.recordId ?? ""));
+const ownRoute = computed(() =>
+  router.resolve(props.tabFullPath || route.fullPath)
+);
+const recordType = computed(() =>
+  String(ownRoute.value.params.recordType ?? "")
+);
+const recordId = computed(() =>
+  String(ownRoute.value.params.recordId ?? "")
+);
 
 const bodyFields = computed(() => {
   const needle = bodyFilter.value.trim().toLowerCase();
@@ -173,7 +185,7 @@ const toggleWatch = async () => {
       watched.value = false;
       toast.add({
         severity: "info",
-        summary: "Removed from Watchtower",
+        summary: "Removed from Record History",
         detail: `${recordType.value} #${recordId.value}`,
         life: 2200
       });
@@ -181,14 +193,13 @@ const toggleWatch = async () => {
       await addWatchedRecord({
         environment: environment.value,
         recordType: recordType.value,
-        recordId: recordId.value,
-        data: bodyRecord.value
+        recordId: recordId.value
       });
       watched.value = true;
       toast.add({
         severity: "success",
-        summary: "Added to Watchtower",
-        detail: "The current record state is now the baseline.",
+        summary: "Saved to Record History",
+        detail: "The record is now available as a quick link.",
         life: 2600
       });
     }
@@ -198,13 +209,32 @@ const toggleWatch = async () => {
 };
 
 const openWatchtower = async () => {
-  await router.push({
+  const labelFields = [
+    "tranid",
+    "entityid",
+    "companyname",
+    "periodname",
+    "itemid",
+    "title",
+    "scriptid",
+    "name",
+    "altname"
+  ];
+  const recordLabel =
+    labelFields
+      .map((fieldId) => displayValue(bodyRecord.value?.body?.[fieldId]))
+      .find((value) => value !== "—") ?? "";
+  const fullPath = router.resolve({
     path: "/watchtower",
     query: {
       type: recordType.value,
       id: recordId.value,
-      scan: "1"
+      ...(recordLabel ? { label: recordLabel } : {})
     }
+  }).fullPath;
+  openDashboardTab(fullPath, {
+    label: `History · ${recordLabel || `${recordType.value} #${recordId.value}`}`,
+    reuseExisting: true
   });
 };
 
@@ -322,19 +352,19 @@ onBeforeUnmount(() => {
               changingWatch
                 ? 'pi pi-spin pi-spinner'
                 : watched
-                  ? 'pi pi-eye-slash'
-                  : 'pi pi-eye'
+                  ? 'pi pi-bookmark-fill'
+                  : 'pi pi-bookmark'
             "
           />
-          {{ watched ? "Unwatch" : "Watch" }}
+          {{ watched ? "Unsave" : "Save" }}
         </button>
         <button
           :disabled="loading || !bodyRecord"
-          title="Open this record in Watchtower and scan it"
+          title="Open the retained NetSuite system-note history"
           @click="openWatchtower"
         >
-          <i class="pi pi-binoculars" />
-          Watchtower
+          <i class="pi pi-history" />
+          Change history
         </button>
         <button @click="loadRecord">
           <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'" />

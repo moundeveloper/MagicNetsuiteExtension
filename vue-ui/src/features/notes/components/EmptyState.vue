@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { inject } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 
-const ws = useWorkspace()
-const router = useRouter()
+const ws = useNotesWorkspace()
+const openPageTab = inject<(id: string, activate?: boolean) => void>('openPageTab')!
 
 async function newPage(type: 'page' | 'database' = 'page') {
   const p = await ws.createPage(null, '', type)
-  router.push({ name: 'notes-page', params: { id: p.id } })
+  openPageTab(p.id, true)
 }
 </script>
 

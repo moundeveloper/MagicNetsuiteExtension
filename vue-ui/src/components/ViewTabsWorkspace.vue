@@ -9,6 +9,10 @@ import {
   formatKeyboardShortcut,
   keyboardShortcutMatches
 } from "../utils/keyboardShortcut";
+import {
+  OPEN_DASHBOARD_TAB_EVENT,
+  type OpenDashboardTabDetail
+} from "../utils/dashboardTabs";
 
 type TabGroup = "left" | "right";
 
@@ -24,6 +28,11 @@ type ReorderTarget = {
   id: string;
   side: "before" | "after";
 } | null;
+
+type TabNavigation = {
+  path: string;
+  replace?: boolean;
+};
 
 type TabContextMenu = {
   tabId: string;
@@ -77,7 +86,7 @@ const workspaceLibraryOpen = ref(false);
 const workspaceSnapshotName = ref("");
 const workspaceSnapshots = ref<WorkspaceSnapshot[]>([]);
 const workspaceLibraryLoading = ref(false);
-let tabActivationNavigation = false;
+let tabActivationNavigationDepth = 0;
 let nextTabId = 1;
 let workspaceEnvironment = "unknown";
 let workspaceReady = false;
@@ -107,7 +116,18 @@ const pathMatchesPattern = (path: string, pattern: string) => {
 
 const createTabId = () => `view-tab-${nextTabId++}`;
 
-const routeLabel = (currentRoute: { path: string; name?: unknown }) => {
+const routeLabel = (currentRoute: {
+  path: string;
+  name?: unknown;
+  query?: Record<string, unknown>;
+}) => {
+  if (
+    currentRoute.path === "/watchtower" &&
+    typeof currentRoute.query?.label === "string" &&
+    currentRoute.query.label.trim()
+  ) {
+    return `History · ${currentRoute.query.label.trim()}`;
+  }
   const match =
     topLevelRouteItems.find((item) => item.route === currentRoute.path) ??
     topLevelRouteItems.find((item) => pathMatchesPattern(currentRoute.path, item.route));
@@ -163,6 +183,10 @@ const ensureGroupState = () => {
     if (!rightActiveId.value || !rightTabIds.value.includes(rightActiveId.value)) {
       rightActiveId.value = rightTabIds.value[0] ?? "";
     }
+    [leftActiveId.value, rightActiveId.value].forEach((id) => {
+      const tab = findTab(id);
+      if (tab) tab.routeHydrated = true;
+    });
     return;
   }
 
@@ -170,6 +194,8 @@ const ensureGroupState = () => {
   rightTabIds.value = [];
   leftActiveId.value = "";
   rightActiveId.value = "";
+  const active = findTab(activeTabId.value);
+  if (active) active.routeHydrated = true;
 };
 
 const ensureRouteTab = (currentRoute: RouteLocationNormalizedLoaded) => {
@@ -223,17 +249,40 @@ const activateTab = async (tabId: string) => {
   if (leftTabIds.value.includes(tabId)) leftActiveId.value = tabId;
   if (rightTabIds.value.includes(tabId)) rightActiveId.value = tabId;
   if (route.fullPath !== tab.fullPath) {
-    tabActivationNavigation = true;
+    tabActivationNavigationDepth += 1;
     try {
       await router.push(tab.fullPath);
       await nextTick();
     } finally {
-      tabActivationNavigation = false;
+      tabActivationNavigationDepth -= 1;
     }
   }
   if (!tab.routeHydrated) {
     tab.routeHydrated = true;
     await nextTick();
+  }
+};
+
+const navigateTab = async (tabId: string, navigation: TabNavigation) => {
+  const tab = findTab(tabId);
+  if (!tab || !navigation?.path) return;
+  const resolved = router.resolve(navigation.path);
+  const component = componentForRoute(resolved);
+  if (!component) return;
+
+  tab.fullPath = resolved.fullPath;
+  tab.label = routeLabel(resolved);
+  tab.component = component;
+  tab.routeHydrated = true;
+
+  if (activeTabId.value !== tabId || route.fullPath === resolved.fullPath) return;
+  tabActivationNavigationDepth += 1;
+  try {
+    if (navigation.replace) await router.replace(resolved.fullPath);
+    else await router.push(resolved.fullPath);
+    await nextTick();
+  } finally {
+    tabActivationNavigationDepth -= 1;
   }
 };
 
@@ -342,6 +391,47 @@ const duplicateTab = async (tabId: string) => {
   await activateTab(duplicate.id);
 };
 
+const splitWithTab = async (tabId: string, side: TabGroup) => {
+  if (tabs.value.length < 2 || !findTab(tabId)) return;
+
+  if (!isSplit.value) {
+    const otherIds = tabs.value.map((tab) => tab.id).filter((id) => id !== tabId);
+    if (side === "left") {
+      leftTabIds.value = [tabId];
+      rightTabIds.value = otherIds;
+      leftActiveId.value = tabId;
+      rightActiveId.value = otherIds.includes(activeTabId.value)
+        ? activeTabId.value
+        : otherIds[0] ?? "";
+    } else {
+      leftTabIds.value = otherIds;
+      rightTabIds.value = [tabId];
+      leftActiveId.value = otherIds.includes(activeTabId.value)
+        ? activeTabId.value
+        : otherIds[0] ?? "";
+      rightActiveId.value = tabId;
+    }
+  } else {
+    const sourceGroup: TabGroup | null = leftTabIds.value.includes(tabId)
+      ? "left"
+      : rightTabIds.value.includes(tabId)
+        ? "right"
+        : null;
+    if (sourceGroup === side) {
+      if (side === "left") leftActiveId.value = tabId;
+      else rightActiveId.value = tabId;
+    } else {
+      addTabToGroup(tabId, side);
+      if (side === "left") leftActiveId.value = tabId;
+      else rightActiveId.value = tabId;
+    }
+  }
+
+  ensureGroupState();
+  hideTabContextMenu();
+  await activateTab(tabId);
+};
+
 const copyTabLink = async (tabId: string) => {
   const tab = findTab(tabId);
   if (!tab) return;
@@ -392,6 +482,7 @@ const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
   const candidate = value as Partial<SavedWorkspace>;
   if (!Array.isArray(candidate.tabs)) return null;
 
+  const seenTabIds = new Set<string>();
   const normalizedTabs = candidate.tabs
     .filter(
       (tab): tab is { id: string; fullPath: string } =>
@@ -402,6 +493,11 @@ const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
             typeof tab.fullPath === "string"
         )
     )
+    .filter((tab) => {
+      if (seenTabIds.has(tab.id)) return false;
+      seenTabIds.add(tab.id);
+      return true;
+    })
     .map((tab) => ({ id: tab.id, fullPath: tab.fullPath }));
   if (!normalizedTabs.length) return null;
 
@@ -484,12 +580,12 @@ const applySavedWorkspace = async (value: unknown) => {
     restoredTabs.find((tab) => tab.id === requestedActiveId) ??
     restoredTabs[0]!;
   if (!workspaceDisposed && route.fullPath !== active.fullPath) {
-    tabActivationNavigation = true;
+    tabActivationNavigationDepth += 1;
     try {
       await router.replace(active.fullPath);
       await nextTick();
     } finally {
-      tabActivationNavigation = false;
+      tabActivationNavigationDepth -= 1;
     }
   }
 
@@ -513,6 +609,14 @@ const applySavedWorkspace = async (value: unknown) => {
     : rightTabIds.value[0] ?? "";
   splitRatio.value = Math.max(25, Math.min(75, saved.splitRatio || 50));
   ensureGroupState();
+  const visibleIds = new Set([
+    activeTabId.value,
+    leftActiveId.value,
+    rightActiveId.value
+  ]);
+  restoredTabs.forEach((tab) => {
+    if (visibleIds.has(tab.id)) tab.routeHydrated = true;
+  });
 
   workspaceGeneration.value += 1;
   return true;
@@ -726,6 +830,42 @@ const newHomeTab = async (group?: TabGroup) => {
   await activateTab(tab.id);
 };
 
+const openPathInDashboardTab = async ({
+  path,
+  label,
+  reuseExisting = true
+}: OpenDashboardTabDetail) => {
+  const resolved = router.resolve(path);
+  if (reuseExisting) {
+    const existing = tabs.value.find(
+      (tab) => tab.fullPath === resolved.fullPath
+    );
+    if (existing) {
+      await activateTab(existing.id);
+      return;
+    }
+  }
+
+  const tab = tabFromPath(resolved.fullPath);
+  if (!tab) return;
+  if (label?.trim()) tab.label = label.trim();
+  tabs.value.push(tab);
+
+  const group = activeGroup.value;
+  if (group && isSplit.value) {
+    addTabToGroup(tab.id, group);
+    if (group === "left") leftActiveId.value = tab.id;
+    else rightActiveId.value = tab.id;
+  }
+  await activateTab(tab.id);
+};
+
+const handleOpenDashboardTab = (event: Event) => {
+  const detail = (event as CustomEvent<OpenDashboardTabDetail>).detail;
+  if (!detail?.path) return;
+  void openPathInDashboardTab(detail);
+};
+
 const onTabBarWheel = (event: WheelEvent) => {
   const target = event.currentTarget as HTMLElement;
   target.scrollLeft += event.deltaY || event.deltaX;
@@ -756,6 +896,22 @@ const onTabItemDragOver = (event: DragEvent, targetId: string) => {
   };
 };
 
+const onTabItemDragLeave = (event: DragEvent, targetId: string) => {
+  const tab = event.currentTarget as HTMLElement;
+  const nextTarget = event.relatedTarget;
+  if (nextTarget instanceof Node && tab.contains(nextTarget)) return;
+  const rect = tab.getBoundingClientRect();
+  if (
+    event.clientX >= rect.left &&
+    event.clientX <= rect.right &&
+    event.clientY >= rect.top &&
+    event.clientY <= rect.bottom
+  ) {
+    return;
+  }
+  if (reorderTarget.value?.id === targetId) reorderTarget.value = null;
+};
+
 const reorderTabs = (sourceId: string, targetId: string, side: "before" | "after") => {
   const source = findTab(sourceId);
   if (!source || sourceId === targetId) return;
@@ -772,6 +928,27 @@ const addTabToGroup = (tabId: string, group: TabGroup) => {
   if (!list.includes(tabId)) list.push(tabId);
 };
 
+const reorderTabInGroup = (
+  sourceId: string,
+  targetId: string,
+  side: "before" | "after",
+  group: TabGroup
+) => {
+  const targetIds = (group === "left" ? leftTabIds.value : rightTabIds.value)
+    .filter((id) => id !== sourceId);
+  const targetIndex = targetIds.indexOf(targetId);
+  if (targetIndex < 0) return;
+  targetIds.splice(side === "before" ? targetIndex : targetIndex + 1, 0, sourceId);
+
+  if (group === "left") {
+    leftTabIds.value = targetIds;
+    rightTabIds.value = rightTabIds.value.filter((id) => id !== sourceId);
+  } else {
+    rightTabIds.value = targetIds;
+    leftTabIds.value = leftTabIds.value.filter((id) => id !== sourceId);
+  }
+};
+
 const onTabItemDrop = async (_event: DragEvent, targetId: string) => {
   if (!draggingTabId.value || !reorderTarget.value) return;
   const sourceId = draggingTabId.value;
@@ -782,7 +959,10 @@ const onTabItemDrop = async (_event: DragEvent, targetId: string) => {
       : null;
 
   reorderTabs(sourceId, targetId, reorderTarget.value.side);
-  if (targetGroup) addTabToGroup(sourceId, targetGroup);
+  if (targetGroup) {
+    reorderTabInGroup(sourceId, targetId, reorderTarget.value.side, targetGroup);
+  }
+  ensureGroupState();
   await activateTab(sourceId);
   onTabDragEnd();
 };
@@ -815,26 +995,11 @@ const onTabbarDrop = async (_event: DragEvent, group: TabGroup) => {
 
 const onDropSplit = async (side: TabGroup) => {
   const draggedId = draggingTabId.value;
-  if (!draggedId || tabs.value.length < 2) {
+  if (!draggedId) {
     onTabDragEnd();
     return;
   }
-
-  const otherIds = tabs.value.map((tab) => tab.id).filter((id) => id !== draggedId);
-  if (side === "left") {
-    leftTabIds.value = [draggedId];
-    rightTabIds.value = otherIds;
-    leftActiveId.value = draggedId;
-    rightActiveId.value = activeTabId.value === draggedId ? otherIds[0] ?? "" : activeTabId.value;
-  } else {
-    leftTabIds.value = otherIds;
-    rightTabIds.value = [draggedId];
-    leftActiveId.value = activeTabId.value === draggedId ? otherIds[0] ?? "" : activeTabId.value;
-    rightActiveId.value = draggedId;
-  }
-
-  ensureGroupState();
-  await activateTab(draggedId);
+  await splitWithTab(draggedId, side);
   onTabDragEnd();
 };
 
@@ -896,7 +1061,9 @@ const stopSplitResize = () => {
 watch(
   () => route.fullPath,
   () => {
-    if (workspaceReady) ensureRouteTab(route);
+    if (workspaceReady && tabActivationNavigationDepth === 0) {
+      ensureRouteTab(route);
+    }
   }
 );
 
@@ -921,6 +1088,7 @@ onMounted(async () => {
     "magic-netsuite-environment-changed",
     handleWorkspaceEnvironmentChanged
   );
+  window.addEventListener(OPEN_DASHBOARD_TAB_EVENT, handleOpenDashboardTab);
 });
 
 onBeforeUnmount(() => {
@@ -939,6 +1107,7 @@ onBeforeUnmount(() => {
     "magic-netsuite-environment-changed",
     handleWorkspaceEnvironmentChanged
   );
+  window.removeEventListener(OPEN_DASHBOARD_TAB_EVENT, handleOpenDashboardTab);
 });
 </script>
 
@@ -968,7 +1137,7 @@ onBeforeUnmount(() => {
           @dragstart="onTabDragStart($event, tab.id)"
           @dragend="onTabDragEnd"
           @dragover="onTabItemDragOver($event, tab.id)"
-          @dragleave="reorderTarget = null"
+          @dragleave="onTabItemDragLeave($event, tab.id)"
           @drop.prevent.stop="onTabItemDrop($event, tab.id)"
           @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
         >
@@ -1033,7 +1202,7 @@ onBeforeUnmount(() => {
               @dragstart="onTabDragStart($event, tab.id, 'left')"
               @dragend="onTabDragEnd"
               @dragover="onTabItemDragOver($event, tab.id)"
-              @dragleave="reorderTarget = null"
+              @dragleave="onTabItemDragLeave($event, tab.id)"
               @drop.prevent.stop="onTabItemDrop($event, tab.id)"
               @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
@@ -1088,7 +1257,7 @@ onBeforeUnmount(() => {
               @dragstart="onTabDragStart($event, tab.id, 'right')"
               @dragend="onTabDragEnd"
               @dragover="onTabItemDragOver($event, tab.id)"
-              @dragleave="reorderTarget = null"
+              @dragleave="onTabItemDragLeave($event, tab.id)"
               @drop.prevent.stop="onTabItemDrop($event, tab.id)"
               @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
@@ -1168,6 +1337,15 @@ onBeforeUnmount(() => {
           v-if="tab.routeHydrated"
           :is="tab.component"
           :vhOffset="vhOffset"
+          :tab-id="tab.id"
+          :tab-full-path="tab.fullPath"
+          :tab-active="
+            !isSplit
+              ? tab.id === activeTabId
+              : tab.id === leftActiveId || tab.id === rightActiveId
+          "
+          :tab-focused="tab.id === activeTabId"
+          @notes-navigate="navigateTab(tab.id, $event)"
         />
       </main>
     </div>
@@ -1187,6 +1365,22 @@ onBeforeUnmount(() => {
         <button type="button" @click="duplicateTab(tabContextMenu.tabId)">
           <i class="pi pi-clone"></i>
           Duplicate
+        </button>
+        <button
+          type="button"
+          :disabled="tabs.length < 2"
+          @click="splitWithTab(tabContextMenu.tabId, 'left')"
+        >
+          <i class="pi pi-objects-column"></i>
+          Open in left split
+        </button>
+        <button
+          type="button"
+          :disabled="tabs.length < 2"
+          @click="splitWithTab(tabContextMenu.tabId, 'right')"
+        >
+          <i class="pi pi-objects-column"></i>
+          Open in right split
         </button>
         <button type="button" @click="copyTabLink(tabContextMenu.tabId)">
           <i class="pi pi-link"></i>

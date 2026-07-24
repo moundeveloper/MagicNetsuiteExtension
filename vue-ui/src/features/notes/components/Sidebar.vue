@@ -1,21 +1,20 @@
 <script setup lang="ts">
 import { inject, ref, type Ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { useNotesWorkspace } from '../stores/workspace'
 import PageTreeItem from './PageTreeItem.vue'
 import TrashPanel from './TrashPanel.vue'
 
 const emit = defineEmits<{ (e: 'open-search'): void; (e: 'toggle-sidebar'): void }>()
-const ws = useWorkspace()
-const router = useRouter()
+const ws = useNotesWorkspace()
 const theme = inject<Ref<'light' | 'dark'>>('theme')!
 const toggleTheme = inject<() => void>('toggleTheme')!
+const openPageTab = inject<(id: string, activate?: boolean) => void>('openPageTab')!
 
 const trashOpen = ref(false)
 
 async function newPage(type: 'page' | 'database' = 'page') {
   const p = await ws.createPage(null, '', type)
-  router.push({ name: 'notes-page', params: { id: p.id } })
+  openPageTab(p.id, true)
 }
 
 // drop page to root level

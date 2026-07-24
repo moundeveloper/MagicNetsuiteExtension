@@ -1,26 +1,35 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { computed, inject, nextTick, ref, watch } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 import BlockEditor from './BlockEditor.vue'
 import DatabaseView from './DatabaseView.vue'
 import IconPicker from './IconPicker.vue'
 
 const props = defineProps<{ id: string }>()
-const ws = useWorkspace()
-const router = useRouter()
+const ws = useNotesWorkspace()
+const navigatePage = inject<(id: string) => void>('navigatePage')!
+const navigateNotesRoot = inject<() => void>('navigateNotesRoot')!
+const closePageTab = inject<(id: string) => void>('closePageTab')
 
 const titleEl = ref<HTMLElement>()
 const editorEl = ref<InstanceType<typeof BlockEditor>>()
 
 watch(
-  () => props.id,
-  async (id) => {
-    if (!ws.pages.find((p) => p.id === id && !p.trashedAt)) {
-      router.replace('/notes')
+  [
+    () => props.id,
+    () => !!ws.pages.find((p) => p.id === props.id && !p.trashedAt),
+  ],
+  async ([id, exists]) => {
+    if (!exists) {
+      if (closePageTab) closePageTab(id)
+      else navigateNotesRoot()
       return
     }
     await ws.openPage(id)
+    if (ws.currentPage?.type === 'page' && ws.blocks.length === 0) {
+      await nextTick()
+      await editorEl.value?.focusFirstBlock()
+    }
   },
   { immediate: true },
 )
@@ -69,7 +78,7 @@ function startSideSelection(e: PointerEvent | MouseEvent) {
     <nav class="crumbs">
       <template v-for="(c, i) in ws.breadcrumb" :key="c.id">
         <span v-if="i > 0" class="crumb-sep">/</span>
-        <button class="crumb" @click="router.push({ name: 'notes-page', params: { id: c.id } })">
+        <button class="crumb" @click="navigatePage(c.id)">
           {{ c.icon ? c.icon + ' ' : '' }}{{ c.title || 'Untitled' }}
         </button>
       </template>
@@ -83,8 +92,8 @@ function startSideSelection(e: PointerEvent | MouseEvent) {
     </nav>
 
     <div class="page-workspace">
-      <div class="selection-gutter left" @pointerdown="startSideSelection" @mousedown="startSideSelection" />
-      <div class="selection-gutter right" @pointerdown="startSideSelection" @mousedown="startSideSelection" />
+      <div class="selection-gutter left" @pointerdown="startSideSelection" />
+      <div class="selection-gutter right" @pointerdown="startSideSelection" />
       <div class="page-body">
       <div class="page-icon-row">
         <IconPicker
@@ -150,16 +159,15 @@ function startSideSelection(e: PointerEvent | MouseEvent) {
   position: absolute;
   top: 0;
   bottom: 0;
-  z-index: 0;
+  z-index: 2;
+  width: 40px;
   cursor: default;
 }
 .selection-gutter.left {
-  left: 0;
-  right: calc(50% + 560px);
+  left: max(0px, calc(50% - 560px));
 }
 .selection-gutter.right {
-  left: calc(50% + 560px);
-  right: 0;
+  right: max(0px, calc(50% - 560px));
 }
 .page-icon-row { position: relative; min-height: 8px; }
 .page-icon { font-size: 40px; line-height: 1; border-radius: 6px; padding: 4px; }

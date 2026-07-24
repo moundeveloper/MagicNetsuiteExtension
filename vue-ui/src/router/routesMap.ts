@@ -121,11 +121,11 @@ export const routes: FullRoute[] = [
   },
   {
     route: "/watchtower",
-    name: "Watchtower",
-    icon: "pi pi-eye",
+    name: "Record History",
+    icon: "pi pi-history",
     component: WatchtowerView,
     status: RouteStatus.release,
-    breadcrumb: "Watchtower"
+    breadcrumb: "Record History"
   },
   {
     route: "/dependency-explorer",

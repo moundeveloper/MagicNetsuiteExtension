@@ -1,6 +1,19 @@
+import { inject, type InjectionKey } from 'vue'
 import { defineStore } from 'pinia'
 import { db, uid, now } from '../db'
 import type { Block, BlockType, DbSchema, Page } from '../types'
+
+export const NOTES_WORKSPACE_CHANGED_EVENT = 'magic-notes-workspace-changed'
+
+export type NotesWorkspaceChange = {
+  source: string
+  pages?: boolean
+  blocksPageId?: string
+}
+
+function notifyWorkspaceChanged(detail: NotesWorkspaceChange) {
+  window.dispatchEvent(new CustomEvent<NotesWorkspaceChange>(NOTES_WORKSPACE_CHANGED_EVENT, { detail }))
+}
 
 interface State {
   pages: Page[]
@@ -17,7 +30,7 @@ function sortByPosition<T extends { position: number }>(arr: T[]): T[] {
   return [...arr].sort((a, b) => a.position - b.position)
 }
 
-export const useWorkspace = defineStore('workspace', {
+const createWorkspaceDefinition = (id: string) => defineStore(id, {
   state: (): State => ({
     pages: [],
     blocks: [],
@@ -70,6 +83,15 @@ export const useWorkspace = defineStore('workspace', {
       this.recentIds = (recent?.value as string[]) ?? []
       if (this.pages.length === 0) await this.seedWelcome()
       this.loaded = true
+    },
+
+    async refreshPages() {
+      this.pages = await db.pages.toArray()
+    },
+
+    async refreshBlocks(pageId: string) {
+      if (this.currentPageId !== pageId) return
+      this.blocks = sortByPosition(await db.blocks.where('pageId').equals(pageId).toArray())
     },
 
     async removeLegacyBranding() {
@@ -130,6 +152,7 @@ export const useWorkspace = defineStore('workspace', {
       }
       this.pages.push(page)
       await db.pages.add(JSON.parse(JSON.stringify(page)))
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
       return page
     },
 
@@ -138,6 +161,7 @@ export const useWorkspace = defineStore('workspace', {
       const idx = this.pages.findIndex((p) => p.id === page.id)
       if (idx >= 0) this.pages[idx] = page
       await db.pages.put(JSON.parse(JSON.stringify(page)))
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     async openPage(id: string) {
@@ -163,6 +187,7 @@ export const useWorkspace = defineStore('workspace', {
         }
       }
       if (this.currentPageId && ids.includes(this.currentPageId)) this.currentPageId = null
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     async restorePage(id: string) {
@@ -173,6 +198,7 @@ export const useWorkspace = defineStore('workspace', {
       const parent = this.pages.find((x) => x.id === p.parentId)
       if (!parent || parent.trashedAt) p.parentId = null
       await db.pages.put(JSON.parse(JSON.stringify(p)))
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     async deletePagePermanently(id: string) {
@@ -186,6 +212,7 @@ export const useWorkspace = defineStore('workspace', {
         await db.pages.delete(pid)
       }
       this.pages = this.pages.filter((p) => !ids.includes(p.id))
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     async emptyTrash() {
@@ -197,6 +224,7 @@ export const useWorkspace = defineStore('workspace', {
       if (!p) return
       p.isFavorite = !p.isFavorite
       await db.pages.put(JSON.parse(JSON.stringify(p)))
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     async movePage(id: string, newParentId: string | null, position: number) {
@@ -218,6 +246,7 @@ export const useWorkspace = defineStore('workspace', {
         s.position = i
         await db.pages.put(JSON.parse(JSON.stringify(s)))
       }
+      notifyWorkspaceChanged({ source: this.$id, pages: true })
     },
 
     // ---- blocks ----
@@ -251,6 +280,7 @@ export const useWorkspace = defineStore('workspace', {
         p.updatedAt = now()
         await db.pages.put(JSON.parse(JSON.stringify(p)))
       }
+      notifyWorkspaceChanged({ source: this.$id, blocksPageId: this.currentPageId })
     },
 
     newBlock(type: BlockType = 'paragraph', html = '', indent = 0): Block {
@@ -277,6 +307,7 @@ export const useWorkspace = defineStore('workspace', {
       if (!b) return
       Object.assign(b, patch, { updatedAt: now() })
       await db.blocks.put(JSON.parse(JSON.stringify(b)))
+      notifyWorkspaceChanged({ source: this.$id, blocksPageId: b.pageId })
     },
 
     async moveBlock(from: number, to: number) {
@@ -371,6 +402,19 @@ export const useWorkspace = defineStore('workspace', {
 
   },
 })
+
+export const useWorkspace = createWorkspaceDefinition('workspace')
+export type WorkspaceStore = ReturnType<typeof useWorkspace>
+
+export const notesWorkspaceKey: InjectionKey<WorkspaceStore> = Symbol('notes-workspace')
+
+export function createWorkspaceStore(instanceId: string): WorkspaceStore {
+  return createWorkspaceDefinition(`workspace:${instanceId}`)()
+}
+
+export function useNotesWorkspace(): WorkspaceStore {
+  return inject(notesWorkspaceKey, null) ?? useWorkspace()
+}
 
 export function defaultDbSchema(): DbSchema {
   const statusOpts = [

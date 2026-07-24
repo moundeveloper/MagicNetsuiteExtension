@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useWorkspace } from '../stores/workspace'
+import { useNotesWorkspace } from '../stores/workspace'
 import { escapeHtml } from '../stores/workspace'
 import type { Block, BlockType } from '../types'
 import IconPicker from './IconPicker.vue'
@@ -30,14 +30,35 @@ const emit = defineEmits<{
   (e: 'drag-start', index: number, ev: DragEvent): void
   (e: 'drag-over', index: number, ev: DragEvent): void
   (e: 'drag-end'): void
+  (e: 'paste-image', index: number, dataUrl: string): void
 }>()
 
-const ws = useWorkspace()
+const ws = useNotesWorkspace()
 const openPageTab = inject<(id: string, activate?: boolean) => void>('openPageTab')
 const navigatePage = inject<(id: string) => void>('navigatePage')
 const contentEl = ref<HTMLElement>()
 const menuPos = ref<{ x: number; y: number } | null>(null)
 const imageInput = ref<HTMLInputElement>()
+const imageFrame = ref<HTMLElement>()
+const imageWidth = ref(Math.max(20, Math.min(100, props.block.imageWidth ?? 100)))
+let imageResize:
+  | {
+      startX: number
+      startWidth: number
+      containerWidth: number
+    }
+  | null = null
+
+watch(
+  () => props.block.imageWidth,
+  (width) => {
+    if (!imageResize) imageWidth.value = Math.max(20, Math.min(100, width ?? 100))
+  },
+)
+
+const imageFrameStyle = computed(() => ({
+  width: `${imageWidth.value}%`,
+}))
 
 const numberLabel = computed(() => {
   if (props.block.type !== 'numbered') return 0
@@ -66,9 +87,6 @@ const placeholder = computed(() => {
 })
 
 const isText = computed(() => !['divider', 'image'].includes(props.block.type))
-const isPageBlock = computed(() => /data-page-link="[^"]+"/.test(props.block.html))
-const isStructured = computed(() => ['callout', 'code', 'divider', 'image', 'quote'].includes(props.block.type) || isPageBlock.value)
-
 // ---- caret helpers ----
 
 function caretAtStart(): boolean {
@@ -131,6 +149,16 @@ function focusAt(at: 'start' | 'end') {
   sel.addRange(range)
 }
 
+function contentHasSelection(): boolean {
+  const el = contentEl.value
+  const selection = window.getSelection()
+  return !!(
+    el &&
+    selection?.rangeCount &&
+    (el.contains(selection.anchorNode) || el.contains(selection.focusNode))
+  )
+}
+
 watch(
   () => props.focusRequest,
   (fr) => {
@@ -147,7 +175,7 @@ watch(
   () => props.block.html,
   (html) => {
     const el = contentEl.value
-    if (el && isText.value && storedHtml(el.innerHTML) !== html && document.activeElement !== el) {
+    if (el && isText.value && storedHtml(el.innerHTML) !== html && !contentHasSelection()) {
       el.innerHTML = renderHtml(html)
     }
   },
@@ -157,7 +185,7 @@ watch(
   () => ws.pages.map((p) => `${p.id}:${p.title}:${p.icon ?? ''}:${p.type}:${p.trashedAt ?? ''}`).join('|'),
   () => {
     const el = contentEl.value
-    if (el && isText.value && document.activeElement !== el) el.innerHTML = renderHtml(props.block.html)
+    if (el && isText.value && !contentHasSelection()) el.innerHTML = renderHtml(props.block.html)
   },
 )
 
@@ -260,7 +288,30 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-function onPaste(e: ClipboardEvent) {
+function readImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onPaste(e: ClipboardEvent) {
+  const imageItem = Array.from(e.clipboardData?.items ?? [])
+    .find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+  const image = imageItem?.getAsFile()
+    ?? Array.from(e.clipboardData?.files ?? []).find((file) => file.type.startsWith('image/'))
+  if (image) {
+    e.preventDefault()
+    try {
+      const dataUrl = await readImage(image)
+      if (dataUrl) emit('paste-image', props.index, dataUrl)
+    } catch (error) {
+      console.error('Failed to paste image.', error)
+    }
+    return
+  }
   e.preventDefault()
   const text = e.clipboardData?.getData('text/plain') ?? ''
   document.execCommand('insertHTML', false, escapeHtml(text).replace(/\n/g, '<br>'))
@@ -361,6 +412,50 @@ async function onImagePick(e: Event) {
   reader.readAsDataURL(file)
 }
 
+function startImageResize(e: PointerEvent) {
+  if (e.button !== 0 || !imageFrame.value) return
+  const container = imageFrame.value.parentElement
+  if (!container) return
+  const containerWidth = container.getBoundingClientRect().width
+  if (containerWidth <= 0) return
+
+  e.preventDefault()
+  e.stopPropagation()
+  ws.snapshot()
+  imageResize = {
+    startX: e.clientX,
+    startWidth: imageFrame.value.getBoundingClientRect().width,
+    containerWidth,
+  }
+  document.body.style.cursor = 'ew-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onImageResize)
+  window.addEventListener('pointerup', stopImageResize)
+  window.addEventListener('pointercancel', stopImageResize)
+}
+
+function onImageResize(e: PointerEvent) {
+  if (!imageResize) return
+  const nextWidth = imageResize.startWidth + e.clientX - imageResize.startX
+  imageWidth.value = Math.max(
+    20,
+    Math.min(100, (nextWidth / imageResize.containerWidth) * 100),
+  )
+}
+
+function stopImageResize() {
+  if (!imageResize) return
+  imageResize = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  window.removeEventListener('pointermove', onImageResize)
+  window.removeEventListener('pointerup', stopImageResize)
+  window.removeEventListener('pointercancel', stopImageResize)
+  void ws.updateBlock(props.block.id, {
+    imageWidth: Math.round(imageWidth.value * 10) / 10,
+  })
+}
+
 // ---- handle menu ----
 
 function closeMenu() {
@@ -384,10 +479,12 @@ function openMenu(e: MouseEvent) {
   })
 }
 
-onBeforeUnmount(closeMenu)
+onBeforeUnmount(() => {
+  closeMenu()
+  stopImageResize()
+})
 
-function onStructuredMouseDown(e: MouseEvent) {
-  if (!isStructured.value) return
+function onBlockMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
   if (target.closest('.block-content, input, button, a')) return
   emit('select-block', props.index, e.shiftKey || e.ctrlKey || e.metaKey)
@@ -419,7 +516,7 @@ function copyCode() {
     :style="{ marginLeft: block.indent * 26 + 'px' }"
     @dragover="emit('drag-over', index, $event)"
   >
-    <div class="blk-gutter">
+    <div class="blk-gutter" contenteditable="false">
       <button
         class="blk-handle"
         draggable="true"
@@ -431,21 +528,23 @@ function copyCode() {
     </div>
 
     <!-- prefix -->
-    <span v-if="block.type === 'bulleted'" class="blk-prefix">•</span>
-    <span v-else-if="block.type === 'numbered'" class="blk-prefix num">{{ numberLabel }}.</span>
+    <span v-if="block.type === 'bulleted'" class="blk-prefix" contenteditable="false">•</span>
+    <span v-else-if="block.type === 'numbered'" class="blk-prefix num" contenteditable="false">{{ numberLabel }}.</span>
     <button
       v-else-if="block.type === 'todo'"
       class="blk-prefix check"
+      contenteditable="false"
       :class="{ checked: block.checked }"
       @click="toggleCheck"
     >{{ block.checked ? '✓' : '' }}</button>
     <button
       v-else-if="block.type === 'toggle'"
       class="blk-prefix toggle-arrow"
+      contenteditable="false"
       :class="{ open: !block.collapsed }"
       @click="toggleCollapse"
     >▸</button>
-    <span v-else-if="block.type === 'callout'" class="blk-prefix callout-icon">
+    <span v-else-if="block.type === 'callout'" class="blk-prefix callout-icon" contenteditable="false">
       <IconPicker
         :model-value="block.icon ?? '💡'"
         fallback="💡"
@@ -455,11 +554,20 @@ function copyCode() {
     </span>
 
     <!-- content -->
-    <hr v-if="block.type === 'divider'" class="blk-divider" />
+    <hr v-if="block.type === 'divider'" class="blk-divider" contenteditable="false" />
 
-    <div v-else-if="block.type === 'image'" class="blk-image" @mousedown="onStructuredMouseDown">
+    <div v-else-if="block.type === 'image'" class="blk-image" contenteditable="false" @mousedown="onBlockMouseDown">
       <template v-if="block.html">
-        <img :src="block.html" :alt="block.caption ?? 'image'" />
+        <div ref="imageFrame" class="img-frame" :style="imageFrameStyle">
+          <img :src="block.html" :alt="block.caption ?? 'image'" draggable="false" />
+          <button
+            class="img-resize-handle"
+            type="button"
+            title="Drag to resize image"
+            aria-label="Resize image"
+            @pointerdown="startImageResize"
+          />
+        </div>
         <input
           class="img-caption"
           :value="block.caption ?? ''"
@@ -471,8 +579,8 @@ function copyCode() {
       <input ref="imageInput" type="file" accept="image/*" hidden @change="onImagePick" />
     </div>
 
-    <div v-else class="blk-main" @mousedown="onStructuredMouseDown">
-      <div v-if="block.type === 'code'" class="code-bar">
+    <div v-else class="blk-main" @mousedown="onBlockMouseDown">
+      <div v-if="block.type === 'code'" class="code-bar" contenteditable="false">
         <input
           class="code-lang"
           :value="block.lang ?? ''"
@@ -487,6 +595,7 @@ function copyCode() {
         :class="{ done: block.type === 'todo' && block.checked }"
         contenteditable="true"
         spellcheck="false"
+        tabindex="0"
         :data-placeholder="placeholder"
         @input="onInput"
         @keydown="onKeydown"
@@ -549,14 +658,15 @@ function copyCode() {
 .blk.selected::before {
   content: '';
   position: absolute;
-  inset: -4px -8px;
-  border: 1px solid rgba(90, 159, 224, 0.7);
-  border-radius: 8px;
-  background: rgba(46, 117, 204, 0.16);
+  inset: 0 -6px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--notes-accent) 12%, transparent);
   pointer-events: none;
   z-index: 0;
 }
-.blk.multi-selected::before { background: rgba(46, 117, 204, 0.22); }
+.blk.multi-selected::before {
+  background: color-mix(in srgb, var(--notes-accent) 16%, transparent);
+}
 .blk > * { position: relative; z-index: 1; }
 .blk-gutter {
   position: absolute;
@@ -723,8 +833,39 @@ function copyCode() {
   border-top: 1px solid var(--notes-border);
   margin: 10px 0;
 }
-.blk-image { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-.blk-image img { max-width: 100%; border-radius: 6px; }
+.blk-image { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.img-frame {
+  position: relative;
+  min-width: 20%;
+  max-width: 100%;
+}
+.img-frame img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.img-resize-handle {
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  width: 10px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--notes-border);
+  border-radius: 3px;
+  background: var(--notes-bg);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--notes-text) 16%, transparent);
+  cursor: ew-resize;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.1s;
+}
+.img-frame:hover .img-resize-handle,
+.img-resize-handle:focus-visible {
+  opacity: 1;
+}
 .img-caption {
   border: none;
   outline: none;

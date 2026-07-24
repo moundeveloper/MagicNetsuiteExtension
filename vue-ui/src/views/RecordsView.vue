@@ -5,6 +5,7 @@ import { debounce } from "lodash";
 import { callApi, closePanel, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
 import MSelect from "../components/universal/input/MSelect.vue";
+import { openDashboardTab } from "../utils/dashboardTabs";
 
 type RecordTypeOption = {
   id: string;
@@ -17,9 +18,16 @@ type RecordRow = {
   meta: string;
 };
 
-const props = defineProps<{ vhOffset: number }>();
+const props = defineProps<{
+  vhOffset: number;
+  tabFullPath?: string;
+  tabActive?: boolean;
+}>();
 const route = useRoute();
 const router = useRouter();
+const ownRoute = computed(() =>
+  router.resolve(props.tabFullPath || route.fullPath)
+);
 
 const recordTypes = ref<RecordTypeOption[]>([]);
 const selectedRecordType = ref("");
@@ -118,6 +126,21 @@ const buildSearchQueries = (recordType: string, searchText: string) => {
     ];
   }
 
+  if (cleanType === "script") {
+    const conditions: string[] = [];
+    if (cleanQuery) {
+      const search = escapeSuiteQL(cleanQuery);
+      conditions.push(
+        isNumeric(cleanQuery)
+          ? `(id = ${Number(cleanQuery)} OR LOWER(name) LIKE LOWER('%${search}%') OR LOWER(scriptid) LIKE LOWER('%${search}%'))`
+          : `(LOWER(name) LIKE LOWER('%${search}%') OR LOWER(scriptid) LIKE LOWER('%${search}%'))`
+      );
+    }
+    return [
+      `SELECT id, name, scriptid, scripttype FROM script${conditions.length ? ` WHERE ${conditions.join(" AND ")}` : ""} ORDER BY id DESC`
+    ];
+  }
+
   const where = (fields: string[]) => {
     const conditions: string[] = [];
     if (cleanQuery) {
@@ -165,6 +188,7 @@ const rowMeta = (row: Record<string, any>) =>
     row.entity,
     row.trandate,
     row.scriptid,
+    row.scripttype,
     row.email
   ]
     .filter((value) => value !== undefined && value !== null && value !== "")
@@ -177,17 +201,21 @@ const loadRecordTypes = async () => {
     const response = await callApi(RequestRoutes.GET_ALL_RECORD_TYPES);
     if (response?.status === "error") throw new Error(String(response.message));
     const rows = Array.isArray(response?.message) ? response.message : [];
-    recordTypes.value = rows
+    const availableTypes = rows
       .map((row: any) => ({
         id: String(row.id ?? "").toLowerCase(),
         name: String(row.name ?? row.id ?? "")
       }))
-      .filter((row: RecordTypeOption) => row.id)
+      .filter((row: RecordTypeOption) => row.id);
+    if (!availableTypes.some((type: RecordTypeOption) => type.id === "script")) {
+      availableTypes.push({ id: "script", name: "Script" });
+    }
+    recordTypes.value = availableTypes
       .sort((a: RecordTypeOption, b: RecordTypeOption) =>
         a.name.localeCompare(b.name)
       );
-    const requestedType = String(route.query.type ?? "").toLowerCase();
-    const requestedQuery = String(route.query.q ?? "");
+    const requestedType = String(ownRoute.value.query.type ?? "").toLowerCase();
+    const requestedQuery = String(ownRoute.value.query.q ?? "");
     selectedRecordType.value =
       recordTypes.value.find((type) => type.id === requestedType)?.id ??
       recordTypes.value.find((type) => type.id === "customer")?.id ??
@@ -336,13 +364,36 @@ const openInNetSuite = async (recordId: string) => {
   }
 };
 
-const openKnownId = (target: "details" | "netsuite") => {
+const openHistory = (record: { id: string; label?: string }) => {
+  const recordLabel =
+    record.label && record.label !== `#${record.id}` ? record.label : "";
+  const fullPath = router.resolve({
+    path: "/watchtower",
+    query: {
+      type: selectedRecordType.value,
+      id: record.id,
+      ...(recordLabel ? { label: recordLabel } : {})
+    }
+  }).fullPath;
+  openDashboardTab(fullPath, {
+    label: `History · ${
+      recordLabel ||
+      `${selectedType.value?.name ?? selectedRecordType.value} #${record.id}`
+    }`,
+    reuseExisting: true
+  });
+};
+
+const openKnownId = (target: "details" | "history" | "netsuite") => {
   const id = query.value.trim();
   if (!isNumeric(id)) {
     error.value = "Enter a numeric internal ID first.";
     return;
   }
   if (target === "details") openDetails(id);
+  else if (target === "history") {
+    openHistory({ id });
+  }
   else void openInNetSuite(id);
 };
 
@@ -355,8 +406,9 @@ watch(query, () => {
   debouncedSearch();
 });
 watch(
-  () => route.query,
-  async (nextQuery) => {
+  () => ownRoute.value.fullPath,
+  async () => {
+    const nextQuery = ownRoute.value.query;
     const requestedType = String(nextQuery.type ?? "").toLowerCase();
     const requestedSearch = String(nextQuery.q ?? "");
     if (!requestedType && !requestedSearch) return;
@@ -468,6 +520,13 @@ onBeforeUnmount(() => debouncedSearch.cancel());
                   <i class="pi pi-eye" />
                   Details
                 </button>
+                <button
+                  title="Open retained system-note history in a dashboard tab"
+                  @click="openHistory(record)"
+                >
+                  <i class="pi pi-history" />
+                  History
+                </button>
               </td>
             </tr>
           </tbody>
@@ -482,6 +541,9 @@ onBeforeUnmount(() => debouncedSearch.cancel());
             </button>
             <button @click="openKnownId('details')">
               <i class="pi pi-eye" /> View ID details
+            </button>
+            <button @click="openKnownId('history')">
+              <i class="pi pi-history" /> View ID history
             </button>
           </div>
         </div>
@@ -775,8 +837,16 @@ tbody tr:hover {
 
 .record-name {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 0.6rem;
+}
+
+.record-name strong,
+.record-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .record-name strong {

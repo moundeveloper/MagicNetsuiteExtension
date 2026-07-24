@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
+const props = defineProps<{ editorRoot?: HTMLElement }>()
 const pos = ref<{ x: number; y: number } | null>(null)
 let savedRange: Range | null = null
 
@@ -18,7 +19,8 @@ function selectionBlock(): HTMLElement | null {
   const sel = window.getSelection()
   const node = sel?.anchorNode
   const element = node instanceof Element ? node : node?.parentElement
-  return element?.closest<HTMLElement>('.block-content') ?? null
+  const block = element?.closest<HTMLElement>('.block-content') ?? null
+  return block && props.editorRoot?.contains(block) ? block : null
 }
 
 function closestInSelection(selector: string): HTMLElement | null {
@@ -56,7 +58,7 @@ function update() {
     sel.isCollapsed ||
     !sel.rangeCount ||
     !sel.toString().trim() ||
-    !(sel.anchorNode?.parentElement?.closest('.block-content'))
+    !selectionBlock()
   ) {
     pos.value = null
     savedRange = null
@@ -255,4 +257,3 @@ onBeforeUnmount(() => document.removeEventListener('selectionchange', onSelChang
 }
 .mono { font-family: monospace; }
 </style>
-

@@ -26,6 +26,8 @@ export interface Block {
   icon?: string
   lang?: string
   caption?: string
+  /** percentage of the available editor width used by an image block */
+  imageWidth?: number
   createdAt: string
   updatedAt: string
 }
@@ -111,5 +113,4 @@ export interface Settings {
   key: string
   value: unknown
 }
-
 

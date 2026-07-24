@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { computed, inject, onBeforeUnmount, ref } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 import { uid } from '../db'
 import type { DbFilter, DbProperty, DbSort, DbView, FilterOp, Page, PropertyType } from '../types'
 import MSelect from '../../../components/universal/input/MSelect.vue'
 
 const props = defineProps<{ page: Page }>()
-const ws = useWorkspace()
-const router = useRouter()
+const ws = useNotesWorkspace()
+const navigatePage = inject<(id: string) => void>('navigatePage')!
 
 const activeViewId = ref(props.page.dbSchema!.views[0]?.id ?? '')
 const showFilters = ref(false)
@@ -188,7 +187,7 @@ async function setTitle(rec: Page, title: string) {
 }
 
 function openRecord(rec: Page) {
-  router.push({ name: 'notes-page', params: { id: rec.id } })
+  navigatePage(rec.id)
 }
 
 function closeRowMenu() {

@@ -32,6 +32,7 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
+const router = useRouter();
 const code = ref<string>("");
 const template = ref<RecordItem | null>(null);
 const loading = ref(false);
@@ -420,6 +421,9 @@ onBeforeUnmount(() => {
       <ExpandableSidebar>
         <template #collapsed>
           <div class="flex flex-col gap-2">
+            <button type="button" class="secondary-btn secondary-btn--icon" title="Back to templates" @click="router.push('/templates')">
+              <i class="pi pi-arrow-left"></i>
+            </button>
             <button type="button" class="primary-btn primary-btn--icon" :disabled="loading" title="Save template" @click="saveTemplate">
               <i class="pi pi-save font-medium"></i>
             </button>
@@ -453,6 +457,10 @@ onBeforeUnmount(() => {
           <div class="sidebar-section">
             <h4>Actions</h4>
             <div class="flex flex-col gap-2">
+              <button type="button" class="secondary-btn" @click="router.push('/templates')">
+                <i class="pi pi-arrow-left"></i>
+                <span>Back to templates</span>
+              </button>
               <button type="button" class="primary-btn" :disabled="loading" @click="saveTemplate">
                 <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-save'"></i>
                 <span>{{ loading ? "Saving" : "Save" }}</span>

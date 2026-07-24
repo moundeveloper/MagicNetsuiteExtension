@@ -9,11 +9,11 @@
       :aria-expanded="isOpen"
       :aria-haspopup="true"
       @click="toggle"
-      @keydown.enter.prevent="toggle"
-      @keydown.space.prevent="toggle"
-      @keydown.escape.prevent="close"
-      @keydown.arrow-down.prevent="isOpen ? moveHighlight(1) : open()"
-      @keydown.arrow-up.prevent="isOpen ? moveHighlight(-1) : open()"
+      @keydown.enter.prevent.stop="toggle"
+      @keydown.space.prevent.stop="toggle"
+      @keydown.escape.prevent.stop="close"
+      @keydown.arrow-down.prevent.stop="isOpen ? moveHighlight(1) : open()"
+      @keydown.arrow-up.prevent.stop="isOpen ? moveHighlight(-1) : open()"
       @keydown.tab="close"
     >
       <span class="m-select-value" :class="{ 'is-placeholder': !hasValue }">
@@ -28,35 +28,62 @@
         ref="overlayRef"
         class="m-select-overlay"
         :style="overlayStyle"
-        @mousedown.prevent
       >
-        <div
-          v-for="(opt, i) in normalizedOptions"
-          :key="String(opt.value)"
-          class="m-select-option"
-          :class="{
-            'is-selected': opt.value === modelValue,
-            'is-highlighted': i === highlightedIndex
-          }"
-          @click="select(opt.value)"
-          @mouseenter="highlightedIndex = i"
-        >
-          <i
-            class="pi pi-check m-select-option-check"
-            :style="{ visibility: opt.value === modelValue ? 'visible' : 'hidden' }"
-          ></i>
-          <span :title="opt.label">{{ opt.label }}</span>
+        <label v-if="searchable" class="m-select-search">
+          <i class="pi pi-search"></i>
+          <input
+            ref="searchInputRef"
+            v-model="searchQuery"
+            type="search"
+            :placeholder="searchPlaceholder"
+            autocomplete="off"
+            @keydown.arrow-down.prevent.stop="moveHighlight(1)"
+            @keydown.arrow-up.prevent.stop="moveHighlight(-1)"
+            @keydown.enter.prevent.stop="selectHighlighted"
+            @keydown.escape.prevent.stop="close"
+          />
+        </label>
+        <div v-if="loading" class="m-select-empty">
+          <i class="pi pi-spin pi-spinner"></i>
+          Loading options…
         </div>
-        <div v-if="normalizedOptions.length === 0" class="m-select-empty">
-          No options
-        </div>
+        <template v-else>
+          <div
+            v-for="(opt, i) in visibleOptions"
+            :key="String(opt.value)"
+            class="m-select-option"
+            :class="{
+              'is-selected': opt.value === modelValue,
+              'is-highlighted': i === highlightedIndex
+            }"
+            @mousedown.prevent
+            @click="select(opt.value)"
+            @mouseenter="highlightedIndex = i"
+          >
+            <i
+              class="pi pi-check m-select-option-check"
+              :style="{ visibility: opt.value === modelValue ? 'visible' : 'hidden' }"
+            ></i>
+            <span :title="opt.label">{{ opt.label }}</span>
+          </div>
+          <div v-if="visibleOptions.length === 0" class="m-select-empty">
+            {{ emptyLabel }}
+          </div>
+        </template>
       </div>
     </Teleport>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import {
+  ref,
+  computed,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+  watch
+} from "vue";
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
@@ -67,6 +94,11 @@ interface Props {
   placeholder?: string;
   size?: "small" | "default";
   disabled?: boolean;
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  filterOptions?: boolean;
+  loading?: boolean;
+  emptyLabel?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -75,19 +107,27 @@ const props = withDefaults(defineProps<Props>(), {
   optionValue: "value",
   placeholder: "Select...",
   size: "default",
-  disabled: false
+  disabled: false,
+  searchable: false,
+  searchPlaceholder: "Search options…",
+  filterOptions: true,
+  loading: false,
+  emptyLabel: "No options"
 });
 
 const emit = defineEmits<{
   "update:modelValue": [value: string | number | null];
+  search: [query: string];
 }>();
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const rootRef = ref<HTMLElement | null>(null);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const overlayRef = ref<HTMLElement | null>(null);
+const searchInputRef = ref<HTMLInputElement | null>(null);
 const isOpen = ref(false);
 const highlightedIndex = ref(0);
+const searchQuery = ref("");
 const overlayRect = ref<{
   top: number;
   left: number;
@@ -108,6 +148,16 @@ const normalizedOptions = computed(() =>
     };
   })
 );
+
+const visibleOptions = computed(() => {
+  const needle = searchQuery.value.trim().toLowerCase();
+  if (!props.searchable || !props.filterOptions || !needle) {
+    return normalizedOptions.value;
+  }
+  return normalizedOptions.value.filter((option) =>
+    option.label.toLowerCase().includes(needle)
+  );
+});
 
 const hasValue = computed(
   () => props.modelValue !== null && props.modelValue !== undefined && props.modelValue !== ""
@@ -137,7 +187,11 @@ const computeOverlayRect = () => {
   const el = triggerRef.value;
   if (!el) return;
   const rect = el.getBoundingClientRect();
-  const preferredHeight = Math.min(220, normalizedOptions.value.length * 34 + 8);
+  const searchHeight = props.searchable ? 46 : 0;
+  const preferredHeight = Math.min(
+    280,
+    visibleOptions.value.length * 34 + searchHeight + 8
+  );
   const spaceBelow = window.innerHeight - rect.bottom - 8;
   const spaceAbove = rect.top - 8;
   const placement =
@@ -160,10 +214,17 @@ const computeOverlayRect = () => {
 
 const open = () => {
   if (props.disabled) return;
+  searchQuery.value = "";
   computeOverlayRect();
   isOpen.value = true;
-  const idx = normalizedOptions.value.findIndex((o) => o.value === props.modelValue);
+  const idx = visibleOptions.value.findIndex((o) => o.value === props.modelValue);
   highlightedIndex.value = idx >= 0 ? idx : 0;
+  if (props.searchable) {
+    void nextTick(() => {
+      searchInputRef.value?.focus();
+      computeOverlayRect();
+    });
+  }
 };
 
 const close = () => {
@@ -181,19 +242,35 @@ const select = (value: string | number | null) => {
 };
 
 const moveHighlight = (delta: number) => {
-  const len = normalizedOptions.value.length;
+  const len = visibleOptions.value.length;
   if (!len) return;
   highlightedIndex.value = (highlightedIndex.value + delta + len) % len;
+};
+
+const selectHighlighted = () => {
+  const option = visibleOptions.value[highlightedIndex.value];
+  if (option) select(option.value);
 };
 
 // Keyboard: Enter while highlight active selects the highlighted option
 const handleKeydown = (e: KeyboardEvent) => {
   if (!isOpen.value) return;
   if (e.key === "Enter") {
-    const opt = normalizedOptions.value[highlightedIndex.value];
-    if (opt) select(opt.value);
+    selectHighlighted();
   }
 };
+
+watch(searchQuery, (query) => {
+  highlightedIndex.value = 0;
+  emit("search", query);
+  if (isOpen.value) void nextTick(computeOverlayRect);
+});
+
+watch(visibleOptions, () => {
+  const lastIndex = Math.max(0, visibleOptions.value.length - 1);
+  highlightedIndex.value = Math.min(highlightedIndex.value, lastIndex);
+  if (isOpen.value) void nextTick(computeOverlayRect);
+});
 
 // ── Outside click ─────────────────────────────────────────────────────────────
 const handleOutsidePointerDown = (event: MouseEvent) => {
@@ -328,6 +405,43 @@ onBeforeUnmount(() => {
   padding: 0.2rem 0;
 }
 
+.m-select-search {
+  position: sticky;
+  z-index: 1;
+  top: -0.2rem;
+  display: flex;
+  align-items: center;
+  margin: -0.2rem 0 0.2rem;
+  padding: 0.42rem;
+  border-bottom: 1px solid var(--p-slate-200, #e2e8f0);
+  background: #ffffff;
+}
+
+.m-select-search > i {
+  position: absolute;
+  left: 0.85rem;
+  color: var(--p-slate-400, #94a3b8);
+  font-size: 0.72rem;
+}
+
+.m-select-search > input {
+  width: 100%;
+  height: 1.9rem;
+  padding: 0 0.55rem 0 1.65rem;
+  border: 1px solid var(--p-slate-300, #cbd5e1);
+  border-radius: 4px;
+  outline: none;
+  background: #ffffff;
+  color: var(--p-slate-800, #1e293b);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.m-select-search > input:focus {
+  border-color: #c6a7ff;
+  box-shadow: 0 0 0 2px #faf7ff;
+}
+
 .m-select-option {
   display: flex;
   align-items: center;
@@ -367,6 +481,10 @@ onBeforeUnmount(() => {
 }
 
 .m-select-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
   padding: 0.5rem 0.75rem;
   font-size: 0.8rem;
   color: var(--p-slate-400, #94a3b8);

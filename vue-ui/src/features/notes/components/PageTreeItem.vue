@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { useWorkspace } from '../stores/workspace'
+import { computed, inject, ref, type ComputedRef } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 import type { Page } from '../types'
 
 const props = defineProps<{ page: Page; depth: number; flat?: boolean }>()
-const ws = useWorkspace()
-const router = useRouter()
-const route = useRoute()
+const ws = useNotesWorkspace()
+const activePageId = inject<ComputedRef<string | null>>('notesActivePageId')
 const openPageTab = inject<(id: string, activate?: boolean) => void>('openPageTab')
 const navigatePage = inject<(id: string) => void>('navigatePage')
 
@@ -16,14 +14,10 @@ const menuPos = ref<{ x: number; y: number } | null>(null)
 const dragOver = ref<'inside' | 'above' | null>(null)
 
 const children = computed(() => (props.flat ? [] : ws.childrenOf(props.page.id)))
-const isActive = computed(() => route.params.id === props.page.id)
+const isActive = computed(() => activePageId?.value === props.page.id)
 
 function open(e?: MouseEvent) {
-  if (navigatePage) {
-    navigatePage(props.page.id)
-    return
-  }
-  router.push({ name: 'notes-page', params: { id: props.page.id } })
+  navigatePage?.(props.page.id)
 }
 
 function openMiddle(e: MouseEvent) {
@@ -42,7 +36,7 @@ function preventMiddle(e: MouseEvent) {
 async function addChild() {
   const p = await ws.createPage(props.page.id, '')
   expanded.value = true
-  router.push({ name: 'notes-page', params: { id: p.id } })
+  openPageTab?.(p.id, true)
 }
 
 function openMenu(e: MouseEvent) {
@@ -63,7 +57,7 @@ async function duplicate() {
   const { db, uid, now } = await import('../db')
   const blocks = await db.blocks.where('pageId').equals(props.page.id).toArray()
   for (const b of blocks) await db.blocks.add({ ...b, id: uid(), pageId: copy.id, createdAt: now(), updatedAt: now() })
-  router.push({ name: 'notes-page', params: { id: copy.id } })
+  openPageTab?.(copy.id, true)
 }
 
 async function exportMd() {
@@ -199,4 +193,3 @@ function onDrop(e: DragEvent) {
 }
 .pt-row:hover .pt-actions { visibility: visible; }
 </style>
-

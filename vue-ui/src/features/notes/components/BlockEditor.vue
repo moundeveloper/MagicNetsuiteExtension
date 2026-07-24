@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useWorkspace } from '../stores/workspace'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, type ComputedRef } from 'vue'
+import { useNotesWorkspace } from '../stores/workspace'
 import type { Block, BlockType } from '../types'
 import BlockItem from './BlockItem.vue'
 import SlashMenu from './SlashMenu.vue'
 import FloatingToolbar from './FloatingToolbar.vue'
 
-const ws = useWorkspace()
+const ws = useNotesWorkspace()
+const tabFocused = inject<ComputedRef<boolean>>('notesTabFocused')
 
 const editorEl = ref<HTMLElement>()
 const focusRequest = ref<{ id: string; at: 'start' | 'end' } | null>(null)
@@ -22,6 +23,9 @@ const selectionDrag = ref<{ active: boolean; startX: number; startY: number; x: 
   x: 0,
   y: 0,
 })
+let gutterSelection = false
+let textSelectionAnchor: { node: Node; offset: number } | null = null
+let textSelectionAnchorContent: HTMLElement | null = null
 
 /** blocks visible after collapsing toggles */
 const visibleBlocks = computed(() => {
@@ -67,12 +71,6 @@ function requestFocus(id: string, at: 'start' | 'end' = 'end') {
   nextTick(() => (focusRequest.value = { id, at }))
 }
 
-const structuredTypes = new Set<BlockType>(['callout', 'code', 'divider', 'image', 'quote'])
-
-function isStructuredBlock(block: Block): boolean {
-  return structuredTypes.has(block.type) || !!linkedPageId(block)
-}
-
 function linkedPageId(block: Block): string | null {
   return block.html.match(/data-page-link="([^"]+)"/)?.[1] ?? null
 }
@@ -83,7 +81,7 @@ function clearSelected() {
 
 function onSelectBlock(index: number, additive: boolean) {
   const block = ws.blocks[index]
-  if (!block || !isStructuredBlock(block)) return
+  if (!block) return
   if (additive) {
     selectedIds.value = selectedIds.value.includes(block.id)
       ? selectedIds.value.filter((id) => id !== block.id)
@@ -314,7 +312,7 @@ function insertionIndexFromPointer(y: number): number | null {
   const vis = visibleBlocks.value
   if (!vis.length) return 0
   for (const { block, index } of vis) {
-    const el = document.querySelector<HTMLElement>(`[data-block-id="${block.id}"]`)
+    const el = editorEl.value?.querySelector<HTMLElement>(`[data-block-id="${block.id}"]`)
     if (!el) continue
     const content = el.querySelector<HTMLElement>('.block-content, .blk-divider, .blk-image, .blk-main')
     const rect = (content ?? el).getBoundingClientRect()
@@ -403,13 +401,12 @@ function onSelectionPointerDown(e: PointerEvent | MouseEvent) {
   const target = e.target as HTMLElement
   if (target.closest('.menu, button, input, textarea, a, [contenteditable="true"], .blk-handle')) return
   stopSelectionDrag()
+  gutterSelection = !!target.closest('.selection-gutter')
   selectionDrag.value = { active: true, startX: e.clientX, startY: e.clientY, x: e.clientX, y: e.clientY }
   selectedIds.value = []
   e.preventDefault()
   document.addEventListener('pointermove', onSelectionPointerMove)
-  document.addEventListener('mousemove', onSelectionPointerMove)
   document.addEventListener('pointerup', stopSelectionDrag)
-  document.addEventListener('mouseup', stopSelectionDrag)
   document.addEventListener('pointercancel', stopSelectionDrag)
   window.addEventListener('blur', stopSelectionDrag)
 }
@@ -431,24 +428,161 @@ function onSelectionPointerMove(e: PointerEvent | MouseEvent) {
   selectionDrag.value.y = e.clientY
   const rect = selectionRect.value
   selectedIds.value = visibleBlocks.value
-    .filter(({ block }) => isStructuredBlock(block))
     .filter(({ block }) => {
-      const el = document.querySelector<HTMLElement>(`[data-block-id="${block.id}"]`)
+      const el = editorEl.value?.querySelector<HTMLElement>(`[data-block-id="${block.id}"]`)
       if (!el) return false
       const r = el.getBoundingClientRect()
-      return rect.left < r.right && rect.right > r.left && rect.top < r.bottom && rect.bottom > r.top
+      const verticallyOverlaps = rect.top < r.bottom && rect.bottom > r.top
+      return gutterSelection
+        ? verticallyOverlaps
+        : rect.left < r.right && rect.right > r.left && verticallyOverlaps
     })
     .map(({ block }) => block.id)
 }
 
 function stopSelectionDrag() {
   selectionDrag.value.active = false
+  gutterSelection = false
   document.removeEventListener('pointermove', onSelectionPointerMove)
-  document.removeEventListener('mousemove', onSelectionPointerMove)
   document.removeEventListener('pointerup', stopSelectionDrag)
-  document.removeEventListener('mouseup', stopSelectionDrag)
   document.removeEventListener('pointercancel', stopSelectionDrag)
   window.removeEventListener('blur', stopSelectionDrag)
+}
+
+function caretAtPoint(x: number, y: number): { node: Node; offset: number } | null {
+  const documentWithCaret = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => CaretPosition | null
+    caretRangeFromPoint?: (x: number, y: number) => Range | null
+  }
+  const position = documentWithCaret.caretPositionFromPoint?.(x, y)
+  if (position) return { node: position.offsetNode, offset: position.offset }
+  const range = documentWithCaret.caretRangeFromPoint?.(x, y)
+  return range ? { node: range.startContainer, offset: range.startOffset } : null
+}
+
+function closestTextCaret(x: number, y: number): { node: Node; offset: number } | null {
+  if (!editorEl.value) return null
+  const contents = Array.from(editorEl.value.querySelectorAll<HTMLElement>('.block-content'))
+  const direct = caretAtPoint(x, y)
+  if (
+    direct &&
+    contents.some((content) => content === direct.node || content.contains(direct.node))
+  ) {
+    return direct
+  }
+
+  let closest: HTMLElement | null = null
+  let closestDistance = Number.POSITIVE_INFINITY
+  for (const content of contents) {
+    const rect = content.getBoundingClientRect()
+    const distance = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0
+    if (distance < closestDistance) {
+      closest = content
+      closestDistance = distance
+    }
+  }
+  if (!closest) return null
+
+  const rect = closest.getBoundingClientRect()
+  const caret = caretAtPoint(
+    Math.max(rect.left + 1, Math.min(rect.right - 1, x)),
+    Math.max(rect.top + 1, Math.min(rect.bottom - 1, y)),
+  )
+  if (caret && (closest === caret.node || closest.contains(caret.node))) return caret
+
+  const range = document.createRange()
+  range.selectNodeContents(closest)
+  range.collapse(y <= rect.top + rect.height / 2)
+  return { node: range.startContainer, offset: range.startOffset }
+}
+
+function onTextSelectionPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  const content = (e.target as HTMLElement).closest<HTMLElement>('.block-content')
+  if (!content) return
+  const caret = closestTextCaret(e.clientX, e.clientY)
+  if (!caret) return
+  editorEl.value?.focus()
+  textSelectionAnchor = caret
+  textSelectionAnchorContent = content
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.setPosition(caret.node, caret.offset)
+  e.preventDefault()
+  document.addEventListener('pointermove', onTextSelectionPointerMove)
+  document.addEventListener('pointerup', stopTextSelectionTracking)
+  document.addEventListener('pointercancel', stopTextSelectionTracking)
+}
+
+function onTextSelectionPointerMove(e: PointerEvent) {
+  if (!textSelectionAnchor || !(e.buttons & 1)) return
+  const caret = closestTextCaret(e.clientX, e.clientY)
+  if (!caret) return
+  window.getSelection()?.setBaseAndExtent(
+    textSelectionAnchor.node,
+    textSelectionAnchor.offset,
+    caret.node,
+    caret.offset,
+  )
+}
+
+function stopTextSelectionTracking() {
+  const selection = window.getSelection()
+  if (selection?.isCollapsed && selection.rangeCount && textSelectionAnchorContent) {
+    const range = selection.getRangeAt(0).cloneRange()
+    textSelectionAnchorContent.focus()
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+  textSelectionAnchor = null
+  textSelectionAnchorContent = null
+  document.removeEventListener('pointermove', onTextSelectionPointerMove)
+  document.removeEventListener('pointerup', stopTextSelectionTracking)
+  document.removeEventListener('pointercancel', stopTextSelectionTracking)
+}
+
+function selectionContent(): HTMLElement | null {
+  const node = window.getSelection()?.anchorNode
+  const element = node instanceof Element ? node : node?.parentElement
+  const content = element?.closest<HTMLElement>('.block-content') ?? null
+  return content && editorEl.value?.contains(content) ? content : null
+}
+
+function onEditorKeydown(e: KeyboardEvent) {
+  if ((e.target as HTMLElement).closest('.block-content')) return
+  const content = selectionContent()
+  if (!content) return
+  const forwarded = new KeyboardEvent('keydown', {
+    key: e.key,
+    code: e.code,
+    ctrlKey: e.ctrlKey,
+    metaKey: e.metaKey,
+    altKey: e.altKey,
+    shiftKey: e.shiftKey,
+    repeat: e.repeat,
+    cancelable: true,
+    bubbles: false,
+  })
+  content.dispatchEvent(forwarded)
+  if (forwarded.defaultPrevented) e.preventDefault()
+}
+
+function onEditorInput(e: Event) {
+  if ((e.target as HTMLElement).closest('.block-content')) return
+  selectionContent()?.dispatchEvent(new Event('input', { bubbles: false }))
+}
+
+function onEditorPaste(e: ClipboardEvent) {
+  if ((e.target as HTMLElement).closest('.block-content')) return
+  const content = selectionContent()
+  if (!content) return
+  const forwarded = new ClipboardEvent('paste', {
+    clipboardData: e.clipboardData ?? undefined,
+    cancelable: true,
+    bubbles: false,
+  })
+  content.dispatchEvent(forwarded)
+  if (forwarded.defaultPrevented) e.preventDefault()
 }
 
 const selectionRect = computed(() => {
@@ -477,9 +611,30 @@ async function appendBlock() {
   requestFocus(nb.id, 'start')
 }
 
+async function onPasteImage(index: number, dataUrl: string) {
+  const current = ws.blocks[index]
+  if (!current) return
+  ws.snapshot()
+  if (
+    current.type === 'paragraph' &&
+    stripHtmlForQuery(current.html).trim() === ''
+  ) {
+    await ws.updateBlock(current.id, {
+      type: 'image',
+      html: dataUrl,
+      caption: '',
+    })
+    return
+  }
+  const image = ws.newBlock('image', dataUrl, current.indent)
+  image.caption = ''
+  await ws.insertBlock(index, image)
+}
+
 // ---- global undo/redo ----
 
 function onKeydown(e: KeyboardEvent) {
+  if (tabFocused && !tabFocused.value) return
   if (e.key === 'Escape' && selectedIds.value.length) {
     selectedIds.value = []
     return
@@ -507,6 +662,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
   stopSelectionDrag()
+  stopTextSelectionTracking()
   resetDragState()
 })
 </script>
@@ -516,6 +672,12 @@ onBeforeUnmount(() => {
     ref="editorEl"
     class="editor"
     :class="{ selecting: selectionDrag.active }"
+    contenteditable="true"
+    spellcheck="false"
+    @pointerdown.capture="onTextSelectionPointerDown"
+    @keydown="onEditorKeydown"
+    @input="onEditorInput"
+    @paste="onEditorPaste"
     @dragenter="acceptBlockDrag"
     @dragover="onEditorDragOver"
     @drop.prevent.stop="onDrop"
@@ -544,6 +706,7 @@ onBeforeUnmount(() => {
       @drag-start="onDragStart"
       @drag-over="onDragOver"
       @drag-end="resetDragState"
+      @paste-image="onPasteImage"
     />
     <div
       v-if="selectionDrag.active"
@@ -555,7 +718,7 @@ onBeforeUnmount(() => {
         height: selectionRect.height + 'px',
       }"
     />
-    <div class="editor-tail" @click="appendBlock" />
+    <div class="editor-tail" contenteditable="false" @click="appendBlock" />
 
     <SlashMenu
       v-if="slashState"
@@ -566,7 +729,7 @@ onBeforeUnmount(() => {
       @pick="onSlashPick"
       @close="slashState = null"
     />
-    <FloatingToolbar />
+    <FloatingToolbar :editor-root="editorEl" />
   </div>
 </template>
 
@@ -579,8 +742,9 @@ onBeforeUnmount(() => {
 .selection-box {
   position: fixed;
   z-index: 950;
-  border: 1px solid rgba(90, 159, 224, 0.8);
-  background: rgba(46, 117, 204, 0.18);
+  border: 1px solid color-mix(in srgb, var(--notes-accent) 72%, transparent);
+  background: color-mix(in srgb, var(--notes-accent) 12%, transparent);
+  border-radius: 2px;
   pointer-events: none;
 }
 </style>
