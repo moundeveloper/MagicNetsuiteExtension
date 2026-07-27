@@ -11,7 +11,13 @@ const tabFocused = inject<ComputedRef<boolean>>('notesTabFocused')
 
 const editorEl = ref<HTMLElement>()
 const focusRequest = ref<{ id: string; at: 'start' | 'end' } | null>(null)
-const slashState = ref<{ blockId: string; x: number; y: number; query?: string } | null>(null)
+const slashState = ref<{
+  blockId: string
+  x: number
+  y: number
+  anchorTop: number
+  query?: string
+} | null>(null)
 const dragIndex = ref<number | null>(null)
 const dragIndices = ref<number[]>([])
 const dropIndex = ref<number | null>(null)
@@ -71,6 +77,10 @@ function requestFocus(id: string, at: 'start' | 'end' = 'end') {
   nextTick(() => (focusRequest.value = { id, at }))
 }
 
+function onFocusApplied(request: { id: string; at: 'start' | 'end' }) {
+  if (focusRequest.value === request) focusRequest.value = null
+}
+
 function linkedPageId(block: Block): string | null {
   return block.html.match(/data-page-link="([^"]+)"/)?.[1] ?? null
 }
@@ -102,13 +112,13 @@ async function onEnter(index: number, htmlBefore: string, htmlAfter: string) {
   let type: BlockType = ['bulleted', 'numbered', 'todo', 'toggle'].includes(cur.type)
     ? cur.type
     : 'paragraph'
-  if (htmlBefore === '' && type !== 'paragraph') {
+  if (htmlBefore === '' && htmlAfter === '' && type !== 'paragraph') {
     cur.type = 'paragraph'
     await ws.persistBlocks()
     return
   }
   const nb = ws.newBlock(type, htmlAfter, cur.indent)
-  if (nb.type === 'todo') nb.checked = false
+  if (nb.type === 'todo') nb.checked = cur.checked ?? false
   await ws.insertBlock(index, nb)
   requestFocus(nb.id, 'start')
 }
@@ -235,7 +245,13 @@ async function onDuplicate(index: number) {
 // ---- slash menu ----
 
 function onSlash(blockId: string, rect: DOMRect, query?: string) {
-  slashState.value = { blockId, x: rect.left, y: rect.bottom + 4, query }
+  slashState.value = {
+    blockId,
+    x: rect.left,
+    y: rect.bottom + 4,
+    anchorTop: rect.top,
+    query,
+  }
 }
 
 async function onSlashPick(type: BlockType | 'page') {
@@ -498,11 +514,15 @@ function closestTextCaret(x: number, y: number): { node: Node; offset: number } 
 
 function onTextSelectionPointerDown(e: PointerEvent) {
   if (e.button !== 0) return
+  if (e.detail > 1) {
+    stopTextSelectionTracking()
+    return
+  }
   const content = (e.target as HTMLElement).closest<HTMLElement>('.block-content')
   if (!content) return
   const caret = closestTextCaret(e.clientX, e.clientY)
   if (!caret) return
-  editorEl.value?.focus()
+  content.focus({ preventScroll: true })
   textSelectionAnchor = caret
   textSelectionAnchorContent = content
   const selection = window.getSelection()
@@ -512,6 +532,39 @@ function onTextSelectionPointerDown(e: PointerEvent) {
   document.addEventListener('pointermove', onTextSelectionPointerMove)
   document.addEventListener('pointerup', stopTextSelectionTracking)
   document.addEventListener('pointercancel', stopTextSelectionTracking)
+}
+
+function onTextDoubleClick(e: MouseEvent) {
+  if (e.button !== 0) return
+  const content = (e.target as HTMLElement).closest<HTMLElement>('.block-content')
+  if (!content) return
+  const caret = caretAtPoint(e.clientX, e.clientY)
+  if (!caret || caret.node.nodeType !== Node.TEXT_NODE) return
+
+  const text = caret.node.textContent ?? ''
+  if (!text) return
+  const isWordCharacter = (character: string) => /[\p{L}\p{M}\p{N}_'-]/u.test(character)
+  let offset = Math.min(caret.offset, text.length - 1)
+  if (!isWordCharacter(text[offset] ?? '') && offset > 0 && isWordCharacter(text[offset - 1] ?? '')) {
+    offset--
+  }
+  if (!isWordCharacter(text[offset] ?? '')) return
+
+  let start = offset
+  let end = offset + 1
+  while (start > 0 && isWordCharacter(text[start - 1] ?? '')) start--
+  while (end < text.length && isWordCharacter(text[end] ?? '')) end++
+
+  stopTextSelectionTracking()
+  content.focus()
+  const range = document.createRange()
+  range.setStart(caret.node, start)
+  range.setEnd(caret.node, end)
+  const selection = window.getSelection()
+  selection?.removeAllRanges()
+  selection?.addRange(range)
+  e.preventDefault()
+  e.stopPropagation()
 }
 
 function onTextSelectionPointerMove(e: PointerEvent) {
@@ -530,7 +583,6 @@ function stopTextSelectionTracking() {
   const selection = window.getSelection()
   if (selection?.isCollapsed && selection.rangeCount && textSelectionAnchorContent) {
     const range = selection.getRangeAt(0).cloneRange()
-    textSelectionAnchorContent.focus()
     selection.removeAllRanges()
     selection.addRange(range)
   }
@@ -672,9 +724,10 @@ onBeforeUnmount(() => {
     ref="editorEl"
     class="editor"
     :class="{ selecting: selectionDrag.active }"
-    contenteditable="true"
+    contenteditable="false"
     spellcheck="false"
     @pointerdown.capture="onTextSelectionPointerDown"
+    @dblclick.capture="onTextDoubleClick"
     @keydown="onEditorKeydown"
     @input="onEditorInput"
     @paste="onEditorPaste"
@@ -707,10 +760,12 @@ onBeforeUnmount(() => {
       @drag-over="onDragOver"
       @drag-end="resetDragState"
       @paste-image="onPasteImage"
+      @focus-applied="onFocusApplied"
     />
     <div
       v-if="selectionDrag.active"
       class="selection-box"
+      contenteditable="false"
       :style="{
         left: selectionRect.left + 'px',
         top: selectionRect.top + 'px',
@@ -724,6 +779,7 @@ onBeforeUnmount(() => {
       v-if="slashState"
       :x="slashState.x"
       :y="slashState.y"
+      :anchor-top="slashState.anchorTop"
       :block-id="slashState.blockId"
       :query="slashQuery"
       @pick="onSlashPick"
@@ -736,6 +792,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .editor {
   position: relative;
+  outline: none;
 }
 .editor.selecting { user-select: none; }
 .editor-tail { height: 120px; cursor: text; }

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Button } from "primevue";
 import { useToast } from "primevue/usetoast";
-import { strFromU8, strToU8, unzipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import MLoader from "../components/universal/patterns/MLoader.vue";
 import {
@@ -275,6 +275,44 @@ const downloadFile = (entry: ProjectEntry | null = selected.value) => {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 };
 
+const downloadProject = () => {
+  if (!roots.value.length) return;
+  try {
+    const archive: Record<string, Uint8Array> = {};
+    allEntries.value.forEach((entry) => {
+      if (entry.directory) {
+        archive[`${entry.path}/`] = new Uint8Array();
+      } else if (entry.bytes) {
+        archive[entry.path] = entry.bytes;
+      }
+    });
+    const zipped = zipSync(archive, { level: 6 });
+    const bytes = new Uint8Array(zipped).buffer as ArrayBuffer;
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileState.value?.fileName
+      || `sdf_conversion_${bundle.value?.bundleId || route.params.bundleId}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    toast.add({
+      severity: "success",
+      summary: "SDF project downloaded",
+      detail: "The complete project ZIP includes the generated manifest.xml.",
+      life: 2500,
+    });
+  } catch (error: any) {
+    toast.add({
+      severity: "error",
+      summary: "Download failed",
+      detail: String(error?.message ?? error),
+      life: 3500,
+    });
+  }
+};
+
 const navigateBack = () => {
   if (!bundle.value) return router.push("/bundles");
   router.push({ path: `/bundles/${bundle.value.bundleId}`, query: { data: JSON.stringify(bundle.value) } });
@@ -338,6 +376,14 @@ onMounted(loadProject);
         <span><i class="pi pi-folder"></i>{{ folderCount }} folders</span>
         <span><i class="pi pi-file"></i>{{ fileCount }} files</span>
         <span v-if="fileState?.lastModified"><i class="pi pi-clock"></i>{{ fileState.lastModified }}</span>
+        <Button
+          icon="pi pi-download"
+          size="small"
+          label="Download SDF"
+          title="Download the complete SDF project as a ZIP"
+          :disabled="loading || !!errorMessage || !roots.length"
+          @click="downloadProject"
+        />
         <Button icon="pi pi-refresh" size="small" outlined label="Reload archive" :loading="loading" @click="loadProject" />
       </div>
     </header>
@@ -514,6 +560,7 @@ onMounted(loadProject);
 .header-identity { min-width: 0; gap: 8px; }
 .header-meta { flex-shrink: 0; gap: 8px; }
 .header-meta span { gap: 5px; font-size: 0.72rem; color: #607d93; white-space: nowrap; }
+.header-meta :deep(.p-button) { height: 2rem; white-space: nowrap; }
 .project-icon { display: grid; place-items: center; width: 30px; height: 30px; color: #517b99; background: #dcecf6; border: 1px solid #bfd5e4; border-radius: 0.25rem; }
 .header-copy { display: flex; flex-direction: column; min-width: 0; }
 .header-copy strong, .header-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

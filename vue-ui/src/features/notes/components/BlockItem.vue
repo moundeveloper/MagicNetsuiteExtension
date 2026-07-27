@@ -31,12 +31,14 @@ const emit = defineEmits<{
   (e: 'drag-over', index: number, ev: DragEvent): void
   (e: 'drag-end'): void
   (e: 'paste-image', index: number, dataUrl: string): void
+  (e: 'focus-applied', request: { id: string; at: 'start' | 'end' }): void
 }>()
 
 const ws = useNotesWorkspace()
 const openPageTab = inject<(id: string, activate?: boolean) => void>('openPageTab')
 const navigatePage = inject<(id: string) => void>('navigatePage')
 const contentEl = ref<HTMLElement>()
+const contentEmpty = ref(isHtmlVisuallyEmpty(props.block.html))
 const menuPos = ref<{ x: number; y: number } | null>(null)
 const imageInput = ref<HTMLInputElement>()
 const imageFrame = ref<HTMLElement>()
@@ -89,6 +91,13 @@ const placeholder = computed(() => {
 const isText = computed(() => !['divider', 'image'].includes(props.block.type))
 // ---- caret helpers ----
 
+function isHtmlVisuallyEmpty(html: string): boolean {
+  const div = document.createElement('div')
+  div.innerHTML = html
+  const text = (div.textContent ?? '').replace(/\u200B/g, '').trim()
+  return !text && !div.querySelector('img, video, audio, iframe, [data-page-link]')
+}
+
 function caretAtStart(): boolean {
   const sel = window.getSelection()
   if (!sel?.rangeCount || !contentEl.value) return false
@@ -130,7 +139,7 @@ function splitAtCaret(): { before: string; after: string } {
   const frag2html = (f: DocumentFragment) => {
     const d = document.createElement('div')
     d.appendChild(f)
-    return d.innerHTML
+    return storedHtml(d.innerHTML)
   }
   return { before: frag2html(pre.cloneContents()), after: frag2html(post.cloneContents()) }
 }
@@ -162,12 +171,20 @@ function contentHasSelection(): boolean {
 watch(
   () => props.focusRequest,
   (fr) => {
-    if (fr?.id === props.block.id) nextTick(() => focusAt(fr.at))
+    if (fr?.id === props.block.id) {
+      nextTick(() => {
+        focusAt(fr.at)
+        emit('focus-applied', fr)
+      })
+    }
   },
 )
 
 onMounted(() => {
-  if (contentEl.value && isText.value) contentEl.value.innerHTML = renderHtml(props.block.html)
+  if (contentEl.value && isText.value) {
+    contentEl.value.innerHTML = renderHtml(props.block.html)
+    contentEmpty.value = isHtmlVisuallyEmpty(contentEl.value.innerHTML)
+  }
 })
 
 // re-sync DOM when html changed externally (undo/redo)
@@ -175,6 +192,7 @@ watch(
   () => props.block.html,
   (html) => {
     const el = contentEl.value
+    contentEmpty.value = isHtmlVisuallyEmpty(html)
     if (el && isText.value && storedHtml(el.innerHTML) !== html && !contentHasSelection()) {
       el.innerHTML = renderHtml(html)
     }
@@ -197,6 +215,7 @@ function onInput() {
   if (!el) return
   const html = storedHtml(el.innerHTML === '<br>' ? '' : el.innerHTML)
   props.block.html = html
+  contentEmpty.value = isHtmlVisuallyEmpty(html)
   const query = slashQueryAtCaret()
   if (query !== null) {
     emit('slash', props.block.id, el.getBoundingClientRect(), query)
@@ -258,6 +277,8 @@ function onKeydown(e: KeyboardEvent) {
     if (e.shiftKey && props.block.type !== 'code') return
     e.preventDefault()
     const { before, after } = splitAtCaret()
+    contentEl.value!.innerHTML = renderHtml(before)
+    contentEmpty.value = isHtmlVisuallyEmpty(before)
     emit('enter', props.index, before, after)
   } else if (e.key === 'Backspace') {
     if (caretAtStart() && window.getSelection()?.isCollapsed) {
@@ -514,6 +535,7 @@ function copyCode() {
     class="blk"
     :class="[{ selected, 'multi-selected': multiSelected }, dropTarget ? `drop-${dropTarget}` : '', 'type-' + block.type]"
     :style="{ marginLeft: block.indent * 26 + 'px' }"
+    contenteditable="false"
     @dragover="emit('drag-over', index, $event)"
   >
     <div class="blk-gutter" contenteditable="false">
@@ -597,6 +619,7 @@ function copyCode() {
         spellcheck="false"
         tabindex="0"
         :data-placeholder="placeholder"
+        :data-empty="contentEmpty ? 'true' : undefined"
         @input="onInput"
         @keydown="onKeydown"
         @paste="onPaste"
@@ -672,8 +695,12 @@ function copyCode() {
   position: absolute;
   left: -28px;
   top: 5px;
+  width: 28px;
+  display: flex;
+  align-items: center;
   opacity: 0;
   transition: opacity 0.1s;
+  z-index: 3;
 }
 .type-heading1 .blk-gutter { top: 24px; }
 .type-heading2 .blk-gutter { top: 18px; }
@@ -681,7 +708,9 @@ function copyCode() {
 .type-quote .blk-gutter { top: 8px; }
 .type-code .blk-gutter,
 .type-callout .blk-gutter { top: 12px; }
-.blk:hover .blk-gutter { opacity: 1; }
+.blk:hover .blk-gutter,
+.blk:focus-within .blk-gutter,
+.blk-gutter:hover { opacity: 1; }
 .blk-handle {
   cursor: grab;
   color: var(--notes-text-faint);
@@ -736,16 +765,19 @@ function copyCode() {
   white-space: pre-wrap;
   cursor: text;
 }
-.block-content:empty::before {
+.block-content[data-empty='true']::before {
   content: attr(data-placeholder);
   color: var(--notes-text-faint);
   pointer-events: none;
 }
-.blk:not(:hover):not(:focus-within) .block-content:empty::before {
+.blk:not(.type-callout):not(:hover):not(:focus-within) .block-content[data-empty='true']::before {
   content: '';
 }
-.type-paragraph .block-content:empty::before { content: ''; }
-.blk:focus-within.type-paragraph .block-content:empty::before {
+.type-paragraph .block-content[data-empty='true']::before { content: ''; }
+.blk:focus-within.type-paragraph .block-content[data-empty='true']::before {
+  content: attr(data-placeholder);
+}
+.type-callout .block-content[data-empty='true']::before {
   content: attr(data-placeholder);
 }
 .block-content.done { text-decoration: line-through; color: var(--notes-text-faint); }

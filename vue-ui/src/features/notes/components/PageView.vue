@@ -152,22 +152,21 @@ function startSideSelection(e: PointerEvent | MouseEvent) {
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 24px 48px 30vh;
-  z-index: 1;
+  padding: 24px 68px 30vh;
 }
 .selection-gutter {
   position: absolute;
   top: 0;
   bottom: 0;
   z-index: 2;
-  width: 40px;
+  width: max(40px, calc(50% - 520px));
   cursor: default;
 }
 .selection-gutter.left {
-  left: max(0px, calc(50% - 560px));
+  left: 0;
 }
 .selection-gutter.right {
-  right: max(0px, calc(50% - 560px));
+  right: 0;
 }
 .page-icon-row { position: relative; min-height: 8px; }
 .page-icon { font-size: 40px; line-height: 1; border-radius: 6px; padding: 4px; }

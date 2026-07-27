@@ -119,13 +119,21 @@ function onDrop(e: DragEvent) {
       @drop="onDrop"
     >
       <button
-        v-if="!flat"
-        class="pt-arrow"
-        :class="{ expanded, hidden: !children.length }"
+        v-if="!flat && children.length"
+        class="pt-leading pt-toggle"
+        :class="{ expanded }"
+        :aria-expanded="expanded"
+        :aria-label="expanded ? 'Collapse subpages' : 'Expand subpages'"
+        :title="expanded ? 'Collapse subpages' : 'Expand subpages'"
         @click.stop="expanded = !expanded"
-      >▸</button>
-      <span class="pt-icon">{{ page.icon ?? (page.type === 'database' ? '▦' : '📄') }}</span>
-      <span class="pt-title">{{ page.title || 'Untitled' }}</span>
+      >
+        <span class="pt-page-icon">{{ page.icon ?? (page.type === 'database' ? '▦' : '📄') }}</span>
+        <span class="pt-arrow">▸</span>
+      </button>
+      <span v-else class="pt-leading pt-page-icon">
+        {{ page.icon ?? (page.type === 'database' ? '▦' : '📄') }}
+      </span>
+      <span class="pt-title" :title="page.title || 'Untitled'">{{ page.title || 'Untitled' }}</span>
       <span class="pt-actions" v-if="!flat">
         <button class="icon-btn" title="Add subpage" @click.stop="addChild">＋</button>
         <button class="icon-btn" title="Menu" @click.stop="openMenu($event)">⋯</button>
@@ -172,17 +180,35 @@ function onDrop(e: DragEvent) {
 .pt-row.active { background: var(--notes-bg-active); color: var(--notes-text); font-weight: 500; }
 .pt-row.drop-inside { box-shadow: inset 0 0 0 2px var(--notes-accent); }
 .pt-row.drop-above { box-shadow: inset 0 2px 0 0 var(--notes-accent); }
-.pt-arrow {
-  width: 16px;
+.pt-leading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
   height: 20px;
-  font-size: 10px;
-  color: var(--notes-text-faint);
-  transition: transform 0.15s;
   flex-shrink: 0;
 }
-.pt-arrow.expanded { transform: rotate(90deg); }
-.pt-arrow.hidden { visibility: hidden; }
-.pt-icon { width: 18px; font-size: 13px; line-height: 1; text-align: center; flex-shrink: 0; }
+.pt-page-icon {
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+}
+.pt-toggle {
+  border-radius: 4px;
+  color: var(--notes-text-faint);
+}
+.pt-toggle:hover { background: color-mix(in srgb, var(--notes-text) 8%, transparent); }
+.pt-toggle .pt-arrow {
+  display: none;
+  font-size: 10px;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+.pt-row:hover .pt-toggle .pt-page-icon,
+.pt-toggle:focus-visible .pt-page-icon { display: none; }
+.pt-row:hover .pt-toggle .pt-arrow,
+.pt-toggle:focus-visible .pt-arrow { display: inline; }
+.pt-toggle.expanded .pt-arrow { transform: rotate(90deg); }
 .pt-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pt-actions {
   display: inline-flex;

@@ -1,8 +1,22 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type CSSProperties,
+} from 'vue'
 import type { BlockType } from '../types'
 
-const props = defineProps<{ x: number; y: number; blockId: string; query?: string }>()
+const props = defineProps<{
+  x: number
+  y: number
+  anchorTop: number
+  blockId: string
+  query?: string
+}>()
 const emit = defineEmits<{
   (e: 'pick', type: BlockType | 'page'): void
   (e: 'close'): void
@@ -34,6 +48,17 @@ const COMMANDS: Cmd[] = [
 ]
 
 const selected = ref(0)
+const menuEl = ref<HTMLElement>()
+const positioned = ref(false)
+const menuPosition = ref({ left: 8, top: 8, maxHeight: 320 })
+let menuResizeObserver: ResizeObserver | null = null
+
+const menuStyle = computed<CSSProperties>(() => ({
+  left: `${menuPosition.value.left}px`,
+  top: `${menuPosition.value.top}px`,
+  maxHeight: `${menuPosition.value.maxHeight}px`,
+  visibility: positioned.value ? 'visible' : 'hidden',
+}))
 
 watch(
   () => props.query,
@@ -58,6 +83,41 @@ const grouped = computed(() => {
   }
   return map
 })
+
+function updatePosition() {
+  const menu = menuEl.value
+  if (!menu) return
+
+  const viewportGap = 8
+  const anchorGap = 4
+  const viewportWidth = window.innerWidth
+  const viewportHeight = window.innerHeight
+  const maxHeight = Math.max(0, Math.min(320, viewportHeight - viewportGap * 2))
+  const menuHeight = Math.min(menu.scrollHeight, maxHeight)
+  const menuWidth = Math.min(menu.offsetWidth, Math.max(0, viewportWidth - viewportGap * 2))
+  const maxLeft = Math.max(viewportGap, viewportWidth - viewportGap - menuWidth)
+  const maxTop = Math.max(viewportGap, viewportHeight - viewportGap - menuHeight)
+
+  const belowTop = props.y
+  const aboveTop = props.anchorTop - anchorGap - menuHeight
+  let top = belowTop
+  if (belowTop + menuHeight > viewportHeight - viewportGap && aboveTop >= viewportGap) {
+    top = aboveTop
+  }
+
+  menuPosition.value = {
+    left: Math.min(Math.max(props.x, viewportGap), maxLeft),
+    top: Math.min(Math.max(top, viewportGap), maxTop),
+    maxHeight,
+  }
+  positioned.value = true
+}
+
+watch(
+  [() => props.x, () => props.y, () => props.anchorTop, () => filtered.value.length],
+  () => nextTick(updatePosition),
+  { flush: 'post' },
+)
 
 function flatIndex(cmd: Cmd): number {
   return filtered.value.indexOf(cmd)
@@ -98,19 +158,26 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown, true)
   window.addEventListener('mousedown', onClickOutside)
   window.addEventListener('scroll', onViewportScroll, true)
+  window.addEventListener('resize', updatePosition)
+  menuResizeObserver = new ResizeObserver(updatePosition)
+  if (menuEl.value) menuResizeObserver.observe(menuEl.value)
+  nextTick(updatePosition)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown, true)
   window.removeEventListener('mousedown', onClickOutside)
   window.removeEventListener('scroll', onViewportScroll, true)
+  window.removeEventListener('resize', updatePosition)
+  menuResizeObserver?.disconnect()
 })
 </script>
 
 <template>
   <Teleport to="body">
     <div
+      ref="menuEl"
       class="menu slash-menu notes-portal"
-      :style="{ left: Math.min(x, 9999) + 'px', top: y + 'px' }"
+      :style="menuStyle"
     >
       <template v-for="[group, cmds] in grouped" :key="group">
         <div class="menu-label">{{ group }}</div>
@@ -133,6 +200,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.slash-menu { width: 292px; }
+.slash-menu {
+  width: 292px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+}
 .slash-empty { padding: 12px; text-align: center; color: var(--notes-text-faint); font-size: 13px; }
 </style>

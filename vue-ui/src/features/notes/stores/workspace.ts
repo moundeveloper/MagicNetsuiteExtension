@@ -92,6 +92,7 @@ const createWorkspaceDefinition = (id: string) => defineStore(id, {
     async refreshBlocks(pageId: string) {
       if (this.currentPageId !== pageId) return
       this.blocks = sortByPosition(await db.blocks.where('pageId').equals(pageId).toArray())
+      if (this.ensureTrailingParagraph()) await this.persistBlocks()
     },
 
     async removeLegacyBranding() {
@@ -169,6 +170,7 @@ const createWorkspaceDefinition = (id: string) => defineStore(id, {
       this.undoStack = []
       this.redoStack = []
       this.blocks = sortByPosition(await db.blocks.where('pageId').equals(id).toArray())
+      if (this.ensureTrailingParagraph()) await this.persistBlocks()
       this.recentIds = [id, ...this.recentIds.filter((r) => r !== id)].slice(0, 20)
       await db.settings.put({ key: 'recentIds', value: JSON.parse(JSON.stringify(this.recentIds)) })
     },
@@ -273,6 +275,7 @@ const createWorkspaceDefinition = (id: string) => defineStore(id, {
 
     async persistBlocks() {
       if (!this.currentPageId) return
+      this.ensureTrailingParagraph()
       await db.blocks.where('pageId').equals(this.currentPageId).delete()
       await db.blocks.bulkAdd(JSON.parse(JSON.stringify(this.blocks)))
       const p = this.currentPage
@@ -288,6 +291,19 @@ const createWorkspaceDefinition = (id: string) => defineStore(id, {
         id: uid(), pageId: this.currentPageId!, type, html, indent,
         position: 0, createdAt: now(), updatedAt: now(),
       }
+    },
+
+    ensureTrailingParagraph(): boolean {
+      const last = this.blocks[this.blocks.length - 1]
+      if (!last || !this.currentPageId) return false
+      const isEmptyParagraph =
+        last.type === 'paragraph' &&
+        !last.html.includes('data-page-link') &&
+        stripHtml(last.html).replace(/[\u200B\u00A0]/g, '').trim() === ''
+      if (isEmptyParagraph) return false
+      this.blocks.push(this.newBlock('paragraph', '', last.indent))
+      this.reindex()
+      return true
     },
 
     async insertBlock(afterIndex: number, block: Block) {
@@ -306,6 +322,10 @@ const createWorkspaceDefinition = (id: string) => defineStore(id, {
       const b = this.blocks.find((x) => x.id === id)
       if (!b) return
       Object.assign(b, patch, { updatedAt: now() })
+      if (this.ensureTrailingParagraph()) {
+        await this.persistBlocks()
+        return
+      }
       await db.blocks.put(JSON.parse(JSON.stringify(b)))
       notifyWorkspaceChanged({ source: this.$id, blocksPageId: b.pageId })
     },

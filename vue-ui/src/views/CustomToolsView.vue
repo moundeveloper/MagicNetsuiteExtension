@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Dialog from "primevue/dialog";
 import InputText from "primevue/inputtext";
 import Textarea from "primevue/textarea";
@@ -96,6 +96,8 @@ const errors = ref<string[]>([]);
 const testInput = ref(defaultTestInput);
 const testOutput = ref(emptyTestOutput);
 const testExecutionDomain = ref<"client" | "server">("client");
+const configurationWidth = ref(42);
+const isResizingWorkspace = ref(false);
 
 const statusOptions = ["draft", "active"];
 const editorTabs: EditorTab[] = ["code", "schema", "test"];
@@ -126,6 +128,39 @@ const availableModules = computed(() => getAvailableCustomToolModules(form.value
 const effectiveTestDomain = computed<"client" | "server">(() =>
   form.value.domain === "both" ? testExecutionDomain.value : form.value.domain
 );
+
+let stopWorkspaceResize: (() => void) | null = null;
+
+const startWorkspaceResize = (event: PointerEvent) => {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  isResizingWorkspace.value = true;
+  const workspace = (event.currentTarget as HTMLElement).parentElement;
+  const startX = event.clientX;
+  const startWidth = configurationWidth.value;
+  const workspaceWidth = workspace?.clientWidth || window.innerWidth;
+
+  const onMove = (moveEvent: PointerEvent) => {
+    const deltaPct = ((moveEvent.clientX - startX) / workspaceWidth) * 100;
+    configurationWidth.value = Math.min(62, Math.max(30, startWidth + deltaPct));
+  };
+  const onUp = () => {
+    isResizingWorkspace.value = false;
+    document.body.classList.remove("custom-tools-resizing");
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    stopWorkspaceResize = null;
+  };
+
+  document.body.classList.add("custom-tools-resizing");
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+  stopWorkspaceResize = onUp;
+};
+
+const resizeConfiguration = (delta: number) => {
+  configurationWidth.value = Math.min(62, Math.max(30, configurationWidth.value + delta));
+};
 
 const parseSchema = (): Record<string, unknown> => {
   const parsed = JSON.parse(form.value.schemaText);
@@ -299,6 +334,7 @@ watch(() => form.value.domain, (domain) => {
 });
 
 onMounted(loadTools);
+onBeforeUnmount(() => stopWorkspaceResize?.());
 </script>
 
 <template>
@@ -336,42 +372,65 @@ onMounted(loadTools);
       </aside>
 
       <main class="tool-editor">
-        <section class="tool-form">
-          <div class="field-grid">
-            <label><span>Display name</span><InputText v-model="form.displayName" class="field-control" /></label>
-            <label><span>Tool name</span><InputText v-model="form.name" class="field-control mono" @blur="form.name = normalizeCustomToolName(form.name)" /></label>
-            <label class="field-wide"><span>Description used by AI routing</span><InputText v-model="form.description" class="field-control" /></label>
-            <label class="field-wide"><span>Tags</span><InputText v-model="form.tags" class="field-control" placeholder="customer, reconciliation, finance" /></label>
-            <label><span>Status</span><MSelect v-model="form.status" :options="statusOptions" size="small" /></label>
-            <label><span>Risk</span><MSelect v-model="form.risk" :options="riskOptions" option-label="label" option-value="value" size="small" /></label>
-            <label><span>Execution domain</span><MSelect v-model="form.domain" :options="domainOptions" option-label="label" option-value="value" size="small" /></label>
-          </div>
-
-          <div class="modules-section">
-            <div class="section-label"><span>SuiteScript modules</span><small>Showing modules supported in {{ form.domain }} execution.</small></div>
-            <div class="module-grid">
-              <button v-for="module in availableModules" :key="module" type="button" class="module-chip" :class="{ active: form.modules.includes(module) }" :title="getCustomToolModulePath(module)" @click="toggleModule(module)">{{ getCustomToolModulePath(module) }}</button>
+        <div class="tool-editor-body">
+          <section class="tool-form" :style="{ flexBasis: `${configurationWidth}%` }">
+            <div class="form-section-heading">
+              <i class="pi pi-sliders-h" />
+              <span>Configuration</span>
             </div>
-          </div>
-        </section>
+            <div class="field-grid">
+              <label><span>Display name</span><InputText v-model="form.displayName" class="field-control" /></label>
+              <label><span>Tool name</span><InputText v-model="form.name" class="field-control mono" @blur="form.name = normalizeCustomToolName(form.name)" /></label>
+              <label class="field-wide"><span>Description used by AI routing</span><InputText v-model="form.description" class="field-control" /></label>
+              <label class="field-wide"><span>Tags</span><InputText v-model="form.tags" class="field-control" placeholder="customer, reconciliation, finance" /></label>
+              <label><span>Status</span><MSelect v-model="form.status" :options="statusOptions" size="small" /></label>
+              <label><span>Risk</span><MSelect v-model="form.risk" :options="riskOptions" option-label="label" option-value="value" size="small" /></label>
+              <label class="field-wide"><span>Execution domain</span><MSelect v-model="form.domain" :options="domainOptions" option-label="label" option-value="value" size="small" /></label>
+            </div>
 
-        <section class="code-workspace">
-          <header class="editor-tabs">
-            <button v-for="tab in editorTabs" :key="tab" type="button" :class="{ active: editorTab === tab }" @click="editorTab = tab">{{ tab === 'schema' ? 'Input Schema' : tab === 'test' ? 'Test & Output' : 'JavaScript' }}</button>
-            <span class="editor-hint">Ctrl+S saves · Ctrl+Enter tests</span>
-          </header>
-          <div class="editor-host">
-            <MonacoCodeEditor v-if="editorTab === 'code'" v-model="form.code" language="javascript" :completion-items="codeCompletions" :config="{ autoSizing: true, minimap: false, validateTags: false, formatOnMount: false }" @ctrl-s="save" @ctrl-enter="runTest" />
-            <MonacoCodeEditor v-else-if="editorTab === 'schema'" v-model="form.schemaText" language="json" :config="{ autoSizing: true, minimap: false, validateTags: false, formatOnMount: false }" @ctrl-s="save" />
-            <div v-else class="test-pane">
-              <div class="test-column">
-                <div class="test-pane-header"><span class="pane-label">Test input</span><MSelect v-if="form.domain === 'both'" v-model="testExecutionDomain" :options="testDomainOptions" option-label="label" option-value="value" size="small" /></div>
-                <Textarea v-model="testInput" class="test-textarea" rows="12" />
+            <div class="modules-section">
+              <div class="section-label"><span>SuiteScript modules</span><small>{{ form.domain }} execution</small></div>
+              <div class="module-grid">
+                <button v-for="module in availableModules" :key="module" type="button" class="module-chip" :class="{ active: form.modules.includes(module) }" :title="getCustomToolModulePath(module)" @click="toggleModule(module)">{{ getCustomToolModulePath(module) }}</button>
               </div>
-              <div class="test-column"><span class="pane-label">Result</span><pre class="test-output">{{ testOutput }}</pre></div>
             </div>
+          </section>
+
+          <div
+            class="workspace-resize-handle"
+            :class="{ 'workspace-resize-handle--active': isResizingWorkspace }"
+            role="separator"
+            tabindex="0"
+            aria-label="Resize configuration and code panels"
+            aria-orientation="vertical"
+            :aria-valuenow="Math.round(configurationWidth)"
+            aria-valuemin="30"
+            aria-valuemax="62"
+            @pointerdown="startWorkspaceResize"
+            @keydown.left.prevent="resizeConfiguration(-2)"
+            @keydown.right.prevent="resizeConfiguration(2)"
+          >
+            <span />
           </div>
-        </section>
+
+          <section class="code-workspace">
+            <header class="editor-tabs">
+              <button v-for="tab in editorTabs" :key="tab" type="button" :class="{ active: editorTab === tab }" @click="editorTab = tab">{{ tab === 'schema' ? 'Input Schema' : tab === 'test' ? 'Test & Output' : 'JavaScript' }}</button>
+              <span class="editor-hint">Ctrl+S saves · Ctrl+Enter tests</span>
+            </header>
+            <div class="editor-host">
+              <MonacoCodeEditor v-if="editorTab === 'code'" v-model="form.code" language="javascript" :completion-items="codeCompletions" :config="{ autoSizing: true, minimap: false, validateTags: false, formatOnMount: false }" @ctrl-s="save" @ctrl-enter="runTest" />
+              <MonacoCodeEditor v-else-if="editorTab === 'schema'" v-model="form.schemaText" language="json" :config="{ autoSizing: true, minimap: false, validateTags: false, formatOnMount: false }" @ctrl-s="save" />
+              <div v-else class="test-pane">
+                <div class="test-column">
+                  <div class="test-pane-header"><span class="pane-label">Test input</span><MSelect v-if="form.domain === 'both'" v-model="testExecutionDomain" :options="testDomainOptions" option-label="label" option-value="value" size="small" /></div>
+                  <Textarea v-model="testInput" class="test-textarea" rows="12" />
+                </div>
+                <div class="test-column"><span class="pane-label">Result</span><pre class="test-output">{{ testOutput }}</pre></div>
+              </div>
+            </div>
+          </section>
+        </div>
 
         <div v-if="errors.length" class="validation-strip"><i class="pi pi-exclamation-triangle" /><span>{{ errors.join(" · ") }}</span></div>
         <footer class="editor-footer">
@@ -418,44 +477,61 @@ magic_netsuite_call_custom_tool({
 </template>
 
 <style scoped>
-.custom-tools-shell { overflow: hidden; background: #fbfcfd; }
+.custom-tools-shell {
+  --tools-accent: #4f46e5;
+  --tools-accent-border: #a5b4fc;
+  --tools-accent-surface: #f1f4fe;
+  --tools-accent-icon-surface: #e0e7ff;
+  overflow: hidden;
+  background: #fbfcfd;
+}
 .tools-toolbar, .toolbar-title, .toolbar-actions, .editor-footer, .section-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tools-toolbar { min-height: 48px; flex-shrink: 0; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid #dbe3ea; background: #fbfcfd; }
+.tools-toolbar { min-height: 44px; flex-shrink: 0; justify-content: space-between; padding: 6px 10px; border-bottom: 1px solid #dbe3ea; background: #fbfcfd; }
 .toolbar-title { color: #27323a; }
-.toolbar-title > i { color: #7b2ff7; }
+.toolbar-title > i { color: var(--tools-accent); }
 .toolbar-title > span { padding: 2px 7px; border: 1px solid #dbe3ea; border-radius: 999px; color: #62696e; font-size: .68rem; }
 .tool-search { width: 230px; }
 .tools-workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.tool-list { display: flex; flex: 0 0 300px; min-height: 0; flex-direction: column; overflow-y: auto; border-right: 1px solid #dbe3ea; background: #f8fafc; }
-.tool-row { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; padding: 10px 12px; border: 0; border-bottom: 1px solid #dbe3ea; background: transparent; text-align: left; cursor: pointer; }
-.tool-row:hover, .tool-row.active { outline: 1px solid #d8c6ff; outline-offset: -1px; background: #faf7ff; color: #7b2ff7; }
+.tool-list { display: flex; flex: 0 0 278px; min-height: 0; flex-direction: column; overflow-y: auto; border-right: 1px solid #dbe3ea; background: #f8fafc; }
+.tool-row { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 7px; padding: 8px 10px; border: 0; border-bottom: 1px solid #dbe3ea; background: transparent; text-align: left; cursor: pointer; }
+.tool-row:hover { background: #f4f6f8; }
+.tool-row.active { outline: 1px solid var(--tools-accent-border); outline-offset: -1px; background: var(--tools-accent-surface); color: var(--tools-accent); }
 .tool-row.muted { opacity: .55; }
-.tool-icon { color: #7b2ff7; }
+.tool-icon { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 5px; color: #64748b; }
+.tool-row.active .tool-icon { color: var(--tools-accent); background: var(--tools-accent-icon-surface); }
 .tool-row-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .tool-row-copy strong, .tool-row-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-row-copy strong { color: #27323a; font-size: .8rem; }
 .tool-row-copy small { color: #8a949b; font-family: "JetBrains Mono", monospace; font-size: .65rem; }
 .tool-row-tags, .module-grid { display: flex; flex-wrap: wrap; gap: 4px; }
 .status-chip, .module-chip { padding: 2px 6px; border: 1px solid #dbe3ea; border-radius: 999px; background: #fff; color: #62696e; font-size: .63rem; white-space: nowrap; }
-.status-chip--active, .module-chip.active { border-color: #d8c6ff; background: #faf7ff; color: #7b2ff7; }
+.status-chip--active, .module-chip.active { border-color: var(--tools-accent-border); background: var(--tools-accent-surface); color: var(--tools-accent); }
 .status-chip--draft { color: #8a6a16; }
 .empty-list { display: flex; min-height: 130px; align-items: center; justify-content: center; gap: 7px; color: #8a949b; font-size: .75rem; }
 .tool-editor { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; background: white; }
-.tool-form { flex-shrink: 0; padding: 10px 12px; border-bottom: 1px solid #dbe3ea; background: #fbfcfd; }
+.tool-editor-body { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+.tool-form { flex: 0 0 auto; min-width: 330px; min-height: 0; padding: 10px; overflow: auto; background: #fbfcfd; }
+.form-section-heading { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; color: #334155; font-size: .74rem; font-weight: 800; }
+.form-section-heading i { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 5px; background: var(--tools-accent-icon-surface); color: var(--tools-accent); font-size: .72rem; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .field-grid label { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .field-grid label > span, .section-label > span, .pane-label { color: #62696e; font-size: .65rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .field-wide { grid-column: 1 / -1; }
 .field-control { width: 100%; min-height: 1.95rem; font-size: .78rem; }
 .mono { font-family: "JetBrains Mono", monospace; }
-.modules-section { margin-top: 9px; }
+.modules-section { margin-top: 11px; padding-top: 10px; border-top: 1px solid #dbe3ea; }
 .section-label { justify-content: space-between; margin-bottom: 5px; }
 .section-label small { overflow: hidden; color: #8a949b; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }
 .module-chip { cursor: pointer; border-radius: 5px; }
-.code-workspace { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.workspace-resize-handle { position: relative; z-index: 2; display: flex; flex: 0 0 7px; align-items: center; justify-content: center; cursor: col-resize; border-inline: 1px solid #dbe3ea; background: #eef2f6; touch-action: none; transition: background .15s, border-color .15s; }
+.workspace-resize-handle span { width: 2px; height: 32px; border-radius: 999px; background: #a8b3bf; }
+.workspace-resize-handle:hover, .workspace-resize-handle:focus-visible, .workspace-resize-handle--active { outline: none; border-color: var(--tools-accent-border); background: var(--tools-accent-icon-surface); }
+.workspace-resize-handle:hover span, .workspace-resize-handle:focus-visible span, .workspace-resize-handle--active span { background: var(--tools-accent); }
+:global(body.custom-tools-resizing) { cursor: col-resize; user-select: none; }
+.code-workspace { display: flex; flex: 1 1 0; min-width: 360px; min-height: 0; flex-direction: column; background: white; }
 .editor-tabs { display: flex; min-height: 34px; flex-shrink: 0; align-items: center; gap: 3px; padding: 3px 8px; border-bottom: 1px solid #dbe3ea; background: #eef3f7; }
 .editor-tabs button { min-height: 27px; padding: 0 9px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #62696e; font: inherit; font-size: .7rem; cursor: pointer; }
-.editor-tabs button.active { border-color: #d8c6ff; background: #faf7ff; color: #7b2ff7; }
+.editor-tabs button.active { border-color: var(--tools-accent-border); background: var(--tools-accent-surface); color: var(--tools-accent); }
 .editor-hint { margin-left: auto; color: #8a949b; font-size: .65rem; }
 .editor-host { flex: 1; min-height: 0; overflow: hidden; }
 .test-pane { display: grid; height: 100%; grid-template-columns: 1fr 1fr; gap: 1px; background: #dbe3ea; }
@@ -465,18 +541,24 @@ magic_netsuite_call_custom_tool({
 .validation-strip { display: flex; flex-shrink: 0; align-items: center; gap: 7px; padding: 6px 10px; border-top: 1px solid #f4c7c7; background: #fff7f7; color: #a33a3a; font-size: .7rem; }
 .editor-footer { min-height: 46px; flex-shrink: 0; justify-content: flex-end; padding: 7px 10px; border-top: 1px solid #dbe3ea; background: #fbfcfd; }
 .enabled-toggle { display: flex; align-items: center; gap: 5px; color: #62696e; font-size: .72rem; }
-.enabled-toggle input { accent-color: #7b2ff7; }
+.enabled-toggle input { accent-color: var(--tools-accent); }
 .save-status { margin-right: auto; color: #62696e; font-size: .68rem; }
 .quiet-btn, .save-btn, .danger-btn { display: inline-flex; min-height: 30px; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid #dbe3ea; border-radius: 5px; background: white; color: #62696e; font: inherit; font-size: .7rem; font-weight: 700; white-space: nowrap; cursor: pointer; }
-.quiet-btn:hover, .save-btn:hover { border-color: #c6a7ff; background: #faf7ff; color: #7b2ff7; }
-.save-btn { border-color: #d8c6ff; color: #7b2ff7; }
+.quiet-btn:hover, .save-btn:hover { border-color: var(--tools-accent-border); background: var(--tools-accent-surface); color: var(--tools-accent); }
+.save-btn { border-color: var(--tools-accent-border); color: var(--tools-accent); }
 .danger-btn { border-color: #f1caca; color: #a33a3a; }
 .quiet-btn:disabled, .save-btn:disabled { opacity: .55; cursor: default; }
 .guide-doc { color: #27323a; font-size: .82rem; line-height: 1.6; }
 .guide-doc h3 { margin: 14px 0 4px; font-size: .86rem; }
 .guide-doc p { margin: 0 0 8px; color: #62696e; }
-.guide-doc a { color: #7b2ff7; text-decoration-color: #d8c6ff; }
+.guide-doc a { color: var(--tools-accent, #4f46e5); text-decoration-color: var(--tools-accent-border, #a5b4fc); }
 .guide-doc pre { overflow: auto; padding: 10px; border: 1px solid #dbe3ea; border-radius: 5px; background: #eef3f7; font-family: "JetBrains Mono", monospace; font-size: .72rem; white-space: pre-wrap; }
 .guide-doc code { font-family: "JetBrains Mono", monospace; }
-@media (max-width: 980px) { .tool-list { flex-basis: 240px; } .tool-search { width: 180px; } .editor-hint { display: none; } }
+@media (max-width: 1180px) {
+  .tool-list { flex-basis: 230px; }
+  .tool-form { min-width: 300px; }
+  .code-workspace { min-width: 320px; }
+  .tool-search { width: 180px; }
+  .editor-hint { display: none; }
+}
 </style>
