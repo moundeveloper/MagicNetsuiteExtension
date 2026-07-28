@@ -22,6 +22,7 @@ const builtinSkills: Array<SkillSearchResult & { content: string }> = [
     status: "active",
     priority: 50,
     source: "built_in",
+    dependencies: [],
     score: 0,
     matchType: "metadata",
     content: DIAGRAM_DOCS
@@ -39,6 +40,7 @@ const stripSkillContent = ({
   source,
   lastReviewedAt,
   confidence,
+  dependencies,
   score,
   matchType
 }: SkillSearchResult & { content?: string }): SkillSearchResult => ({
@@ -52,6 +54,7 @@ const stripSkillContent = ({
   source,
   lastReviewedAt,
   confidence,
+  dependencies,
   score,
   matchType
 });
@@ -159,7 +162,8 @@ export const skillTools: ToolDefinition[] = [
       if (builtin) {
         return {
           name: builtin.name,
-          content: builtin.content
+          content: builtin.content,
+          dependencies: []
         };
       }
 
@@ -172,7 +176,8 @@ export const skillTools: ToolDefinition[] = [
 
       return {
         name: result.name,
-        content: result.content
+        content: result.content,
+        dependencies: result.dependencies
       };
     }
   }

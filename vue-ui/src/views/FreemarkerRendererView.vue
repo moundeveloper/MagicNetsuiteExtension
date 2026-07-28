@@ -27,6 +27,16 @@
             <h4>Actions</h4>
             <Button
               class="w-full"
+              severity="secondary"
+              outlined
+              @click="openTemplateStudio"
+              title="Open collaborative Template Studio"
+            >
+              <i class="pi pi-sparkles font-medium"></i>
+              <span class="flex-1 text-left">Template Studio</span>
+            </Button>
+            <Button
+              class="w-full"
               :loading="isRendering"
               :disabled="isRendering"
               @click="renderTemplate"
@@ -68,16 +78,16 @@
             </div>
 
             <template v-if="contextMode !== 'freestyle'">
-              <Select
-                v-model="selectedRecordType"
+              <MSelect
+                v-model="selectedRecordTypeId"
                 :options="recordTypeOptions"
-                optionLabel="name"
+                option-label="name"
+                option-value="id"
                 placeholder="Record type"
                 size="small"
                 class="w-full"
                 :loading="recordTypesLoading"
-                filter
-                @change="loadRecords"
+                searchable
               />
 
               <div class="flex gap-2">
@@ -96,15 +106,16 @@
                 />
               </div>
 
-              <Select
-                v-model="selectedRecord"
+              <MSelect
+                v-model="selectedRecordId"
                 :options="recordRows"
-                optionLabel="label"
+                option-label="label"
+                option-value="id"
                 placeholder="Record"
                 size="small"
                 class="w-full"
                 :loading="recordsLoading"
-                filter
+                searchable
               />
 
               <div v-if="selectedRecord" class="text-xs text-slate-500">
@@ -215,13 +226,15 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Button, InputText, Select, useToast } from "primevue";
+import { Button, InputText, useToast } from "primevue";
 import MCard from "../components/universal/card/MCard.vue";
+import MSelect from "../components/universal/input/MSelect.vue";
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MonacoCodeEditor from "../components/MonacoCodeEditor.vue";
 import ServerComponentsPanel from "../components/ServerComponentsPanel.vue";
 import { ApiRequestType, callApi, type ApiResponse } from "../utils/api";
 import { RequestRoutes } from "../types/request";
+import { openDashboardTab } from "../utils/dashboardTabs";
 
 const STORAGE_KEY = "freemarkerRendererTemplate";
 const CONTEXT_MODE_KEY = "freemarkerRendererContextMode";
@@ -459,6 +472,25 @@ const recordRows = ref<RecordListRow[]>([]);
 const recordTypesLoading = ref(false);
 const recordsLoading = ref(false);
 const recordListError = ref("");
+const selectedRecordTypeId = computed({
+  get: () => selectedRecordType.value?.id || null,
+  set: (value: string | number | null) => {
+    selectedRecordType.value =
+      recordTypeOptions.value.find(
+        (option) => option.id === String(value || "")
+      ) || null;
+    selectedRecord.value = null;
+    recordRows.value = [];
+    if (selectedRecordType.value) void loadRecords();
+  }
+});
+const selectedRecordId = computed({
+  get: () => selectedRecord.value?.id || null,
+  set: (value: string | number | null) => {
+    selectedRecord.value =
+      recordRows.value.find((row) => row.id === String(value || "")) || null;
+  }
+});
 const serverComponentsPanelRef = ref<InstanceType<typeof ServerComponentsPanel> | null>(null);
 const renderHistory = ref<RenderHistoryEntry[]>([]);
 
@@ -617,6 +649,13 @@ const renderTemplate = async () => {
 
 const openFreemarkerReference = () => {
   window.open("https://freemarker.apache.org/docs/index.html", "_blank");
+};
+
+const openTemplateStudio = () => {
+  openDashboardTab("/template-studio", {
+    label: "Template Studio",
+    reuseExisting: true
+  });
 };
 
 const setContextMode = (mode: ContextMode) => {

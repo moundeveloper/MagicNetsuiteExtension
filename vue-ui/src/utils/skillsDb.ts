@@ -29,6 +29,8 @@ export interface Skill {
   priority: number;
   source: SkillSource;
   supersedes: number[];
+  /** Ordered IDs of reusable sub-skills loaded with this skill. */
+  dependencies: number[];
   lastReviewedAt?: string;
   confidence?: SkillConfidence;
   sourceConversation?: SkillConversationSource;
@@ -47,6 +49,7 @@ export interface SkillSearchResult {
   source: SkillSource;
   lastReviewedAt?: string;
   confidence?: SkillConfidence;
+  dependencies: number[];
   score: number;
   matchType: SkillMatchType;
 }
@@ -89,20 +92,23 @@ db.version(4).stores({
 );
 
 const withDefaults = <T extends Partial<Skill>>(skill: T): T & Pick<Skill,
-  "triggers" | "status" | "priority" | "source" | "supersedes"
+  "triggers" | "status" | "priority" | "source" | "supersedes" | "dependencies"
 > => ({
   ...skill,
   triggers: skill.triggers ?? "",
   status: skill.status ?? "active",
   priority: Math.min(100, Math.max(0, Number(skill.priority ?? 50))),
   source: skill.source ?? "manual",
-  supersedes: Array.isArray(skill.supersedes) ? skill.supersedes : []
+  supersedes: Array.isArray(skill.supersedes) ? skill.supersedes : [],
+  dependencies: Array.isArray(skill.dependencies)
+    ? [...new Set(skill.dependencies.map(Number).filter((id) => Number.isInteger(id) && id > 0))]
+    : []
 });
 
 export type NewSkill = Omit<
   Skill,
-  "id" | "createdAt" | "updatedAt" | "triggers" | "status" | "priority" | "source" | "supersedes"
-> & Partial<Pick<Skill, "triggers" | "status" | "priority" | "source" | "supersedes">>;
+  "id" | "createdAt" | "updatedAt" | "triggers" | "status" | "priority" | "source" | "supersedes" | "dependencies"
+> & Partial<Pick<Skill, "triggers" | "status" | "priority" | "source" | "supersedes" | "dependencies">>;
 
 export const addSkill = async (
   skill: NewSkill
@@ -123,10 +129,55 @@ export const updateSkill = async (
   const normalized = { ...updates };
   if (updates.priority !== undefined) normalized.priority = Math.min(100, Math.max(0, Number(updates.priority)));
   if (updates.supersedes !== undefined) normalized.supersedes = Array.isArray(updates.supersedes) ? updates.supersedes : [];
+  if (updates.dependencies !== undefined) {
+    normalized.dependencies = [
+      ...new Set(
+        updates.dependencies
+          .map(Number)
+          .filter((dependencyId) => Number.isInteger(dependencyId) && dependencyId > 0 && dependencyId !== id)
+      )
+    ];
+    const all = await db.skills.toArray();
+    const dependencyMap = new Map(
+      all.map((skill) => [
+        skill.id!,
+        skill.id === id
+          ? normalized.dependencies!
+          : (skill.dependencies ?? [])
+      ])
+    );
+    const visiting = new Set<number>();
+    const visited = new Set<number>();
+    const hasCycle = (skillId: number): boolean => {
+      if (visiting.has(skillId)) return true;
+      if (visited.has(skillId)) return false;
+      visiting.add(skillId);
+      for (const dependencyId of dependencyMap.get(skillId) ?? []) {
+        if (dependencyMap.has(dependencyId) && hasCycle(dependencyId)) return true;
+      }
+      visiting.delete(skillId);
+      visited.add(skillId);
+      return false;
+    };
+    if (hasCycle(id)) {
+      throw new Error("Skill dependencies cannot contain a cycle.");
+    }
+  }
   await db.skills.update(id, { ...normalized, updatedAt: new Date().toISOString() });
 };
 
-export const deleteSkill = async (id: number): Promise<void> => { await db.skills.delete(id); };
+export const deleteSkill = async (id: number): Promise<void> => {
+  await db.transaction("rw", db.skills, async () => {
+    await db.skills.delete(id);
+    await db.skills
+      .filter((skill) => (skill.dependencies ?? []).includes(id))
+      .modify((skill) => {
+        skill.dependencies = (skill.dependencies ?? []).filter(
+          (dependencyId) => dependencyId !== id
+        );
+      });
+  });
+};
 export const getSkill = async (id: number): Promise<Skill | undefined> => db.skills.get(id);
 export const getAllSkills = async (): Promise<Skill[]> => db.skills.toArray();
 export const getSkillsByDomain = async (domain: "global" | "sql"): Promise<Skill[]> =>
@@ -206,21 +257,54 @@ export const searchSkills = async (
     id: skill.id!, name: skill.name, description: skill.description, tags: skill.tags,
     triggers: skill.triggers ?? "", status: skill.status ?? "active",
     priority: skill.priority ?? 50, source: skill.source ?? "manual",
-    lastReviewedAt: skill.lastReviewedAt, confidence: skill.confidence, score, matchType
+    lastReviewedAt: skill.lastReviewedAt, confidence: skill.confidence,
+    dependencies: skill.dependencies ?? [], score, matchType
   }));
 };
 
 export const getSkillContent = async (
   id: number,
   options: { includeDeprecated?: boolean } = {}
-): Promise<{ name: string; content: string } | null> => {
+): Promise<{
+  name: string;
+  content: string;
+  dependencies: Array<{ id: number; name: string }>;
+} | null> => {
   const skill = await db.skills.get(id);
   if (
     !skill ||
     skill.enabled === false ||
     ((skill.status ?? "active") === "deprecated" && !options.includeDeprecated)
   ) return null;
-  return { name: skill.name, content: skill.content };
+  const all = await db.skills.toArray();
+  const byId = new Map(all.filter((item) => item.id).map((item) => [item.id!, item]));
+  const loaded = new Set<number>([id]);
+  const dependencyMetadata: Array<{ id: number; name: string }> = [];
+  const sections: string[] = [skill.content];
+  const appendDependencies = (parent: Skill, depth: number) => {
+    if (depth > 8) return;
+    for (const dependencyId of parent.dependencies ?? []) {
+      if (loaded.has(dependencyId)) continue;
+      const dependency = byId.get(dependencyId);
+      if (
+        !dependency ||
+        dependency.enabled === false ||
+        (dependency.status ?? "active") === "deprecated"
+      ) continue;
+      loaded.add(dependencyId);
+      dependencyMetadata.push({ id: dependencyId, name: dependency.name });
+      sections.push(
+        `\n\n---\n\n## Sub-skill: ${dependency.name}\n\n${dependency.content}`
+      );
+      appendDependencies(dependency, depth + 1);
+    }
+  };
+  appendDependencies(skill, 1);
+  return {
+    name: skill.name,
+    content: sections.join(""),
+    dependencies: dependencyMetadata
+  };
 };
 
 export interface SkillExport {
@@ -234,6 +318,7 @@ export interface SkillExport {
   priority?: number;
   source?: SkillSource;
   supersedes?: number[];
+  dependencies?: number[];
   lastReviewedAt?: string;
   confidence?: SkillConfidence;
   sourceConversation?: SkillConversationSource;

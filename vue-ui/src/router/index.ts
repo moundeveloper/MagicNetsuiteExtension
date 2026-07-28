@@ -9,8 +9,16 @@ import {
   hasAdminAccess,
   initializeAdminAccess
 } from "../utils/adminAccess";
+import TemplateReviewView from "../views/TemplateReviewView.vue";
 
-const routes = getRoutes();
+const routes: RouteRecordRaw[] = [
+  ...getRoutes(),
+  {
+    path: "/template-review/:reviewId",
+    name: "TemplateReview",
+    component: TemplateReviewView
+  }
+];
 
 export const router = createRouter({
   history: createMemoryHistory(),
@@ -29,6 +37,7 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
+  if (to.name === "TemplateReview") return;
   void recordRecentView(to);
 });
 

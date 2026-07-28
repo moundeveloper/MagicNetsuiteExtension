@@ -24,6 +24,7 @@ import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
 import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
 import NotesView from "../features/notes/NotesView.vue";
 import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
+import TemplateStudioView from "../views/TemplateStudioView.vue";
 import RecordsView from "../views/RecordsView.vue";
 import RecordDetailView from "../views/RecordDetailView.vue";
 import FlightRecorderView from "../views/FlightRecorderView.vue";
@@ -266,6 +267,14 @@ export const routes: FullRoute[] = [
     component: FreemarkerRendererView,
     status: RouteStatus.release,
     breadcrumb: "FreeMarker Renderer"
+  },
+  {
+    route: "/template-studio",
+    name: "Template Studio",
+    icon: "pi pi-sparkles",
+    component: TemplateStudioView,
+    status: RouteStatus.release,
+    breadcrumb: "Collaborative FreeMarker Sessions"
   },
   {
     route: "/processing",

@@ -35,9 +35,11 @@ process.stdin.on("end", () => {
   }
 
   if (
-    (state?.pending === true && !state?.status) ||
+    state?.pending === true ||
     state?.status === "html_review" ||
     state?.status === "html_changes_requested" ||
+    state?.status === "html_approved" ||
+    state?.status === "converting" ||
     state?.status === "freemarker_review" ||
     state?.status === "freemarker_changes_requested" ||
     state?.status === "render_error"

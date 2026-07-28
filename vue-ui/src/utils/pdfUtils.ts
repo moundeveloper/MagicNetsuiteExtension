@@ -9,6 +9,14 @@ export interface PdfTextResult {
   pageCount: number;
 }
 
+export interface PdfPageImage {
+  dataUrl: string;
+  pageNumber: number;
+  pageCount: number;
+  width: number;
+  height: number;
+}
+
 interface LineItem {
   x: number;
   str: string;
@@ -21,13 +29,60 @@ interface LineObject {
   y: number;
 }
 
-export const extractPdfText = async (file: File): Promise<PdfTextResult> => {
+const loadPdfJs = async () => {
   const pdfjsLib = await import("pdfjs-dist");
-
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.mjs",
     import.meta.url
   ).toString();
+  return pdfjsLib;
+};
+
+export const renderPdfDataUrlPage = async (
+  dataUrl: string,
+  requestedPage = 1,
+  targetWidth = 1600
+): Promise<PdfPageImage> => {
+  const pdfjsLib = await loadPdfJs();
+  const pdfBytes = new Uint8Array(await (await fetch(dataUrl)).arrayBuffer());
+  const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
+  const pdf = await loadingTask.promise;
+  const pageNumber = Math.trunc(requestedPage);
+  if (pageNumber < 1 || pageNumber > pdf.numPages) {
+    throw new Error(
+      `PDF page ${requestedPage} is out of range. This document has ${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}.`
+    );
+  }
+
+  const page = await pdf.getPage(pageNumber);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const scale = Math.max(1, Math.min(4, targetWidth / baseViewport.width));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const canvasContext = canvas.getContext("2d", { alpha: false });
+  if (!canvasContext) throw new Error("Could not create the PDF page canvas.");
+  canvasContext.fillStyle = "#ffffff";
+  canvasContext.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({
+    canvas,
+    canvasContext,
+    viewport,
+    background: "rgb(255,255,255)"
+  }).promise;
+
+  return {
+    dataUrl: canvas.toDataURL("image/jpeg", 0.92),
+    pageNumber,
+    pageCount: pdf.numPages,
+    width: canvas.width,
+    height: canvas.height
+  };
+};
+
+export const extractPdfText = async (file: File): Promise<PdfTextResult> => {
+  const pdfjsLib = await loadPdfJs();
 
   const arrayBuffer = await file.arrayBuffer();
   const typedArray = new Uint8Array(arrayBuffer);

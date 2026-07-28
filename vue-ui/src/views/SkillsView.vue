@@ -33,6 +33,7 @@ type SkillForm = {
   priority: number;
   source: SkillSource;
   supersedes: string;
+  dependencies: number[];
   lastReviewedAt: string;
   confidence: SkillConfidence | "";
 };
@@ -51,6 +52,7 @@ const showDisabled = ref(true);
 const viewMode = ref<"edit" | "preview">("edit");
 const saving = ref(false);
 const statusMessage = ref("");
+const dependencyToAdd = ref<number | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const skillListWidth = ref(27);
 const isResizingSkillList = ref(false);
@@ -69,6 +71,7 @@ const emptyForm = (): SkillForm => ({
   priority: 50,
   source: "manual",
   supersedes: "",
+  dependencies: [],
   lastReviewedAt: new Date().toISOString().slice(0, 10),
   confidence: ""
 });
@@ -97,6 +100,29 @@ const filteredSkills = computed(() => {
 
 const isValid = computed(
   () => form.value.name.trim().length > 0 && form.value.content.trim().length > 0
+);
+
+const dependencyOptions = computed(() =>
+  skills.value
+    .filter(
+      (skill) =>
+        skill.id !== undefined &&
+        skill.id !== selectedId.value &&
+        skill.enabled !== false &&
+        skill.status !== "deprecated" &&
+        !form.value.dependencies.includes(skill.id)
+    )
+    .map((skill) => ({
+      value: skill.id!,
+      label: skill.name
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+);
+
+const dependencySkills = computed(() =>
+  form.value.dependencies
+    .map((id) => skills.value.find((skill) => skill.id === id))
+    .filter((skill): skill is Skill => Boolean(skill))
 );
 
 const loadSkills = async () => {
@@ -183,6 +209,7 @@ const selectSkill = (skill: Skill) => {
     priority: skill.priority ?? 50,
     source: skill.source ?? "manual",
     supersedes: (skill.supersedes ?? []).join(", "),
+    dependencies: [...(skill.dependencies ?? [])],
     lastReviewedAt: (skill.lastReviewedAt ?? "").slice(0, 10),
     confidence: skill.confidence ?? ""
   };
@@ -192,6 +219,7 @@ const selectSkill = (skill: Skill) => {
 const createNewSkill = () => {
   selectedId.value = null;
   form.value = emptyForm();
+  dependencyToAdd.value = null;
   viewMode.value = "edit";
   statusMessage.value = "";
 };
@@ -210,6 +238,7 @@ const saveSkill = async () => {
     priority: Math.min(100, Math.max(0, Number(form.value.priority) || 0)),
     source: form.value.source,
     supersedes: form.value.supersedes.split(/[\s,]+/).map(Number).filter((id) => Number.isInteger(id) && id > 0),
+    dependencies: [...form.value.dependencies],
     lastReviewedAt: form.value.lastReviewedAt
       ? new Date(`${form.value.lastReviewedAt}T00:00:00`).toISOString()
       : undefined,
@@ -223,9 +252,30 @@ const saveSkill = async () => {
     }
     statusMessage.value = "Saved";
     await loadSkills();
+  } catch (error) {
+    statusMessage.value =
+      error instanceof Error ? error.message : "Could not save skill.";
   } finally {
     saving.value = false;
   }
+};
+
+const addDependency = (value: string | number | null) => {
+  const id = Number(value);
+  dependencyToAdd.value = null;
+  if (
+    !Number.isInteger(id) ||
+    id <= 0 ||
+    id === selectedId.value ||
+    form.value.dependencies.includes(id)
+  ) return;
+  form.value.dependencies.push(id);
+};
+
+const removeDependency = (id: number) => {
+  form.value.dependencies = form.value.dependencies.filter(
+    (dependencyId) => dependencyId !== id
+  );
 };
 
 const toggleSkillEnabled = async (skill: Skill) => {
@@ -393,6 +443,9 @@ onBeforeUnmount(() => {
                   <span v-for="tag in parseTags(skill.tags)" :key="`${skill.id}-${tag}`" class="skill-tag">
                     {{ tag }}
                   </span>
+                  <span v-if="skill.dependencies?.length" class="skill-tag skill-tag--dependency">
+                    {{ skill.dependencies.length }} sub
+                  </span>
                 </span>
               </span>
               <span class="skill-row-meta">{{ formatDate(skill.updatedAt) }}</span>
@@ -496,6 +549,38 @@ onBeforeUnmount(() => {
                     <span>Supersedes skill IDs</span>
                     <InputText v-model="form.supersedes" class="skill-input" placeholder="12, 18" />
                   </label>
+                  <div class="field-wide dependency-field">
+                    <span>Calls sub-skills</span>
+                    <MSelect
+                      :model-value="dependencyToAdd"
+                      :options="dependencyOptions"
+                      option-label="label"
+                      option-value="value"
+                      searchable
+                      size="small"
+                      placeholder="Add reusable sub-skill…"
+                      @update:model-value="addDependency"
+                    />
+                    <div v-if="dependencySkills.length" class="dependency-list">
+                      <span
+                        v-for="dependency in dependencySkills"
+                        :key="dependency.id"
+                        class="dependency-chip"
+                        :title="`Loaded automatically with ${form.name || 'this skill'}`"
+                      >
+                        <i class="pi pi-share-alt" />
+                        <span>{{ dependency.name }}</span>
+                        <button
+                          type="button"
+                          :aria-label="`Remove ${dependency.name}`"
+                          @click="removeDependency(dependency.id!)"
+                        >
+                          <i class="pi pi-times" />
+                        </button>
+                      </span>
+                    </div>
+                    <small>Loaded recursively in this order; circular calls are rejected.</small>
+                  </div>
                 </div>
               </div>
 
@@ -818,6 +903,12 @@ onBeforeUnmount(() => {
   color: var(--skills-accent);
 }
 
+.skill-tag--dependency {
+  border-color: var(--skills-accent-border);
+  background: var(--skills-accent-icon-surface);
+  color: var(--skills-accent);
+}
+
 .skill-tag--draft {
   border-color: var(--p-amber-200);
   background: var(--p-amber-50);
@@ -979,13 +1070,72 @@ onBeforeUnmount(() => {
   gap: 5px;
 }
 
-.field-grid label > span {
+.field-grid label > span,
+.dependency-field > span {
   margin: 0;
   color: var(--p-slate-400);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.dependency-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.dependency-field > small {
+  color: var(--p-slate-400);
+  font-size: 0.66rem;
+}
+
+.dependency-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.dependency-chip {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--skills-accent-border);
+  border-radius: 5px;
+  background: var(--skills-accent-surface);
+  color: var(--skills-accent);
+  padding: 3px 5px 3px 7px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.dependency-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dependency-chip button {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dependency-chip button:hover {
+  background: var(--skills-accent-icon-surface);
 }
 
 .skill-input,

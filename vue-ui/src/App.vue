@@ -12,6 +12,7 @@ import { useVhOffset } from "./composables/useVhOffset";
 import { Toast } from "primevue";
 import GridPattern from "./components/universal/patterns/GridPattern.vue";
 import ViewTabsWorkspace from "./components/ViewTabsWorkspace.vue";
+import { openDashboardTab } from "./utils/dashboardTabs";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -20,6 +21,10 @@ const route = useRoute();
 const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 
 const isProcessingRoute = computed(() => route.path === "/processing");
+const isTemplateReviewRoute = computed(() => route.name === "TemplateReview");
+const isStandaloneRoute = computed(
+  () => isProcessingRoute.value || isTemplateReviewRoute.value
+);
 
 type PanelAction = "open" | "close";
 type OpenViewStorage = {
@@ -37,10 +42,11 @@ const router = useRouter();
 
 onMounted(async () => {
   try {
-    const isDashboardPreview = new URLSearchParams(window.location.search).has(
-      "magicDashboardPreview"
-    );
-    if (isDashboardPreview) {
+    const searchParams = new URLSearchParams(window.location.search);
+    const isDashboardPreview = searchParams.has("magicDashboardPreview");
+    const isTemplateReviewWindow = searchParams.has("magicTemplateReview");
+    const isEmbeddedDashboard = window.self !== window.top;
+    if (isDashboardPreview || isTemplateReviewWindow) {
       document.title = "Magic NetSuite";
       document
         .querySelectorAll<HTMLLinkElement>(
@@ -54,7 +60,19 @@ onMounted(async () => {
       document.head.appendChild(icon);
     }
 
+    if (isTemplateReviewWindow) return;
+
     chrome.runtime.onMessage.addListener((message) => {
+      if (
+        message.type === "OPEN_TEMPLATE_STUDIO" &&
+        (isDashboardPreview || isEmbeddedDashboard)
+      ) {
+        openDashboardTab("/template-studio", {
+          label: "Template Studio",
+          reuseExisting: true
+        });
+        return;
+      }
       if (message.type === "OPEN_VIEW") {
         router.push({ name: message.view });
       }
@@ -90,10 +108,10 @@ onBeforeUnmount(() => {
 
 <template>
   <Toast />
-  <GridPattern v-if="!isProcessingRoute" class="app-background-decoration" />
-  <AppHeader v-if="!isProcessingRoute" />
+  <GridPattern v-if="!isStandaloneRoute" class="app-background-decoration" />
+  <AppHeader v-if="!isStandaloneRoute" />
 
-  <main v-if="!isProcessingRoute" ref="container" class="tabbed-shell">
+  <main v-if="!isStandaloneRoute" ref="container" class="tabbed-shell">
     <ViewTabsWorkspace data-ignore :vhOffset="vhOffset" />
   </main>
 
@@ -101,7 +119,7 @@ onBeforeUnmount(() => {
     <transition name="subtle-fade" mode="out-in">
       <main
         ref="container"
-        :class="{ 'full-screen': isProcessingRoute }"
+        :class="{ 'full-screen': isStandaloneRoute }"
         :key="route.fullPath"
       >
         <component :is="Component" :vhOffset="vhOffset" />

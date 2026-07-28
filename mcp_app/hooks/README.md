@@ -1,8 +1,15 @@
-# Magic NetSuite Claude Code Hooks
+# Archived Magic NetSuite Claude Code Hooks
 
-## Template Review Stop Hook
+## Template review stop hook (retired)
 
-Use `template-review-stop-hook.js` as a Claude Code `Stop` hook to keep the current agent turn alive while the Playwright template review is pending.
+`template-review-stop-hook.js` belongs to the retired blocking template-review
+workflow. Template Studio sessions are asynchronous and collaborative, so the
+current workflow does not install or require this hook.
+
+Keep this file as a reference if a future workflow needs to hold an agent turn
+open while waiting for an external UI action.
+
+### Historical setup
 
 Example hook command:
 
@@ -18,7 +25,7 @@ The hook reads:
 
 or the path in `MAGIC_NS_TEMPLATE_REVIEW_STATE`.
 
-When the workflow still needs agent work (`html_review`, `html_changes_requested`, `freemarker_review`, `freemarker_changes_requested`, or `render_error`), the hook blocks stopping.
+While the workflow is pending—including HTML review, approval/conversion, requested fixes, FreeMarker/PDF review, and render errors—the hook blocks stopping.
 
 ```json
 {
