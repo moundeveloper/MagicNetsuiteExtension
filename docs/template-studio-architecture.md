@@ -45,6 +45,20 @@ the dashboard must not discard the work.
 8. The user can add fix requests at any time. Claude sees their IDs on the next
    session read and marks them addressed with the revision that resolves them.
 
+## Fix-request lifecycle
+
+Fix requests are durable todos with independent AI and user review state:
+
+- **Open**: Claude still needs to address the request.
+- **Addressed, unchecked**: Claude saved a response and revision, but the todo
+  remains active until the user checks it.
+- **Checked**: retained as history and excluded from normal MCP session
+  responses. `includeFeedbackHistory:true` is required to load it.
+
+Unchecked todos can be removed. Checked history cannot be deleted from the
+Template Studio queue, but can be unchecked to restore it. Addressed responses
+remain expandable in both the active queue and history.
+
 There is no intermediate browser-HTML artifact, approval state machine, wait
 tool, or stop hook in this lifecycle.
 
@@ -90,6 +104,10 @@ get current → read relevant source → patch → render → select PDF page �
 - Revision history stores FreeMarker source but not historical PDF data.
 - `sourceVersion` changes only when the FreeMarker changes. Patch operations
   require the version they read and reject stale writes.
+- The bundled editable **Bind FreeMarker to NetSuite Record** skill is seeded
+  into the Skills database once. It discovers body fields, targeted sublists,
+  and linked records before replacing sample content. Unmatched values remain
+  visible as `FIELD_MATCH_NOT_FOUND:semantic_name`.
 - NetSuite deployment remains a separate, explicit user-authorized operation.
 
 ## Compatibility

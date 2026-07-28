@@ -46,13 +46,18 @@ const NETSUITE_TEMPLATE_RECREATION_WORKFLOW = `CURRENT TEMPLATE STUDIO WORKFLOW:
    - Patch with render:true, screenshot:true, and screenshotPage:1 to receive the first complete rasterized PDF page and pdfPageCount.
    - If pdfPageCount is greater than 1, call magic_netsuite_template_session_screenshot once for each remaining page before judging the design.
    - Inspect that PDF image and renderError, then iterate on the same session until it faithfully matches the references.
-   - Load the current session again when resuming; address openFeedback IDs in the next revision.
+   - Load the current session again when resuming. Address openFeedback IDs in the next revision and write a concise changeSummary; addressed todos remain visible until the user checks them.
+   - Checked fix-request history is intentionally omitted. Request includeFeedbackHistory:true only when the user asks to review history.
 
 5. The dashboard is the durable source of truth:
    - Claude and the user edit the same session, FreeMarker source, references, record context, fix requests, render, and revision history.
    - No wait tool, stop hook, approval state machine, Playwright, or chrome.debugger capture is part of this workflow.
 
-6. Deployment remains separate:
+6. Bind the finished design to record data:
+   - When the visual design is ready to test with a selected record, search skills for "bind freemarker netsuite record fields sublists linked records" and load the matching skill.
+   - Follow that skill before replacing sample values. Never guess a field; keep unresolved values as FIELD_MATCH_NOT_FOUND markers.
+
+7. Deployment remains separate:
    - Never upload or deploy the template to NetSuite unless the user explicitly asks.`;
 let bridgeSocket = null;
 let bridgeConnecting = null;
@@ -670,16 +675,18 @@ export function createServer() {
     }, async () => callExtensionToolResult("magic_netsuite_template_session_list"));
     server.registerTool("magic_netsuite_template_session_get_current", {
         title: "Get Current Template Studio Session",
-        description: "Load current collaborative metadata, references, record context, render status, revisions, and open fix requests. Full FreeMarker is omitted by default; use the read tool for compact source access.",
+        description: "Load current collaborative metadata, references, record context, render status, revisions, and active fix-request todos. Checked history and full FreeMarker are omitted by default.",
         inputSchema: {
             sessionId: z.string().optional(),
             includeReferences: z.boolean().optional().describe("Include reference images. Defaults to true."),
             includeFreemarker: z.boolean().optional().describe("Include the complete source. Defaults to false; prefer template_session_read."),
+            includeFeedbackHistory: z.boolean().optional().describe("Include checked fix-request history. Defaults to false."),
         },
-    }, async ({ sessionId, includeReferences = true, includeFreemarker = false }) => callExtensionToolResult("magic_netsuite_template_session_get_current", {
+    }, async ({ sessionId, includeReferences = true, includeFreemarker = false, includeFeedbackHistory = false }) => callExtensionToolResult("magic_netsuite_template_session_get_current", {
         sessionId,
         includeReferences,
         includeFreemarker,
+        includeFeedbackHistory,
     }));
     server.registerTool("magic_netsuite_template_session_set_current", {
         title: "Set Current Template Studio Session",

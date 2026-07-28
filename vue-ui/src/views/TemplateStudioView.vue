@@ -133,17 +133,17 @@ const recordOptions = computed(() => {
   return values;
 });
 
-const openFeedback = computed(
+const activeFeedback = computed(
   () =>
     currentSession.value?.feedback.filter(
-      (feedback) => feedback.status === "open"
+      (feedback) => !feedback.checked
     ) || []
 );
 
-const addressedFeedback = computed(
+const checkedFeedback = computed(
   () =>
     currentSession.value?.feedback.filter(
-      (feedback) => feedback.status === "addressed"
+      (feedback) => feedback.checked
     ) || []
 );
 
@@ -522,6 +522,38 @@ const addFeedback = async () => {
     updatedAt: new Date().toISOString()
   }));
   feedbackText.value = "";
+};
+
+const setFeedbackChecked = async (feedbackId: string, checked: boolean) => {
+  const session = currentSession.value;
+  if (!session) return;
+  await updateSession(session.id, (current) => ({
+    ...current,
+    feedback: current.feedback.map((feedback) =>
+      feedback.id === feedbackId
+        ? {
+            ...feedback,
+            checked,
+            checkedAt: checked ? new Date().toISOString() : undefined
+          }
+        : feedback
+    ),
+    version: current.version + 1,
+    updatedAt: new Date().toISOString()
+  }));
+};
+
+const removeFeedback = async (feedbackId: string) => {
+  const session = currentSession.value;
+  if (!session) return;
+  await updateSession(session.id, (current) => ({
+    ...current,
+    feedback: current.feedback.filter(
+      (feedback) => feedback.id !== feedbackId || feedback.checked
+    ),
+    version: current.version + 1,
+    updatedAt: new Date().toISOString()
+  }));
 };
 
 const setCompleted = async () => {
@@ -1077,7 +1109,9 @@ onBeforeUnmount(() => {
         <section class="panel-section feedback-section">
           <div class="panel-heading">
             <strong>Fix requests</strong>
-            <span v-if="openFeedback.length">{{ openFeedback.length }} open</span>
+            <span v-if="activeFeedback.length"
+              >{{ activeFeedback.length }} todo</span
+            >
           </div>
           <Textarea
             v-model="feedbackText"
@@ -1096,22 +1130,80 @@ onBeforeUnmount(() => {
 
           <div class="feedback-list">
             <article
-              v-for="feedback in openFeedback"
+              v-for="feedback in activeFeedback"
               :key="feedback.id"
-              class="feedback-item feedback-open"
+              class="feedback-item"
+              :class="{ 'feedback-open': feedback.status === 'open' }"
             >
-              <span>{{ feedback.text }}</span>
-              <small>{{ new Date(feedback.createdAt).toLocaleString() }}</small>
-            </article>
-            <details v-if="addressedFeedback.length">
-              <summary>{{ addressedFeedback.length }} addressed</summary>
-              <article
-                v-for="feedback in addressedFeedback"
-                :key="feedback.id"
-                class="feedback-item"
+              <div class="feedback-todo-row">
+                <input
+                  type="checkbox"
+                  :checked="feedback.checked"
+                  :aria-label="`Mark fix request complete: ${feedback.text}`"
+                  @change="setFeedbackChecked(feedback.id, true)"
+                />
+                <span :title="feedback.text">{{ feedback.text }}</span>
+                <button
+                  type="button"
+                  class="feedback-remove"
+                  title="Remove unchecked fix request"
+                  @click="removeFeedback(feedback.id)"
+                >
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
+              <small>
+                {{
+                  feedback.status === "addressed"
+                    ? "Addressed · awaiting your check"
+                    : new Date(feedback.createdAt).toLocaleString()
+                }}
+              </small>
+              <details
+                v-if="feedback.status === 'addressed'"
+                class="feedback-response"
               >
-                <span>{{ feedback.text }}</span>
-                <small v-if="feedback.response">{{ feedback.response }}</small>
+                <summary>Claude's response</summary>
+                <p>
+                  {{
+                    feedback.response ||
+                    "Marked addressed without a written response."
+                  }}
+                </p>
+              </details>
+            </article>
+            <details v-if="checkedFeedback.length" class="feedback-history">
+              <summary>{{ checkedFeedback.length }} checked history</summary>
+              <article
+                v-for="feedback in checkedFeedback"
+                :key="feedback.id"
+                class="feedback-item feedback-checked"
+              >
+                <div class="feedback-todo-row">
+                  <input
+                    type="checkbox"
+                    checked
+                    :aria-label="`Restore fix request: ${feedback.text}`"
+                    @change="setFeedbackChecked(feedback.id, false)"
+                  />
+                  <span :title="feedback.text">{{ feedback.text }}</span>
+                </div>
+                <small v-if="feedback.checkedAt">
+                  Checked
+                  {{ new Date(feedback.checkedAt).toLocaleString() }}
+                </small>
+                <details
+                  v-if="feedback.status === 'addressed'"
+                  class="feedback-response"
+                >
+                  <summary>Addressed response</summary>
+                  <p>
+                    {{
+                      feedback.response ||
+                      "Marked addressed without a written response."
+                    }}
+                  </p>
+                </details>
               </article>
             </details>
           </div>
@@ -1750,15 +1842,80 @@ onBeforeUnmount(() => {
   background: var(--studio-accent-surface);
 }
 
-.feedback-item span {
+.feedback-todo-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+
+.feedback-todo-row input {
+  width: 0.8rem;
+  height: 0.8rem;
+  flex: 0 0 auto;
+  margin: 0.1rem 0 0;
+  accent-color: var(--studio-accent);
+}
+
+.feedback-todo-row span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
   font-size: 0.66rem;
   line-height: 1.4;
+  text-overflow: ellipsis;
 }
 
 .feedback-item small,
 .feedback-list summary {
   color: var(--p-slate-400);
   font-size: 0.58rem;
+}
+
+.feedback-remove {
+  display: inline-flex;
+  width: 1.2rem;
+  height: 1.2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: var(--p-slate-400);
+  cursor: pointer;
+}
+
+.feedback-remove:hover {
+  border-color: var(--p-slate-200);
+  background: white;
+  color: var(--p-slate-700);
+}
+
+.feedback-response {
+  border-top: 1px solid var(--p-slate-200);
+  padding-top: 0.25rem;
+}
+
+.feedback-response p {
+  margin: 0.3rem 0 0;
+  color: var(--p-slate-600);
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+
+.feedback-history {
+  border-top: 1px solid var(--p-slate-200);
+  padding-top: 0.3rem;
+}
+
+.feedback-checked {
+  margin-top: 0.35rem;
+  opacity: 0.78;
+}
+
+.feedback-checked .feedback-todo-row span {
+  text-decoration: line-through;
 }
 
 .feedback-list details {

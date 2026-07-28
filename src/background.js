@@ -415,7 +415,24 @@ const normalizeTemplateDesignSession = (value = {}) => ({
   freemarker: String(value.freemarker || ""),
   pdfDataUrl: String(value.pdfDataUrl || ""),
   renderError: String(value.renderError || ""),
-  feedback: Array.isArray(value.feedback) ? value.feedback : [],
+  feedback: Array.isArray(value.feedback)
+    ? value.feedback
+        .filter((feedback) => feedback?.id && feedback?.text)
+        .map((feedback) => ({
+          ...feedback,
+          status: feedback.status === "addressed" ? "addressed" : "open",
+          checked: Boolean(feedback.checked),
+          ...(feedback.checked
+            ? {
+                checkedAt: String(
+                  feedback.checkedAt ||
+                    feedback.addressedAt ||
+                    new Date().toISOString()
+                )
+              }
+            : { checkedAt: undefined })
+        }))
+    : [],
   revisions: Array.isArray(value.revisions)
     ? value.revisions.slice(0, MAX_TEMPLATE_SESSION_REVISIONS)
     : [],
@@ -484,8 +501,12 @@ function getTemplateDesignSessionFromStore(store, sessionId = "") {
 
 const templateDesignSessionSummary = (
   session,
-  { includeFreemarker = true } = {}
-) => ({
+  { includeFreemarker = true, includeFeedbackHistory = false } = {}
+) => {
+  const activeFeedback = session.feedback.filter(
+    (feedback) => !feedback?.checked
+  );
+  return {
   id: session.id,
   name: session.name,
   prompt: session.prompt,
@@ -503,10 +524,20 @@ const templateDesignSessionSummary = (
   ...(includeFreemarker ? { freemarker: session.freemarker } : {}),
   pdfReady: Boolean(session.pdfDataUrl),
   renderError: session.renderError,
-  feedback: session.feedback,
-  openFeedback: session.feedback.filter(
+  feedback: includeFeedbackHistory ? session.feedback : activeFeedback,
+  openFeedback: activeFeedback.filter(
     (feedback) => feedback?.status === "open"
   ),
+  addressedFeedback: activeFeedback.filter(
+    (feedback) => feedback?.status === "addressed"
+  ),
+  ...(includeFeedbackHistory
+    ? {
+        checkedFeedback: session.feedback.filter(
+          (feedback) => feedback?.checked
+        )
+      }
+    : {}),
   revisions: session.revisions.map((revision) => ({
     id: revision.id,
     actor: revision.actor,
@@ -520,7 +551,8 @@ const templateDesignSessionSummary = (
   createdAt: session.createdAt,
   updatedAt: session.updatedAt,
   lastRenderedAt: session.lastRenderedAt
-});
+  };
+};
 
 function appendTemplateReferenceImages(content, session) {
   for (const reference of session.referenceImages) {
@@ -541,6 +573,7 @@ function templateDesignSessionToolResult(
   {
     includeReferences = false,
     includeFreemarker = false,
+    includeFeedbackHistory = false,
     screenshot = "",
     metadata = {}
   } = {}
@@ -550,7 +583,10 @@ function templateDesignSessionToolResult(
       type: "text",
       text: JSON.stringify(
         {
-          ...templateDesignSessionSummary(session, { includeFreemarker }),
+          ...templateDesignSessionSummary(session, {
+            includeFreemarker,
+            includeFeedbackHistory
+          }),
           ...metadata
         },
         null,
@@ -597,7 +633,8 @@ async function handleTemplateDesignSessionGetCurrent(args = {}) {
   const session = getTemplateDesignSessionFromStore(store, args.sessionId);
   return templateDesignSessionToolResult(session, {
     includeReferences: args.includeReferences !== false,
-    includeFreemarker: args.includeFreemarker === true
+    includeFreemarker: args.includeFreemarker === true,
+    includeFeedbackHistory: args.includeFeedbackHistory === true
   });
 }
 
@@ -1654,7 +1691,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     DOWNLOAD_ANALYZER_SET_ENABLED: handleDownloadAnalyzerSetEnabled,
     DOWNLOAD_ANALYZER_CLEAR: handleDownloadAnalyzerClear,
     DOWNLOAD_FILE_CABINET_FILE: handleDownloadFileCabinetFile,
-    TEMPLATE_DESIGN_SESSION_RENDER: handleTemplateDesignSessionRenderMessage
+    TEMPLATE_DESIGN_SESSION_RENDER: handleTemplateDesignSessionRenderMessage,
+    ENSURE_RECORD_BINDING_SKILL: handleEnsureRecordBindingSkillMessage
   };
 
   const messageHandler = messageMap[message.type];
@@ -2730,6 +2768,8 @@ let mcpSuiteletServerUrlCache = null;
 
 const SKILLS_DB_NAME = "MagicNetsuiteSkills";
 const SKILLS_STORE_NAME = "skills";
+const RECORD_BINDING_SKILL_SEED_KEY =
+  "magic_netsuite_record_binding_skill_seed_v1";
 
 function openSkillsDb() {
   return new Promise((resolve, reject) => {
@@ -2787,6 +2827,63 @@ async function getAllStoredSkills() {
   return withSkillsStore("readonly", (store) => requestToPromise(store.getAll()));
 }
 
+async function ensureRecordBindingSkill() {
+  const seedState = await chrome.storage.local.get(
+    RECORD_BINDING_SKILL_SEED_KEY
+  );
+  if (seedState[RECORD_BINDING_SKILL_SEED_KEY]) return null;
+
+  const response = await fetch(
+    chrome.runtime.getURL("skills/bind-freemarker-record.json")
+  );
+  if (!response.ok) {
+    throw new Error("Could not load the bundled record-binding skill.");
+  }
+  const definition = await response.json();
+  const storedSkills = await getAllStoredSkills();
+  const existing = storedSkills.find(
+    (skill) =>
+      String(skill.name || "").toLowerCase() ===
+      String(definition.name || "").toLowerCase()
+  );
+  let skillId = existing?.id || null;
+  if (!existing) {
+    const timestamp = new Date().toISOString();
+    skillId = await withSkillsStore("readwrite", (store) =>
+      requestToPromise(
+        store.add({
+          ...definition,
+          enabled: true,
+          supersedes: [],
+          dependencies: [],
+          lastReviewedAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        })
+      )
+    );
+  }
+  await chrome.storage.local.set({
+    [RECORD_BINDING_SKILL_SEED_KEY]: {
+      skillId,
+      seededAt: new Date().toISOString()
+    }
+  });
+  return skillId;
+}
+
+function handleEnsureRecordBindingSkillMessage({ sendResponse }) {
+  ensureRecordBindingSkill()
+    .then((skillId) => sendResponse({ ok: true, skillId }))
+    .catch((error) =>
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    );
+  return true;
+}
+
 function normalizeSkillPayload(args) {
   const name = String(args?.name || "").trim();
   const content = String(args?.content || args?.markdown || "").trim();
@@ -2840,6 +2937,21 @@ async function handleMagicSaveSkill(args) {
         )
       : null);
   if (existing?.id) {
+    const preserveWhenOmitted = [
+      "description",
+      "tags",
+      "enabled",
+      "domain",
+      "triggers",
+      "status",
+      "priority",
+      "source"
+    ];
+    for (const field of preserveWhenOmitted) {
+      if (args?.[field] === undefined && existing[field] !== undefined) {
+        payload[field] = existing[field];
+      }
+    }
     if (!dependenciesSpecified) {
       payload.dependencies = Array.isArray(existing.dependencies)
         ? existing.dependencies.map(Number)
@@ -2922,6 +3034,7 @@ async function handleMagicSaveSkill(args) {
 }
 
 async function handleMagicListSkills(args) {
+  await ensureRecordBindingSkill();
   const includeDisabled = args?.includeDisabled !== false;
   const skills = (await getAllStoredSkills())
     .filter((skill) => includeDisabled || skill.enabled !== false)
@@ -2939,6 +3052,7 @@ async function handleMagicListSkills(args) {
 }
 
 async function handleMagicSearchSkills(args) {
+  await ensureRecordBindingSkill();
   const query = String(args?.query || "").trim().toLowerCase();
   const includeDisabled = Boolean(args?.includeDisabled);
   const terms = query.split(/\s+/).filter(Boolean);
@@ -2976,6 +3090,7 @@ async function handleMagicSearchSkills(args) {
 }
 
 async function handleMagicLoadSkill(args) {
+  await ensureRecordBindingSkill();
   const id = Number(args?.id ?? args?.skillId);
   if (!Number.isFinite(id)) throw new Error("Skill id is required.");
   const skills = await getAllStoredSkills();
@@ -5406,7 +5521,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_get_current",
     description:
-      "Load current Template Studio metadata, references, record context, render status, and fix requests. FreeMarker source is omitted by default; use the read tool for token-efficient source access.",
+      "Load current Template Studio metadata, references, record context, render status, and active fix-request todos. Checked history and FreeMarker source are omitted by default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5421,6 +5536,10 @@ const MCP_TOOL_DEFINITIONS = [
         includeFreemarker: {
           type: "boolean",
           description: "Include the complete FreeMarker source. Defaults to false; prefer the read tool."
+        },
+        includeFeedbackHistory: {
+          type: "boolean",
+          description: "Include checked fix-request history. Defaults to false."
         }
       }
     }

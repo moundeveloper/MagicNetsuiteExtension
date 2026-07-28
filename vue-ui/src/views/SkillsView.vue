@@ -358,7 +358,12 @@ const formatDate = (value?: string): string => {
   }).format(new Date(value));
 };
 
-onMounted(loadSkills);
+onMounted(async () => {
+  await chrome.runtime
+    .sendMessage({ type: "ENSURE_RECORD_BINDING_SKILL" })
+    .catch(() => undefined);
+  await loadSkills();
+});
 
 onBeforeUnmount(() => {
   isResizingSkillList.value = false;

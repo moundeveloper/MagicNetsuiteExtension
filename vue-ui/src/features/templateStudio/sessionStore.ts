@@ -32,9 +32,11 @@ export interface TemplateFeedback {
   id: string;
   text: string;
   status: "open" | "addressed";
+  checked: boolean;
   createdAt: string;
   addressedAt?: string;
   response?: string;
+  checkedAt?: string;
 }
 
 export interface TemplateRevision {
@@ -124,7 +126,21 @@ const normalizeSession = (
     freemarker: String(value.freemarker || ""),
     pdfDataUrl: String(value.pdfDataUrl || ""),
     renderError: String(value.renderError || ""),
-    feedback: Array.isArray(value.feedback) ? value.feedback : [],
+    feedback: Array.isArray(value.feedback)
+      ? value.feedback
+          .filter((feedback) => feedback?.id && feedback?.text)
+          .map((feedback) => ({
+            ...feedback,
+            status:
+              feedback.status === "addressed"
+                ? ("addressed" as const)
+                : ("open" as const),
+            checked: Boolean(feedback.checked),
+            checkedAt: feedback.checked
+              ? String(feedback.checkedAt || feedback.addressedAt || timestamp)
+              : undefined
+          }))
+      : [],
     revisions: Array.isArray(value.revisions) ? value.revisions.slice(0, 30) : [],
     status: value.status || "brief_ready",
     version: Number(value.version) || 1,
@@ -214,6 +230,7 @@ export const makeTemplateFeedback = (text: string): TemplateFeedback => ({
   id: makeId("feedback"),
   text: text.trim(),
   status: "open",
+  checked: false,
   createdAt: now()
 });
 

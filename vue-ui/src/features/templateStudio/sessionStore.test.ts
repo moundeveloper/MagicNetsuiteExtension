@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createTemplateDesignSession,
+  makeTemplateFeedback,
   normalizeTemplateSessionStore
 } from "./sessionStore";
 
@@ -54,5 +55,37 @@ describe("Template Studio session store", () => {
     });
 
     expect(normalized.sessions[0]?.sourceVersion).toBe(1);
+  });
+
+  it("creates unchecked fix-request todos and preserves checked history", () => {
+    const todo = makeTemplateFeedback("Move the total to the right.");
+    expect(todo.checked).toBe(false);
+
+    const normalized = normalizeTemplateSessionStore({
+      schemaVersion: 1,
+      currentSessionId: "feedback",
+      sessions: [
+        {
+          id: "feedback",
+          name: "Feedback",
+          prompt: "Review",
+          feedback: [
+            todo,
+            {
+              id: "done",
+              text: "Increase the logo.",
+              status: "addressed",
+              checked: true,
+              response: "Logo width increased."
+            }
+          ]
+        }
+      ],
+      updatedAt: ""
+    });
+
+    expect(normalized.sessions[0]?.feedback[0]?.checked).toBe(false);
+    expect(normalized.sessions[0]?.feedback[1]?.checked).toBe(true);
+    expect(normalized.sessions[0]?.feedback[1]?.checkedAt).toBeTruthy();
   });
 });
