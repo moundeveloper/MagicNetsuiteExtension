@@ -7,12 +7,22 @@
     }"
   >
     <div class="m-panel-header">
-      <div v-if="toggleable" class="m-panel-header-toggle" @click="onToggle">
+      <button
+        v-if="toggleable"
+        :id="toggleId"
+        type="button"
+        class="m-panel-header-toggle"
+        :aria-label="header ? `Toggle ${header}` : 'Toggle panel'"
+        :aria-expanded="expanded"
+        :aria-controls="contentId"
+        @click="onToggle"
+      >
         <i
           class="pi pi-angle-down"
+          aria-hidden="true"
           :style="{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)' }"
         ></i>
-      </div>
+      </button>
       <span v-if="header" class="m-panel-header-label">{{ header }}</span>
       <slot name="header" />
     </div>
@@ -23,7 +33,14 @@
       @leave="onLeave"
       @after-leave="onAfterLeave"
     >
-      <div v-if="expanded" class="m-panel-content-wrapper">
+      <div
+        v-if="expanded"
+        :id="contentId"
+        class="m-panel-content-wrapper"
+        role="region"
+        :aria-label="header || undefined"
+        :aria-labelledby="toggleable && !header ? toggleId : undefined"
+      >
         <div class="m-panel-content px-4 pt-2">
           <slot name="content">
             <slot />
@@ -35,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, useId, watch } from "vue";
 
 type MPanelProps = {
   header?: string;
@@ -57,6 +74,9 @@ const emit = defineEmits<{
 }>();
 
 const expanded = ref<boolean>(false);
+const componentId = useId();
+const toggleId = `m-panel-toggle-${componentId}`;
+const contentId = `m-panel-content-${componentId}`;
 
 if (props.expanded !== undefined) {
   expanded.value = props.expanded;
@@ -68,6 +88,13 @@ const onToggle = () => {
   expanded.value = !expanded.value;
   emit("toggle", expanded.value);
 };
+
+watch(
+  () => props.expanded,
+  (value) => {
+    if (value !== undefined) expanded.value = value;
+  }
+);
 
 const onEnter = (el: Element) => {
   const element = el as HTMLElement;
@@ -118,12 +145,25 @@ const onAfterLeave = (el: Element) => {
 }
 
 .m-panel-header-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   transition:
     color 0.2s ease,
     transform 0.3s ease;
   padding: 0.5rem;
   transform-origin: center;
+}
+
+.m-panel-header-toggle:focus-visible {
+  outline: 2px solid #a5b4fc;
+  outline-offset: 1px;
 }
 
 .m-panel-header-toggle:hover {
@@ -145,5 +185,17 @@ const onAfterLeave = (el: Element) => {
   transition:
     height 0.3s ease,
     opacity 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-panel-header-toggle,
+  .m-panel-header-toggle i,
+  .m-panel-content-wrapper {
+    transition: none !important;
+  }
+
+  .m-panel-header-toggle:hover {
+    transform: none;
+  }
 }
 </style>

@@ -1990,33 +1990,21 @@ export const useAgent = (options: AgentOptions = {}) => {
               match.score >= SKILL_AUTO_ROUTE_THRESHOLD &&
               top.score - match.score <= SKILL_MULTI_MATCH_DELTA
           );
-          const loadSkillAllowed =
-            toolRegistry.value.has("load_skill") &&
-            (!allowedTools || allowedTools.includes("load_skill")) &&
-            !blockedTools?.includes("load_skill");
-
-          if (strongMatches.length === 1) {
-            if (loadSkillAllowed) {
-              routedSystemPrompt +=
-                `\n\n[Local skill preflight]\nRelevant local skill: ${top.name} (ID ${top.id}, ${top.matchType} match, priority ${top.priority}). ` +
-                "Call load_skill for this skill before using external documentation or search sources.";
-            } else {
-              const loaded = await getSkillContent(top.id);
-              if (loaded) {
-                routedSystemPrompt +=
-                  `\n\n[Local skill preflight]\nRelevant local skill: ${loaded.name}. Use this before external sources.\n` +
-                  loaded.content.slice(0, 6000);
-              }
-            }
-          } else {
-            const metadata = strongMatches.slice(0, 5).map((match) =>
-              `- ${match.name} (ID ${match.id}; ${match.matchType}; score ${match.score}; priority ${match.priority}; reviewed ${match.lastReviewedAt ?? "unknown"})`
-            ).join("\n");
+          const selectedMatches = strongMatches.slice(0, 2);
+          const loadedSections: string[] = [];
+          for (const [index, match] of selectedMatches.entries()) {
+            const loaded = await getSkillContent(match.id);
+            if (!loaded) continue;
+            const maxLength = index === 0 ? 7000 : 4000;
+            loadedSections.push(
+              `## ${loaded.name}\n` + loaded.content.slice(0, maxLength)
+            );
+          }
+          if (loadedSections.length) {
             routedSystemPrompt +=
-              `\n\n[Local skill preflight]\nMultiple relevant local skills matched:\n${metadata}\n` +
-              (loadSkillAllowed
-                ? "Choose the most specific skill and call load_skill before external documentation or search sources."
-                : "Prefer the most specific local skill metadata before external sources.");
+              "\n\n[Automatically loaded local skill preflight]\n" +
+              "Apply this local guidance before the first completion. When multiple skills are present, the more specific reviewed guidance takes precedence.\n\n" +
+              loadedSections.join("\n\n---\n\n");
           }
           console.log(`[useAgent] Skill preflight matched "${top.name}" (${top.score}, ${top.matchType})`);
         }

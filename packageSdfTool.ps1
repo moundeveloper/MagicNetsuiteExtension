@@ -28,6 +28,9 @@ New-Item -ItemType Directory -Force -Path $RuntimeDest | Out-Null
 Copy-Item -LiteralPath (Join-Path $SdfToolRoot "sdfDeploy.exe") -Destination (Join-Path $SdfDest "sdfDeploy.exe") -Force
 Copy-Item -LiteralPath (Join-Path $SdfToolRoot "package.json") -Destination (Join-Path $SdfDest "package.json") -Force
 Copy-Item -LiteralPath (Join-Path $SdfToolRoot "pnpm-lock.yaml") -Destination (Join-Path $SdfDest "pnpm-lock.yaml") -Force
+# Keep the staged install on the same pnpm dependency policy as the source
+# package (allowBuilds, overrides, and release-age rules live here in pnpm 11).
+Copy-Item -LiteralPath (Join-Path $SdfToolRoot "pnpm-workspace.yaml") -Destination (Join-Path $SdfDest "pnpm-workspace.yaml") -Force
 Copy-Item -LiteralPath $NodeSource -Destination (Join-Path $RuntimeDest "node.exe") -Force
 
 Push-Location $SdfDest

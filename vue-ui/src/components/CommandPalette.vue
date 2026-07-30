@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { routes, RouteStatus } from "../router/routesMap";
+import {
+  routes,
+  RouteStatus,
+  isRouteVisibleInNavigation,
+} from "../router/routesMap";
 import {
   ApiRequestType,
   callApi,
@@ -41,7 +45,7 @@ const featureItems = computed<PaletteItem[]>(() =>
   routes
     .filter(
       (route) =>
-        route.route !== "/processing" &&
+        isRouteVisibleInNavigation(route) &&
         route.status !== RouteStatus.deprecated &&
         (!route.adminOnly || hasAdminAccess.value) &&
         (mode === "development" || route.status === RouteStatus.release)

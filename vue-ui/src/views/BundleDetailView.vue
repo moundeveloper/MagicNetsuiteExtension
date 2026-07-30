@@ -21,6 +21,7 @@ import {
   type BundleSdfFileState,
 } from "../utils/bundleTools";
 import { getNetsuiteEnvironment } from "../utils/api";
+import { createJob, updateJob } from "../utils/jobsDb";
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -46,6 +47,7 @@ const SDF_POLL_INTERVAL_MS = 5000;
 const SDF_POLL_TIMEOUT_MS = 10 * 60 * 1000; // 10 min
 const sdfConverting = ref(false);
 const sdfBaseline = ref<BundleSdfFileState | null>(null);
+const sdfJobId = ref("");
 let sdfPollTimer: ReturnType<typeof setTimeout> | null = null;
 let sdfPollDeadline = 0;
 
@@ -58,6 +60,47 @@ const stopSdfPolling = () => {
 };
 
 onBeforeUnmount(stopSdfPolling);
+
+const getAccountFromDomain = (environment: string) => {
+  const accountHost = environment.split(".")[0] ?? "";
+  return accountHost
+    ? accountHost.toUpperCase().replace(/-/g, "_")
+    : "unknown";
+};
+
+const updateSdfJob = async (
+  patch: Parameters<typeof updateJob>[1],
+) => {
+  if (!sdfJobId.value) return;
+  try {
+    await updateJob(sdfJobId.value, patch);
+  } catch (err: any) {
+    // Conversion must not fail solely because local job history is unavailable.
+    console.warn("SDF job history update failed:", err?.message ?? err);
+  }
+};
+
+const createSdfJob = async (bundleId: string) => {
+  if (!bundle.value) return;
+  sdfJobId.value = "";
+  try {
+    const job = await createJob({
+      title: `Convert ${bundle.value.name || `bundle ${bundleId}`} to SDF`,
+      kind: "bundle-sdf-conversion",
+      environment: domain.value,
+      account: getAccountFromDomain(domain.value),
+      sourcePath: route.fullPath,
+      result: {
+        bundleId,
+        phase: "preparing",
+      },
+    });
+    sdfJobId.value = job.id;
+  } catch (err: any) {
+    // IndexedDB history is best-effort; NetSuite conversion remains available.
+    console.warn("SDF job history creation failed:", err?.message ?? err);
+  }
+};
 
 // ── Parse bundle from route query ──────────────────────────────────────────
 onMounted(async () => {
@@ -144,9 +187,19 @@ const startSdfConversion = async () => {
   const bundleId = bundle.value.bundleId;
   sdfConversionStarting.value = true;
   try {
+    await createSdfJob(bundleId);
+
     // Snapshot the result file BEFORE starting so completion is a pure
     // server-side comparison (created, or lastModified advanced).
     sdfBaseline.value = await fetchBundleSdfFileState(bundleId);
+    await updateSdfJob({
+      progress: 5,
+      result: {
+        bundleId,
+        phase: "starting",
+        baseline: sdfBaseline.value,
+      },
+    });
 
     await startBundleSdfConversion(
       domain.value,
@@ -159,6 +212,17 @@ const startSdfConversion = async () => {
       canConvert: false,
       inProgress: true,
     };
+    await updateSdfJob({
+      status: "running",
+      progress: 10,
+      startedAt: Date.now(),
+      error: undefined,
+      result: {
+        bundleId,
+        phase: "watching-result-file",
+        baseline: sdfBaseline.value,
+      },
+    });
     toast.add({
       severity: "success",
       summary: "SDF conversion started",
@@ -172,6 +236,15 @@ const startSdfConversion = async () => {
     scheduleSdfPoll(bundleId);
   } catch (err: any) {
     stopSdfPolling();
+    await updateSdfJob({
+      status: "failed",
+      finishedAt: Date.now(),
+      error: String(err?.message ?? err),
+      result: {
+        bundleId,
+        phase: "start-failed",
+      },
+    });
     toast.add({
       severity: "error",
       summary: "Conversion failed",
@@ -189,6 +262,11 @@ const scheduleSdfPoll = (bundleId: string) => {
 
 const pollSdfCompletion = async (bundleId: string) => {
   if (!sdfConverting.value) return;
+  const elapsed = SDF_POLL_TIMEOUT_MS - Math.max(0, sdfPollDeadline - Date.now());
+  const progress = Math.min(
+    90,
+    10 + Math.round((elapsed / SDF_POLL_TIMEOUT_MS) * 80),
+  );
   try {
     const current = await fetchBundleSdfFileState(bundleId);
     const result = detectSdfConversionCompletion(
@@ -205,6 +283,18 @@ const pollSdfCompletion = async (bundleId: string) => {
     if (result.completed) {
       stopSdfPolling();
       sdfFileState.value = current;
+      await updateSdfJob({
+        status: "succeeded",
+        progress: 100,
+        finishedAt: Date.now(),
+        error: undefined,
+        result: {
+          bundleId,
+          phase: "completed",
+          completion: result.created ? "created" : "updated",
+          file: current,
+        },
+      });
       if (sdfStatus.value) {
         sdfStatus.value = {
           ...sdfStatus.value,
@@ -221,13 +311,45 @@ const pollSdfCompletion = async (bundleId: string) => {
       });
       return;
     }
+    await updateSdfJob({
+      status: "running",
+      progress,
+      error: undefined,
+      result: {
+        bundleId,
+        phase: "watching-result-file",
+        baseline: sdfBaseline.value,
+        latest: current,
+      },
+    });
   } catch (err: any) {
     // Transient query error — keep polling until the deadline.
     console.warn("SDF completion poll failed:", err?.message ?? err);
+    await updateSdfJob({
+      status: "running",
+      progress,
+      result: {
+        bundleId,
+        phase: "watching-result-file",
+        baseline: sdfBaseline.value,
+        lastPollError: String(err?.message ?? err),
+      },
+    });
   }
 
   if (Date.now() >= sdfPollDeadline) {
     stopSdfPolling();
+    await updateSdfJob({
+      status: "running",
+      progress: 90,
+      result: {
+        bundleId,
+        phase: "observation-timeout",
+        baseline: sdfBaseline.value,
+        message:
+          "Local observation stopped after 10 minutes; NetSuite may still be converting.",
+      },
+    });
     toast.add({
       severity: "warn",
       summary: "SDF conversion still pending",

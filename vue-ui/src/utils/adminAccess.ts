@@ -3,7 +3,6 @@ import { setFlightRecorderEnabled } from "../states/settingsState";
 
 const SESSION_KEY = "magic_netsuite_temporary_admin_access";
 const ACCESS_DURATION_MS = 30 * 60 * 1000;
-const PASSKEY = "mounmoon";
 type AdminAccessStorageResult = {
   [SESSION_KEY]?: {
     expiresAt?: number;
@@ -89,9 +88,8 @@ export const adminAccessExpiresAt = computed(() =>
   isBuiltInAdmin ? null : state.expiresAt || null
 );
 
-export const unlockAdminAccess = async (passkey: string) => {
+export const grantAdvancedAccess = async () => {
   if (isBuiltInAdmin) return true;
-  if (passkey !== PASSKEY) return false;
 
   state.expiresAt = Date.now() + ACCESS_DURATION_MS;
   try {

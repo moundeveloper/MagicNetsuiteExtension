@@ -13,7 +13,7 @@ if (-not $vuePath) {
     exit 1
 }
 
-Write-Host "=== Running npm build in $vueFolder ===`n"
+Write-Host "=== Running pnpm build in $vueFolder ===`n"
 
 # Save current location
 $rootPath = Get-Location
@@ -21,10 +21,10 @@ $rootPath = Get-Location
 # Navigate to vue-ui folder
 Set-Location $vuePath
 
-# Run npm build
-npm run build
+# Run the package manager pinned by vue-ui/package.json.
+pnpm run build
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ npm build failed!"
+    Write-Host "❌ pnpm build failed!"
     exit $LASTEXITCODE
 }
 

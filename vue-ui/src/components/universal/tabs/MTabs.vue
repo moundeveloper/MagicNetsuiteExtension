@@ -9,33 +9,61 @@
         class="tabs-scroll-container"
         @wheel.prevent="onWheel"
       >
-        <TransitionGroup name="tab-transition" tag="div" class="tabs-inner">
-          <button
+        <TransitionGroup
+          name="tab-transition"
+          tag="div"
+          class="tabs-inner"
+          role="tablist"
+        >
+          <div
             v-for="tab in tabs"
             :key="tab.name"
-            class="tab-header group"
+            class="tab-item group"
             :class="{ 'tab-header--active': tab.name === activeTab }"
-            @click="switchTab(tab.name)"
-            @mousedown.middle.prevent="isDynamic && emitDeleteEvent(tab.name)"
           >
-            <div
-              class="tab-indicator"
-              :class="{ 'tab-indicator--active': tab.name === activeTab }"
-            ></div>
-            <span class="tab-label">{{ tab.label }}</span>
+            <button
+              type="button"
+              class="tab-header"
+              role="tab"
+              :id="tabId(tab.name)"
+              :aria-controls="panelId(tab.name)"
+              :aria-selected="tab.name === activeTab"
+              :tabindex="tab.name === activeTab ? 0 : -1"
+              :title="tab.label"
+              @click="switchTab(tab.name)"
+              @keydown="onTabKeydown(tab.name, $event)"
+              @mousedown.middle.prevent="isDynamic && emitDeleteEvent(tab.name)"
+            >
+              <span
+                class="tab-indicator"
+                :class="{ 'tab-indicator--active': tab.name === activeTab }"
+                aria-hidden="true"
+              ></span>
+              <span class="tab-label">{{ tab.label }}</span>
+            </button>
             <button
               v-if="isDynamic"
+              type="button"
               class="tab-close"
-              @click.stop="emitDeleteEvent(tab.name)"
+              :aria-label="`Close ${tab.label}`"
+              :title="`Close ${tab.label}`"
+              @click="emitDeleteEvent(tab.name, true)"
             >
-              <i class="pi pi-times" style="font-size: 0.7rem"></i>
+              <i class="pi pi-times" style="font-size: 0.7rem" aria-hidden="true"></i>
             </button>
-          </button>
+          </div>
         </TransitionGroup>
       </div>
 
       <!-- Add button: pinned right after scroll area, never scrolls -->
-      <button v-if="isDynamic" class="tab-add" @click="emitAddEvent">
+      <button
+        v-if="isDynamic"
+        type="button"
+        class="tab-add"
+        aria-label="Add tab"
+        title="Add tab"
+        @click="emitAddEvent"
+      >
         <i
           class="pi pi-plus"
           style="font-size: 0.8rem; color: var(--p-slate-600)"
@@ -49,7 +77,14 @@
     </div>
 
     <!-- Always render tab content below -->
-    <div ref="tabContentRef" class="tab-content">
+    <div
+      ref="tabContentRef"
+      class="tab-content"
+      role="tabpanel"
+      :id="activeTab ? panelId(activeTab) : undefined"
+      :aria-labelledby="activeTab ? tabId(activeTab) : undefined"
+      tabindex="0"
+    >
       <div v-if="$slots['tab-content']">
         <slot
           name="tab-content"
@@ -67,7 +102,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, nextTick, watch } from "vue";
+import {
+  ref,
+  onMounted,
+  onUnmounted,
+  computed,
+  nextTick,
+  useId,
+  watch
+} from "vue";
 
 interface Tab {
   name: string;
@@ -89,10 +132,15 @@ const emit = defineEmits<{
 }>();
 
 const activeTab = ref(props.modelValue ?? props.tabs[0]?.name ?? null);
-const isTransitioning = ref(false);
 const tabContentRef = ref<HTMLElement | null>(null);
 const scrollRef = ref<HTMLElement | null>(null);
 const contentHeight = ref(0);
+const componentId = useId();
+const pendingFocusName = ref<string | null>(null);
+
+const tabIndex = (name: string) => props.tabs.findIndex((tab) => tab.name === name);
+const tabId = (name: string) => `m-tabs-${componentId}-tab-${tabIndex(name)}`;
+const panelId = (name: string) => `m-tabs-${componentId}-panel-${tabIndex(name)}`;
 
 // Scroll wheel → horizontal scroll, just like VS Code
 const onWheel = (e: WheelEvent) => {
@@ -118,34 +166,72 @@ onUnmounted(() => {
 });
 
 const switchTab = (name: string) => {
-  if (name !== activeTab.value && !isTransitioning.value) {
-    isTransitioning.value = true;
+  if (name !== activeTab.value) {
     activeTab.value = name;
     emit("update:modelValue", name);
     nextTick(() => {
-      setTimeout(() => {
-        isTransitioning.value = false;
-        updateContentHeight();
-      }, 200);
+      updateContentHeight();
     });
   }
 };
 
-const emitDeleteEvent = (tabId: string) => {
-  let nextTabId: string | null = null;
+const focusTab = (name: string) => {
+  const id = tabId(name);
+  void nextTick(() => document.getElementById(id)?.focus());
+};
 
-  if (activeTab.value === tabId) {
-    const tabIndex = props.tabs.findIndex((t) => t.name === tabId);
-    if (tabIndex > 0) {
-      nextTabId = props.tabs[tabIndex - 1]!.name;
-    } else if (tabIndex < props.tabs.length - 1) {
-      nextTabId = props.tabs[tabIndex + 1]!.name;
+const onTabKeydown = (name: string, event: KeyboardEvent) => {
+  const currentIndex = tabIndex(name);
+  if (currentIndex < 0 || !props.tabs.length) return;
+
+  let targetIndex: number | null = null;
+  if (event.key === "ArrowRight") {
+    targetIndex = (currentIndex + 1) % props.tabs.length;
+  } else if (event.key === "ArrowLeft") {
+    targetIndex = (currentIndex - 1 + props.tabs.length) % props.tabs.length;
+  } else if (event.key === "Home") {
+    targetIndex = 0;
+  } else if (event.key === "End") {
+    targetIndex = props.tabs.length - 1;
+  } else if (event.key === "Delete" && isDynamic.value) {
+    event.preventDefault();
+    emitDeleteEvent(name, true);
+    return;
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  const target = props.tabs[targetIndex];
+  if (target) {
+    switchTab(target.name);
+    focusTab(target.name);
+  }
+};
+
+const emitDeleteEvent = (deletedTabId: string, restoreFocus = false) => {
+  let nextTabId: string | null = null;
+  const deletedIndex = props.tabs.findIndex((t) => t.name === deletedTabId);
+
+  if (activeTab.value === deletedTabId) {
+    if (deletedIndex > 0) {
+      nextTabId = props.tabs[deletedIndex - 1]!.name;
+    } else if (deletedIndex < props.tabs.length - 1) {
+      nextTabId = props.tabs[deletedIndex + 1]!.name;
     }
     activeTab.value = nextTabId;
     if (nextTabId) emit("update:modelValue", nextTabId);
   }
 
-  emit("delete-tab", { tabId, nextTabId });
+  if (restoreFocus) {
+    pendingFocusName.value =
+      nextTabId ??
+      props.tabs[deletedIndex + 1]?.name ??
+      props.tabs[deletedIndex - 1]?.name ??
+      null;
+  }
+
+  emit("delete-tab", { tabId: deletedTabId, nextTabId });
 };
 
 const emitAddEvent = () => {
@@ -170,6 +256,12 @@ watch(
     ) {
       activeTab.value = props.modelValue ?? newTabs[0]?.name ?? null;
       if (activeTab.value) emit("update:modelValue", activeTab.value);
+    }
+
+    if (pendingFocusName.value) {
+      const focusName = pendingFocusName.value;
+      pendingFocusName.value = null;
+      if (newTabs.some((tab) => tab.name === focusName)) focusTab(focusName);
     }
   }
 );
@@ -210,28 +302,45 @@ watch(
 }
 
 /* ── Tab button ── */
-.tab-header {
+.tab-item {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.25rem;
+  outline: 1px solid var(--p-slate-300);
+  background-color: var(--m-slate-150);
+  color: var(--p-slate-600);
+  overflow: hidden;
+  transition:
+    background-color 0.15s,
+    color 0.15s,
+    outline-color 0.15s;
+}
+
+.tab-header {
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   padding: 0.3rem 0.6rem;
   border: 0;
-  border-radius: 0.25rem;
-  outline: 1px solid var(--p-slate-300);
-  background-color: var(--m-slate-150);
-  color: var(--p-slate-600);
+  background: transparent;
+  color: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition:
-    background-color 0.15s,
-    color 0.15s;
+}
+
+.tab-header:focus-visible,
+.tab-close:focus-visible,
+.tab-add:focus-visible {
+  outline: 2px solid #a5b4fc;
+  outline-offset: -2px;
 }
 
 .tab-header--active {
-  background-color: var(--m-slate-250);
-  color: var(--p-slate-900);
-  outline-color: var(--p-slate-400);
+  background-color: #f1f4fe;
+  color: #4f46e5;
+  outline-color: #a5b4fc;
 }
 
 /* ── Active indicator bar ── */
@@ -247,13 +356,18 @@ watch(
 }
 
 .tab-indicator--active {
-  background-color: var(--p-slate-500);
+  background-color: #4f46e5;
   opacity: 1;
   transform: translateX(0) scaleX(1);
   animation: bounce-in 0.4s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
 
 .tab-label {
+  min-width: 0;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 500;
   font-size: 0.8rem;
   user-select: none;
@@ -268,7 +382,8 @@ watch(
   cursor: pointer;
   padding: 0.2rem;
   border-radius: 0.25rem;
-  margin-left: 0.25rem;
+  margin-right: 0.25rem;
+  background: transparent;
   opacity: 0;
   color: var(--p-slate-500);
   transition:
@@ -276,7 +391,8 @@ watch(
     background-color 0.15s;
 }
 
-.tab-header:hover .tab-close {
+.tab-item:hover .tab-close,
+.tab-close:focus-visible {
   opacity: 1;
 }
 
@@ -360,8 +476,6 @@ watch(
   transform: scale(0.7) translateY(-10px);
   width: 0;
   min-width: 0;
-  padding-left: 0;
-  padding-right: 0;
   margin-right: 0;
   border: none;
   outline: none;
@@ -380,6 +494,21 @@ watch(
   }
   100% {
     transform: translateX(0) scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-item,
+  .tab-indicator,
+  .tab-close,
+  .tab-add,
+  .tab-fade-enter-active,
+  .tab-fade-leave-active,
+  .tab-transition-enter-active,
+  .tab-transition-leave-active,
+  .tab-transition-move {
+    animation: none !important;
+    transition: none !important;
   }
 }
 </style>

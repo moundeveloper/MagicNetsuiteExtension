@@ -149,7 +149,7 @@ const extractHelpPageContent = (root, pageUrl) => {
   };
 };
 
-export const setupMessageListener = () => {
+export const setupMessageListener = (bridgeCapability) => {
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "stream-api") return;
 
@@ -167,7 +167,7 @@ export const setupMessageListener = () => {
         return;
       }
 
-      const handler = new StreamHandler(requestId, (chunk) => {
+      const handler = new StreamHandler(requestId, bridgeCapability, (chunk) => {
         port.postMessage(chunk);
       });
 
@@ -178,6 +178,7 @@ export const setupMessageListener = () => {
       window.postMessage(
         {
           type: MESSAGE_TYPES.FROM_EXTENSION,
+          capability: bridgeCapability,
           payload: {
             action,
             data,
@@ -185,7 +186,7 @@ export const setupMessageListener = () => {
             mode
           }
         },
-        "*"
+        window.location.origin
       );
     });
 
@@ -427,16 +428,21 @@ export const setupMessageListener = () => {
       return true;
     }
 
-    const handler = new NormalRequestHandler(requestId, sendResponse);
+    const handler = new NormalRequestHandler(
+      requestId,
+      bridgeCapability,
+      sendResponse
+    );
     requestManager.addRequest(requestId, handler);
     handler.start();
 
     window.postMessage(
       {
         type: MESSAGE_TYPES.FROM_EXTENSION,
+        capability: bridgeCapability,
         payload: { ...msg, requestId }
       },
-      "*"
+      window.location.origin
     );
 
     return true;

@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 import {
   RouteStatus,
   RouteStatusColors,
+  isRouteVisibleInNavigation,
   type RouteItem
 } from "../router/routesMap";
 import { Button, Drawer, InputText } from "primevue";
@@ -20,7 +21,7 @@ const props = defineProps<{
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const visibleBottom = ref(false);
 const search = ref("");
-const blackList = ["settings", "modules not found", "features", "processing"];
+const blackList = ["settings", "modules not found", "features"];
 const mode = import.meta.env.MODE;
 const { settings, isSettingsLoaded } = useSettings();
 
@@ -29,6 +30,7 @@ const allLinks = computed(() => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
       !blackList.includes(link.name.toLowerCase()) &&
+      isRouteVisibleInNavigation(link) &&
       link.status !== RouteStatus.deprecated &&
       (mode === "development" || link.status === RouteStatus.release) &&
       (!link.adminOnly || hasAdminAccess.value)

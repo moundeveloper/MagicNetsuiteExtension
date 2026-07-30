@@ -78,7 +78,6 @@
         "content/utils/*.js",
         "content/ui/**/*.js",
         "content/keyboard/*.js",
-        "content/elementScreenshotPicker.js",
         "content/modules/*.js",
         "globalUtils.js"
       ],
@@ -92,8 +91,8 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/elementScreenshotPicker.js"],
+      "matches": ["*://*.app.netsuite.com/*"],
+      "js": ["content/elementScreenshotShortcut.js"],
       "all_frames": true,
       "run_at": "document_idle"
     },

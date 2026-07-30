@@ -1,39 +1,80 @@
-import CustomRecordsView from "../views/CustomRecordsView.vue";
-import HomeView from "../views/HomeView.vue";
-import ScriptsView from "../views/ScriptsView.vue";
-import ScriptDetailView from "../views/ScriptDetailView.vue";
-import RunQuickScriptView from "../views/RunQuickScriptView.vue";
-import SettingsView from "../views/SettingsView.vue";
-import LogSearchView from "../views/LogSearchView.vue";
-import BundleSearchView from "../views/BundleSearchView.vue";
-import BundleDetailView from "../views/BundleDetailView.vue";
-import BundleSdfProjectView from "../views/BundleSdfProjectView.vue";
-import BetterFilecabinetView from "../views/BetterFilecabinetView.vue";
-import PlaygroundView from "../views/PlaygroundView.vue";
-import ScriptsDeployedView from "../views/ScriptsDeployedView.vue";
-import ProcessingView from "../views/ProcessingView.vue";
-import TemplatesView from "../views/TemplatesView.vue";
-import TemplateDetailView from "../views/TemplateDetailView.vue";
-import SuiteScriptModulesView from "../views/SuiteScriptModulesView.vue";
-import SuiteQLView from "../views/SuiteQLView.vue";
-import McpServerView from "../views/McpServerView.vue";
-import ApiTesterView from "../views/ApiTesterView.vue";
-import MultiAgentView from "../views/MultiAgentView.vue";
-import NetsuiteApiTesterView from "../views/NetsuiteApiTesterView.vue";
-import NetsuiteAgentHarnessView from "../views/NetsuiteAgentHarnessView.vue";
-import FeatureFeedbackView from "../views/FeatureFeedbackView.vue";
-import NotesView from "../features/notes/NotesView.vue";
-import FreemarkerRendererView from "../views/FreemarkerRendererView.vue";
-import TemplateStudioView from "../views/TemplateStudioView.vue";
-import RecordsView from "../views/RecordsView.vue";
-import RecordDetailView from "../views/RecordDetailView.vue";
-import FlightRecorderView from "../views/FlightRecorderView.vue";
-import WatchtowerView from "../views/WatchtowerView.vue";
-import DependencyExplorerView from "../views/DependencyExplorerView.vue";
-import SkillsView from "../views/SkillsView.vue";
-import CustomToolsView from "../views/CustomToolsView.vue";
-import ClaudeTasksView from "../views/ClaudeTasksView.vue";
-import DownloadAnalyzerView from "../views/DownloadAnalyzerView.vue";
+import { defineAsyncComponent, markRaw, type Component } from "vue";
+
+type ViewModule = { default: Component };
+type ViewLoader = () => Promise<ViewModule>;
+
+/**
+ * Vue Router accepts raw import functions, but ViewTabsWorkspace renders route
+ * components manually with <component :is>. A raw loader is treated there as a
+ * functional component and its Promise becomes visible text ("[object Promise]").
+ * Always wrap route loaders so both rendering paths receive a real component.
+ */
+const lazyView = (loader: ViewLoader): Component =>
+  markRaw(defineAsyncComponent(loader));
+
+const CustomRecordsView = lazyView(() => import("../views/CustomRecordsView.vue"));
+const HomeView = lazyView(() => import("../views/HomeView.vue"));
+const ScriptsView = lazyView(() => import("../views/ScriptsView.vue"));
+const ScriptDetailView = lazyView(() => import("../views/ScriptDetailView.vue"));
+const RunQuickScriptView = lazyView(() => import("../views/RunQuickScriptView.vue"));
+const SettingsView = lazyView(() => import("../views/SettingsView.vue"));
+const LogSearchView = lazyView(() => import("../views/LogSearchView.vue"));
+const BundleSearchView = lazyView(() => import("../views/BundleSearchView.vue"));
+const BundleDetailView = lazyView(() => import("../views/BundleDetailView.vue"));
+const BundleSdfProjectView = lazyView(() =>
+  import("../views/BundleSdfProjectView.vue")
+);
+const BetterFilecabinetView = lazyView(() =>
+  import("../views/BetterFilecabinetView.vue")
+);
+const PlaygroundView = lazyView(() => import("../views/PlaygroundView.vue"));
+const ScriptsDeployedView = lazyView(() =>
+  import("../views/ScriptsDeployedView.vue")
+);
+const ProcessingView = lazyView(() => import("../views/ProcessingView.vue"));
+const JobsCenterView = lazyView(() => import("../views/JobsCenterView.vue"));
+const TemplatesView = lazyView(() => import("../views/TemplatesView.vue"));
+const TemplateDetailView = lazyView(() =>
+  import("../views/TemplateDetailView.vue")
+);
+const SuiteScriptModulesView = lazyView(() =>
+  import("../views/SuiteScriptModulesView.vue")
+);
+const SuiteQLView = lazyView(() => import("../views/SuiteQLView.vue"));
+const McpServerView = lazyView(() => import("../views/McpServerView.vue"));
+const ApiTesterView = lazyView(() => import("../views/ApiTesterView.vue"));
+const MultiAgentView = lazyView(() => import("../views/MultiAgentView.vue"));
+const NetsuiteApiTesterView = lazyView(() =>
+  import("../views/NetsuiteApiTesterView.vue")
+);
+const NetsuiteAgentHarnessView = lazyView(() =>
+  import("../views/NetsuiteAgentHarnessView.vue")
+);
+const FeatureFeedbackView = lazyView(() =>
+  import("../views/FeatureFeedbackView.vue")
+);
+const NotesView = lazyView(() => import("../features/notes/NotesView.vue"));
+const FreemarkerRendererView = lazyView(() =>
+  import("../views/FreemarkerRendererView.vue")
+);
+const TemplateStudioView = lazyView(() =>
+  import("../views/TemplateStudioView.vue")
+);
+const RecordsView = lazyView(() => import("../views/RecordsView.vue"));
+const RecordDetailView = lazyView(() => import("../views/RecordDetailView.vue"));
+const FlightRecorderView = lazyView(() =>
+  import("../views/FlightRecorderView.vue")
+);
+const WatchtowerView = lazyView(() => import("../views/WatchtowerView.vue"));
+const DependencyExplorerView = lazyView(() =>
+  import("../views/DependencyExplorerView.vue")
+);
+const SkillsView = lazyView(() => import("../views/SkillsView.vue"));
+const CustomToolsView = lazyView(() => import("../views/CustomToolsView.vue"));
+const ClaudeTasksView = lazyView(() => import("../views/ClaudeTasksView.vue"));
+const DownloadAnalyzerView = lazyView(() =>
+  import("../views/DownloadAnalyzerView.vue")
+);
 
 export enum RouteStatus {
   development = "development",
@@ -59,6 +100,7 @@ export type RouteItem = {
   tabLabel?: string;
   breadcrumbParents?: Array<{ label: string; route: string }>;
   adminOnly?: boolean;
+  internalOnly?: boolean;
 };
 
 export type Route = {
@@ -278,11 +320,20 @@ export const routes: FullRoute[] = [
   },
   {
     route: "/processing",
-    name: "Processing",
-    icon: "pi pi-spinner",
+    name: "Execution Monitor",
+    icon: "pi pi-bolt",
     component: ProcessingView,
-    status: RouteStatus.draft,
-    breadcrumb: "Processing"
+    status: RouteStatus.release,
+    breadcrumb: "Execution Monitor",
+    internalOnly: true
+  },
+  {
+    route: "/jobs",
+    name: "Jobs Center",
+    icon: "pi pi-list-check",
+    component: JobsCenterView,
+    status: RouteStatus.release,
+    breadcrumb: "Jobs Center"
   },
   {
     route: "/suitescript-modules",
@@ -421,9 +472,14 @@ export const getRouteMap = (): RouteItem[] => {
     status: route.status,
     breadcrumb: route.breadcrumb,
     breadcrumbParents: route.breadcrumbParents,
-    adminOnly: route.adminOnly
+    adminOnly: route.adminOnly,
+    internalOnly: route.internalOnly
   }));
 };
+
+export const isRouteVisibleInNavigation = (
+  route: Pick<RouteItem, "internalOnly">
+) => !route.internalOnly;
 
 export const getRoutes = () => {
   const result: any[] = [];
@@ -433,7 +489,10 @@ export const getRoutes = () => {
       path: route.route,
       name: route.name,
       component: route.component,
-      meta: { adminOnly: Boolean(route.adminOnly) }
+      meta: {
+        adminOnly: Boolean(route.adminOnly),
+        internalOnly: Boolean(route.internalOnly)
+      }
     };
 
     result.push(baseRoute);
@@ -444,7 +503,10 @@ export const getRoutes = () => {
           path: child.route,
           name: child.name,
           component: child.component,
-          meta: { adminOnly: Boolean(route.adminOnly) }
+          meta: {
+            adminOnly: Boolean(route.adminOnly),
+            internalOnly: Boolean(route.internalOnly)
+          }
         });
       }
     }

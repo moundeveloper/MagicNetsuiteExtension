@@ -1,2 +1,5 @@
 allowBuilds:
   vue-demi: set this to true or false
+overrides:
+  dompurify: ^3.4.12
+  postcss: ^8.5.18

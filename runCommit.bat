@@ -49,7 +49,7 @@ echo ====================================
 echo Step 1.6: Building MCP Apps
 echo ====================================
 cd /d "%~dp0mcp_app"
-call npm run build
+call pnpm run build
 if %ERRORLEVEL% NEQ 0 goto :error
 cd /d "%~dp0"
 

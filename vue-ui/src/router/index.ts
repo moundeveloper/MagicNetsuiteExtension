@@ -9,7 +9,7 @@ import {
   hasAdminAccess,
   initializeAdminAccess
 } from "../utils/adminAccess";
-import TemplateReviewView from "../views/TemplateReviewView.vue";
+const TemplateReviewView = () => import("../views/TemplateReviewView.vue");
 
 const routes: RouteRecordRaw[] = [
   ...getRoutes(),
@@ -37,7 +37,7 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
-  if (to.name === "TemplateReview") return;
+  if (to.name === "TemplateReview" || to.meta.internalOnly) return;
   void recordRecentView(to);
 });
 

@@ -40,6 +40,211 @@ const TEMPLATE_REVIEW_PENDING_STATUSES = new Set([
   "freemarker_changes_requested",
   "render_error"
 ]);
+const JOBS_STORAGE_KEY = "magic_netsuite_jobs_v1";
+const JOBS_MAX_HISTORY = 500;
+const JOB_TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+const JOB_RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
+const JOB_CANCELLABLE_STATUSES = new Set([
+  "queued",
+  "running",
+  "retry-requested"
+]);
+let jobsWriteQueue = Promise.resolve();
+const NETSUITE_DOC_BATCHES_STORAGE_KEY =
+  "magic_netsuite_doc_search_batches_v1";
+const NETSUITE_DOC_BATCH_MAX_HISTORY = 100;
+const NETSUITE_DOC_BATCH_MAX_TOPICS = 20;
+const NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC = 3;
+const NETSUITE_DOC_BATCH_TERMINAL_STATUSES = new Set([
+  "completed",
+  "completed_with_errors",
+  "failed"
+]);
+let netsuiteDocBatchWriteQueue = Promise.resolve();
+let netsuiteDocBatchWorkerActive = false;
+
+const createJobId = () =>
+  typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `job-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const clampJobProgress = (progress) => {
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
+
+const normalizeStoredJob = (value, now = Date.now()) => {
+  const input = value && typeof value === "object" ? value : {};
+  return {
+    ...input,
+    id: String(input.id || createJobId()),
+    title: String(input.title || "Magic NetSuite operation"),
+    status: [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled",
+      "retry-requested",
+      "cancel-requested"
+    ].includes(input.status)
+      ? input.status
+      : "queued",
+    progress: clampJobProgress(input.progress),
+    createdAt: Number(input.createdAt) || now,
+    updatedAt: Number(input.updatedAt) || now,
+    environment: String(input.environment || "unknown"),
+    account: String(input.account || "unknown"),
+    attempt: Math.max(1, Math.floor(Number(input.attempt) || 1))
+  };
+};
+
+const readStoredJobs = async () => {
+  const stored = await chrome.storage.local.get(JOBS_STORAGE_KEY);
+  const jobs = stored?.[JOBS_STORAGE_KEY];
+  return Array.isArray(jobs) ? jobs.map((job) => normalizeStoredJob(job)) : [];
+};
+
+const notifyJobsChanged = () => {
+  chrome.runtime.sendMessage({ type: "JOBS_CHANGED" }).catch(() => undefined);
+};
+
+const mutateStoredJobs = (mutation) => {
+  const pending = jobsWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const jobs = await readStoredJobs();
+      const result = await mutation(jobs);
+      jobs.sort((a, b) => b.updatedAt - a.updatedAt);
+      const activeJobs = jobs.filter(
+        (job) => !JOB_TERMINAL_STATUSES.has(job.status)
+      );
+      const completedJobs = jobs.filter((job) =>
+        JOB_TERMINAL_STATUSES.has(job.status)
+      );
+      const persistedJobs = [
+        ...activeJobs,
+        ...completedJobs.slice(
+          0,
+          Math.max(0, JOBS_MAX_HISTORY - activeJobs.length)
+        )
+      ].sort((a, b) => b.updatedAt - a.updatedAt);
+      await chrome.storage.local.set({
+        [JOBS_STORAGE_KEY]: persistedJobs
+      });
+      notifyJobsChanged();
+      return result;
+    });
+  jobsWriteQueue = pending.then(() => undefined, () => undefined);
+  return pending;
+};
+
+const createStoredJob = (input = {}) =>
+  mutateStoredJobs((jobs) => {
+    const job = normalizeStoredJob(input);
+    if (jobs.some((candidate) => candidate.id === job.id)) {
+      throw new Error(`Job ${job.id} already exists.`);
+    }
+    jobs.push(job);
+    return job;
+  });
+
+const updateStoredJob = (id, patch = {}) =>
+  mutateStoredJobs((jobs) => {
+    const index = jobs.findIndex((job) => job.id === id);
+    if (index < 0) return false;
+    const current = jobs[index];
+    const next = normalizeStoredJob({
+      ...current,
+      ...patch,
+      id: current.id,
+      createdAt: current.createdAt,
+      progress:
+        patch.progress === undefined ? current.progress : patch.progress,
+      updatedAt: patch.updatedAt ?? Date.now()
+    });
+    jobs[index] = next;
+    return true;
+  });
+
+const requestStoredJobAction = (id, action) =>
+  mutateStoredJobs((jobs) => {
+    const index = jobs.findIndex((job) => job.id === id);
+    if (index < 0) return false;
+    const job = jobs[index];
+    if (action === "retry" && JOB_RETRYABLE_STATUSES.has(job.status)) {
+      jobs[index] = normalizeStoredJob({
+        ...job,
+        status: "retry-requested",
+        progress: 0,
+        finishedAt: undefined,
+        updatedAt: Date.now()
+      });
+      return true;
+    }
+    if (action === "cancel" && JOB_CANCELLABLE_STATUSES.has(job.status)) {
+      jobs[index] = normalizeStoredJob({
+        ...job,
+        status: "cancel-requested",
+        updatedAt: Date.now()
+      });
+      return true;
+    }
+    return false;
+  });
+
+const clearStoredCompletedJobs = () =>
+  mutateStoredJobs((jobs) => {
+    const retained = jobs.filter(
+      (job) => !JOB_TERMINAL_STATUSES.has(job.status)
+    );
+    const removed = jobs.length - retained.length;
+    jobs.splice(0, jobs.length, ...retained);
+    return removed;
+  });
+
+const sendJobResponse = (sendResponse, operation) => {
+  Promise.resolve()
+    .then(operation)
+    .then((result) => sendResponse({ ok: true, result }))
+    .catch((error) =>
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    );
+  return true;
+};
+
+const handleJobsList = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await jobsWriteQueue.catch(() => undefined);
+    const jobs = await readStoredJobs();
+    return jobs.sort((a, b) => b.updatedAt - a.updatedAt);
+  });
+
+const handleJobsGet = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await jobsWriteQueue.catch(() => undefined);
+    return (await readStoredJobs()).find((job) => job.id === message.id) || null;
+  });
+
+const handleJobsCreate = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () => createStoredJob(message.job));
+
+const handleJobsUpdate = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    updateStoredJob(String(message.id || ""), message.patch)
+  );
+
+const handleJobsRequestAction = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    requestStoredJobAction(String(message.id || ""), message.action)
+  );
+
+const handleJobsClearCompleted = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, clearStoredCompletedJobs);
 
 const chromeCallback = (invoke) =>
   new Promise((resolve, reject) => {
@@ -1075,16 +1280,70 @@ const handleTemplateDesignSessionRenderMessage = ({
   sendResponse
 }) => {
   (async () => {
+    let jobId = "";
     try {
+      try {
+        const store = await getTemplateDesignSessionStore();
+        const pendingSession = getTemplateDesignSessionFromStore(
+          store,
+          message.sessionId
+        );
+        const job = await createStoredJob({
+          title: `Render ${pendingSession.name || "FreeMarker template"}`,
+          kind: "template-studio-render",
+          status: "running",
+          progress: 0,
+          indeterminate: true,
+          startedAt: Date.now(),
+          environment: pendingSession.accountId || "unknown",
+          account: pendingSession.accountId || "unknown",
+          sourcePath: "/template-studio",
+          message: "Rendering with authenticated NetSuite services"
+        });
+        jobId = job.id;
+      } catch (jobError) {
+        console.warn(
+          "[Template Studio] Could not register render job.",
+          jobError
+        );
+      }
+
       const session = await renderTemplateDesignSession({
         sessionId: message.sessionId
       });
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: session.status === "rendered" ? "succeeded" : "failed",
+          progress: 100,
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: session.renderError || undefined,
+          message:
+            session.status === "rendered"
+              ? "NetSuite PDF render completed"
+              : "NetSuite PDF render failed",
+          result: {
+            sessionId: session.id,
+            renderVersion: session.renderVersion,
+            status: session.status
+          }
+        }).catch(() => undefined);
+      }
       sendResponse({
         ok: session.status === "rendered",
         error: session.renderError || "",
         session: templateDesignSessionSummary(session)
       });
     } catch (error) {
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "failed",
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+          message: "Template Studio render failed"
+        }).catch(() => undefined);
+      }
       sendResponse({
         ok: false,
         error: error instanceof Error ? error.message : String(error)
@@ -1691,8 +1950,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     DOWNLOAD_ANALYZER_SET_ENABLED: handleDownloadAnalyzerSetEnabled,
     DOWNLOAD_ANALYZER_CLEAR: handleDownloadAnalyzerClear,
     DOWNLOAD_FILE_CABINET_FILE: handleDownloadFileCabinetFile,
+    JOBS_LIST: handleJobsList,
+    JOBS_GET: handleJobsGet,
+    JOBS_CREATE: handleJobsCreate,
+    JOBS_UPDATE: handleJobsUpdate,
+    JOBS_REQUEST_ACTION: handleJobsRequestAction,
+    JOBS_CLEAR_COMPLETED: handleJobsClearCompleted,
     TEMPLATE_DESIGN_SESSION_RENDER: handleTemplateDesignSessionRenderMessage,
-    ENSURE_RECORD_BINDING_SKILL: handleEnsureRecordBindingSkillMessage
+    ENSURE_RECORD_BINDING_SKILL: handleEnsureTemplateSkillsMessage,
+    ENSURE_TEMPLATE_SKILLS: handleEnsureTemplateSkillsMessage
   };
 
   const messageHandler = messageMap[message.type];
@@ -2402,6 +2668,7 @@ const openDashboardPreview = ({ message, sender, sendResponse }) => {
 
 const switchDashboardAccount = ({ message, sendResponse }) => {
   (async () => {
+    let jobId = "";
     try {
       const liveSession = await getLiveDashboardPreviewSession();
       const sessions = await getDashboardPreviewSessions();
@@ -2421,6 +2688,24 @@ const switchDashboardAccount = ({ message, sendResponse }) => {
       if (accountId === session.accountId) {
         sendResponse({ ok: true, accountId, accountDomain: sourceUrl.hostname });
         return;
+      }
+
+      try {
+        const job = await createStoredJob({
+          title: `Switch NetSuite context to ${accountId}`,
+          kind: "account-switch",
+          status: "running",
+          progress: 0,
+          indeterminate: true,
+          startedAt: Date.now(),
+          environment: sourceUrl.hostname,
+          account: accountId,
+          sourcePath: "/",
+          message: "Reloading the authenticated execution worker"
+        });
+        jobId = job.id;
+      } catch (jobError) {
+        console.warn("[Dashboard] Could not register account switch.", jobError);
       }
 
       const enablerTab = await dashboardTabsGet(session.enablerTabId);
@@ -2462,8 +2747,30 @@ const switchDashboardAccount = ({ message, sendResponse }) => {
       await dashboardTabsUpdate(session.dashboardTabId, { active: true })
         .catch(() => undefined);
 
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "succeeded",
+          progress: 100,
+          indeterminate: false,
+          finishedAt: Date.now(),
+          message: `Execution worker connected to ${accountId}`,
+          result: {
+            accountId,
+            accountDomain: sourceUrl.hostname
+          }
+        }).catch(() => undefined);
+      }
       sendResponse({ ok: true, accountId, accountDomain: sourceUrl.hostname });
     } catch (error) {
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "failed",
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+          message: "NetSuite context switch failed"
+        }).catch(() => undefined);
+      }
       sendResponse({ ok: false, error: error.message });
     }
   })();
@@ -2770,6 +3077,8 @@ const SKILLS_DB_NAME = "MagicNetsuiteSkills";
 const SKILLS_STORE_NAME = "skills";
 const RECORD_BINDING_SKILL_SEED_KEY =
   "magic_netsuite_record_binding_skill_seed_v1";
+const TEMPLATE_DESIGN_SKILL_SEED_KEY =
+  "magic_netsuite_template_design_skill_seed_v1";
 
 function openSkillsDb() {
   return new Promise((resolve, reject) => {
@@ -2827,17 +3136,13 @@ async function getAllStoredSkills() {
   return withSkillsStore("readonly", (store) => requestToPromise(store.getAll()));
 }
 
-async function ensureRecordBindingSkill() {
-  const seedState = await chrome.storage.local.get(
-    RECORD_BINDING_SKILL_SEED_KEY
-  );
-  if (seedState[RECORD_BINDING_SKILL_SEED_KEY]) return null;
+async function ensureBundledSkill(seedKey, skillPath, loadErrorMessage) {
+  const seedState = await chrome.storage.local.get(seedKey);
+  if (seedState[seedKey]) return null;
 
-  const response = await fetch(
-    chrome.runtime.getURL("skills/bind-freemarker-record.json")
-  );
+  const response = await fetch(chrome.runtime.getURL(skillPath));
   if (!response.ok) {
-    throw new Error("Could not load the bundled record-binding skill.");
+    throw new Error(loadErrorMessage);
   }
   const definition = await response.json();
   const storedSkills = await getAllStoredSkills();
@@ -2864,7 +3169,7 @@ async function ensureRecordBindingSkill() {
     );
   }
   await chrome.storage.local.set({
-    [RECORD_BINDING_SKILL_SEED_KEY]: {
+    [seedKey]: {
       skillId,
       seededAt: new Date().toISOString()
     }
@@ -2872,9 +3177,31 @@ async function ensureRecordBindingSkill() {
   return skillId;
 }
 
-function handleEnsureRecordBindingSkillMessage({ sendResponse }) {
-  ensureRecordBindingSkill()
-    .then((skillId) => sendResponse({ ok: true, skillId }))
+const ensureRecordBindingSkill = () =>
+  ensureBundledSkill(
+    RECORD_BINDING_SKILL_SEED_KEY,
+    "skills/bind-freemarker-record.json",
+    "Could not load the bundled record-binding skill."
+  );
+
+const ensureTemplateDesignSkill = () =>
+  ensureBundledSkill(
+    TEMPLATE_DESIGN_SKILL_SEED_KEY,
+    "skills/design-freemarker-template.json",
+    "Could not load the bundled FreeMarker design skill."
+  );
+
+const ensureTemplateSkills = async () => {
+  const [recordBindingSkillId, templateDesignSkillId] = await Promise.all([
+    ensureRecordBindingSkill(),
+    ensureTemplateDesignSkill()
+  ]);
+  return { recordBindingSkillId, templateDesignSkillId };
+};
+
+function handleEnsureTemplateSkillsMessage({ sendResponse }) {
+  ensureTemplateSkills()
+    .then((skillIds) => sendResponse({ ok: true, ...skillIds }))
     .catch((error) =>
       sendResponse({
         ok: false,
@@ -3034,7 +3361,7 @@ async function handleMagicSaveSkill(args) {
 }
 
 async function handleMagicListSkills(args) {
-  await ensureRecordBindingSkill();
+  await ensureTemplateSkills();
   const includeDisabled = args?.includeDisabled !== false;
   const skills = (await getAllStoredSkills())
     .filter((skill) => includeDisabled || skill.enabled !== false)
@@ -3052,28 +3379,69 @@ async function handleMagicListSkills(args) {
 }
 
 async function handleMagicSearchSkills(args) {
-  await ensureRecordBindingSkill();
+  await ensureTemplateSkills();
   const query = String(args?.query || "").trim().toLowerCase();
   const includeDisabled = Boolean(args?.includeDisabled);
-  const terms = query.split(/\s+/).filter(Boolean);
+  const normalizeSearchText = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  const normalizedQuery = normalizeSearchText(query);
+  const terms = normalizedQuery
+    .split(/\s+/)
+    .filter((term) => term.length > 1);
   const results = (await getAllStoredSkills())
     .filter((skill) => includeDisabled || skill.enabled !== false)
     .map((skill) => {
-      const haystack = `${skill.name || ""} ${skill.description || ""} ${skill.tags || ""}`.toLowerCase();
+      const name = normalizeSearchText(skill.name);
+      const metadata = normalizeSearchText(
+        `${skill.name || ""} ${skill.description || ""} ${skill.tags || ""}`
+      );
+      const content = normalizeSearchText(skill.content);
+      const triggers = String(skill.triggers || "")
+        .split(/[\n,]+/)
+        .map(normalizeSearchText)
+        .filter(Boolean);
+      const exactTrigger = triggers.some(
+        (trigger) => normalizedQuery && normalizedQuery.includes(trigger)
+      );
+      const triggerTermMatches = terms.filter((term) =>
+        triggers.some((trigger) => trigger.includes(term))
+      ).length;
+      const metadataMatches = terms.filter((term) =>
+        metadata.includes(term)
+      ).length;
+      const contentMatches = terms.filter((term) =>
+        content.includes(term)
+      ).length;
       const score = terms.length
-        ? terms.reduce((sum, term) => sum + (haystack.includes(term) ? 2 : 0), 0)
+        ? (exactTrigger ? 120 : 0) +
+          (normalizedQuery.includes(name) ? 45 : 0) +
+          triggerTermMatches * 10 +
+          metadataMatches * 6 +
+          Math.min(12, contentMatches)
         : 1;
       return { skill, score };
     })
     .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score)
-    .map(({ skill }) => ({
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Number(b.skill.priority || 50) - Number(a.skill.priority || 50)
+    )
+    .map(({ skill, score }) => ({
       id: skill.id,
       name: skill.name,
       description: skill.description,
       tags: skill.tags,
+      triggers: skill.triggers || "",
       enabled: skill.enabled !== false,
       domain: skill.domain || "global",
+      status: skill.status || "active",
+      priority: Number(skill.priority || 50),
+      source: skill.source || "manual",
+      score,
       dependencies: Array.isArray(skill.dependencies)
         ? skill.dependencies
         : []
@@ -3090,7 +3458,7 @@ async function handleMagicSearchSkills(args) {
 }
 
 async function handleMagicLoadSkill(args) {
-  await ensureRecordBindingSkill();
+  await ensureTemplateSkills();
   const id = Number(args?.id ?? args?.skillId);
   if (!Number.isFinite(id)) throw new Error("Skill id is required.");
   const skills = await getAllStoredSkills();
@@ -4387,6 +4755,65 @@ const MCP_TOOL_DEFINITIONS = [
       required: ["url"]
     }
   },
+  {
+    name: "netsuite_submit_docs_batch",
+    description:
+      "Submit many official NetSuite Help Center topics as one non-blocking background job. Returns a jobId immediately, allowing this agent and other agents to continue using the MCP/browser bridge while the shared FIFO worker searches and reads documentation. Use netsuite_get_docs_batch later with the jobId to collect progress and answers. Prefer this over repeated netsuite_search_docs calls when researching several topics or when multiple agents share the NetSuite browser session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: NETSUITE_DOC_BATCH_MAX_TOPICS,
+          description:
+            "Independent documentation questions or keyword searches. Duplicate and blank queries are removed."
+        },
+        pagesPerQuery: {
+          type: "integer",
+          minimum: 0,
+          maximum: NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC,
+          description:
+            "How many top search results to read for each query. Defaults to 1; use 0 for search-result metadata only."
+        },
+        maxSearchResults: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description:
+            "Maximum search matches retained per query. Defaults to 5."
+        }
+      },
+      required: ["queries"]
+    }
+  },
+  {
+    name: "netsuite_get_docs_batch",
+    description:
+      "Get status, progress, and completed answers for a job returned by netsuite_submit_docs_batch. This call never waits for the browser worker. Poll later while status is queued or running. By default it returns every topic including read page content; use topicIndexes to retrieve only this agent's topics or includeContent=false for a compact progress check.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          description: "The jobId returned by netsuite_submit_docs_batch."
+        },
+        topicIndexes: {
+          type: "array",
+          items: { type: "integer", minimum: 0 },
+          description:
+            "Optional zero-based topic indexes to retrieve. Omit to retrieve all topics."
+        },
+        includeContent: {
+          type: "boolean",
+          description:
+            "Include full documentation page text. Defaults to true. Set false for a small status/progress response."
+        }
+      },
+      required: ["jobId"]
+    }
+  },
   // ── Script Tools ──
   {
     name: "netsuite_get_scripts",
@@ -5521,7 +5948,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_get_current",
     description:
-      "Load current Template Studio metadata, references, record context, render status, and active fix-request todos. Checked history and FreeMarker source are omitted by default.",
+      "Load current Template Studio metadata, references, record context, render status, and active fix-request todos. The MCP hosts automatically search and load relevant local/custom FreeMarker design skills for a new session before the first draft. Checked history and FreeMarker source are omitted by default.",
     inputSchema: {
       type: "object",
       properties: {
@@ -5623,7 +6050,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_update",
     description:
-      "Create the initial complete FreeMarker document or replace it explicitly. For later revisions use template_session_read + template_session_patch to avoid retransmitting unchanged source.",
+      "Create the initial complete FreeMarker document or replace it explicitly. Before the initial draft, call template_session_get_current and apply its automatically loaded localSkillPreflight. For later revisions use template_session_read + template_session_patch to avoid retransmitting unchanged source.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6048,6 +6475,25 @@ const MCP_TOOL_DEFINITIONS = [
 // -----------------------------
 // MCP tool handling
 // -----------------------------
+const MCP_JOB_TOOL_PATTERN =
+  /(?:^|_)(?:create|update|delete|upload|rename|move|deploy|import|save|set|patch|render|screenshot|convert|fill|click|eval)(?:_|$)|run_quick_script|call_custom_tool|test_custom_tool|switch_environment|stream_start|stream_input|control_open|proxy_request/;
+
+const shouldTrackMcpJob = (toolName) =>
+  MCP_JOB_TOOL_PATTERN.test(String(toolName || ""));
+
+const formatMcpJobTitle = (toolName) =>
+  String(toolName || "MCP operation")
+    .replace(/^magic_netsuite_|^netsuite_/, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const getMcpJobSourcePath = (toolName) => {
+  if (toolName.includes("template")) return "/template-studio";
+  if (toolName.includes("bundle") || toolName.includes("sdf")) return "/bundles";
+  if (toolName.includes("custom_tool")) return "/custom-tools";
+  return "/mcp-server";
+};
+
 async function handleRequest({ requestId, method, params }) {
   try {
     let result;
@@ -6071,6 +6517,30 @@ async function handleRequest({ requestId, method, params }) {
       }
 
       let executionSide = "client";
+      let executionJobId = "";
+      if (shouldTrackMcpJob(name)) {
+        try {
+          const account =
+            mcpDedicatedTabAccountId ||
+            storageForCall?.magic_netsuite_settings?.mcpPreferredAccount ||
+            "unknown";
+          const job = await createStoredJob({
+            title: formatMcpJobTitle(name),
+            kind: "mcp-tool-execution",
+            status: "running",
+            progress: 0,
+            indeterminate: true,
+            startedAt: Date.now(),
+            environment: account,
+            account,
+            sourcePath: getMcpJobSourcePath(name),
+            message: `Running ${name}`
+          });
+          executionJobId = job.id;
+        } catch (jobError) {
+          console.warn("[MCP] Could not register execution job.", jobError);
+        }
+      }
       try {
         result = await callMcpSuiteletServerTool(name, args);
 
@@ -6126,6 +6596,12 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteSearchDocs(args);
         } else if (name === "netsuite_read_doc_page") {
           result = await handleNetsuiteReadDocPage(args);
+        } else if (name === "netsuite_submit_docs_batch") {
+          result = await handleNetsuiteSubmitDocsBatch(args);
+          executionSide = "local";
+        } else if (name === "netsuite_get_docs_batch") {
+          result = await handleNetsuiteGetDocsBatch(args);
+          executionSide = "local";
         } else if (name === "netsuite_list_bundles") {
           result = await handleNetsuitListBundles(args);
         } else if (name === "netsuite_get_bundle_components") {
@@ -6286,6 +6762,20 @@ async function handleRequest({ requestId, method, params }) {
           throw new Error(`Unknown tool: ${name}`);
         }
         recordMcpUsage(name, true, null, executionSide);
+        if (executionJobId) {
+          await updateStoredJob(executionJobId, {
+            status: "succeeded",
+            progress: 100,
+            indeterminate: false,
+            finishedAt: Date.now(),
+            message: `${name} completed`,
+            result: {
+              tool: name,
+              executionSide,
+              completed: true
+            }
+          }).catch(() => undefined);
+        }
 
         // After a successful tool call, check governance on the dedicated tab
         // and refresh it if needed for the next call.
@@ -6297,6 +6787,21 @@ async function handleRequest({ requestId, method, params }) {
         }
       } catch (toolErr) {
         recordMcpUsage(name, false, toolErr.message, executionSide);
+        if (executionJobId) {
+          await updateStoredJob(executionJobId, {
+            status: "failed",
+            indeterminate: false,
+            finishedAt: Date.now(),
+            error:
+              toolErr instanceof Error ? toolErr.message : String(toolErr),
+            message: `${name} failed`,
+            result: {
+              tool: name,
+              executionSide,
+              completed: false
+            }
+          }).catch(() => undefined);
+        }
         throw toolErr;
       }
     } else {
@@ -6519,7 +7024,7 @@ async function handleSuiteQLTool(toolName, args) {
 // NetSuite Docs Tool Helpers
 // -----------------------------
 
-async function handleNetsuiteSearchDocs(args) {
+async function searchNetsuiteDocs(args) {
   const tab = await getPreferredNetsuiteTab();
   if (!tab || !tab.url) {
     throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
@@ -6544,10 +7049,15 @@ async function handleNetsuiteSearchDocs(args) {
     ? { results: [], message: "No results found for the given query." }
     : { results };
 
+  return payload;
+}
+
+async function handleNetsuiteSearchDocs(args) {
+  const payload = await searchNetsuiteDocs(args);
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
 }
 
-async function handleNetsuiteReadDocPage(args) {
+async function readNetsuiteDocPage(args) {
   const url = String(args.url ?? "");
   let parsedUrl;
   try {
@@ -6592,11 +7102,450 @@ async function handleNetsuiteReadDocPage(args) {
     linksTruncated: Boolean(response.message?.linksTruncated)
   };
 
+  return payload;
+}
+
+async function handleNetsuiteReadDocPage(args) {
+  const payload = await readNetsuiteDocPage(args);
   return {
     content: [{
       type: "text",
       text: JSON.stringify(payload, null, 2)
     }]
+  };
+}
+
+function normalizeNetsuiteDocBatchQueries(value) {
+  if (!Array.isArray(value)) {
+    throw new Error("queries must be an array of documentation topics.");
+  }
+
+  const seen = new Set();
+  const queries = [];
+  value.forEach((item) => {
+    const query = String(item ?? "").trim().replace(/\s+/g, " ");
+    const key = query.toLocaleLowerCase();
+    if (!query || seen.has(key)) return;
+    seen.add(key);
+    queries.push(query);
+  });
+
+  if (queries.length === 0) {
+    throw new Error("queries must contain at least one non-empty topic.");
+  }
+  if (queries.length > NETSUITE_DOC_BATCH_MAX_TOPICS) {
+    throw new Error(
+      `A documentation batch supports at most ${NETSUITE_DOC_BATCH_MAX_TOPICS} unique topics.`
+    );
+  }
+  return queries;
+}
+
+function clampNetsuiteDocBatchInteger(value, fallback, minimum, maximum) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`Expected an integer between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+async function readNetsuiteDocBatches() {
+  const stored = await chrome.storage.local.get(
+    NETSUITE_DOC_BATCHES_STORAGE_KEY
+  );
+  const batches = stored?.[NETSUITE_DOC_BATCHES_STORAGE_KEY];
+  return batches && typeof batches === "object" && !Array.isArray(batches)
+    ? batches
+    : {};
+}
+
+function mutateNetsuiteDocBatches(mutation) {
+  const pending = netsuiteDocBatchWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const batches = await readNetsuiteDocBatches();
+      const result = await mutation(batches);
+      const ordered = Object.values(batches).sort(
+        (left, right) =>
+          Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0)
+      );
+      const active = ordered.filter(
+        (batch) =>
+          !NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch?.status)
+      );
+      const terminal = ordered.filter((batch) =>
+        NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch?.status)
+      );
+      const retained = [
+        ...active,
+        ...terminal.slice(
+          0,
+          Math.max(0, NETSUITE_DOC_BATCH_MAX_HISTORY - active.length)
+        )
+      ];
+      await chrome.storage.local.set({
+        [NETSUITE_DOC_BATCHES_STORAGE_KEY]: Object.fromEntries(
+          retained.map((batch) => [batch.id, batch])
+        )
+      });
+      return result;
+    });
+  netsuiteDocBatchWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+}
+
+async function updateNetsuiteDocBatch(jobId, updater) {
+  return mutateNetsuiteDocBatches((batches) => {
+    const current = batches[jobId];
+    if (!current) return null;
+    const next =
+      typeof updater === "function"
+        ? updater(current)
+        : { ...current, ...updater };
+    batches[jobId] = {
+      ...next,
+      id: current.id,
+      createdAt: current.createdAt,
+      updatedAt: Date.now()
+    };
+    return batches[jobId];
+  });
+}
+
+function summarizeNetsuiteDocBatch(batch) {
+  const topics = Array.isArray(batch?.topics) ? batch.topics : [];
+  const completedTopics = topics.filter((topic) =>
+    ["succeeded", "completed_with_errors", "failed"].includes(topic.status)
+  ).length;
+  const failedTopics = topics.filter((topic) => topic.status === "failed")
+    .length;
+  const topicsWithWarnings = topics.filter(
+    (topic) => topic.status === "completed_with_errors"
+  ).length;
+  return {
+    totalTopics: topics.length,
+    completedTopics,
+    successfulTopics: completedTopics - failedTopics,
+    failedTopics,
+    topicsWithWarnings,
+    progress:
+      topics.length === 0 ? 0 : Math.round((completedTopics / topics.length) * 100)
+  };
+}
+
+function scheduleNetsuiteDocBatchWorker() {
+  if (netsuiteDocBatchWorkerActive) return;
+  netsuiteDocBatchWorkerActive = true;
+  let completedNormally = false;
+  Promise.resolve()
+    .then(processNetsuiteDocBatchQueue)
+    .then(() => {
+      completedNormally = true;
+    })
+    .catch((error) => {
+      console.error("[NetSuite Docs Batch] Worker failed.", error);
+    })
+    .finally(() => {
+      netsuiteDocBatchWorkerActive = false;
+      if (!completedNormally) return;
+      netsuiteDocBatchWriteQueue
+        .catch(() => undefined)
+        .then(readNetsuiteDocBatches)
+        .then((batches) => {
+          if (
+            Object.values(batches).some((batch) =>
+              ["queued", "running"].includes(batch?.status)
+            )
+          ) {
+            scheduleNetsuiteDocBatchWorker();
+          }
+        })
+        .catch((error) => {
+          console.error(
+            "[NetSuite Docs Batch] Could not check for queued work.",
+            error
+          );
+        });
+    });
+}
+
+async function processNetsuiteDocBatchQueue() {
+  while (true) {
+    await netsuiteDocBatchWriteQueue.catch(() => undefined);
+    const batches = await readNetsuiteDocBatches();
+    const batch = Object.values(batches)
+      .filter((candidate) =>
+        ["queued", "running"].includes(candidate?.status)
+      )
+      .sort(
+        (left, right) =>
+          Number(left?.createdAt || 0) - Number(right?.createdAt || 0)
+      )[0];
+    if (!batch) return;
+
+    const jobId = String(batch.id);
+    await updateNetsuiteDocBatch(jobId, (current) => ({
+      ...current,
+      status: "running",
+      startedAt: current.startedAt || Date.now()
+    }));
+    await updateStoredJob(jobId, {
+      status: "running",
+      startedAt: batch.startedAt || Date.now(),
+      indeterminate: false,
+      message: "Searching official NetSuite documentation"
+    }).catch(() => undefined);
+
+    for (let index = 0; index < batch.topics.length; index += 1) {
+      await netsuiteDocBatchWriteQueue.catch(() => undefined);
+      const latest = (await readNetsuiteDocBatches())[jobId];
+      const currentTopic = latest?.topics?.[index];
+      if (
+        !currentTopic ||
+        ["succeeded", "completed_with_errors", "failed"].includes(
+          currentTopic.status
+        )
+      ) {
+        continue;
+      }
+
+      await updateNetsuiteDocBatch(jobId, (current) => {
+        const topics = [...current.topics];
+        topics[index] = {
+          ...topics[index],
+          status: "running",
+          startedAt: topics[index].startedAt || Date.now()
+        };
+        return { ...current, topics };
+      });
+
+      try {
+        const searchPayload = await searchNetsuiteDocs({
+          query: currentTopic.query
+        });
+        const searchResults = (searchPayload.results || []).slice(
+          0,
+          latest.maxSearchResults
+        );
+        const pages = [];
+        const pageErrors = [];
+        for (
+          let pageIndex = 0;
+          pageIndex < Math.min(latest.pagesPerQuery, searchResults.length);
+          pageIndex += 1
+        ) {
+          const searchResult = searchResults[pageIndex];
+          try {
+            pages.push(
+              await readNetsuiteDocPage({ url: searchResult.url })
+            );
+          } catch (error) {
+            pageErrors.push({
+              url: searchResult.url,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+
+        await updateNetsuiteDocBatch(jobId, (current) => {
+          const topics = [...current.topics];
+          topics[index] = {
+            ...topics[index],
+            status:
+              pageErrors.length > 0 ? "completed_with_errors" : "succeeded",
+            finishedAt: Date.now(),
+            searchResults,
+            pages,
+            pageErrors
+          };
+          return { ...current, topics };
+        });
+      } catch (error) {
+        await updateNetsuiteDocBatch(jobId, (current) => {
+          const topics = [...current.topics];
+          topics[index] = {
+            ...topics[index],
+            status: "failed",
+            finishedAt: Date.now(),
+            error: error instanceof Error ? error.message : String(error)
+          };
+          return { ...current, topics };
+        });
+      }
+
+      const progressBatch = (await readNetsuiteDocBatches())[jobId];
+      const progress = summarizeNetsuiteDocBatch(progressBatch);
+      await updateStoredJob(jobId, {
+        progress: progress.progress,
+        message: `Completed ${progress.completedTopics} of ${progress.totalTopics} documentation topics`
+      }).catch(() => undefined);
+    }
+
+    const completedBatch = (await readNetsuiteDocBatches())[jobId];
+    const summary = summarizeNetsuiteDocBatch(completedBatch);
+    const finalStatus =
+      summary.failedTopics === summary.totalTopics
+        ? "failed"
+        : summary.failedTopics > 0 || summary.topicsWithWarnings > 0
+          ? "completed_with_errors"
+          : "completed";
+    await updateNetsuiteDocBatch(jobId, {
+      status: finalStatus,
+      finishedAt: Date.now(),
+      ...summary
+    });
+    await updateStoredJob(jobId, {
+      status: finalStatus === "failed" ? "failed" : "succeeded",
+      progress: 100,
+      indeterminate: false,
+      finishedAt: Date.now(),
+      message:
+        finalStatus === "completed"
+          ? "NetSuite documentation batch completed"
+          : `NetSuite documentation batch completed with ${summary.failedTopics + summary.topicsWithWarnings} issue(s)`,
+      result: {
+        docBatchJobId: jobId,
+        status: finalStatus,
+        ...summary
+      }
+    }).catch(() => undefined);
+  }
+}
+
+async function handleNetsuiteSubmitDocsBatch(args) {
+  const queries = normalizeNetsuiteDocBatchQueries(args?.queries);
+  const pagesPerQuery = clampNetsuiteDocBatchInteger(
+    args?.pagesPerQuery,
+    1,
+    0,
+    NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC
+  );
+  const maxSearchResults = clampNetsuiteDocBatchInteger(
+    args?.maxSearchResults,
+    5,
+    1,
+    10
+  );
+  const now = Date.now();
+  const jobId = createJobId();
+  const batch = {
+    id: jobId,
+    status: "queued",
+    createdAt: now,
+    updatedAt: now,
+    pagesPerQuery,
+    maxSearchResults,
+    totalTopics: queries.length,
+    completedTopics: 0,
+    successfulTopics: 0,
+    failedTopics: 0,
+    topicsWithWarnings: 0,
+    progress: 0,
+    topics: queries.map((query, index) => ({
+      index,
+      query,
+      status: "queued",
+      searchResults: [],
+      pages: [],
+      pageErrors: []
+    }))
+  };
+
+  await mutateNetsuiteDocBatches((batches) => {
+    batches[jobId] = batch;
+    return batch;
+  });
+
+  const settings = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const account =
+    mcpDedicatedTabAccountId ||
+    settings?.magic_netsuite_settings?.mcpPreferredAccount ||
+    "unknown";
+  await createStoredJob({
+    id: jobId,
+    title: `Research ${queries.length} NetSuite documentation topic${queries.length === 1 ? "" : "s"}`,
+    kind: "netsuite-docs-batch",
+    status: "queued",
+    progress: 0,
+    indeterminate: false,
+    environment: account,
+    account,
+    sourcePath: "/mcp-server",
+    message: "Queued for the shared NetSuite documentation worker",
+    result: { docBatchJobId: jobId }
+  }).catch(() => undefined);
+
+  scheduleNetsuiteDocBatchWorker();
+  const payload = {
+    jobId,
+    status: "queued",
+    topicCount: queries.length,
+    topics: batch.topics.map(({ index, query, status }) => ({
+      index,
+      query,
+      status
+    })),
+    instruction:
+      "Continue with other work. Call netsuite_get_docs_batch with this jobId for a non-blocking progress check or to retrieve completed answers."
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
+  };
+}
+
+async function handleNetsuiteGetDocsBatch(args) {
+  const jobId = String(args?.jobId || "").trim();
+  if (!jobId) throw new Error("jobId is required.");
+  await netsuiteDocBatchWriteQueue.catch(() => undefined);
+  const batch = (await readNetsuiteDocBatches())[jobId];
+  if (!batch) {
+    throw new Error(
+      `NetSuite documentation batch "${jobId}" was not found or has expired.`
+    );
+  }
+
+  if (!NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch.status)) {
+    scheduleNetsuiteDocBatchWorker();
+  }
+
+  const requestedIndexes = Array.isArray(args?.topicIndexes)
+    ? new Set(
+        args.topicIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0)
+      )
+    : null;
+  const includeContent = args?.includeContent !== false;
+  const selectedTopics = batch.topics
+    .filter((topic) => !requestedIndexes || requestedIndexes.has(topic.index))
+    .map((topic) => {
+      if (includeContent) return topic;
+      return {
+        ...topic,
+        pages: topic.pages.map(({ content, ...page }) => page)
+      };
+    });
+  const summary = summarizeNetsuiteDocBatch(batch);
+  const payload = {
+    jobId,
+    status: batch.status,
+    createdAt: batch.createdAt,
+    startedAt: batch.startedAt,
+    finishedAt: batch.finishedAt,
+    pagesPerQuery: batch.pagesPerQuery,
+    maxSearchResults: batch.maxSearchResults,
+    ...summary,
+    topics: selectedTopics,
+    nextAction: NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch.status)
+      ? "Use the returned official documentation and cite the page URLs in your answer."
+      : "Continue other work and call netsuite_get_docs_batch again later. This status call does not wait for the browser worker."
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
   };
 }
 

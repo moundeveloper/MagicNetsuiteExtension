@@ -1,5 +1,8 @@
 // Streaming-enabled runQuickScript
-window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
+window.runQuickScript = async (
+  N,
+  { code, requestId, mode = "normal", bridgeCapability }
+) => {
   console.log("[runQuickScript] requestId", requestId);
   const logs = [];
   const isStreaming = mode === "stream";
@@ -24,6 +27,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
     window.postMessage(
       {
         type: "TO_EXTENSION",
+        capability: bridgeCapability,
         payload: {
           requestId,
           event: "log",
@@ -31,7 +35,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
           timestamp: Date.now()
         }
       },
-      "*"
+      window.location.origin
     );
   };
 
@@ -41,6 +45,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
     window.postMessage(
       {
         type: "TO_EXTENSION",
+        capability: bridgeCapability,
         payload: {
           requestId,
           event: "progress",
@@ -48,7 +53,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
           timestamp: Date.now()
         }
       },
-      "*"
+      window.location.origin
     );
   };
 
@@ -58,6 +63,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
     window.postMessage(
       {
         type: "TO_EXTENSION",
+        capability: bridgeCapability,
         payload: {
           requestId,
           event: "chunk",
@@ -65,7 +71,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
           timestamp: Date.now()
         }
       },
-      "*"
+      window.location.origin
     );
   };
 
@@ -73,6 +79,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
     window.postMessage(
       {
         type: "TO_EXTENSION",
+        capability: bridgeCapability,
         payload: isStreaming
           ? {
               requestId,
@@ -89,7 +96,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
               timestamp: Date.now()
             }
       },
-      "*"
+      window.location.origin
     );
   };
 
@@ -97,6 +104,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
     window.postMessage(
       {
         type: "TO_EXTENSION",
+        capability: bridgeCapability,
         payload: isStreaming
           ? {
               requestId,
@@ -111,7 +119,7 @@ window.runQuickScript = async (N, { code, requestId, mode = "normal" }) => {
               timestamp: Date.now()
             }
       },
-      "*"
+      window.location.origin
     );
   };
 

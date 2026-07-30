@@ -18,9 +18,11 @@ export const generateRequestId = () => {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
 };
 
-export const createMessageFilter = (requestId) => (event) => {
+export const createMessageFilter = (requestId, bridgeCapability) => (event) => {
   if (event.source !== window) return false;
+  if (event.origin !== window.location.origin) return false;
   if (event.data?.type !== MESSAGE_TYPES.TO_EXTENSION) return false;
+  if (event.data?.capability !== bridgeCapability) return false;
   if (event.data?.payload?.requestId !== requestId) return false;
   return true;
 };

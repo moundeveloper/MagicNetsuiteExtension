@@ -13,7 +13,7 @@ export type RecentView = {
 
 const STORAGE_KEY = "magic_netsuite_recent_views";
 const MAX_ITEMS = 30;
-const EXCLUDED_PATHS = new Set(["/", "/settings", "/processing", "/feature-feedback"]);
+const EXCLUDED_PATHS = new Set(["/", "/settings", "/feature-feedback"]);
 export const RECENT_VIEWS_CHANGED_EVENT = "magic-netsuite-recent-views-changed";
 let writeQueue: Promise<void> = Promise.resolve();
 

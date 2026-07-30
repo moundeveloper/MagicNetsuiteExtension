@@ -51,7 +51,7 @@ export const createDock = async () => {
 
   if (injectAllowed && isCustomizationPage) {
     if (isDashboardEnabler) {
-      injectUI("/processing");
+      injectUI("/processing", { executionSurface: true });
       showUI();
       chrome.runtime.sendMessage({ type: "UI_SOURCE", source: "page" });
       const iframe = document.getElementById(FRAME_ID);

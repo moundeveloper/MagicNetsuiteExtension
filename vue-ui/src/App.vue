@@ -13,6 +13,7 @@ import { Toast } from "primevue";
 import GridPattern from "./components/universal/patterns/GridPattern.vue";
 import ViewTabsWorkspace from "./components/ViewTabsWorkspace.vue";
 import { openDashboardTab } from "./utils/dashboardTabs";
+import AppErrorBoundary from "./components/AppErrorBoundary.vue";
 
 const container = ref<HTMLElement | null>(null);
 const { vhOffset } = useVhOffset(container);
@@ -20,11 +21,15 @@ const route = useRoute();
 
 const isAdmin = import.meta.env.VITE_PRIVILEGE_LEVEL === "ADMIN";
 
-const isProcessingRoute = computed(() => route.path === "/processing");
 const isTemplateReviewRoute = computed(() => route.name === "TemplateReview");
+const appSearchParams = new URLSearchParams(window.location.search);
+const isExecutionSurface = appSearchParams.has("magicExecutionSurface");
 const isStandaloneRoute = computed(
-  () => isProcessingRoute.value || isTemplateReviewRoute.value
+  () => isTemplateReviewRoute.value || isExecutionSurface,
 );
+const isDashboardPreview = appSearchParams.has("magicDashboardPreview");
+const isTemplateReviewWindow = appSearchParams.has("magicTemplateReview");
+const isEmbeddedDashboard = window.self !== window.top;
 
 type PanelAction = "open" | "close";
 type OpenViewStorage = {
@@ -39,13 +44,27 @@ const sendPanelState = (action: PanelAction): void => {
 };
 
 const router = useRouter();
+let sidePanelPort: chrome.runtime.Port | null = null;
+
+const handleRuntimeMessage = (message: { type?: string; view?: string }) => {
+  if (
+    message.type === "OPEN_TEMPLATE_STUDIO" &&
+    (isDashboardPreview || isEmbeddedDashboard)
+  ) {
+    openDashboardTab("/template-studio", {
+      label: "Template Studio",
+      reuseExisting: true
+    });
+    return;
+  }
+  if (message.type === "OPEN_VIEW" && message.view) {
+    if (isExecutionSurface) return;
+    void router.push({ name: message.view });
+  }
+};
 
 onMounted(async () => {
   try {
-    const searchParams = new URLSearchParams(window.location.search);
-    const isDashboardPreview = searchParams.has("magicDashboardPreview");
-    const isTemplateReviewWindow = searchParams.has("magicTemplateReview");
-    const isEmbeddedDashboard = window.self !== window.top;
     if (isDashboardPreview || isTemplateReviewWindow) {
       document.title = "Magic NetSuite";
       document
@@ -60,23 +79,13 @@ onMounted(async () => {
       document.head.appendChild(icon);
     }
 
-    if (isTemplateReviewWindow) return;
+    if (isTemplateReviewWindow || isExecutionSurface) {
+      if (isExecutionSurface) document.title = "Magic NetSuite · Execution";
+      return;
+    }
 
-    chrome.runtime.onMessage.addListener((message) => {
-      if (
-        message.type === "OPEN_TEMPLATE_STUDIO" &&
-        (isDashboardPreview || isEmbeddedDashboard)
-      ) {
-        openDashboardTab("/template-studio", {
-          label: "Template Studio",
-          reuseExisting: true
-        });
-        return;
-      }
-      if (message.type === "OPEN_VIEW") {
-        router.push({ name: message.view });
-      }
-    });
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    window.addEventListener("beforeunload", handleUnload);
 
     chrome.storage.session.get<OpenViewStorage>("openView", (result) => {
       if (isAdmin) console.log("openView", result);
@@ -86,9 +95,9 @@ onMounted(async () => {
       }
     });
 
-    const port = chrome.runtime.connect({ name: "sidePanel" });
+    sidePanelPort = chrome.runtime.connect({ name: "sidePanel" });
 
-    port.onDisconnect.addListener(() => {
+    sidePanelPort.onDisconnect.addListener(() => {
       if (isAdmin)
         console.log("Disconnected from background (cleanup if needed)");
     });
@@ -102,30 +111,35 @@ const handleUnload = () => {
 };
 
 onBeforeUnmount(() => {
+  chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
   window.removeEventListener("beforeunload", handleUnload);
+  sidePanelPort?.disconnect();
+  sidePanelPort = null;
 });
 </script>
 
 <template>
   <Toast />
-  <GridPattern v-if="!isStandaloneRoute" class="app-background-decoration" />
-  <AppHeader v-if="!isStandaloneRoute" />
+  <AppErrorBoundary>
+    <GridPattern v-if="!isStandaloneRoute" class="app-background-decoration" />
+    <AppHeader v-if="!isStandaloneRoute" />
 
-  <main v-if="!isStandaloneRoute" ref="container" class="tabbed-shell">
-    <ViewTabsWorkspace data-ignore :vhOffset="vhOffset" />
-  </main>
+    <main v-if="!isStandaloneRoute" ref="container" class="tabbed-shell">
+      <ViewTabsWorkspace data-ignore :vhOffset="vhOffset" />
+    </main>
 
-  <RouterView v-else v-slot="{ Component, route }">
-    <transition name="subtle-fade" mode="out-in">
-      <main
-        ref="container"
-        :class="{ 'full-screen': isStandaloneRoute }"
-        :key="route.fullPath"
-      >
-        <component :is="Component" :vhOffset="vhOffset" />
-      </main>
-    </transition>
-  </RouterView>
+    <RouterView v-else v-slot="{ Component, route }">
+      <transition name="subtle-fade" mode="out-in">
+        <main
+          ref="container"
+          :class="{ 'full-screen': isStandaloneRoute }"
+          :key="route.fullPath"
+        >
+          <component :is="Component" :vhOffset="vhOffset" />
+        </main>
+      </transition>
+    </RouterView>
+  </AppErrorBoundary>
 </template>
 
 <style scoped>

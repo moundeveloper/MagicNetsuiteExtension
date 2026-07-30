@@ -2,7 +2,10 @@
 // Main Content Script Entry Point
 // ============================================================================
 
-import { injectScripts } from "./core/injection/scriptInjector.js";
+import {
+  createBridgeCapability,
+  injectScripts
+} from "./core/injection/scriptInjector.js";
 import { INJECTABLE_SCRIPTS } from "./core/injection/scripts.js";
 import { setupMessageListener } from "./core/messaging/messageListener.js";
 import { setupXHRInterceptor } from "./core/interceptors/xhrInterceptor.js";
@@ -20,11 +23,13 @@ export const initExtension = async () => {
   try {
     console.log("[Magic Netsuite] Initializing...");
 
+    const bridgeCapability = createBridgeCapability();
+
     // Inject page scripts
-    injectScripts(INJECTABLE_SCRIPTS);
+    injectScripts(INJECTABLE_SCRIPTS, bridgeCapability);
 
     // Setup messaging system
-    setupMessageListener();
+    setupMessageListener(bridgeCapability);
 
     // Setup interceptors for API monitoring
     setupXHRInterceptor();

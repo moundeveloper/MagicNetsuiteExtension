@@ -1,3 +1,5 @@
+import DOMPurify, { type Config } from "dompurify";
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 export const escapeHtml = (str: string): string =>
@@ -5,7 +7,66 @@ export const escapeHtml = (str: string): string =>
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+type HtmlSanitizer = {
+  sanitize: (dirty: string, config?: Config) => unknown;
+};
+
+const SANITIZER_CONFIG: Config = {
+  ALLOWED_TAGS: [
+    "a",
+    "blockquote",
+    "br",
+    "code",
+    "details",
+    "div",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "hr",
+    "input",
+    "label",
+    "li",
+    "ol",
+    "p",
+    "span",
+    "strong",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul"
+  ],
+  ALLOWED_ATTR: [
+    "checked",
+    "class",
+    "disabled",
+    "href",
+    "open",
+    "rel",
+    "target",
+    "type"
+  ],
+  FORBID_ATTR: ["id", "name", "style"],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  ALLOWED_URI_REGEXP: /^(?:(?:https?):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i
+};
+
+export const sanitizeRenderedHtmlWith = (
+  sanitizer: HtmlSanitizer,
+  html: string
+): string => String(sanitizer.sanitize(html, SANITIZER_CONFIG));
+
+export const sanitizeRenderedHtml = (html: string): string =>
+  sanitizeRenderedHtmlWith(DOMPurify, html);
 
 // ── Collapsible sections  ??? Title … ??? ────────────────────────────────────
 
@@ -46,24 +107,12 @@ export const processCollapsibleSections = (text: string): string => {
 // ── Callout boxes  :::type Title … ::: ───────────────────────────────────────
 
 export const processCalloutBoxes = (text: string): string => {
-  const calloutMap: Record<
-    string,
-    { icon: string; color: string; bg: string }
-  > = {
-    tip: { icon: "💡", color: "var(--p-green-700)", bg: "var(--p-green-50)" },
-    warning: {
-      icon: "⚠️",
-      color: "var(--p-amber-700)",
-      bg: "var(--p-amber-50)"
-    },
-    error: { icon: "❌", color: "var(--p-red-700)", bg: "var(--p-red-50)" },
-    info: { icon: "ℹ️", color: "var(--p-blue-700)", bg: "var(--p-blue-50)" },
-    note: { icon: "📝", color: "var(--p-slate-700)", bg: "var(--p-slate-50)" }
-  };
-  const defaultCallout = {
-    icon: "ℹ️",
-    color: "var(--p-blue-700)",
-    bg: "var(--p-blue-50)"
+  const calloutMap: Record<string, { icon: string }> = {
+    tip: { icon: "💡" },
+    warning: { icon: "⚠️" },
+    error: { icon: "❌" },
+    info: { icon: "ℹ️" },
+    note: { icon: "📝" }
   };
 
   const lines = text.split("\n");
@@ -77,14 +126,15 @@ export const processCalloutBoxes = (text: string): string => {
     const closeMatch = /^:::\s*$/.test(line);
 
     if (openMatch && !inCallout) {
-      const type = openMatch[1]!.toLowerCase();
+      const requestedType = openMatch[1]!.toLowerCase();
+      const type = calloutMap[requestedType] ? requestedType : "info";
       const title = openMatch[2]?.trim() || "";
-      const config = calloutMap[type] ?? defaultCallout;
+      const config = calloutMap[type]!;
       const titleHtml = title
         ? `<div class="callout-title">${escapeHtml(title)}</div>`
         : `<div class="callout-title">${type.charAt(0).toUpperCase() + type.slice(1)}</div>`;
       result.push(
-        `<div class="callout" style="--callout-color: ${config.color}; --callout-bg: ${config.bg}"><div class="callout-icon">${config.icon}</div><div class="callout-content">${titleHtml}`
+        `<div class="callout callout-${type}"><div class="callout-icon">${config.icon}</div><div class="callout-content">${titleHtml}`
       );
       inCallout = true;
     } else if (closeMatch && inCallout) {
@@ -341,3 +391,23 @@ export const processParagraphs = (text: string): string => {
 export const cleanExcessNewlines = (text: string): string => {
   return text.replace(/\n{3,}/g, "\n\n");
 };
+
+export const renderMarkdownTextWith = (
+  sanitizer: HtmlSanitizer,
+  text: string
+): string => {
+  let html = text;
+  html = processCollapsibleSections(html);
+  html = processCalloutBoxes(html);
+  html = processTables(html);
+  html = processCheckboxes(html);
+  html = processHeadings(html);
+  html = processLists(html);
+  html = processInlineElements(html);
+  html = cleanExcessNewlines(html);
+  html = processParagraphs(html);
+  return sanitizeRenderedHtmlWith(sanitizer, html);
+};
+
+export const renderMarkdownText = (text: string): string =>
+  renderMarkdownTextWith(DOMPurify, text);

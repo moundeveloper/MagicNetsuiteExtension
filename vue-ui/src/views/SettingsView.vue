@@ -5,8 +5,8 @@ import { useRoute } from "vue-router";
 import InputText from "primevue/inputtext";
 import InputNumber from "primevue/inputnumber";
 import Checkbox from "primevue/checkbox";
-import Select from "primevue/select";
 import Button from "primevue/button";
+import MSelect from "../components/universal/input/MSelect.vue";
 import {
   COPILOT_CLIENT_ID,
   fetchCopilotModels
@@ -18,15 +18,19 @@ import {
   initializeAdminAccess,
   isBuiltInAdmin,
   revokeAdminAccess,
-  unlockAdminAccess
+  grantAdvancedAccess
 } from "../utils/adminAccess";
+import {
+  grantAiDataConsent,
+  hasCurrentAiDataConsent,
+  revokeAiDataConsent
+} from "../utils/aiDataConsent";
 
 const { settings } = useSettings();
 const route = useRoute();
 const extensionUserId = ref("");
-const adminPasskey = ref("");
-const adminError = ref("");
-const adminUnlockRequested = ref(false);
+const aiDataConsentGranted = ref(false);
+const aiDataConsentBusy = ref(false);
 const currentTime = ref(Date.now());
 let adminClock: ReturnType<typeof setInterval> | null = null;
 
@@ -41,25 +45,11 @@ const adminRemaining = computed(() => {
 });
 
 const handleAdminToggle = async (enabled: boolean) => {
-  adminError.value = "";
   if (!enabled) {
-    adminUnlockRequested.value = false;
-    adminPasskey.value = "";
     await revokeAdminAccess();
     return;
   }
-  adminUnlockRequested.value = true;
-};
-
-const unlockAdminMode = async () => {
-  adminError.value = "";
-  const unlocked = await unlockAdminAccess(adminPasskey.value);
-  if (!unlocked) {
-    adminError.value = "Incorrect passkey.";
-    return;
-  }
-  adminPasskey.value = "";
-  adminUnlockRequested.value = false;
+  await grantAdvancedAccess();
 };
 
 const handleFlightRecorderToggle = (enabled: boolean) => {
@@ -217,6 +207,30 @@ const copyExtensionUserId = () => {
 
 const resetExtensionUserId = async () => {
   extensionUserId.value = await regenerateExtensionUserId();
+};
+
+const refreshAiDataConsent = async () => {
+  aiDataConsentGranted.value = await hasCurrentAiDataConsent();
+};
+
+const allowExternalAiData = async () => {
+  aiDataConsentBusy.value = true;
+  try {
+    await grantAiDataConsent();
+    await refreshAiDataConsent();
+  } finally {
+    aiDataConsentBusy.value = false;
+  }
+};
+
+const revokeExternalAiData = async () => {
+  aiDataConsentBusy.value = true;
+  try {
+    await revokeAiDataConsent();
+    await refreshAiDataConsent();
+  } finally {
+    aiDataConsentBusy.value = false;
+  }
 };
 
 const startElementScreenshotSelection = async () => {
@@ -439,11 +453,20 @@ const modelLabel = (m: OllamaModel) => {
   return tag ? `${m.name}  (${tag})` : m.name;
 };
 
+const ollamaModelOptions = computed(() =>
+  ollamaModels.value.map((model) => ({
+    label: modelLabel(model),
+    value: model.name
+  }))
+);
+
 onMounted(async () => {
-  extensionUserId.value = await getExtensionUserId();
+  const [userId] = await Promise.all([
+    getExtensionUserId(),
+    refreshAiDataConsent()
+  ]);
+  extensionUserId.value = userId;
   await initializeAdminAccess();
-  adminUnlockRequested.value =
-    route.query.adminRequired === "1" && !hasAdminAccess.value;
   adminClock = setInterval(() => {
     currentTime.value = Date.now();
   }, 1000);
@@ -459,8 +482,8 @@ onBeforeUnmount(() => {
     <div class="settings-section admin-access-section">
       <div class="admin-heading">
         <div>
-          <span class="admin-eyebrow">RESTRICTED TOOLS</span>
-          <h2>Admin Mode</h2>
+          <span class="admin-eyebrow">DIAGNOSTIC TOOLS</span>
+          <h2>Advanced Tools</h2>
         </div>
         <span v-if="hasAdminAccess" class="admin-status active">
           <i class="pi pi-shield"></i>
@@ -468,12 +491,12 @@ onBeforeUnmount(() => {
         </span>
         <span v-else class="admin-status">
           <i class="pi pi-lock"></i>
-          Locked
+          Off
         </span>
       </div>
 
       <div class="shortcut-item">
-        <label for="admin-mode">Enable Admin Mode:</label>
+        <label for="admin-mode">Enable Advanced Tools:</label>
         <Checkbox
           id="admin-mode"
           :model-value="hasAdminAccess"
@@ -483,33 +506,26 @@ onBeforeUnmount(() => {
         />
         <small>
           Temporarily reveals API Tester and Flight Recorder for 30 minutes.
+          This is a visibility control, not an authorization boundary.
         </small>
       </div>
 
-      <form
-        v-if="adminUnlockRequested && !hasAdminAccess"
-        class="admin-unlock"
-        @submit.prevent="unlockAdminMode"
+      <p
+        v-if="route.query.adminRequired === '1' && !hasAdminAccess"
+        class="provider-hint"
       >
-        <InputText
-          v-model="adminPasskey"
-          type="password"
-          autocomplete="off"
-          placeholder="Enter admin passkey"
-          autofocus
-        />
-        <Button
-          type="submit"
-          icon="pi pi-unlock"
-          label="Unlock for 30 minutes"
-          :disabled="!adminPasskey"
-        />
-        <span v-if="adminError" class="admin-error">{{ adminError }}</span>
-      </form>
+        The requested diagnostic view is hidden. Enable Advanced Tools above to
+        reveal it; NetSuite still enforces the current user's permissions.
+      </p>
 
       <p v-if="hasAdminAccess && !isBuiltInAdmin" class="provider-hint">
-        Access is temporary and will be removed automatically. Turn the flag
-        off to revoke it immediately.
+        Advanced Tools will turn off automatically. Disable them above to hide
+        them immediately.
+      </p>
+
+      <p v-if="isBuiltInAdmin" class="provider-hint">
+        Advanced Tools are permanently visible in this build. NetSuite remains
+        the authority for all record, script, and account operations.
       </p>
 
       <div class="shortcut-item">
@@ -632,9 +648,63 @@ onBeforeUnmount(() => {
     <div class="settings-section">
       <h2>AI Provider</h2>
 
+    <section
+      class="ai-consent"
+      aria-labelledby="ai-consent-title"
+      aria-describedby="ai-consent-description"
+    >
+      <div class="ai-consent-copy">
+        <h3 id="ai-consent-title">External AI data permission</h3>
+        <p id="ai-consent-description">
+          OpenRouter, GitHub Copilot, and non-loopback custom servers may
+          receive your prompts, conversation context, selected NetSuite data,
+          and tool outputs. Only allow this when you are permitted to share
+          that data. Direct connections to loopback endpoints do not require
+          this permission.
+        </p>
+        <span
+          class="ai-consent-status"
+          :class="{ granted: aiDataConsentGranted }"
+          role="status"
+        >
+          <i
+            :class="
+              aiDataConsentGranted
+                ? 'pi pi-check-circle'
+                : 'pi pi-shield'
+            "
+            aria-hidden="true"
+          />
+          {{
+            aiDataConsentGranted
+              ? "External AI data sharing allowed"
+              : "External AI data sharing blocked"
+          }}
+        </span>
+      </div>
+      <Button
+        v-if="aiDataConsentGranted"
+        size="small"
+        severity="secondary"
+        outlined
+        :loading="aiDataConsentBusy"
+        @click="revokeExternalAiData"
+      >
+        Revoke permission
+      </Button>
+      <Button
+        v-else
+        size="small"
+        :loading="aiDataConsentBusy"
+        @click="allowExternalAiData"
+      >
+        Allow external AI
+      </Button>
+    </section>
+
     <div class="shortcut-item">
       <label for="ai-provider">Provider:</label>
-      <Select
+      <MSelect
         id="ai-provider"
         v-model="settings.aiProvider"
         :options="providerOptions"
@@ -647,7 +717,7 @@ onBeforeUnmount(() => {
 
     <div class="shortcut-item">
       <label for="compaction-mode">Context Compaction:</label>
-      <Select
+      <MSelect
         id="compaction-mode"
         v-model="settings.compactionMode"
         :options="compactionModeOptions"
@@ -746,7 +816,7 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else-if="copilotModels.length > 0">
-            <Select
+            <MSelect
               id="copilot-model"
               v-model="settings.copilotModel"
               :options="copilotModels"
@@ -754,7 +824,7 @@ onBeforeUnmount(() => {
               option-value="id"
               placeholder="Select a model"
               class="model-select"
-              filter
+              searchable
             />
           </template>
 
@@ -898,15 +968,15 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="ollamaModels.length > 0">
-          <Select
+          <MSelect
             id="ollama-model"
             v-model="settings.ollamaModel"
-            :options="ollamaModels"
-            :option-label="modelLabel"
-            option-value="name"
+            :options="ollamaModelOptions"
+            option-label="label"
+            option-value="value"
             placeholder="Select a model"
             class="model-select"
-            filter
+            searchable
           />
         </template>
 
@@ -1007,7 +1077,7 @@ onBeforeUnmount(() => {
         </template>
 
         <template v-else-if="opencodeModels.length > 0">
-          <Select
+          <MSelect
             id="opencode-model"
             v-model="settings.opencodeModel"
             :options="opencodeModels"
@@ -1015,7 +1085,7 @@ onBeforeUnmount(() => {
             option-value="value"
             placeholder="Select a model"
             class="model-select"
-            filter
+            searchable
           />
         </template>
 
@@ -1052,6 +1122,54 @@ onBeforeUnmount(() => {
 .settings-section h2 {
   font-size: 1.5rem;
   margin-bottom: 1rem;
+}
+
+.ai-consent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #a5b4fc;
+  border-radius: 0.375rem;
+  background: #f1f4fe;
+}
+
+.ai-consent-copy {
+  min-width: 0;
+}
+
+.ai-consent h3 {
+  margin: 0 0 0.25rem;
+  color: var(--p-slate-900);
+  font-size: 0.9rem;
+}
+
+.ai-consent p {
+  max-width: 780px;
+  margin: 0 0 0.45rem;
+  color: var(--p-slate-600);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.ai-consent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--p-slate-600);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.ai-consent-status.granted {
+  color: #4f46e5;
+}
+
+.ai-consent :deep(.p-button) {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .admin-access-section {

@@ -5,8 +5,12 @@ import { visualizer } from "rollup-plugin-visualizer";
 import { resolve } from "path";
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [vue(), UnoCSS(), visualizer({ open: false })],
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    vue(),
+    UnoCSS(),
+    ...(mode === "analyze" ? [visualizer({ open: false })] : [])
+  ],
   optimizeDeps: {
     include: ["monaco-editor"]
   },
@@ -33,4 +37,4 @@ export default defineConfig({
     }
   },
   assetsInclude: ["**/*.ftl"]
-});
+}));

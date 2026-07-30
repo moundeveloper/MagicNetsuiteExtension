@@ -2,14 +2,17 @@
   "name": "vue-ui",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@11.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "check": "vue-tsc -b",
+    "check:bundle": "node scripts/checkBundleBudget.mjs",
     "test": "vitest run",
     "test:suiteql": "vitest run src/utils/suiteqlLinter.test.ts",
     "preview": "vite preview",
-    "report": "vite build --report"
+    "report": "vite build --mode analyze"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.19.0",
@@ -38,7 +41,7 @@
     "@vueuse/core": "^14.0.0",
     "codemirror": "^6.0.2",
     "dexie": "^4.4.2",
-    "expr-eval": "^2.0.2",
+    "dompurify": "^3.4.12",
     "fflate": "^0.8.3",
     "highlight.js": "^11.11.1",
     "lodash": "^4.17.21",
@@ -60,10 +63,12 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.1.24",
+    "@types/jsdom": "^21.1.7",
     "@types/mark.js": "^8.11.12",
     "@types/node": "^24.6.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "@vue/tsconfig": "^0.8.1",
+    "jsdom": "^26.1.0",
     "rollup-plugin-visualizer": "^6.0.5",
     "typescript": "~5.9.3",
     "unocss": "^66.5.4",

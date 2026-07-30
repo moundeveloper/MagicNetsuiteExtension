@@ -20,19 +20,21 @@ export const hideUI = () => {
   iframe.style.transform = "translateY(20px)";
 };
 
-export const injectUI = (route = "") => {
+export const injectUI = (route = "", options = {}) => {
   let iframe = document.getElementById(FRAME_ID);
   if (iframe) return;
 
   const baseUrl = chrome.runtime.getURL("dist/vue-ui/index.html");
-  const src = route
-    ? `${baseUrl}?initialRoute=${encodeURIComponent(route)}`
-    : baseUrl;
+  const frameUrl = new URL(baseUrl);
+  if (route) frameUrl.searchParams.set("initialRoute", route);
+  if (options.executionSurface) {
+    frameUrl.searchParams.set("magicExecutionSurface", "1");
+  }
 
   iframe = document.createElement("iframe");
   iframe.allow = "clipboard-read; clipboard-write";
   iframe.id = FRAME_ID;
-  iframe.src = src;
+  iframe.src = frameUrl.toString();
 
   Object.assign(iframe.style, {
     position: "fixed",

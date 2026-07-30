@@ -6,8 +6,9 @@ import {
 } from "./constants.js";
 
 export class StreamHandler {
-  constructor(requestId, sendChunk) {
+  constructor(requestId, bridgeCapability, sendChunk) {
     this.requestId = requestId;
+    this.bridgeCapability = bridgeCapability;
     this.sendChunk = sendChunk;
     this.timeoutId = null;
     this.isActive = true;
@@ -30,7 +31,7 @@ export class StreamHandler {
 
   handleStream(event) {
     if (!this.isActive) return;
-    if (!createMessageFilter(this.requestId)(event)) return;
+    if (!createMessageFilter(this.requestId, this.bridgeCapability)(event)) return;
 
     const { payload } = event.data;
     this.chunkCount++;
@@ -78,8 +79,9 @@ export class StreamHandler {
 }
 
 export class NormalRequestHandler {
-  constructor(requestId, sendResponse, retryAttempts = 0) {
+  constructor(requestId, bridgeCapability, sendResponse, retryAttempts = 0) {
     this.requestId = requestId;
+    this.bridgeCapability = bridgeCapability;
     this.sendResponse = sendResponse;
     this.retryAttempts = retryAttempts;
     this.timeoutId = null;
@@ -119,7 +121,7 @@ export class NormalRequestHandler {
 
   handleResponse(event) {
     if (!this.isActive) return;
-    if (!createMessageFilter(this.requestId)(event)) return;
+    if (!createMessageFilter(this.requestId, this.bridgeCapability)(event)) return;
 
     const { payload } = event.data;
     console.log(`[Request ${this.requestId}] Response received`, payload);

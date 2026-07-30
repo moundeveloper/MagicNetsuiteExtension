@@ -1,5 +1,15 @@
 console.log("netsuiteApi");
 
+const MAGIC_NETSUITE_BRIDGE_CAPABILITY = (() => {
+  try {
+    return new URL(document.currentScript?.src || "").searchParams.get(
+      "bridgeCapability"
+    );
+  } catch {
+    return null;
+  }
+})();
+
 const NETSUITE_REQUIRE_TIMEOUT_MS = 5000;
 const NETSUITE_RUNTIME_SCRIPTS = [
   "/assets/suitescript_nsrequire/147491859.js",
@@ -130,14 +140,26 @@ const loadNetsuiteApi = async () => {
 // Central listener for messages from the extension
 window.addEventListener("message", async (event) => {
   if (event.source !== window) return;
+  if (event.origin !== window.location.origin) return;
   if (event.data?.type !== "FROM_EXTENSION") return;
+  if (
+    !MAGIC_NETSUITE_BRIDGE_CAPABILITY ||
+    event.data?.capability !== MAGIC_NETSUITE_BRIDGE_CAPABILITY
+  ) {
+    return;
+  }
+  if (!event.data?.payload || typeof event.data.payload !== "object") return;
 
   const { requestId, action, data, mode } = event.data.payload;
+  if (typeof requestId !== "string" || typeof action !== "string") return;
+  if (data != null && (typeof data !== "object" || Array.isArray(data))) return;
+  if (mode !== "normal" && mode !== "stream") return;
 
   const payload = {
     requestId,
     mode,
-    ...data
+    ...data,
+    bridgeCapability: MAGIC_NETSUITE_BRIDGE_CAPABILITY
   };
 
   const handler = handlers[action];
@@ -189,7 +211,14 @@ window.addEventListener("message", async (event) => {
 });
 
 const sendToExtension = (msg) => {
-  window.postMessage({ type: "TO_EXTENSION", payload: msg }, "*");
+  window.postMessage(
+    {
+      type: "TO_EXTENSION",
+      capability: MAGIC_NETSUITE_BRIDGE_CAPABILITY,
+      payload: msg
+    },
+    window.location.origin
+  );
 };
 
 const normalizeMetadataScriptId = (value, prefix) => {

@@ -422,6 +422,9 @@ const commitSession = async () => {
   store.value = await saveTemplateSessionStore(latest);
   creating.value = false;
   hydrateWorkingSession(session, true);
+  await chrome.runtime
+    .sendMessage({ type: "ENSURE_TEMPLATE_SKILLS" })
+    .catch(() => undefined);
   toast.add({
     severity: "success",
     summary: "Session committed",

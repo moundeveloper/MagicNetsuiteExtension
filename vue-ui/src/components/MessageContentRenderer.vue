@@ -4,17 +4,7 @@ import CodeViewer from "./CodeViewer.vue";
 import DiffViewer from "./DiffViewer.vue";
 import DiagramViewer from "./DiagramViewer.vue";
 import QuestionBlock from "./QuestionBlock.vue";
-import {
-  processCollapsibleSections,
-  processCalloutBoxes,
-  processTables,
-  processCheckboxes,
-  processHeadings,
-  processLists,
-  processInlineElements,
-  cleanExcessNewlines,
-  processParagraphs
-} from "../utils/markdownRenderer";
+import { renderMarkdownText } from "../utils/markdownRenderer";
 
 interface Props {
   content: string;
@@ -175,19 +165,7 @@ const parseContent = (text: string): ContentBlock[] => {
 const blocks = computed(() => parseContent(props.content));
 
 const renderText = (text: string): string => {
-  let html = text;
-
-  html = processCollapsibleSections(html);
-  html = processCalloutBoxes(html);
-  html = processTables(html);
-  html = processCheckboxes(html);
-  html = processHeadings(html);
-  html = processLists(html);
-  html = processInlineElements(html);
-  html = cleanExcessNewlines(html);
-  html = processParagraphs(html);
-
-  return html;
+  return renderMarkdownText(text);
 };
 </script>
 
@@ -540,6 +518,8 @@ const renderText = (text: string): string => {
 
 /* ── Callout boxes ── */
 .text-block :deep(.callout) {
+  --callout-color: var(--p-blue-700);
+  --callout-bg: var(--p-blue-50);
   display: flex;
   gap: 0.75rem;
   padding: 0.65rem 0.85rem;
@@ -548,6 +528,26 @@ const renderText = (text: string): string => {
   background: var(--callout-bg);
   border: 1px solid color-mix(in srgb, var(--callout-color) 25%, transparent);
   border-left: 3px solid var(--callout-color);
+}
+
+.text-block :deep(.callout-tip) {
+  --callout-color: var(--p-green-700);
+  --callout-bg: var(--p-green-50);
+}
+
+.text-block :deep(.callout-warning) {
+  --callout-color: var(--p-amber-700);
+  --callout-bg: var(--p-amber-50);
+}
+
+.text-block :deep(.callout-error) {
+  --callout-color: var(--p-red-700);
+  --callout-bg: var(--p-red-50);
+}
+
+.text-block :deep(.callout-note) {
+  --callout-color: var(--p-slate-700);
+  --callout-bg: var(--p-slate-50);
 }
 
 .text-block :deep(.callout-icon) {

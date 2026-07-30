@@ -7,6 +7,7 @@ import {
   routes,
   RouteStatus,
   RouteStatusColors,
+  isRouteVisibleInNavigation,
   type RouteItem
 } from "../router/routesMap";
 import MagicNetsuiteLogo from "./MagicNetsuiteLogo.vue";
@@ -41,13 +42,14 @@ const commandPalette = ref<InstanceType<typeof CommandPalette> | null>(null);
 const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
 
-const blackList = ["settings", "modules not found", "features", "processing"];
+const blackList = ["settings", "modules not found", "features"];
 
 const allLinks = computed(() => {
   return routes.filter((link) => {
     return (
       link.name.toLowerCase().includes(search.value.toLowerCase()) &&
       !blackList.includes(link.name.toLowerCase()) &&
+      isRouteVisibleInNavigation(link) &&
       link.status !== RouteStatus.deprecated &&
       (mode === "development" || link.status === RouteStatus.release) &&
       (!link.adminOnly || hasAdminAccess.value)

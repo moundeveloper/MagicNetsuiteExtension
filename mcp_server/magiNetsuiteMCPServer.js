@@ -32,9 +32,20 @@ let hostConfig = {};
 let lastLocalSkillSearchAt = 0;
 
 function shouldRequireLocalSkillSearchBeforeDocs(params = {}) {
-  if (params?.name !== "netsuite_search_docs") return false;
+  if (
+    params?.name !== "netsuite_search_docs" &&
+    params?.name !== "netsuite_submit_docs_batch"
+  ) {
+    return false;
+  }
   const args = params.arguments || {};
-  const query = String(args.query || "").toLowerCase();
+  const query = [
+    args.query,
+    ...(Array.isArray(args.queries) ? args.queries : [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   if (!query) return false;
   const knowledgeTopic =
     /\b(netsuite|suite(script|ql|cloud)|freemarker|free\s*marker|bfo|advanced\s+pdf|template|templates|pdf|html|governance|limit|quota|workflow|record|search|script|deployment|custom\s+record|text|characters?|spacing|spaced|font|css)\b/i.test(query);
@@ -50,10 +61,133 @@ function localSkillSearchRequiredResult(query) {
         text:
           "Local Magic NetSuite skills must be checked before NetSuite docs for this topic. " +
           `Call magic_netsuite_search_skills first with query "${query}", then call magic_netsuite_load_skill for relevant results. ` +
-          "Use netsuite_search_docs only if the loaded local skills are missing or insufficient."
+          "Use netsuite_search_docs or netsuite_submit_docs_batch only if the loaded local skills are missing or insufficient."
       }
     ]
   };
+}
+
+const TEMPLATE_DESIGN_SKILL_NAME = "Design NetSuite FreeMarker Template";
+
+async function appendTemplateDesignSkillPreflight(sessionResult) {
+  const session = parseMcpTextPayload(sessionResult);
+  if (
+    !session ||
+    typeof session !== "object" ||
+    Number(session.sourceVersion || 0) > 0
+  ) {
+    return sessionResult;
+  }
+
+  const query = [
+    "netsuite freemarker advanced pdf bfo template visual design first draft",
+    String(session.name || ""),
+    String(session.prompt || ""),
+    String(session.recordType || "")
+  ].filter(Boolean).join(" ");
+
+  try {
+    const searchResult = await callExtension("tools/call", {
+      name: "magic_netsuite_search_skills",
+      arguments: { query, includeDisabled: false }
+    });
+    const searchPayload = parseMcpTextPayload(searchResult);
+    const results = Array.isArray(searchPayload?.results)
+      ? searchPayload.results.filter(
+          (item) => item && typeof item === "object"
+        )
+      : [];
+    const baseline = results.find(
+      (item) => String(item.name || "") === TEMPLATE_DESIGN_SKILL_NAME
+    );
+    const specific = results.find((item) => {
+      if (item === baseline) return false;
+      const metadata = `${String(item.name || "")} ${String(
+        item.description || ""
+      )} ${String(item.tags || "")}`;
+      return (
+        /\b(freemarker|free\s*marker|bfo|advanced\s+pdf)\b/i.test(metadata) &&
+        Number(item.score || 0) >= 30
+      );
+    });
+    const selected = [specific, baseline || results[0]]
+      .filter(Boolean)
+      .filter(
+        (item, index, items) =>
+          items.findIndex(
+            (candidate) => Number(candidate.id) === Number(item.id)
+          ) === index
+      )
+      .slice(0, 2);
+    const loaded = [];
+    for (const match of selected) {
+      const id = Number(match.id);
+      if (!Number.isFinite(id)) continue;
+      const loadedResult = await callExtension("tools/call", {
+        name: "magic_netsuite_load_skill",
+        arguments: { id }
+      });
+      const payload = parseMcpTextPayload(loadedResult);
+      if (!payload || typeof payload !== "object") continue;
+      loaded.push({
+        id,
+        name: String(payload.name || match.name || ""),
+        source: String(match.source || "manual"),
+        score: Number(match.score || 0),
+        content: String(payload.content || "").slice(0, 12000),
+        dependencies: Array.isArray(payload.dependencies)
+          ? payload.dependencies
+          : []
+      });
+    }
+
+    const nonTextContent = Array.isArray(sessionResult?.content)
+      ? sessionResult.content.filter((item) => item?.type !== "text")
+      : [];
+    return {
+      ...sessionResult,
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              ...session,
+              localSkillPreflight: {
+                status: loaded.length ? "loaded" : "no_relevant_skill",
+                query,
+                loaded,
+                instruction: loaded.length
+                  ? "Apply these local skills before writing the initial FreeMarker. More specific reviewed custom guidance takes precedence over the bundled baseline."
+                  : "No relevant enabled local FreeMarker skill was found. Continue with the workflow guidance and render quality gate."
+              }
+            },
+            null,
+            2
+          )
+        },
+        ...nonTextContent
+      ]
+    };
+  } catch (error) {
+    return {
+      ...sessionResult,
+      content: [
+        ...(Array.isArray(sessionResult?.content)
+          ? sessionResult.content
+          : []),
+        {
+          type: "text",
+          text: JSON.stringify({
+            localSkillPreflight: {
+              status: "unavailable",
+              query,
+              message: error?.message || String(error)
+            }
+          })
+        }
+      ]
+    };
+  }
 }
 
 for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
@@ -1299,6 +1433,65 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "netsuite_submit_docs_batch",
+            description:
+              "Submit many official NetSuite Help Center topics as one non-blocking background job. Returns a jobId immediately, allowing this agent and other agents to continue using the MCP/browser bridge while the shared FIFO worker searches and reads documentation. Use netsuite_get_docs_batch later with the jobId to collect progress and answers. Prefer this over repeated netsuite_search_docs calls when researching several topics or when multiple agents share the NetSuite browser session.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                queries: {
+                  type: "array",
+                  items: { type: "string" },
+                  minItems: 1,
+                  maxItems: 20,
+                  description:
+                    "Independent documentation questions or keyword searches. Duplicate and blank queries are removed."
+                },
+                pagesPerQuery: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 3,
+                  description:
+                    "How many top search results to read for each query. Defaults to 1; use 0 for search-result metadata only."
+                },
+                maxSearchResults: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 10,
+                  description:
+                    "Maximum search matches retained per query. Defaults to 5."
+                }
+              },
+              required: ["queries"]
+            }
+          },
+          {
+            name: "netsuite_get_docs_batch",
+            description:
+              "Get status, progress, and completed answers for a job returned by netsuite_submit_docs_batch. This call never waits for the browser worker. Poll later while status is queued or running. By default it returns every topic including read page content; use topicIndexes to retrieve only this agent's topics or includeContent=false for a compact progress check.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                jobId: {
+                  type: "string",
+                  description: "The jobId returned by netsuite_submit_docs_batch."
+                },
+                topicIndexes: {
+                  type: "array",
+                  items: { type: "integer", minimum: 0 },
+                  description:
+                    "Optional zero-based topic indexes to retrieve. Omit to retrieve all topics."
+                },
+                includeContent: {
+                  type: "boolean",
+                  description:
+                    "Include full documentation page text. Defaults to true. Set false for a small status/progress response."
+                }
+              },
+              required: ["jobId"]
+            }
+          },
+          {
             name: "netsuite_get_scripts",
             description:
               "Search and list scripts from a live NetSuite account. Returns scriptid, id, name, scripttype, owner, scriptfile. " +
@@ -2513,7 +2706,14 @@ async function handleMcp(req) {
         lastLocalSkillSearchAt = Date.now();
       }
       if (shouldRequireLocalSkillSearchBeforeDocs(params)) {
-        const query = String(params.arguments?.query || "");
+        const query = [
+          params.arguments?.query,
+          ...(Array.isArray(params.arguments?.queries)
+            ? params.arguments.queries
+            : [])
+        ]
+          .filter(Boolean)
+          .join(" ");
         result = localSkillSearchRequiredResult(query);
       }
       if (params?.name === "netsuite_switch_environment") {
@@ -2555,6 +2755,9 @@ async function handleMcp(req) {
       }
       if (!result) {
         result = await callExtension("tools/call", params);
+      }
+      if (params?.name === "magic_netsuite_template_session_get_current") {
+        result = await appendTemplateDesignSkillPreflight(result);
       }
       result = await enrichNetsuiteReadFilePdfResult(result);
     } else if (method === "resources/list") {

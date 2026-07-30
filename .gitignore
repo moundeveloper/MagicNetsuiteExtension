@@ -9,6 +9,7 @@ lerna-debug.log*
 .vscode
 
 vue-ui/node_modules
+vue-ui/stats.html
 src/dist
 dist-ssr
 *.local

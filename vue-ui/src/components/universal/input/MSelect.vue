@@ -4,17 +4,22 @@
       ref="triggerRef"
       type="button"
       class="m-select-trigger"
+      role="combobox"
       :disabled="disabled"
       :title="displayValue"
       :aria-expanded="isOpen"
-      :aria-haspopup="true"
+      aria-haspopup="listbox"
+      :aria-controls="listboxId"
+      :aria-activedescendant="isOpen ? activeOptionId : undefined"
       @click="toggle"
-      @keydown.enter.prevent.stop="toggle"
-      @keydown.space.prevent.stop="toggle"
-      @keydown.escape.prevent.stop="close"
+      @keydown.enter.prevent.stop="onTriggerConfirm"
+      @keydown.space.prevent.stop="onTriggerConfirm"
+      @keydown.escape.prevent.stop="close(true)"
       @keydown.arrow-down.prevent.stop="isOpen ? moveHighlight(1) : open()"
       @keydown.arrow-up.prevent.stop="isOpen ? moveHighlight(-1) : open()"
-      @keydown.tab="close"
+      @keydown.home.prevent.stop="isOpen ? moveToBoundary('start') : undefined"
+      @keydown.end.prevent.stop="isOpen ? moveToBoundary('end') : undefined"
+      @keydown.tab="close()"
     >
       <span class="m-select-value" :class="{ 'is-placeholder': !hasValue }">
         {{ displayValue }}
@@ -36,40 +41,58 @@
             v-model="searchQuery"
             type="search"
             :placeholder="searchPlaceholder"
+            aria-label="Filter options"
+            role="searchbox"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             autocomplete="off"
             @keydown.arrow-down.prevent.stop="moveHighlight(1)"
             @keydown.arrow-up.prevent.stop="moveHighlight(-1)"
+            @keydown.home.prevent.stop="moveToBoundary('start')"
+            @keydown.end.prevent.stop="moveToBoundary('end')"
             @keydown.enter.prevent.stop="selectHighlighted"
-            @keydown.escape.prevent.stop="close"
+            @keydown.escape.prevent.stop="close(true)"
+            @keydown.tab="close()"
           />
         </label>
-        <div v-if="loading" class="m-select-empty">
-          <i class="pi pi-spin pi-spinner"></i>
-          Loading options…
+        <div
+          :id="listboxId"
+          class="m-select-options"
+          role="listbox"
+          :aria-busy="loading || undefined"
+          :aria-activedescendant="activeOptionId"
+        >
+          <div v-if="loading" class="m-select-empty" role="status">
+            <i class="pi pi-spin pi-spinner"></i>
+            Loading options…
+          </div>
+          <template v-else>
+            <div
+              v-for="(opt, i) in visibleOptions"
+              :key="String(opt.value)"
+              :id="optionId(i)"
+              class="m-select-option"
+              role="option"
+              :aria-selected="opt.value === modelValue"
+              :class="{
+                'is-selected': opt.value === modelValue,
+                'is-highlighted': i === highlightedIndex
+              }"
+              @mousedown.prevent
+              @click="select(opt.value)"
+              @mouseenter="highlightedIndex = i"
+            >
+              <i
+                class="pi pi-check m-select-option-check"
+                :style="{ visibility: opt.value === modelValue ? 'visible' : 'hidden' }"
+              ></i>
+              <span :title="opt.label">{{ opt.label }}</span>
+            </div>
+            <div v-if="visibleOptions.length === 0" class="m-select-empty">
+              {{ emptyLabel }}
+            </div>
+          </template>
         </div>
-        <template v-else>
-          <div
-            v-for="(opt, i) in visibleOptions"
-            :key="String(opt.value)"
-            class="m-select-option"
-            :class="{
-              'is-selected': opt.value === modelValue,
-              'is-highlighted': i === highlightedIndex
-            }"
-            @mousedown.prevent
-            @click="select(opt.value)"
-            @mouseenter="highlightedIndex = i"
-          >
-            <i
-              class="pi pi-check m-select-option-check"
-              :style="{ visibility: opt.value === modelValue ? 'visible' : 'hidden' }"
-            ></i>
-            <span :title="opt.label">{{ opt.label }}</span>
-          </div>
-          <div v-if="visibleOptions.length === 0" class="m-select-empty">
-            {{ emptyLabel }}
-          </div>
-        </template>
       </div>
     </Teleport>
   </div>
@@ -82,6 +105,7 @@ import {
   nextTick,
   onMounted,
   onBeforeUnmount,
+  useId,
   watch
 } from "vue";
 
@@ -135,6 +159,8 @@ const overlayRect = ref<{
   maxHeight: number;
   placement: "top" | "bottom";
 } | null>(null);
+const componentId = useId();
+const listboxId = `m-select-listbox-${componentId}`;
 
 // ── Computed ──────────────────────────────────────────────────────────────────
 const normalizedOptions = computed(() =>
@@ -168,6 +194,13 @@ const displayValue = computed(() => {
   const match = normalizedOptions.value.find((o) => o.value === props.modelValue);
   return match ? match.label : String(props.modelValue);
 });
+
+const optionId = (index: number) => `${listboxId}-option-${index}`;
+const activeOptionId = computed(() =>
+  isOpen.value && visibleOptions.value[highlightedIndex.value]
+    ? optionId(highlightedIndex.value)
+    : undefined
+);
 
 const overlayStyle = computed(() => {
   if (!overlayRect.value) return {};
@@ -219,16 +252,20 @@ const open = () => {
   isOpen.value = true;
   const idx = visibleOptions.value.findIndex((o) => o.value === props.modelValue);
   highlightedIndex.value = idx >= 0 ? idx : 0;
-  if (props.searchable) {
-    void nextTick(() => {
+  void nextTick(() => {
+    scrollHighlightedIntoView();
+    if (props.searchable) {
       searchInputRef.value?.focus();
       computeOverlayRect();
-    });
-  }
+    }
+  });
 };
 
-const close = () => {
+const close = (restoreFocus = false) => {
   isOpen.value = false;
+  if (restoreFocus) {
+    void nextTick(() => triggerRef.value?.focus());
+  }
 };
 
 const toggle = () => {
@@ -238,13 +275,21 @@ const toggle = () => {
 
 const select = (value: string | number | null) => {
   emit("update:modelValue", value);
-  close();
+  close(true);
 };
 
 const moveHighlight = (delta: number) => {
   const len = visibleOptions.value.length;
   if (!len) return;
   highlightedIndex.value = (highlightedIndex.value + delta + len) % len;
+  void nextTick(scrollHighlightedIntoView);
+};
+
+const moveToBoundary = (boundary: "start" | "end") => {
+  if (!visibleOptions.value.length) return;
+  highlightedIndex.value =
+    boundary === "start" ? 0 : visibleOptions.value.length - 1;
+  void nextTick(scrollHighlightedIntoView);
 };
 
 const selectHighlighted = () => {
@@ -252,12 +297,15 @@ const selectHighlighted = () => {
   if (option) select(option.value);
 };
 
-// Keyboard: Enter while highlight active selects the highlighted option
-const handleKeydown = (e: KeyboardEvent) => {
-  if (!isOpen.value) return;
-  if (e.key === "Enter") {
-    selectHighlighted();
-  }
+const onTriggerConfirm = () => {
+  if (isOpen.value) selectHighlighted();
+  else open();
+};
+
+const scrollHighlightedIntoView = () => {
+  const id = activeOptionId.value;
+  if (!id) return;
+  document.getElementById(id)?.scrollIntoView({ block: "nearest" });
 };
 
 watch(searchQuery, (query) => {
@@ -269,7 +317,12 @@ watch(searchQuery, (query) => {
 watch(visibleOptions, () => {
   const lastIndex = Math.max(0, visibleOptions.value.length - 1);
   highlightedIndex.value = Math.min(highlightedIndex.value, lastIndex);
-  if (isOpen.value) void nextTick(computeOverlayRect);
+  if (isOpen.value) {
+    void nextTick(() => {
+      computeOverlayRect();
+      scrollHighlightedIntoView();
+    });
+  }
 });
 
 // ── Outside click ─────────────────────────────────────────────────────────────
@@ -288,14 +341,12 @@ const handleViewportChange = () => {
 
 onMounted(() => {
   document.addEventListener("pointerdown", handleOutsidePointerDown);
-  document.addEventListener("keydown", handleKeydown);
   window.addEventListener("resize", handleViewportChange);
   window.addEventListener("scroll", handleViewportChange, true);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleOutsidePointerDown);
-  document.removeEventListener("keydown", handleKeydown);
   window.removeEventListener("resize", handleViewportChange);
   window.removeEventListener("scroll", handleViewportChange, true);
 });
@@ -344,13 +395,13 @@ onBeforeUnmount(() => {
 
 .m-select-trigger:focus {
   outline: none;
-  border-color: #c6a7ff;
-  box-shadow: 0 0 0 2px #faf7ff;
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 2px #f1f4fe;
 }
 
 .is-open .m-select-trigger {
-  border-color: #c6a7ff;
-  box-shadow: 0 0 0 2px #faf7ff;
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 2px #f1f4fe;
 }
 
 .m-select-trigger:disabled {
@@ -385,6 +436,13 @@ onBeforeUnmount(() => {
 
 .size-small .m-select-chevron {
   font-size: 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-select-trigger,
+  .m-select-chevron {
+    transition: none;
+  }
 }
 
 /* ── Overlay (teleported to body) ──────────────────────────────────────────── */
@@ -438,8 +496,8 @@ onBeforeUnmount(() => {
 }
 
 .m-select-search > input:focus {
-  border-color: #c6a7ff;
-  box-shadow: 0 0 0 2px #faf7ff;
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 2px #f1f4fe;
 }
 
 .m-select-option {
@@ -457,25 +515,29 @@ onBeforeUnmount(() => {
   transition: background 0.1s;
 }
 
+.m-select-options {
+  outline: none;
+}
+
 .m-select-option:hover,
 .m-select-option.is-highlighted {
-  background: #faf7ff;
-  color: #7b2ff7;
+  background: #f1f4fe;
+  color: #4f46e5;
 }
 
 .m-select-option.is-selected {
-  background: #faf7ff;
-  color: #7b2ff7;
+  background: #f1f4fe;
+  color: #4f46e5;
   font-weight: 500;
 }
 
 .m-select-option.is-selected.is-highlighted {
-  background: #f1eaff;
+  background: #e0e7ff;
 }
 
 .m-select-option-check {
   font-size: 0.65rem;
-  color: #7b2ff7;
+  color: #4f46e5;
   flex-shrink: 0;
   width: 0.75rem;
 }
@@ -489,5 +551,11 @@ onBeforeUnmount(() => {
   font-size: 0.8rem;
   color: var(--p-slate-400, #94a3b8);
   text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .m-select-option {
+    transition: none;
+  }
 }
 </style>

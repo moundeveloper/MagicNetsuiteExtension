@@ -596,6 +596,10 @@
 
   document.addEventListener("keydown", (event) => {
     if (active) return;
+    // NetSuite's small, persistent shortcut listener asks the background
+    // worker to inject this picker. Once injected, do not register a second
+    // handler for the same key combination in the top-level page.
+    if (window.__magicNetsuiteElementScreenshotShortcutInstalled) return;
     if (!matchesShortcut(event, shortcut)) return;
 
     event.preventDefault();

@@ -2,7 +2,7 @@
 import type { ToolDefinition } from "../composables/useAgent";
 import { callApi, ApiRequestType } from "./api";
 import { RequestRoutes } from "../types/request";
-import { Parser } from "expr-eval";
+import { evaluateMathExpression } from "./safeMath";
 import { searchSkills, getSkillContent } from "./skillsDb";
 import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 import { agentCache } from "./agentCacheStore";
@@ -309,7 +309,7 @@ export const tools: ToolDefinition[] = [
           .replace(/−/g, "-")
           .replace(/\^/g, "**");
 
-        const result = Parser.evaluate(expr);
+        const result = evaluateMathExpression(expr);
         return { result };
       } catch (err) {
         return { error: `Invalid expression: ${String(err)}` };

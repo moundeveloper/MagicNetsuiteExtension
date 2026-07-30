@@ -11,6 +11,7 @@
 
 import { Ollama } from "ollama/browser";
 import { useSettings } from "../states/settingsState";
+import { ensureAiDataConsent } from "../utils/aiDataConsent";
 
 // ─────────────────────────────────────────────
 // Shared types
@@ -1080,6 +1081,18 @@ export const useAiProvider = () => {
     }
 
     const provider = settings.aiProvider;
+    const endpoint =
+      provider === "ollama"
+        ? settings.ollamaBaseUrl || "http://localhost:11434"
+        : provider === "opencode"
+          ? settings.opencodeBaseUrl || "http://localhost:4096"
+          : undefined;
+    const consentGranted = await ensureAiDataConsent({ provider, endpoint });
+    if (!consentGranted) {
+      throw new Error(
+        "External AI data sharing was not allowed. No prompt or context was sent. You can review this permission in Settings → AI Provider."
+      );
+    }
 
     // ── Chain-of-thought injection for providers without native thinking ──
     // When thinking mode is on but the provider can't natively surface reasoning

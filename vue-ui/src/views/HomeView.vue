@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   getRouteMap,
+  isRouteVisibleInNavigation,
   RouteStatus,
   RouteStatusColors
 } from "../router/routesMap";
@@ -36,12 +37,13 @@ const privilegeLevel = import.meta.env.VITE_PRIVILEGE_LEVEL;
 const mode = import.meta.env.MODE;
 const isAdmin = computed(() => privilegeLevel === Privilege.ADMIN);
 
-const blackList = ["features", "settings", "modules not found", "processing"];
+const blackList = ["features", "settings", "modules not found"];
 
 const allFeatures = computed(() => {
   return getRouteMap().filter(
     (route) =>
       !blackList.includes(route.name.toLowerCase()) &&
+      isRouteVisibleInNavigation(route) &&
       route.name.toLowerCase().includes(searchFeatures.value.toLowerCase()) &&
       route.status !== RouteStatus.deprecated &&
       (!route.adminOnly || hasAdminAccess.value) &&

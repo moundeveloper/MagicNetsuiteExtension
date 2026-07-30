@@ -41,6 +41,10 @@ New-Item -ItemType Directory -Force -Path $RuntimeDest | Out-Null
 Copy-Directory -Source (Join-Path $McpAppRoot "dist") -Destination (Join-Path $McpAppsDest "dist")
 Copy-Item -LiteralPath (Join-Path $McpAppRoot "package.json") -Destination (Join-Path $McpAppsDest "package.json") -Force
 Copy-Item -LiteralPath (Join-Path $McpAppRoot "pnpm-lock.yaml") -Destination (Join-Path $McpAppsDest "pnpm-lock.yaml") -Force
+# pnpm 11 reads dependency policy, overrides, and release-age exceptions from
+# pnpm-workspace.yaml. The staged install must use the same policy that produced
+# and verified the source lockfile.
+Copy-Item -LiteralPath (Join-Path $McpAppRoot "pnpm-workspace.yaml") -Destination (Join-Path $McpAppsDest "pnpm-workspace.yaml") -Force
 Copy-Item -LiteralPath (Join-Path $McpAppRoot "installClaudeMcpApps.ps1") -Destination (Join-Path $McpAppsDest "installClaudeMcpApps.ps1") -Force
 Copy-Item -LiteralPath $NodeSource -Destination (Join-Path $RuntimeDest "node.exe") -Force
 
