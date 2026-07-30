@@ -630,7 +630,10 @@ h1 {
 }
 
 .jobs-list-pane {
+  display: flex;
+  min-height: 0;
   min-width: 0;
+  flex-direction: column;
   overflow: auto;
 }
 .jobs-list {
@@ -856,6 +859,11 @@ h2 {
   gap: 0.55rem;
   color: var(--p-slate-500, #64748b);
   text-align: center;
+}
+.jobs-list-pane > .state-panel {
+  flex: 1;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 .state-panel p,
 .details-placeholder p {

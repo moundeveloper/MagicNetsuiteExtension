@@ -46,4 +46,11 @@ describe("workspace route components", () => {
     );
     expect(processingRecord?.meta.internalOnly).toBe(true);
   });
+
+  it("exposes the NetSuite Quiz workspace in navigation", () => {
+    const quiz = getRouteMap().find((route) => route.route === "/quiz");
+    expect(quiz?.name).toBe("NetSuite Quiz");
+    expect(quiz?.icon).toBe("pi pi-question-circle");
+    expect(quiz && isRouteVisibleInNavigation(quiz)).toBe(true);
+  });
 });

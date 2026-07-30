@@ -67,6 +67,102 @@ function localSkillSearchRequiredResult(query) {
   };
 }
 
+const NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: {
+      type: "string",
+      description: "Stable unique question ID within this quiz."
+    },
+    type: {
+      type: "string",
+      enum: ["single", "multiple"],
+      description:
+        "single requires exactly one correct option; multiple requires at least two."
+    },
+    prompt: {
+      type: "string",
+      description:
+        "A direct, complete question written in plain English for a working developer. State the concrete script, API, value, action, and failure being tested; do not use clipped fragments, management language, or vague abstractions. If it refers to or describes a specific query, code fragment, expression, XML fragment, or configuration, the code field is required so the learner can inspect the actual artifact."
+    },
+    topic: {
+      type: "string",
+      description: "Optional short topic label shown above the question."
+    },
+    code: {
+      type: "object",
+      description:
+        "Code sample for genuine code-reasoning questions. Required whenever the prompt refers to or describes a specific query, code/XML fragment, expression, or configuration; do not force the learner to reconstruct an omitted artifact from prose. Never show the correct answer, tested API/property/path, or a line that directly states the correct option. Do not ask learners to transcribe entry points, exports, methods, fields, properties, or operations that are visibly listed in the snippet. Code questions must require tracing behavior, diagnosing a defect, predicting output, or choosing a justified correction. For fill-in or identifier questions, replace the tested expression with a neutral placeholder such as /* choose the correct expression */. Supports SuiteScript, SuiteQL, FreeMarker, JSON, XML, and other text languages.",
+      properties: {
+        language: {
+          type: "string",
+          description:
+            "Language identifier such as javascript, sql, freemarker, json, or xml."
+        },
+        content: {
+          type: "string",
+          description:
+            "Exact code shown to the learner. It must not contain the literal answer or the exact identifier/property/method/module/path being asked for."
+        },
+        caption: { type: "string", description: "Optional compact code-block caption." }
+      },
+      required: ["language", "content"]
+    },
+    options: {
+      type: "array",
+      minItems: 2,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          text: { type: "string" }
+        },
+        required: ["id", "text"]
+      }
+    },
+    correctOptionIds: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string" },
+      description: "Option IDs that comprise the complete correct answer."
+    },
+    explanation: {
+      type: "string",
+      description:
+        "A plain-English explanation of why the answer is correct. Use concrete NetSuite behavior and avoid vague architecture or strategy language. It may reason directly from a supplied code block."
+    },
+    citations: {
+      type: "array",
+      description:
+        "Exact documentation evidence. Every question without a code block must include at least one citation whose literal quote directly supports the complete correct answer. A code question may omit citations only when every fact needed to answer follows from the supplied snippet without relying on NetSuite platform behavior or general best-practice claims.",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "NetSuite Help page title." },
+          url: {
+            type: "string",
+            description: "NetSuite Help Center page URL returned by the docs batch."
+          },
+          quote: {
+            type: "string",
+            description:
+              "Exact literal supporting text copied from the returned page. Do not add Markdown backticks, emphasis, links, quotation marks, or other decoration. The UI highlights this exact text in the live page."
+          }
+        },
+        required: ["title", "url", "quote"]
+      }
+    }
+  },
+  required: [
+    "id",
+    "type",
+    "prompt",
+    "options",
+    "correctOptionIds",
+    "explanation"
+  ]
+};
+
 const TEMPLATE_DESIGN_SKILL_NAME = "Design NetSuite FreeMarker Template";
 
 async function appendTemplateDesignSkillPreflight(sessionResult) {
@@ -1239,6 +1335,66 @@ async function handleMcp(req) {
             }
           },
           {
+            name: "magic_netsuite_create_quiz",
+            description:
+              "Create a persistent NetSuite quiz question bank after researching official documentation with netsuite_submit_docs_batch and netsuite_get_docs_batch. The quiz must contain 10–60 meaningful questions with explanations. Write for working developers in plain English: name the concrete script, API, value, action, and failure being tested. Do not use clipped fragments or corporate/academic shorthand such as authoritative ledger, lifecycle placement, execution boundary, architecture improvement, mechanism, or contract when a direct question says the same thing. Options and explanations must also be complete and understandable without decoding vague abstractions. Every non-code question requires exact documentation evidence that directly supports the complete answer; broad architecture, security, reliability, performance, or best-practice claims without evidence are rejected. A code question may omit citations only when every fact needed to answer follows from the shown code without NetSuite platform knowledge. Include the actual code/query/XML/configuration whenever the prompt describes one. Never ask learners to copy identifiers, entry points, exports, methods, fields, properties, or operations visibly listed in a snippet. Code questions must require behavioral tracing, diagnosis, output prediction, or a justified correction, and must not reveal the tested answer.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                description: { type: "string" },
+                sourceBatchJobId: {
+                  type: "string",
+                  description:
+                    "Completed NetSuite documentation batch job used to produce this quiz."
+                },
+                questions: {
+                  type: "array",
+                  minItems: 10,
+                  maxItems: 60,
+                  items: NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA
+                }
+              },
+              required: ["title", "sourceBatchJobId", "questions"]
+            }
+          },
+          {
+            name: "magic_netsuite_list_quizzes",
+            description:
+              "List saved NetSuite quiz metadata and question counts without returning full question banks.",
+            inputSchema: { type: "object", properties: {} }
+          },
+          {
+            name: "magic_netsuite_get_quiz",
+            description:
+              "Get one complete saved NetSuite quiz, including questions, options, code blocks, answers, explanations, and citations.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Quiz ID from magic_netsuite_list_quizzes."
+                }
+              },
+              required: ["id"]
+            }
+          },
+          {
+            name: "magic_netsuite_delete_quiz",
+            description:
+              "Permanently delete one saved NetSuite quiz question bank. List quizzes first and pass the exact quiz ID.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Quiz ID from magic_netsuite_list_quizzes."
+                }
+              },
+              required: ["id"]
+            }
+          },
+          {
             name: "magic_netsuite_search_custom_tools",
             description: "Search active user-created Magic NetSuite tools. Returns metadata, execution domains, and input schemas without exposing implementation source.",
             inputSchema: {
@@ -1420,7 +1576,7 @@ async function handleMcp(req) {
           {
             name: "netsuite_read_doc_page",
             description:
-              "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's main text (up to 10 000 characters) with inline Markdown links preserved, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
+              "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's literal main text (up to 10 000 characters) without Markdown decoration, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
             inputSchema: {
               type: "object",
               properties: {

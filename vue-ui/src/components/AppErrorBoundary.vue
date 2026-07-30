@@ -84,7 +84,7 @@ const goHome = async () => {
   }
 };
 
-const reload = () => window.location.reload();
+const refreshPage = () => window.location.reload();
 
 const copyDetails = async () => {
   if (!failure.value) return;
@@ -102,7 +102,7 @@ const copyDetails = async () => {
     await navigator.clipboard.writeText(details);
     copyStatus.value = "Safe technical details copied.";
   } catch {
-    copyStatus.value = "Could not copy. Reload the app and try again.";
+    copyStatus.value = "Could not copy. Refresh the page and try again.";
   }
 };
 </script>
@@ -124,8 +124,8 @@ const copyDetails = async () => {
           This view stopped unexpectedly
         </h1>
         <p>
-          Your saved settings are untouched. Retry the view, return home, or
-          reload the extension to restore a clean session.
+          Your saved settings are untouched. Refresh the page to retry the
+          view, or return home.
         </p>
       </div>
 
@@ -153,7 +153,7 @@ const copyDetails = async () => {
           size="small"
           icon="pi pi-refresh"
           label="Try again"
-          @click="reset"
+          @click="refreshPage"
         />
         <Button
           size="small"
@@ -170,14 +170,6 @@ const copyDetails = async () => {
           icon="pi pi-copy"
           label="Copy details"
           @click="copyDetails"
-        />
-        <Button
-          size="small"
-          severity="secondary"
-          text
-          icon="pi pi-replay"
-          label="Reload app"
-          @click="reload"
         />
       </div>
 

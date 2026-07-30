@@ -27,9 +27,6 @@ const normalizeDocWhitespace = (text) =>
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-const escapeMarkdownLinkText = (text) =>
-  text.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
-
 const toAbsoluteDocUrl = (href, pageUrl) => {
   const raw = String(href ?? "").trim();
   if (!raw) return "";
@@ -108,7 +105,7 @@ const extractHelpPageContent = (root, pageUrl) => {
       if (!absoluteUrl) return text;
 
       addLink(element, text, absoluteUrl);
-      return `[${escapeMarkdownLinkText(text || absoluteUrl)}](${absoluteUrl})`;
+      return text || absoluteUrl;
     }
 
     if (tagName === "pre") {
@@ -116,11 +113,11 @@ const extractHelpPageContent = (root, pageUrl) => {
     }
 
     if (tagName === "code") {
-      return `\`${normalizeDocWhitespace(element.textContent ?? "")}\``;
+      return normalizeDocWhitespace(element.textContent ?? "");
     }
 
     if (tagName === "li") {
-      return `\n- ${normalizeDocWhitespace(serializeChildren(element))}`;
+      return `\n${normalizeDocWhitespace(serializeChildren(element))}`;
     }
 
     if (tagName === "tr") {
@@ -128,7 +125,7 @@ const extractHelpPageContent = (root, pageUrl) => {
         .filter(child => ["td", "th"].includes(child.tagName.toLowerCase()))
         .map(child => normalizeDocWhitespace(serializeChildren(child)))
         .filter(Boolean);
-      return cells.length ? `\n${cells.join(" | ")}` : "";
+      return cells.length ? `\n${cells.join(" ")}` : "";
     }
 
     if (HEADING_DOC_TEXT_TAGS.has(tagName)) {

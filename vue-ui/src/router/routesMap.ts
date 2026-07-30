@@ -33,6 +33,9 @@ const ScriptsDeployedView = lazyView(() =>
 );
 const ProcessingView = lazyView(() => import("../views/ProcessingView.vue"));
 const JobsCenterView = lazyView(() => import("../views/JobsCenterView.vue"));
+const NetsuiteQuizView = lazyView(() =>
+  import("../views/NetsuiteQuizView.vue")
+);
 const TemplatesView = lazyView(() => import("../views/TemplatesView.vue"));
 const TemplateDetailView = lazyView(() =>
   import("../views/TemplateDetailView.vue")
@@ -334,6 +337,14 @@ export const routes: FullRoute[] = [
     component: JobsCenterView,
     status: RouteStatus.release,
     breadcrumb: "Jobs Center"
+  },
+  {
+    route: "/quiz",
+    name: "NetSuite Quiz",
+    icon: "pi pi-question-circle",
+    component: NetsuiteQuizView,
+    status: RouteStatus.release,
+    breadcrumb: "NetSuite Quiz"
   },
   {
     route: "/suitescript-modules",

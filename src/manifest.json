@@ -97,6 +97,12 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["*://*.app.netsuite.com/app/help/helpcenter.nl*"],
+      "js": ["content/quizCitationFrame.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["*://*.netsuite.com/app/site/hosting/scriptlet.nl*"],
       "js": ["content/suiteletIframeBridge.js"],
       "all_frames": true,

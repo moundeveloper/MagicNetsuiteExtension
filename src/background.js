@@ -62,6 +62,556 @@ const NETSUITE_DOC_BATCH_TERMINAL_STATUSES = new Set([
 ]);
 let netsuiteDocBatchWriteQueue = Promise.resolve();
 let netsuiteDocBatchWorkerActive = false;
+const NETSUITE_QUIZZES_STORAGE_KEY = "magic_netsuite_quizzes_v1";
+const NETSUITE_QUIZ_MIN_QUESTIONS = 10;
+const NETSUITE_QUIZ_MAX_QUESTIONS = 60;
+const NETSUITE_QUIZ_MAX_STORED = 100;
+let netsuiteQuizWriteQueue = Promise.resolve();
+const CLIENT_EDIT_GUARD_PROMPT =
+  "When this client-script entry point runs while editing an existing sales order, what happens?";
+const CLIENT_EDIT_GUARD_UNRELATED_QUOTE =
+  "When you edit the form, the pageInit event sets the customer field to a specific customer.";
+const SUITELET_FILE_SOURCE_PROMPT =
+  "In this Suitelet pattern, where is an uploaded file obtained during the POST request?";
+const SUITELET_FILE_SOURCE_VISIBLE_ANSWER = "var files = request.files;";
+const SUITELET_FILE_SOURCE_REDACTION =
+  "var files = /* choose the correct source */;";
+const QUIZ_PLAIN_LANGUAGE_PROMPT_REPAIRS = Object.freeze({
+  "exam-perf-001":
+    "Five scripts each write 25,000 log messages within one hour. Which NetSuite logging limit will they exceed?",
+  "exam-perf-002":
+    "A script logs every sublist line. NetSuite later lowers the deployment's log level even though nobody edited it. Why?",
+  "exam-perf-003":
+    "Execution logs may be deleted. Where should a compliance script store audit records that must be kept?",
+  "exam-perf-006":
+    "A webhook must use the record after NetSuite has saved it. Which User Event entry point should send the webhook?",
+  "exam-perf-007":
+    "A record form has ten beforeLoad scripts. How will those scripts affect the time it takes to open the form?",
+  "exam-perf-008":
+    "A value calculated in beforeLoad must be read again in afterSubmit. How can the script pass that value between the two entry points?",
+  "exam-perf-010":
+    "A validation is not needed for web-services imports. How can you stop the script from running that validation for those imports?",
+  "exam-perf-013":
+    "A retryable script records completed work only in N/cache. Why can this cause the script to process the same work again?",
+  "exam-perf-016":
+    "Three synchronous User Event scripts repeatedly load the same transaction and must run in a specific order. What is the recommended fix?",
+  "exam-perf-017":
+    "An afterSubmit script calls an external API, renders a PDF, and sends an email before returning. What should be changed to reduce the user's wait time?",
+  "exam-perf-025":
+    "A record page is slow. Which APM tools can compare page, SuiteScript, and plug-in performance?",
+  "exam-int-002":
+    "A Suitelet adds a button whose function name is approveOrder, but clicking the button does nothing. What must be attached to the form?",
+  "exam-int-006":
+    "A server-side User Event calls email.send.promise and expects asynchronous email. Why will this not work?",
+  "exam-int-008":
+    "A SuiteScript calls a RESTlet in the same account. Which API can make the call without manually building an OAuth header?",
+  "exam-int-010":
+    "A Suitelet needs the user to enter an SFTP password without exposing the plain-text password to the script. Which serverWidget field should it use?",
+  "exam-int-012":
+    "How can a script check whether the Advanced Billing feature is enabled in the current account?",
+  "exam-int-013":
+    "At runtime, what kind of JavaScript value is config.Type?",
+  "exam-int-014":
+    "Code that uses define fails in the SuiteScript Debugger. Which loader should the debugger use instead, and where should define be used?",
+  "exam-int-017":
+    "A report needs four columns from 5,000 records. How can it return those values without loading 5,000 full record objects?",
+  "exam-int-018":
+    "A browser script sends 30 N/query requests at once. Why can this be slower even when the calls use promises?",
+  "exam-int-019":
+    "A page runs four separate queries to get four customer fields. What should it do instead when possible?",
+  "exam-int-022":
+    "Why can CSV imports and web-services requests bypass a validation that exists only in a client script?",
+  "exam-int-023":
+    "When using N/render, when should the invoice record, saved-search results, and external JSON be added to the renderer?",
+  "exam-int-024":
+    "How can N/render combine NetSuite record fields with JSON returned by an external service?",
+  "exam-int-025":
+    "Why can the template editor preview fail to show values from a custom data source?",
+  "exam2-ui-001":
+    "A server script is Released, but you need to debug the deployed script. What must you change first?",
+  "exam2-ui-002":
+    "A deployment is set to Testing, but an Administrator still cannot select it in the debugger. What is the most likely reason?",
+  "exam2-ui-003":
+    "Before debugging a script that creates records, which safety steps should you take?",
+  "exam2-ui-004":
+    "A deployment is Released and its Audience is empty. Who is allowed to run it?",
+  "exam2-ui-005":
+    "A deployment's Audience requires the Sales Manager role and the EMEA department. Can a Sales Manager in the APAC department run it?",
+  "exam2-ui-006":
+    "Which script deployment types do not support Audience settings?",
+  "exam2-ui-007":
+    "The code calls error.create but then continues running. Why does execution continue?",
+  "exam2-ui-008":
+    "A thrown custom error should email the Unhandled Errors recipients. What should notifyOff be set to?",
+  "exam2-ui-009":
+    "Which missing properties cause error.create to throw SSS_MISSING_REQD_ARGUMENT?",
+  "exam2-ui-010":
+    "A Suitelet uses the browser DOM to move native fields. Which supported API should it use instead?",
+  "exam2-ui-011":
+    "A beforeLoad script adds a field with ID approval_note to an existing form. How must the ID be changed to follow NetSuite's rules?",
+  "exam2-ui-012":
+    "Which serverWidget page type is best for a guided, multi-step onboarding process?",
+  "exam2-ui-013":
+    "Why can a FILE upload field not be placed in a sublist on an existing record page?",
+  "exam2-ui-014":
+    "An INLINEHTML field was given a label, but the label does not appear. Why?",
+  "exam2-ui-015":
+    "Why does pageInit not run when a user only views a record?",
+  "exam2-ui-016":
+    "A form-level client script and a record-level client script both change the same field. Which script runs first?",
+  "exam2-ui-017":
+    "Why can a Suitelet that is not marked Available Without Login not redirect to an external URL?",
+  "exam2-ui-018":
+    "A hard-coded Suitelet URL stops working after the account moves to another data center. How should the URL be generated?",
+  "exam2-ui-019":
+    "Which HTTP methods can start a Suitelet request?",
+  "exam2-ui-020":
+    "A Testing deployment has a broad Audience. Can a user who is not the script owner run it?",
+  "exam2-ui-021":
+    "Why can a workflow running in the User Event Script context not trigger another user event?",
+  "exam2-ui-022":
+    "Why is beforeSubmit the correct place to reject a record before NetSuite saves it?",
+  "exam2-ui-023":
+    "Which tasks are appropriate for afterSubmit?",
+  "exam2-ui-024":
+    "A deployment is configured only for the delete event even though handlers for create and delete exist. Which handler runs?",
+  "exam2-ui-025":
+    "If a deployment's log level is Debug, which message levels are written to the execution log?",
+  "exam2-flow-026":
+    "A Testing workflow includes a QA analyst in its Audience, but the analyst is not the workflow owner. Can the workflow start for that analyst?",
+  "exam2-flow-027":
+    "A scheduled workflow finds matching records but is still in Testing status. What must be changed before it can run on schedule?",
+  "exam2-flow-028":
+    "Which values are valid workflow release statuses?",
+  "exam2-flow-029":
+    "A workflow should react to UI edits but ignore CSV imports and web-services requests. Which workflow settings provide that filter?",
+  "exam2-flow-030":
+    "A nightly workflow should start only for records returned by an existing business filter. What can the workflow use as its condition source?",
+  "exam2-flow-031":
+    "Which settings determine whether a workflow action runs and when it runs?",
+  "exam2-flow-032":
+    "A state has one action that runs on entry and another that runs on exit. Which action setting determines when each one runs?",
+  "exam2-flow-033":
+    "Which trigger and formula-language combinations are valid?",
+  "exam2-flow-034":
+    "A workflow state contains 1,020 usage units of actions and fails with a usage-limit error. What should be changed?",
+  "exam2-flow-035":
+    "State 2 transitions back to itself more than 50 times in a row. What is the most likely problem?",
+  "exam2-flow-036":
+    "An opportunity entered State 1 but may not have entered State 2. Where should you look first on the opportunity record?",
+  "exam2-flow-037":
+    "A user with limited permissions starts a workflow configured as Execute as Admin. Which permissions does the workflow normally use?",
+  "exam2-flow-038":
+    "Why should Execute as Admin be enabled only when it is actually required?",
+  "exam2-flow-039":
+    "An Execute as Admin action uses a joined record on a client trigger. What should be changed?",
+  "exam2-flow-040":
+    "A role has Full Workflow permission but cannot enable Execute as Admin. Why?",
+  "exam2-flow-041":
+    "A workflow must inspect item-sublist quantities that Workflow Manager cannot access. What should the developer add?",
+  "exam2-flow-042":
+    "A custom workflow action returns an integer, but Store Result In points to a text field. What must be changed?",
+  "exam2-flow-043":
+    "Which development practices are supported by file-based SuiteCloud projects?",
+  "exam2-flow-044":
+    "Which project information belongs in manifest.xml?",
+  "exam2-flow-045":
+    "A custom object is deployed before the library it references, so deployment fails. Which project file controls the deployment order?",
+  "exam2-flow-046":
+    "A team wants to use Jest in its file-based NetSuite development process. Which supported tools can be used together?",
+  "exam2-flow-047":
+    "Which SuiteApp installation-preference categories are supported?",
+  "exam2-flow-048":
+    "A HIDE rule applies to every SuiteScript file, including client scripts. What must be changed?",
+  "exam2-flow-049":
+    "A field has the correct sourcing configuration but its Display Type is Hidden. Why is the field not sourced?",
+  "exam2-flow-050":
+    "Why can a Multiple Select custom field not be populated through sourcing?",
+  "sq2-001":
+    "A query has one condition on the joined sales-representative record and two conditions on the root customer record. How should those conditions be combined without moving the joined condition to the root record?",
+  "sq2-003":
+    "Why can N/query represent nested AND/OR logic that a flat list of N/search filters cannot express directly?",
+  "sq2-006":
+    "How can a field context change the value returned by an N/query result column?",
+  "sq2-007":
+    "How should an N/query currency-conversion field context specify both the currency and the effective date?",
+  "sq2-008":
+    "To return one row per sales representative with the total transaction amount, which column must group the rows and which column must aggregate the amounts?",
+  "sq2-009":
+    "Why should a formula column have an alias when the code reads mapped results?",
+  "sq2-010":
+    "What separator must a formula use after a polymorphic join created with joinTo?",
+  "sq2-011":
+    "What separator must a formula use after an inverse join created with joinFrom?",
+  "sq2-017":
+    "How can code iterate through paged query results without reading pageRanges by index?",
+  "sq2-021":
+    "Why can a SuiteScript not modify a Workbook query definition and then save the changed definition back to NetSuite?",
+  "sq2-022":
+    "Which N/query component methods can create another join from an existing component instead of from the root Query object?",
+  "sq2-023":
+    "After running a constructed query without paging, which objects contain the returned rows?",
+  "sq2-024":
+    "How do you define an N/query date condition that stays relative to the date when the script runs?",
+  "sq2-027":
+    "Which Records Catalog property shows that a join is one-to-many and may return several rows for one source record?",
+  "sq2-028":
+    "What join information does the Records Catalog Join tab show for each field?",
+  "sq2-029":
+    "A join is missing for the current role and enabled features. What can Show Unavailable Items tell you?",
+  "sq2-030":
+    "Why must a developer check the join type in Records Catalog before choosing autoJoin, joinTo, or joinFrom?",
+  "sq2-031":
+    "Does the Analytics Administrator permission let a user read transaction fields that their role is not allowed to access?",
+  "sq2-032":
+    "What happens when a role has Analytics Administrator but does not have the SuiteAnalytics Workbook permission?",
+  "sq2-033":
+    "Why should the Analytics Administrator permission be given to only a small group of users?",
+  "sq2-034":
+    "Why can Workbook audit-trail record types not be used to audit changes made in 2025?",
+  "sq2-038":
+    "Which metaDataProvider setting makes query.runSuiteQL throw an error when the query requests an unauthorized field?",
+  "sq2-039":
+    "When the STATIC metadata provider returns no value for a field, what must the code not assume?",
+  "sq2-041":
+    "Why should unrelated SuiteQL queries use different customScriptId values when you troubleshoot performance?",
+  "sq2-043":
+    "How can code read both paged query rows and the metadata for the selected columns?",
+  "sq2-044":
+    "When SuiteAnalytics Connect is not enabled, what row and page limits apply to query.runSuiteQLPaged?",
+  "sq2-047":
+    "SuiteQL may return record and field names with different letter casing after an update. How should code avoid breaking?",
+  "sq2-049":
+    "Why does selecting a custom transaction body field not automatically include related data from its application subtab?",
+  "orch-001":
+    "A User Event updates many records in a loop before the user receives a response. Which script type should process those independent records instead?",
+  "orch-002":
+    "A monitoring script must call task.checkStatus after the shown User Event submits its worker. What information must the User Event save?",
+  "orch-004":
+    "A Map/Reduce restart can happen after an external order is created but before the map call finishes. Which changes prevent the order from being created twice?",
+  "orch-005":
+    "If context.isRestarted is true, what can the script safely conclude?",
+  "orch-006":
+    "Does the retryCount setting retry errors from getInputData? Why or why not?",
+  "orch-008":
+    "retryCount is omitted and a map invocation ends with an uncaught error. By default, what happens to the key whose completion is uncertain?",
+  "orch-009":
+    "Where can a restarted map invocation read errors from its previous attempts?",
+  "orch-010":
+    "getInputData returns individual rows and map writes a group key. Does each map invocation receive one row or a whole group?",
+  "orch-011":
+    "Several work-item IDs use the same group key. How many times is reduce called for that key, and which values does it receive?",
+  "orch-012":
+    "How many times does summarize run during one execution of a Map/Reduce script?",
+  "orch-013":
+    "getInputData runs again after a restart, but its READY search may now return different rows. How can the design keep the input set consistent?",
+  "orch-014":
+    "If getInputData creates a custom audit record, what restart behavior must the script handle?",
+  "orch-016":
+    "Why can increasing Buffer Size cause more keys to be processed again after a forceful interruption?",
+  "orch-017":
+    "What happens to key-value pairs written by a map batch that only partly completes?",
+  "orch-018":
+    "Why does context.write alone not prevent the external order-result record from being created twice after a restart?",
+  "orch-019":
+    "A synchronous script exceeds its governance limit halfway through several dependent steps. What can happen to the work before and after the failure?",
+  "orch-020":
+    "A high-volume job must process records one after another instead of in parallel. Why might a scheduled script be a better fit?",
+  "orch-022":
+    "When account capacity is available, which Map/Reduce deployment setting can let multiple jobs run at the same time?",
+  "orch-023":
+    "When a Map/Reduce job reaches a framework limit, how does NetSuite continue the remaining work?",
+  "orch-025":
+    "Which changes make the shown User Event and Map/Reduce process handle heavy load and restarts safely?",
+  "data-005":
+    "The User Event needs only the entity ID, email, and subsidiary before it updates two body fields. Why is search.lookupFields a good choice?",
+  "data-006":
+    "After record.submitFields succeeds, what value does it return?",
+  "data-007":
+    "Which execution context does the shown User Event intentionally skip?",
+  "data-008":
+    "Why should the script compare runtime.executionContext with runtime.ContextType instead of checking an unrelated event-type property?",
+  "data-009":
+    "A nightly script needs a few columns from hundreds of thousands of transactions and does not need editable record objects. Which API approach fits this job?",
+  "data-010":
+    "A Suitelet runs the same lookup query once for every row returned by another query. What should be changed to avoid this repeated-query performance problem?",
+  "data-011":
+    "Why is one SuiteQL request better than launching a separate browser query for every order shown on the dashboard?",
+  "data-012":
+    "When the shown Suitelet calls the RESTlet, which part of NetSuite supplies the authentication headers?",
+  "data-013":
+    "A user with a restricted role calls the shown RESTlet through https.requestRestlet. Which permissions are used for the RESTlet call?",
+  "data-014":
+    "Which security settings do not need to be weakened just so the shown Suitelet can call its RESTlet in the same account?",
+  "data-015":
+    "Can an external application use https.requestRestlet as its way to authenticate directly to the shown RESTlet?",
+  "data-017":
+    "Why must the batch-run custom record remain the permanent status record even when the status endpoint also uses N/cache?",
+  "data-018":
+    "A cache value is written with a 900-second TTL. Which assumption about how long the value remains available is unsafe?",
+  "data-020":
+    "Which kind of repeated work is a good use case for N/cache?",
+  "data-021":
+    "Which script task types run through SuiteCloud Processors?",
+  "data-022":
+    "Where do you set the processing priority for a Map/Reduce deployment?",
+  "data-023":
+    "Old scheduled-script deployments depend on one queue running jobs in FIFO order. What should be checked before removing the queues?",
+  "data-024":
+    "A server script that is not running as Administrator submits a customer-sync Map/Reduce task. Which permissions must its role have?",
+  "data-025":
+    "Two rapid edits try to submit the same Map/Reduce script and deployment while its first task is still unfinished. What should the design do to avoid the second submission failing?",
+  "sdf-rel-044":
+    "Which installation-script entry point cannot run before a SuiteApp is uninstalled?",
+  "sdf-rel-013":
+    "An Account Customization Project manifest references a file that is missing from the target account. Where is this reported during server validation?",
+  "sdf-rel-016":
+    "A CI job cannot open a browser for NetSuite login. Which SuiteCloud CLI command should configure its authentication?",
+  "sqlint-020":
+    "What can happen when a SuiteAnalytics Connect client keeps more than about 50 connections open?",
+  "flow-001":
+    "What does marking a workflow state as an exit state mean?",
+  "ssdev-2026-04":
+    "A script creates a record without setting isDynamic. Which record mode does NetSuite use?",
+  "ssdev-2026-48":
+    "A User Event should run for UI edits but not for web-services imports. Which deployment setting should filter those executions?",
+  "proc-001":
+    "Why can getInputData return a saved search instead of manually returning an array of every key-value pair?",
+  "proc-009":
+    "A Map/Reduce job reaches a soft limit after finishing one key. How does NetSuite preserve the work that is still unfinished?",
+  "proc-022":
+    "getInputData produces 800 key-value pairs and the map stage is enabled. If no calls fail, how many times does map run?",
+  "proc-025":
+    "A developer expects one map call to receive every value for a key. What does a map invocation actually receive?",
+  "sdf-lifecycle-adv-16":
+    "A cleanup routine must run after a SuiteApp and all its objects have been removed. Can the documented BeforeUndeploy entry point meet that requirement?",
+  "mr-advanced-05":
+    "A map function calls an external fulfillment service, and calling it twice would create a duplicate fulfillment. Buffer Size is increased from 1 to 50. If the processor is interrupted, what problems can this cause?",
+  "mr-advanced-14":
+    "An integration submits the same Map/Reduce deployment for customer A and immediately submits it again for customer B. Both tasks must be allowed to remain unfinished at the same time. How should the deployments be configured?",
+  "mr-advanced-19":
+    "A Map/Reduce script writes a 3,400-character key and an 11 MB JSON value. Both are too large. How should the script pass this data to the next stage?",
+  "ss-jobs-03":
+    "Why is high-volume input/output work often moved from a user-facing script to a scheduled script?",
+  "wf-ground-06":
+    "A workflow should run for UI edits but not for web-services updates. Which workflow setting filters those execution contexts?",
+  "ss-ground-03":
+    "An external notification must use a record only after NetSuite has saved it. Which User Event entry point should send the notification?",
+  "sdf-rel-022":
+    "An Account Customization Project uses WARNING for account-specific values in optional fields. What happens during deployment?",
+  "sdf-rel-023":
+    "An Account Customization Project uses WARNING, but an account-specific value appears in a required field. What happens during validation?",
+  "sdf-rel-038":
+    "A file has hideinbundle set to F, but hiding.xml applies HIDE to the same file. What happens during validation?",
+  "sdf-rel-047":
+    "An Account Customization Project contains an sdfinstallationscript object and a run element. Why is this invalid?"
+});
+const QUIZ_PLAIN_LANGUAGE_EXPLANATION_REPAIRS = Object.freeze({
+  "exam-perf-013":
+    "N/cache is temporary and its values can disappear. Store completion status in a persistent record when retries must know which work is already finished.",
+  "exam2-ui-001":
+    "The deployed-script debugger can select the script only while its deployment is in Testing status.",
+  "exam2-ui-002":
+    "Testing status is not enough. The person using the debugger must also be the script owner.",
+  "exam2-ui-007":
+    "error.create builds and returns an error object. Execution stops only when the code throws that object.",
+  "exam2-ui-008":
+    "Set notifyOff to false so NetSuite can send the unhandled-error notification.",
+  "exam2-ui-020":
+    "While the deployment is in Testing, only the script owner can run it. A broad Audience does not override that rule.",
+  "exam2-flow-027":
+    "Scheduled workflows run only when their release status is Released.",
+  "exam2-flow-035":
+    "Repeatedly transitioning a state back to itself creates an infinite loop and eventually reaches the workflow usage limit.",
+  "exam2-flow-037":
+    "Execute as Admin makes the workflow use Administrator privileges instead of the permissions of the user who started it.",
+  "exam2-flow-049":
+    "A custom field with Display Type set to Hidden does not perform sourcing.",
+  "sdf-rel-022":
+    "WARNING records a warning for account-specific values in optional fields, but it still allows the deployment to continue.",
+  "sdf-rel-023":
+    "The WARNING setting applies only to optional fields. An account-specific value in a required field still causes a validation error.",
+  "sdf-rel-038":
+    "NetSuite rejects a file when its hideinbundle attribute conflicts with the hiding preference for the same file.",
+  "sdf-rel-047":
+    "Account Customization Projects do not support SDF installation scripts; that feature is available only to SuiteApp projects."
+});
+const QUIZ_PLAIN_LANGUAGE_OPTION_REPAIRS = Object.freeze({
+  "sdf-rel-022": Object.freeze({
+    A: "NetSuite automatically converts the account-specific IDs.",
+    B: "NetSuite also allows account-specific values in required fields.",
+    C: "NetSuite records warnings and allows the deployment to continue.",
+    D: "The WARNING setting works only in SuiteApp projects."
+  }),
+  "sdf-rel-023": Object.freeze({
+    A: "Validation records only a warning.",
+    B: "Validation returns an error.",
+    C: "NetSuite changes the field to optional.",
+    D: "Validation ignores the value."
+  }),
+  "sdf-rel-038": Object.freeze({
+    A: "The hiding.xml preference overrides hideinbundle.",
+    B: "Validation rejects the conflicting settings.",
+    C: "The hideinbundle attribute overrides hiding.xml.",
+    D: "The conflict is allowed only for client scripts."
+  }),
+  "sdf-rel-047": Object.freeze({
+    A: "The run element must be moved into manifest.xml.",
+    B: "Account Customization Projects do not support SDF installation scripts.",
+    C: "The object must be changed to an unmanaged definition.",
+    D: "The object works only with SuiteCloud CLI for Java."
+  })
+});
+const QUIZ_UNCLEAR_PROMPT_PATTERNS = Object.freeze([
+  /\bauthoritative (?:completion )?ledger\b/i,
+  /\bcore reliability mistake\b/i,
+  /\bwhich (?:lifecycle placement|architecture improvement|execution boundary|performance mechanism|documented mechanism|framework contract|stage contract|context shape)\b/i,
+  /\bwhat lifecycle meaning should\b/i,
+  /\bwhere does this surface\??$/i,
+  /(?:^|[.!?]\s*)(?:likely cause|required fix|best fix|supported redesign|direct correction|first [^?]+ diagnostic|validation result|fundamental problem|result)\?$/i
+]);
+const QUIZ_CODE_LOOKUP_PROMPT_PATTERN =
+  /\bwhere\b|\b(?:which|what)\s+(?:api|property|object|field|method|function|module|value|expression|collection|member|path|source)\b/i;
+const QUIZ_EXPLICIT_CODE_CONTEXT_PATTERN =
+  /^\s*(?:this|the)\s+(?:(?:shown|following|imported|generated|current|existing|hand-edited)\s+){0,2}(?:code|snippet|fragment|script|expression|configuration|xml)\b|\b(?:code|snippet|fragment)\s+(?:shown|below|above)\b/i;
+const QUIZ_QUERY_STRUCTURE_PATTERN =
+  /\b(?:a|the|this)\s+(?:paged\s+|resumable\s+|parameterized\s+)?(?:suiteql\s+)?(?:query|statement|filter|report)\b|\b(?:query|report)\s+(?:returns|joins|groups|orders|filters|selects|seeks|uses)\b|\b(?:left|right|full|inner|cross)\s+(?:outer\s+)?join\b|\bpredicate\s+on\s+the\s+\w+\s+table\b|\bfilter\s+uses\b|\bpaged\s+export\s+orders\b/i;
+const QUIZ_LITERAL_CODE_COPY_PROMPT_PATTERN =
+  /\bwhich\b[\s\S]{0,80}\b(?:entry\s*points?|exports?|methods?|functions?|fields?|properties|members?|operations?|http(?:-style)?\s+operations?)\b[\s\S]{0,40}\b(?:exposed|exported|returned|listed|defined|included|supported)\b|\bwhich\b[\s\S]{0,40}\b(?:does|do)\b[\s\S]{0,40}\b(?:expose|export|return|list|define|include|support)\b/i;
+
+const stripQuizCitationMarkdown = (value) =>
+  String(value || "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/(`+)([\s\S]*?)\1/g, "$2")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,;:!?])/g, "$1$2")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1$2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^"([\s\S]*)"$/, "$1")
+    .replace(/^“([\s\S]*)”$/, "$1")
+    .replace(/^'([\s\S]*)'$/, "$1")
+    .replace(/^‘([\s\S]*)’$/, "$1");
+
+const normalizeQuizCodeReference = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/\(\)/g, "");
+
+const extractQuizCodeReferences = (value) => {
+  const text = String(value || "");
+  const references =
+    text.match(
+      /[A-Za-z_$][\w$]*(?:\s*(?:\(\s*\))?\s*\.\s*[A-Za-z_$][\w$]*(?:\s*\(\s*\))?)+/g
+    ) || [];
+  const modulePaths =
+    text.match(/[A-Za-z][\w-]*(?:\/[A-Za-z][\w-]*)+/g) || [];
+  return [
+    ...new Set(
+      [...references, ...modulePaths]
+        .map(normalizeQuizCodeReference)
+        .filter(Boolean)
+    )
+  ];
+};
+
+const buildQuizCodeAliasMap = (code) => {
+  const aliases = new Map();
+  const assignmentPattern =
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)+)\s*;/g;
+  for (const match of String(code || "").matchAll(assignmentPattern)) {
+    aliases.set(
+      normalizeQuizCodeReference(match[1]),
+      normalizeQuizCodeReference(match[2])
+    );
+  }
+  return aliases;
+};
+
+const expandQuizCodeReference = (reference, aliases) => {
+  let expanded = normalizeQuizCodeReference(reference);
+  for (let depth = 0; depth < 5; depth += 1) {
+    const separatorIndex = expanded.indexOf(".");
+    const firstSegment =
+      separatorIndex >= 0 ? expanded.slice(0, separatorIndex) : expanded;
+    const alias = aliases.get(firstSegment);
+    if (!alias) break;
+    expanded =
+      alias + (separatorIndex >= 0 ? expanded.slice(separatorIndex) : "");
+  }
+  return expanded;
+};
+
+const findQuizCodeAnswerLeak = ({
+  prompt,
+  code,
+  options,
+  correctOptionIds
+}) => {
+  if (!code?.content || !QUIZ_CODE_LOOKUP_PROMPT_PATTERN.test(prompt)) {
+    return "";
+  }
+  const correctIds = new Set(correctOptionIds);
+  const correctReferences = options
+    .filter((option) => correctIds.has(option.id))
+    .flatMap((option) => extractQuizCodeReferences(option.text));
+  if (correctReferences.length === 0) return "";
+
+  const aliases = buildQuizCodeAliasMap(code.content);
+  const codeReferences = new Set(
+    extractQuizCodeReferences(code.content).flatMap((reference) => [
+      reference,
+      expandQuizCodeReference(reference, aliases)
+    ])
+  );
+  return (
+    correctReferences.find((reference) =>
+      codeReferences.has(expandQuizCodeReference(reference, aliases))
+    ) || ""
+  );
+};
+
+const findQuizLiteralCodeCopyAnswer = ({
+  prompt,
+  code,
+  options,
+  correctOptionIds
+}) => {
+  if (
+    !code?.content ||
+    !QUIZ_LITERAL_CODE_COPY_PROMPT_PATTERN.test(String(prompt || ""))
+  ) {
+    return "";
+  }
+
+  const correctIds = new Set(correctOptionIds);
+  const codeText = String(code.content);
+  return (
+    options
+      .filter((option) => correctIds.has(option.id))
+      .map((option) => String(option.text || "").trim().replace(/\(\)$/, ""))
+      .filter((answer) => /^[A-Za-z_$][\w$-]*$/.test(answer))
+      .find((answer) =>
+        new RegExp(
+          `(^|[^A-Za-z0-9_$-])${answer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9_$-]|$)`,
+          "i"
+        ).test(codeText)
+      ) || ""
+  );
+};
+
+const quizQuestionRequiresCode = (prompt, topic) => {
+  if (QUIZ_EXPLICIT_CODE_CONTEXT_PATTERN.test(prompt)) return true;
+  const queryContext = `${String(topic || "")} ${String(prompt || "")}`;
+  return (
+    /\b(?:suiteql|sql|query|join|aggregation|null semantics|pagination|parameters)\b/i.test(
+      queryContext
+    ) && QUIZ_QUERY_STRUCTURE_PATTERN.test(prompt)
+  );
+};
 
 const createJobId = () =>
   typeof crypto?.randomUUID === "function"
@@ -245,6 +795,638 @@ const handleJobsRequestAction = ({ message, sendResponse }) =>
 
 const handleJobsClearCompleted = ({ sendResponse }) =>
   sendJobResponse(sendResponse, clearStoredCompletedJobs);
+
+const repairKnownQuizQuestionIssues = (quiz) => {
+  let changed = false;
+  const questions = Array.isArray(quiz?.questions)
+    ? quiz.questions.map((question) => {
+        const citations = Array.isArray(question?.citations)
+          ? question.citations.map((citation) => {
+              const quote = stripQuizCitationMarkdown(citation?.quote);
+              if (quote !== citation?.quote) changed = true;
+              return quote === citation?.quote
+                ? citation
+                : { ...citation, quote };
+            })
+          : question?.citations;
+        let repairedQuestion =
+          citations === question?.citations
+            ? question
+            : { ...question, citations };
+        if (
+          question?.prompt === CLIENT_EDIT_GUARD_PROMPT &&
+          Array.isArray(citations) &&
+          citations.some(
+            (citation) =>
+              citation?.quote === CLIENT_EDIT_GUARD_UNRELATED_QUOTE
+          )
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            explanation:
+              "The guard exits whenever the page mode is not create. Therefore, editing an existing record returns before setValue runs.",
+            citations: []
+          };
+        }
+        if (
+          repairedQuestion?.prompt === SUITELET_FILE_SOURCE_PROMPT &&
+          repairedQuestion?.code?.content?.includes(
+            SUITELET_FILE_SOURCE_VISIBLE_ANSWER
+          )
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            code: {
+              ...repairedQuestion.code,
+              content: repairedQuestion.code.content.replace(
+                SUITELET_FILE_SOURCE_VISIBLE_ANSWER,
+                SUITELET_FILE_SOURCE_REDACTION
+              )
+            }
+          };
+        }
+        const repairedPrompt =
+          QUIZ_PLAIN_LANGUAGE_PROMPT_REPAIRS[repairedQuestion?.id];
+        const repairedExplanation =
+          QUIZ_PLAIN_LANGUAGE_EXPLANATION_REPAIRS[repairedQuestion?.id];
+        const repairedOptions =
+          QUIZ_PLAIN_LANGUAGE_OPTION_REPAIRS[repairedQuestion?.id];
+        if (
+          repairedPrompt &&
+          repairedQuestion?.prompt !== repairedPrompt
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            prompt: repairedPrompt
+          };
+        }
+        if (
+          repairedExplanation &&
+          repairedQuestion?.explanation !== repairedExplanation
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            explanation: repairedExplanation
+          };
+        }
+        if (repairedOptions && Array.isArray(repairedQuestion?.options)) {
+          const options = repairedQuestion.options.map((option) => {
+            const text = repairedOptions[option?.id];
+            return text && text !== option?.text
+              ? { ...option, text }
+              : option;
+          });
+          if (
+            options.some(
+              (option, index) =>
+                option !== repairedQuestion.options[index]
+            )
+          ) {
+            changed = true;
+            repairedQuestion = {
+              ...repairedQuestion,
+              options
+            };
+          }
+        }
+        return repairedQuestion;
+      })
+    : quiz?.questions;
+  return {
+    quiz: changed ? { ...quiz, questions, updatedAt: Date.now() } : quiz,
+    changed
+  };
+};
+
+const readStoredNetsuiteQuizzes = async () => {
+  const stored = await chrome.storage.local.get(NETSUITE_QUIZZES_STORAGE_KEY);
+  const quizzes = stored?.[NETSUITE_QUIZZES_STORAGE_KEY];
+  if (!Array.isArray(quizzes)) return [];
+
+  let changed = false;
+  const repaired = quizzes.map((quiz) => {
+    const result = repairKnownQuizQuestionIssues(quiz);
+    changed ||= result.changed;
+    return result.quiz;
+  });
+  if (changed) {
+    await chrome.storage.local.set({
+      [NETSUITE_QUIZZES_STORAGE_KEY]: repaired
+    });
+  }
+  return repaired;
+};
+
+const isNetsuiteHelpCitationUrl = (value) => {
+  try {
+    const url = new URL(String(value || ""));
+    return (
+      (url.hostname === "netsuite.com" ||
+        url.hostname.endsWith(".netsuite.com")) &&
+      url.pathname === "/app/help/helpcenter.nl"
+    );
+  } catch {
+    return false;
+  }
+};
+
+const normalizeQuizQuestion = (value, questionIndex) => {
+  const input = value && typeof value === "object" ? value : {};
+  const prompt = String(input.prompt || "").trim();
+  if (!prompt) {
+    throw new Error(`Question ${questionIndex + 1} must include a prompt.`);
+  }
+  const unclearPattern = QUIZ_UNCLEAR_PROMPT_PATTERNS.find((pattern) =>
+    pattern.test(prompt)
+  );
+  if (unclearPattern) {
+    throw new Error(
+      `Question ${questionIndex + 1} is written in vague or fragmented language. Rewrite it as a direct question for a working developer: name the concrete script, API, value, action, and failure being tested, and avoid corporate or academic shorthand.`
+    );
+  }
+  const type = String(input.type || "single").toLowerCase();
+  if (!["single", "multiple"].includes(type)) {
+    throw new Error(
+      `Question ${questionIndex + 1} type must be "single" or "multiple".`
+    );
+  }
+
+  if (!Array.isArray(input.options) || input.options.length < 2) {
+    throw new Error(
+      `Question ${questionIndex + 1} must include at least two options.`
+    );
+  }
+  const optionIds = new Set();
+  const options = input.options.map((option, optionIndex) => {
+    const optionInput =
+      option && typeof option === "object" ? option : { text: option };
+    const id = String(
+      optionInput.id || `option-${optionIndex + 1}`
+    ).trim();
+    const text = String(optionInput.text || "").trim();
+    if (!id || !text) {
+      throw new Error(
+        `Question ${questionIndex + 1}, option ${optionIndex + 1} must include id and text.`
+      );
+    }
+    if (optionIds.has(id)) {
+      throw new Error(
+        `Question ${questionIndex + 1} contains duplicate option id "${id}".`
+      );
+    }
+    optionIds.add(id);
+    return { id, text };
+  });
+
+  const correctOptionIds = [
+    ...new Set(
+      (Array.isArray(input.correctOptionIds) ? input.correctOptionIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    )
+  ];
+  const requiredCorrectAnswers = type === "single" ? 1 : 2;
+  if (
+    (type === "single" && correctOptionIds.length !== 1) ||
+    (type === "multiple" && correctOptionIds.length < requiredCorrectAnswers)
+  ) {
+    throw new Error(
+      `Question ${questionIndex + 1} must provide ${
+        type === "single" ? "exactly one" : "at least two"
+      } correct option id(s).`
+    );
+  }
+  const unknownCorrectId = correctOptionIds.find((id) => !optionIds.has(id));
+  if (unknownCorrectId) {
+    throw new Error(
+      `Question ${questionIndex + 1} references unknown correct option "${unknownCorrectId}".`
+    );
+  }
+
+  const explanation = String(input.explanation || "").trim();
+  if (!explanation) {
+    throw new Error(
+      `Question ${questionIndex + 1} must explain why the answer is correct.`
+    );
+  }
+
+  if (input.citations !== undefined && !Array.isArray(input.citations)) {
+    throw new Error(
+      `Question ${questionIndex + 1} citations must be an array when provided.`
+    );
+  }
+  const citations = (
+    Array.isArray(input.citations) ? input.citations : []
+  ).map((citation, citationIndex) => {
+    const citationInput =
+      citation && typeof citation === "object" ? citation : {};
+    const title = String(citationInput.title || "").trim();
+    const url = String(citationInput.url || "").trim();
+    const quote = stripQuizCitationMarkdown(citationInput.quote);
+    if (!title || !quote || !isNetsuiteHelpCitationUrl(url)) {
+      throw new Error(
+        `Question ${questionIndex + 1}, citation ${citationIndex + 1} must include a title, exact quote, and NetSuite Help Center URL.`
+      );
+    }
+    return { title, url, quote: quote.slice(0, 1000) };
+  });
+
+  let code;
+  if (input.code !== undefined && input.code !== null) {
+    if (typeof input.code !== "object" || Array.isArray(input.code)) {
+      throw new Error(
+        `Question ${questionIndex + 1} code must be an object.`
+      );
+    }
+    const content = String(input.code.content || "").trim();
+    if (!content) {
+      throw new Error(
+        `Question ${questionIndex + 1} code must include content.`
+      );
+    }
+    code = {
+      language: String(input.code.language || "text").trim() || "text",
+      content,
+      ...(String(input.code.caption || "").trim()
+        ? { caption: String(input.code.caption).trim() }
+        : {})
+    };
+  }
+
+  if (!code && quizQuestionRequiresCode(prompt, input.topic)) {
+    throw new Error(
+      `Question ${questionIndex + 1} describes a specific query or code fragment but does not include a code block. Include the exact snippet being analyzed; use a neutral placeholder only for an expression the learner must choose.`
+    );
+  }
+
+  const leakedReference = findQuizCodeAnswerLeak({
+    prompt,
+    code,
+    options,
+    correctOptionIds
+  });
+  if (leakedReference) {
+    throw new Error(
+      `Question ${questionIndex + 1} code reveals the correct answer "${leakedReference}". Hide the tested expression with /* choose the correct expression */ or ask a reasoning question whose answer is not copied from the snippet.`
+    );
+  }
+
+  const literalCopyAnswer = findQuizLiteralCodeCopyAnswer({
+    prompt,
+    code,
+    options,
+    correctOptionIds
+  });
+  if (literalCopyAnswer) {
+    throw new Error(
+      `Question ${questionIndex + 1} asks the learner to copy "${literalCopyAnswer}" directly from the visible code. Replace it with a question that requires tracing behavior, diagnosing a defect, predicting output, or choosing a justified correction.`
+    );
+  }
+
+  if (!code && citations.length === 0) {
+    throw new Error(
+      `Question ${questionIndex + 1} has neither a code block nor documentation evidence. Non-code NetSuite questions must include at least one exact supporting citation. Citation-free questions are allowed only when every fact needed to answer follows from the supplied code without relying on undocumented NetSuite behavior.`
+    );
+  }
+
+  return {
+    id: String(input.id || `question-${questionIndex + 1}`).trim(),
+    type,
+    prompt,
+    ...(code ? { code } : {}),
+    options,
+    correctOptionIds,
+    explanation,
+    citations,
+    ...(String(input.topic || "").trim()
+      ? { topic: String(input.topic).trim() }
+      : {})
+  };
+};
+
+const normalizeNetsuiteQuiz = (input = {}) => {
+  const title = String(input.title || "").trim();
+  if (!title) throw new Error("Quiz title is required.");
+  const sourceBatchJobId = String(input.sourceBatchJobId || "").trim();
+  if (!sourceBatchJobId) {
+    throw new Error(
+      "sourceBatchJobId is required. Research the topics with netsuite_submit_docs_batch first."
+    );
+  }
+  if (!Array.isArray(input.questions)) {
+    throw new Error("Quiz questions must be an array.");
+  }
+  if (
+    input.questions.length < NETSUITE_QUIZ_MIN_QUESTIONS ||
+    input.questions.length > NETSUITE_QUIZ_MAX_QUESTIONS
+  ) {
+    throw new Error(
+      `A quiz must contain ${NETSUITE_QUIZ_MIN_QUESTIONS}–${NETSUITE_QUIZ_MAX_QUESTIONS} questions.`
+    );
+  }
+  const questions = input.questions.map(normalizeQuizQuestion);
+  const questionIds = new Set();
+  questions.forEach((question, index) => {
+    if (!question.id || questionIds.has(question.id)) {
+      throw new Error(
+        `Question ${index + 1} has a missing or duplicate question id.`
+      );
+    }
+    questionIds.add(question.id);
+  });
+  const now = Date.now();
+  return {
+    id: String(input.id || createJobId()),
+    title,
+    description: String(input.description || "").trim(),
+    questions,
+    sourceBatchJobId,
+    createdAt: Number(input.createdAt) || now,
+    updatedAt: now
+  };
+};
+
+const quizSummary = ({ questions, ...quiz }) => ({
+  ...quiz,
+  questionCount: Array.isArray(questions) ? questions.length : 0
+});
+
+const notifyQuizzesChanged = () => {
+  chrome.runtime
+    .sendMessage({ type: "QUIZZES_CHANGED" })
+    .catch(() => undefined);
+};
+
+const normalizeQuizEvidenceText = (value) =>
+  stripQuizCitationMarkdown(value).toLowerCase();
+
+const quizEvidenceUrlKey = (value) => {
+  try {
+    const url = new URL(String(value || ""));
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+};
+
+const validateQuizAgainstDocsBatch = async (quiz) => {
+  await netsuiteDocBatchWriteQueue.catch(() => undefined);
+  const batch = (await readNetsuiteDocBatches())[quiz.sourceBatchJobId];
+  if (!batch) {
+    throw new Error(
+      `Documentation batch "${quiz.sourceBatchJobId}" was not found or has expired.`
+    );
+  }
+  if (
+    !["completed", "completed_with_errors"].includes(batch.status)
+  ) {
+    throw new Error(
+      `Documentation batch "${quiz.sourceBatchJobId}" is ${batch.status}; wait for usable completed results before creating the quiz.`
+    );
+  }
+
+  const evidencePages = new Map();
+  (Array.isArray(batch.topics) ? batch.topics : []).forEach((topic) => {
+    (Array.isArray(topic?.pages) ? topic.pages : []).forEach((page) => {
+      const key = quizEvidenceUrlKey(page?.url);
+      if (key) evidencePages.set(key, normalizeQuizEvidenceText(page?.content));
+    });
+  });
+  quiz.questions.forEach((question, questionIndex) => {
+    question.citations.forEach((citation, citationIndex) => {
+      const pageContent = evidencePages.get(quizEvidenceUrlKey(citation.url));
+      if (!pageContent) {
+        throw new Error(
+          `Question ${questionIndex + 1}, citation ${citationIndex + 1} does not reference a page read by the source documentation batch.`
+        );
+      }
+      if (!pageContent.includes(normalizeQuizEvidenceText(citation.quote))) {
+        throw new Error(
+          `Question ${questionIndex + 1}, citation ${citationIndex + 1} quote was not found in the source page text.`
+        );
+      }
+    });
+  });
+};
+
+const createStoredNetsuiteQuiz = (input) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const quizzes = await readStoredNetsuiteQuizzes();
+      const quiz = normalizeNetsuiteQuiz(input);
+      await validateQuizAgainstDocsBatch(quiz);
+      if (
+        quizzes.some(
+          (candidate) =>
+            String(candidate?.title || "").toLowerCase() ===
+            quiz.title.toLowerCase()
+        )
+      ) {
+        throw new Error(
+          `Quiz "${quiz.title}" already exists. Use a distinct title.`
+        );
+      }
+      quizzes.unshift(quiz);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: quizzes.slice(
+          0,
+          NETSUITE_QUIZ_MAX_STORED
+        )
+      });
+      notifyQuizzesChanged();
+      return quiz;
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesList = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await netsuiteQuizWriteQueue.catch(() => undefined);
+    return (await readStoredNetsuiteQuizzes()).map(quizSummary);
+  });
+
+const handleQuizzesGet = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await netsuiteQuizWriteQueue.catch(() => undefined);
+    return (
+      (await readStoredNetsuiteQuizzes()).find(
+        (quiz) => quiz.id === String(message.id || "")
+      ) || null
+    );
+  });
+
+const deleteStoredNetsuiteQuiz = (idValue) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const id = String(idValue || "").trim();
+      if (!id) throw new Error("Quiz id is required.");
+      const quizzes = await readStoredNetsuiteQuizzes();
+      const index = quizzes.findIndex((quiz) => quiz.id === id);
+      if (index < 0) throw new Error(`Quiz "${id}" was not found.`);
+      const [deletedQuiz] = quizzes.splice(index, 1);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: quizzes
+      });
+      notifyQuizzesChanged();
+      return {
+        deleted: true,
+        quiz: quizSummary(deletedQuiz),
+        quizzes: quizzes.map(quizSummary)
+      };
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesDelete = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    deleteStoredNetsuiteQuiz(message.id)
+  );
+
+const getImportedQuizCandidates = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") {
+    throw new Error("The import does not contain quiz data.");
+  }
+  if (payload.format === "magic-netsuite-quizzes") {
+    if (payload.version !== 1) {
+      throw new Error(
+        `Unsupported quiz export version "${String(payload.version)}".`
+      );
+    }
+    if (!Array.isArray(payload.quizzes)) {
+      throw new Error(
+        "The quiz export package does not contain a quizzes array."
+      );
+    }
+    return payload.quizzes;
+  }
+  if (Array.isArray(payload.quizzes)) return payload.quizzes;
+  if (Array.isArray(payload.questions)) return [payload];
+  throw new Error("The import does not contain a quiz or quiz package.");
+};
+
+const importStoredNetsuiteQuizzes = (payload) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const candidates = getImportedQuizCandidates(payload);
+      if (candidates.length === 0) {
+        throw new Error("The quiz export package is empty.");
+      }
+      if (candidates.length > NETSUITE_QUIZ_MAX_STORED) {
+        throw new Error(
+          `A single import supports at most ${NETSUITE_QUIZ_MAX_STORED} quizzes.`
+        );
+      }
+
+      const importedAt = Date.now();
+      const imported = candidates.map((candidate) =>
+        normalizeNetsuiteQuiz({
+          ...(candidate && typeof candidate === "object" ? candidate : {}),
+          sourceBatchJobId:
+            String(candidate?.sourceBatchJobId || "").trim() ||
+            `imported:${importedAt}`
+        })
+      );
+      const quizzes = await readStoredNetsuiteQuizzes();
+      let added = 0;
+      let replaced = 0;
+
+      imported.forEach((quiz) => {
+        const titleKey = quiz.title.toLowerCase();
+        const existingIndex = quizzes.findIndex(
+          (candidate) =>
+            candidate?.id === quiz.id ||
+            String(candidate?.title || "").toLowerCase() === titleKey
+        );
+        if (existingIndex >= 0) {
+          quizzes.splice(existingIndex, 1);
+          replaced += 1;
+        } else {
+          added += 1;
+        }
+        quizzes.unshift({
+          ...quiz,
+          importedAt
+        });
+      });
+
+      const stored = quizzes.slice(0, NETSUITE_QUIZ_MAX_STORED);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: stored
+      });
+      notifyQuizzesChanged();
+      return {
+        imported: imported.length,
+        added,
+        replaced,
+        quizIds: imported.map((quiz) => quiz.id),
+        quizzes: imported.map(quizSummary)
+      };
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesImport = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    importStoredNetsuiteQuizzes(message.payload)
+  );
+
+async function handleMagicCreateQuiz(args) {
+  const quiz = await createStoredNetsuiteQuiz(args);
+  return asMcpTextResult({
+    created: true,
+    quiz: quizSummary(quiz),
+    instruction:
+      "The quiz is now available in the NetSuite Quiz view. Use magic_netsuite_get_quiz to retrieve its full question bank."
+  });
+}
+
+async function handleMagicListQuizzes() {
+  await netsuiteQuizWriteQueue.catch(() => undefined);
+  return asMcpTextResult(
+    (await readStoredNetsuiteQuizzes()).map(quizSummary)
+  );
+}
+
+async function handleMagicGetQuiz(args) {
+  const id = String(args?.id || args?.quizId || "").trim();
+  if (!id) throw new Error("id is required.");
+  await netsuiteQuizWriteQueue.catch(() => undefined);
+  const quiz = (await readStoredNetsuiteQuizzes()).find(
+    (candidate) => candidate.id === id
+  );
+  if (!quiz) throw new Error(`Quiz "${id}" was not found.`);
+  return asMcpTextResult(quiz);
+}
+
+async function handleMagicDeleteQuiz(args) {
+  const result = await deleteStoredNetsuiteQuiz(args?.id || args?.quizId);
+  return asMcpTextResult({
+    deleted: true,
+    quiz: result.quiz,
+    remainingQuizzes: result.quizzes
+  });
+}
 
 const chromeCallback = (invoke) =>
   new Promise((resolve, reject) => {
@@ -1956,6 +3138,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     JOBS_UPDATE: handleJobsUpdate,
     JOBS_REQUEST_ACTION: handleJobsRequestAction,
     JOBS_CLEAR_COMPLETED: handleJobsClearCompleted,
+    QUIZZES_LIST: handleQuizzesList,
+    QUIZZES_GET: handleQuizzesGet,
+    QUIZZES_DELETE: handleQuizzesDelete,
+    QUIZZES_IMPORT: handleQuizzesImport,
     TEMPLATE_DESIGN_SESSION_RENDER: handleTemplateDesignSessionRenderMessage,
     ENSURE_RECORD_BINDING_SKILL: handleEnsureTemplateSkillsMessage,
     ENSURE_TEMPLATE_SKILLS: handleEnsureTemplateSkillsMessage
@@ -4468,6 +5654,102 @@ async function persistFreemarkerPreviewSessions() {
   });
 }
 
+const NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: {
+      type: "string",
+      description: "Stable unique question ID within this quiz."
+    },
+    type: {
+      type: "string",
+      enum: ["single", "multiple"],
+      description:
+        "single requires exactly one correct option; multiple requires at least two."
+    },
+    prompt: {
+      type: "string",
+      description:
+        "A direct, complete question written in plain English for a working developer. State the concrete script, API, value, action, and failure being tested; do not use clipped fragments, management language, or vague abstractions. If it refers to or describes a specific query, code fragment, expression, XML fragment, or configuration, the code field is required so the learner can inspect the actual artifact."
+    },
+    topic: {
+      type: "string",
+      description: "Optional short topic label shown above the question."
+    },
+    code: {
+      type: "object",
+      description:
+        "Code sample for genuine code-reasoning questions. Required whenever the prompt refers to or describes a specific query, code/XML fragment, expression, or configuration; do not force the learner to reconstruct an omitted artifact from prose. Never show the correct answer, tested API/property/path, or a line that directly states the correct option. Do not ask learners to transcribe entry points, exports, methods, fields, properties, or operations that are visibly listed in the snippet. Code questions must require tracing behavior, diagnosing a defect, predicting output, or choosing a justified correction. For fill-in or identifier questions, replace the tested expression with a neutral placeholder such as /* choose the correct expression */. Supports SuiteScript, SuiteQL, FreeMarker, JSON, XML, and other text languages.",
+      properties: {
+        language: {
+          type: "string",
+          description:
+            "Language identifier such as javascript, sql, freemarker, json, or xml."
+        },
+        content: {
+          type: "string",
+          description:
+            "Exact code shown to the learner. It must not contain the literal answer or the exact identifier/property/method/module/path being asked for."
+        },
+        caption: { type: "string", description: "Optional compact code-block caption." }
+      },
+      required: ["language", "content"]
+    },
+    options: {
+      type: "array",
+      minItems: 2,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          text: { type: "string" }
+        },
+        required: ["id", "text"]
+      }
+    },
+    correctOptionIds: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string" },
+      description: "Option IDs that comprise the complete correct answer."
+    },
+    explanation: {
+      type: "string",
+      description:
+        "A plain-English explanation of why the answer is correct. Use concrete NetSuite behavior and avoid vague architecture or strategy language. It may reason directly from a supplied code block."
+    },
+    citations: {
+      type: "array",
+      description:
+        "Exact documentation evidence. Every question without a code block must include at least one citation whose literal quote directly supports the complete correct answer. A code question may omit citations only when every fact needed to answer follows from the supplied snippet without relying on NetSuite platform behavior or general best-practice claims.",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "NetSuite Help page title." },
+          url: {
+            type: "string",
+            description: "NetSuite Help Center page URL returned by the docs batch."
+          },
+          quote: {
+            type: "string",
+            description:
+              "Exact literal supporting text copied from the returned page. Do not add Markdown backticks, emphasis, links, quotation marks, or other decoration. The UI highlights this exact text in the live page."
+          }
+        },
+        required: ["title", "url", "quote"]
+      }
+    }
+  },
+  required: [
+    "id",
+    "type",
+    "prompt",
+    "options",
+    "correctOptionIds",
+    "explanation"
+  ]
+};
+
 const MCP_TOOL_DEFINITIONS = [
   {
     name: "ping",
@@ -4553,6 +5835,60 @@ const MCP_TOOL_DEFINITIONS = [
         enabled: { type: "boolean", description: "True to enable, false to disable." }
       },
       required: ["enabled"]
+    }
+  },
+  {
+    name: "magic_netsuite_create_quiz",
+    description:
+      "Create a persistent NetSuite quiz question bank after researching official documentation with netsuite_submit_docs_batch and netsuite_get_docs_batch. The quiz must contain 10–60 meaningful questions with explanations. Write for working developers in plain English: name the concrete script, API, value, action, and failure being tested. Do not use clipped fragments or corporate/academic shorthand such as authoritative ledger, lifecycle placement, execution boundary, architecture improvement, mechanism, or contract when a direct question says the same thing. Options and explanations must also be complete and understandable without decoding vague abstractions. Every non-code question requires exact documentation evidence that directly supports the complete answer; broad architecture, security, reliability, performance, or best-practice claims without evidence are rejected. A code question may omit citations only when every fact needed to answer follows from the shown code without NetSuite platform knowledge. Include the actual code/query/XML/configuration whenever the prompt describes one. Never ask learners to copy identifiers, entry points, exports, methods, fields, properties, or operations visibly listed in a snippet. Code questions must require behavioral tracing, diagnosis, output prediction, or a justified correction, and must not reveal the tested answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        sourceBatchJobId: {
+          type: "string",
+          description:
+            "Completed NetSuite documentation batch job used to produce this quiz."
+        },
+        questions: {
+          type: "array",
+          minItems: NETSUITE_QUIZ_MIN_QUESTIONS,
+          maxItems: NETSUITE_QUIZ_MAX_QUESTIONS,
+          items: NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA
+        }
+      },
+      required: ["title", "sourceBatchJobId", "questions"]
+    }
+  },
+  {
+    name: "magic_netsuite_list_quizzes",
+    description:
+      "List saved NetSuite quiz metadata and question counts without returning full question banks.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "magic_netsuite_get_quiz",
+    description:
+      "Get one complete saved NetSuite quiz, including questions, options, code blocks, answers, explanations, and citations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Quiz ID from magic_netsuite_list_quizzes." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "magic_netsuite_delete_quiz",
+    description:
+      "Permanently delete one saved NetSuite quiz question bank. List quizzes first and pass the exact quiz ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Quiz ID from magic_netsuite_list_quizzes." }
+      },
+      required: ["id"]
     }
   },
   {
@@ -4743,7 +6079,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_read_doc_page",
     description:
-      "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's main text (up to 10 000 characters) with inline Markdown links preserved, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
+      "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's literal main text (up to 10 000 characters) without Markdown decoration, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6571,6 +7907,18 @@ async function handleRequest({ requestId, method, params }) {
           executionSide = "local";
         } else if (name === "magic_netsuite_set_skill_enabled") {
           result = await handleMagicSetSkillEnabled(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_create_quiz") {
+          result = await handleMagicCreateQuiz(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_list_quizzes") {
+          result = await handleMagicListQuizzes();
+          executionSide = "local";
+        } else if (name === "magic_netsuite_get_quiz") {
+          result = await handleMagicGetQuiz(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_delete_quiz") {
+          result = await handleMagicDeleteQuiz(args);
           executionSide = "local";
         } else if (name === "magic_netsuite_search_custom_tools") {
           result = await handleMagicSearchCustomTools(args);
