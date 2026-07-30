@@ -1,0 +1,9 @@
+# TypeScript sources and generated extension JavaScript are emitted with LF.
+# Keeping that stable makes a Windows checkout followed by a build reproducible.
+extension-src/**/*.ts text eol=lf
+extension-src/**/*.mjs text eol=lf
+vue-ui/scripts/*.mjs text eol=lf
+src/background.js text eol=lf
+src/globalUtils.js text eol=lf
+src/content/**/*.js text eol=lf
+src/netsuiteApi/*.js text eol=lf
