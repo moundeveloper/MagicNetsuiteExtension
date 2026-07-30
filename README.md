@@ -9,7 +9,8 @@ providers.
 
 | Path | Purpose |
 | --- | --- |
-| `src/` | Chrome extension background, content/page bridges, manifest, and built UI |
+| `extension-src/` | TypeScript sources for the extension background, content, and page-world scripts |
+| `src/` | Built Chrome extension, static assets, manifest, and built UI |
 | `vue-ui/` | Vue side-panel application |
 | `mcp_app/` | MCP HTTP/stdio server and interactive MCP apps |
 | `mcp_server/` | Native messaging/MCP companion |
@@ -43,6 +44,10 @@ pnpm audit --prod
 The production build is written to `src/dist/vue-ui`. Feature views are loaded
 on demand. The startup bundle gate currently allows at most 400 KiB raw and
 100 KiB gzip.
+
+The same commands type-check, test, bundle, and minify the scripts in
+`extension-src`. Their stable production filenames are written into `src`
+without source maps so the manifest and runtime injection paths do not change.
 
 To generate an interactive bundle report:
 
