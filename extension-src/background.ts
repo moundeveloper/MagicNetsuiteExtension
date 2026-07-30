@@ -1,0 +1,12354 @@
+// This worker intentionally accepts messages and storage records from several
+// independently deployed extension surfaces. Keep those runtime contracts
+// permissive while the producers are migrated; TypeScript still validates the
+// syntax and strips the annotations during the production build.
+type AnyRecord = Record<string, any>;
+type RuntimeMessage = AnyRecord & {
+  type?: string;
+  action?: string;
+};
+type SendResponse = (response?: any) => void;
+type DashboardEnablerWaiter = {
+  tabId: number;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: () => void;
+};
+
+// Enable side panel
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) => console.error(error));
+
+// ENUMS
+const PANEL_STATE = { OPEN: "open", CLOSE: "close" } as const;
+
+const UI_SOURCE = { PANEL: "panel", PAGE: "page" } as const;
+
+const CONNECT_PORT: AnyRecord = { SIDE_PANEL: "sidePanel" };
+
+const UI_VIEWS = {
+  SCRIPTS: "Scripts",
+  CUSTOM_RECORDS: "Custom Records"
+} as const;
+
+// GLOBALS
+let uiSource: (typeof UI_SOURCE)[keyof typeof UI_SOURCE] = UI_SOURCE.PANEL;
+let panelState: (typeof PANEL_STATE)[keyof typeof PANEL_STATE] =
+  PANEL_STATE.CLOSE;
+const DASHBOARD_PREVIEW_SESSIONS_KEY = "magic_netsuite_dashboard_preview_sessions";
+const dashboardEnablerReadyWaiters = new Map<string, DashboardEnablerWaiter>();
+const readyDashboardEnablers = new Set<string>();
+let dashboardPreviewOpenPromise: Promise<unknown> | null = null;
+const DASHBOARD_TAB_TITLE = "Magic NetSuite";
+const DASHBOARD_ENABLER_TAB_TITLE = "Magic NetSuite · NetSuite Worker";
+const DASHBOARD_GROUP_TITLE = "Magic NetSuite";
+const TAB_GROUP_ID_NONE = chrome.tabGroups?.TAB_GROUP_ID_NONE ?? -1;
+const TEMPLATE_REVIEW_STATE_KEY = "magic_netsuite_template_review_state";
+const TEMPLATE_REVIEW_PENDING_STATUSES = new Set([
+  "html_review",
+  "html_changes_requested",
+  "html_approved",
+  "converting",
+  "freemarker_review",
+  "freemarker_changes_requested",
+  "render_error"
+]);
+const JOBS_STORAGE_KEY = "magic_netsuite_jobs_v1";
+const JOBS_MAX_HISTORY = 500;
+const JOB_TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+const JOB_RETRYABLE_STATUSES = new Set(["failed", "cancelled"]);
+const JOB_CANCELLABLE_STATUSES = new Set([
+  "queued",
+  "running",
+  "retry-requested"
+]);
+let jobsWriteQueue = Promise.resolve();
+const NETSUITE_DOC_BATCHES_STORAGE_KEY =
+  "magic_netsuite_doc_search_batches_v1";
+const NETSUITE_DOC_BATCH_MAX_HISTORY = 100;
+const NETSUITE_DOC_BATCH_MAX_TOPICS = 20;
+const NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC = 3;
+const NETSUITE_DOC_BATCH_TERMINAL_STATUSES = new Set([
+  "completed",
+  "completed_with_errors",
+  "failed"
+]);
+let netsuiteDocBatchWriteQueue = Promise.resolve();
+let netsuiteDocBatchWorkerActive = false;
+const NETSUITE_QUIZZES_STORAGE_KEY = "magic_netsuite_quizzes_v1";
+const NETSUITE_QUIZ_MIN_QUESTIONS = 10;
+const NETSUITE_QUIZ_MAX_QUESTIONS = 60;
+const NETSUITE_QUIZ_MAX_STORED = 100;
+let netsuiteQuizWriteQueue = Promise.resolve();
+const CLIENT_EDIT_GUARD_PROMPT =
+  "When this client-script entry point runs while editing an existing sales order, what happens?";
+const CLIENT_EDIT_GUARD_UNRELATED_QUOTE =
+  "When you edit the form, the pageInit event sets the customer field to a specific customer.";
+const SUITELET_FILE_SOURCE_PROMPT =
+  "In this Suitelet pattern, where is an uploaded file obtained during the POST request?";
+const SUITELET_FILE_SOURCE_VISIBLE_ANSWER = "var files = request.files;";
+const SUITELET_FILE_SOURCE_REDACTION =
+  "var files = /* choose the correct source */;";
+const QUIZ_PLAIN_LANGUAGE_PROMPT_REPAIRS = Object.freeze({
+  "exam-perf-001":
+    "Five scripts each write 25,000 log messages within one hour. Which NetSuite logging limit will they exceed?",
+  "exam-perf-002":
+    "A script logs every sublist line. NetSuite later lowers the deployment's log level even though nobody edited it. Why?",
+  "exam-perf-003":
+    "Execution logs may be deleted. Where should a compliance script store audit records that must be kept?",
+  "exam-perf-006":
+    "A webhook must use the record after NetSuite has saved it. Which User Event entry point should send the webhook?",
+  "exam-perf-007":
+    "A record form has ten beforeLoad scripts. How will those scripts affect the time it takes to open the form?",
+  "exam-perf-008":
+    "A value calculated in beforeLoad must be read again in afterSubmit. How can the script pass that value between the two entry points?",
+  "exam-perf-010":
+    "A validation is not needed for web-services imports. How can you stop the script from running that validation for those imports?",
+  "exam-perf-013":
+    "A retryable script records completed work only in N/cache. Why can this cause the script to process the same work again?",
+  "exam-perf-016":
+    "Three synchronous User Event scripts repeatedly load the same transaction and must run in a specific order. What is the recommended fix?",
+  "exam-perf-017":
+    "An afterSubmit script calls an external API, renders a PDF, and sends an email before returning. What should be changed to reduce the user's wait time?",
+  "exam-perf-025":
+    "A record page is slow. Which APM tools can compare page, SuiteScript, and plug-in performance?",
+  "exam-int-002":
+    "A Suitelet adds a button whose function name is approveOrder, but clicking the button does nothing. What must be attached to the form?",
+  "exam-int-006":
+    "A server-side User Event calls email.send.promise and expects asynchronous email. Why will this not work?",
+  "exam-int-008":
+    "A SuiteScript calls a RESTlet in the same account. Which API can make the call without manually building an OAuth header?",
+  "exam-int-010":
+    "A Suitelet needs the user to enter an SFTP password without exposing the plain-text password to the script. Which serverWidget field should it use?",
+  "exam-int-012":
+    "How can a script check whether the Advanced Billing feature is enabled in the current account?",
+  "exam-int-013":
+    "At runtime, what kind of JavaScript value is config.Type?",
+  "exam-int-014":
+    "Code that uses define fails in the SuiteScript Debugger. Which loader should the debugger use instead, and where should define be used?",
+  "exam-int-017":
+    "A report needs four columns from 5,000 records. How can it return those values without loading 5,000 full record objects?",
+  "exam-int-018":
+    "A browser script sends 30 N/query requests at once. Why can this be slower even when the calls use promises?",
+  "exam-int-019":
+    "A page runs four separate queries to get four customer fields. What should it do instead when possible?",
+  "exam-int-022":
+    "Why can CSV imports and web-services requests bypass a validation that exists only in a client script?",
+  "exam-int-023":
+    "When using N/render, when should the invoice record, saved-search results, and external JSON be added to the renderer?",
+  "exam-int-024":
+    "How can N/render combine NetSuite record fields with JSON returned by an external service?",
+  "exam-int-025":
+    "Why can the template editor preview fail to show values from a custom data source?",
+  "exam2-ui-001":
+    "A server script is Released, but you need to debug the deployed script. What must you change first?",
+  "exam2-ui-002":
+    "A deployment is set to Testing, but an Administrator still cannot select it in the debugger. What is the most likely reason?",
+  "exam2-ui-003":
+    "Before debugging a script that creates records, which safety steps should you take?",
+  "exam2-ui-004":
+    "A deployment is Released and its Audience is empty. Who is allowed to run it?",
+  "exam2-ui-005":
+    "A deployment's Audience requires the Sales Manager role and the EMEA department. Can a Sales Manager in the APAC department run it?",
+  "exam2-ui-006":
+    "Which script deployment types do not support Audience settings?",
+  "exam2-ui-007":
+    "The code calls error.create but then continues running. Why does execution continue?",
+  "exam2-ui-008":
+    "A thrown custom error should email the Unhandled Errors recipients. What should notifyOff be set to?",
+  "exam2-ui-009":
+    "Which missing properties cause error.create to throw SSS_MISSING_REQD_ARGUMENT?",
+  "exam2-ui-010":
+    "A Suitelet uses the browser DOM to move native fields. Which supported API should it use instead?",
+  "exam2-ui-011":
+    "A beforeLoad script adds a field with ID approval_note to an existing form. How must the ID be changed to follow NetSuite's rules?",
+  "exam2-ui-012":
+    "Which serverWidget page type is best for a guided, multi-step onboarding process?",
+  "exam2-ui-013":
+    "Why can a FILE upload field not be placed in a sublist on an existing record page?",
+  "exam2-ui-014":
+    "An INLINEHTML field was given a label, but the label does not appear. Why?",
+  "exam2-ui-015":
+    "Why does pageInit not run when a user only views a record?",
+  "exam2-ui-016":
+    "A form-level client script and a record-level client script both change the same field. Which script runs first?",
+  "exam2-ui-017":
+    "Why can a Suitelet that is not marked Available Without Login not redirect to an external URL?",
+  "exam2-ui-018":
+    "A hard-coded Suitelet URL stops working after the account moves to another data center. How should the URL be generated?",
+  "exam2-ui-019":
+    "Which HTTP methods can start a Suitelet request?",
+  "exam2-ui-020":
+    "A Testing deployment has a broad Audience. Can a user who is not the script owner run it?",
+  "exam2-ui-021":
+    "Why can a workflow running in the User Event Script context not trigger another user event?",
+  "exam2-ui-022":
+    "Why is beforeSubmit the correct place to reject a record before NetSuite saves it?",
+  "exam2-ui-023":
+    "Which tasks are appropriate for afterSubmit?",
+  "exam2-ui-024":
+    "A deployment is configured only for the delete event even though handlers for create and delete exist. Which handler runs?",
+  "exam2-ui-025":
+    "If a deployment's log level is Debug, which message levels are written to the execution log?",
+  "exam2-flow-026":
+    "A Testing workflow includes a QA analyst in its Audience, but the analyst is not the workflow owner. Can the workflow start for that analyst?",
+  "exam2-flow-027":
+    "A scheduled workflow finds matching records but is still in Testing status. What must be changed before it can run on schedule?",
+  "exam2-flow-028":
+    "Which values are valid workflow release statuses?",
+  "exam2-flow-029":
+    "A workflow should react to UI edits but ignore CSV imports and web-services requests. Which workflow settings provide that filter?",
+  "exam2-flow-030":
+    "A nightly workflow should start only for records returned by an existing business filter. What can the workflow use as its condition source?",
+  "exam2-flow-031":
+    "Which settings determine whether a workflow action runs and when it runs?",
+  "exam2-flow-032":
+    "A state has one action that runs on entry and another that runs on exit. Which action setting determines when each one runs?",
+  "exam2-flow-033":
+    "Which trigger and formula-language combinations are valid?",
+  "exam2-flow-034":
+    "A workflow state contains 1,020 usage units of actions and fails with a usage-limit error. What should be changed?",
+  "exam2-flow-035":
+    "State 2 transitions back to itself more than 50 times in a row. What is the most likely problem?",
+  "exam2-flow-036":
+    "An opportunity entered State 1 but may not have entered State 2. Where should you look first on the opportunity record?",
+  "exam2-flow-037":
+    "A user with limited permissions starts a workflow configured as Execute as Admin. Which permissions does the workflow normally use?",
+  "exam2-flow-038":
+    "Why should Execute as Admin be enabled only when it is actually required?",
+  "exam2-flow-039":
+    "An Execute as Admin action uses a joined record on a client trigger. What should be changed?",
+  "exam2-flow-040":
+    "A role has Full Workflow permission but cannot enable Execute as Admin. Why?",
+  "exam2-flow-041":
+    "A workflow must inspect item-sublist quantities that Workflow Manager cannot access. What should the developer add?",
+  "exam2-flow-042":
+    "A custom workflow action returns an integer, but Store Result In points to a text field. What must be changed?",
+  "exam2-flow-043":
+    "Which development practices are supported by file-based SuiteCloud projects?",
+  "exam2-flow-044":
+    "Which project information belongs in manifest.xml?",
+  "exam2-flow-045":
+    "A custom object is deployed before the library it references, so deployment fails. Which project file controls the deployment order?",
+  "exam2-flow-046":
+    "A team wants to use Jest in its file-based NetSuite development process. Which supported tools can be used together?",
+  "exam2-flow-047":
+    "Which SuiteApp installation-preference categories are supported?",
+  "exam2-flow-048":
+    "A HIDE rule applies to every SuiteScript file, including client scripts. What must be changed?",
+  "exam2-flow-049":
+    "A field has the correct sourcing configuration but its Display Type is Hidden. Why is the field not sourced?",
+  "exam2-flow-050":
+    "Why can a Multiple Select custom field not be populated through sourcing?",
+  "sq2-001":
+    "A query has one condition on the joined sales-representative record and two conditions on the root customer record. How should those conditions be combined without moving the joined condition to the root record?",
+  "sq2-003":
+    "Why can N/query represent nested AND/OR logic that a flat list of N/search filters cannot express directly?",
+  "sq2-006":
+    "How can a field context change the value returned by an N/query result column?",
+  "sq2-007":
+    "How should an N/query currency-conversion field context specify both the currency and the effective date?",
+  "sq2-008":
+    "To return one row per sales representative with the total transaction amount, which column must group the rows and which column must aggregate the amounts?",
+  "sq2-009":
+    "Why should a formula column have an alias when the code reads mapped results?",
+  "sq2-010":
+    "What separator must a formula use after a polymorphic join created with joinTo?",
+  "sq2-011":
+    "What separator must a formula use after an inverse join created with joinFrom?",
+  "sq2-017":
+    "How can code iterate through paged query results without reading pageRanges by index?",
+  "sq2-021":
+    "Why can a SuiteScript not modify a Workbook query definition and then save the changed definition back to NetSuite?",
+  "sq2-022":
+    "Which N/query component methods can create another join from an existing component instead of from the root Query object?",
+  "sq2-023":
+    "After running a constructed query without paging, which objects contain the returned rows?",
+  "sq2-024":
+    "How do you define an N/query date condition that stays relative to the date when the script runs?",
+  "sq2-027":
+    "Which Records Catalog property shows that a join is one-to-many and may return several rows for one source record?",
+  "sq2-028":
+    "What join information does the Records Catalog Join tab show for each field?",
+  "sq2-029":
+    "A join is missing for the current role and enabled features. What can Show Unavailable Items tell you?",
+  "sq2-030":
+    "Why must a developer check the join type in Records Catalog before choosing autoJoin, joinTo, or joinFrom?",
+  "sq2-031":
+    "Does the Analytics Administrator permission let a user read transaction fields that their role is not allowed to access?",
+  "sq2-032":
+    "What happens when a role has Analytics Administrator but does not have the SuiteAnalytics Workbook permission?",
+  "sq2-033":
+    "Why should the Analytics Administrator permission be given to only a small group of users?",
+  "sq2-034":
+    "Why can Workbook audit-trail record types not be used to audit changes made in 2025?",
+  "sq2-038":
+    "Which metaDataProvider setting makes query.runSuiteQL throw an error when the query requests an unauthorized field?",
+  "sq2-039":
+    "When the STATIC metadata provider returns no value for a field, what must the code not assume?",
+  "sq2-041":
+    "Why should unrelated SuiteQL queries use different customScriptId values when you troubleshoot performance?",
+  "sq2-043":
+    "How can code read both paged query rows and the metadata for the selected columns?",
+  "sq2-044":
+    "When SuiteAnalytics Connect is not enabled, what row and page limits apply to query.runSuiteQLPaged?",
+  "sq2-047":
+    "SuiteQL may return record and field names with different letter casing after an update. How should code avoid breaking?",
+  "sq2-049":
+    "Why does selecting a custom transaction body field not automatically include related data from its application subtab?",
+  "orch-001":
+    "A User Event updates many records in a loop before the user receives a response. Which script type should process those independent records instead?",
+  "orch-002":
+    "A monitoring script must call task.checkStatus after the shown User Event submits its worker. What information must the User Event save?",
+  "orch-004":
+    "A Map/Reduce restart can happen after an external order is created but before the map call finishes. Which changes prevent the order from being created twice?",
+  "orch-005":
+    "If context.isRestarted is true, what can the script safely conclude?",
+  "orch-006":
+    "Does the retryCount setting retry errors from getInputData? Why or why not?",
+  "orch-008":
+    "retryCount is omitted and a map invocation ends with an uncaught error. By default, what happens to the key whose completion is uncertain?",
+  "orch-009":
+    "Where can a restarted map invocation read errors from its previous attempts?",
+  "orch-010":
+    "getInputData returns individual rows and map writes a group key. Does each map invocation receive one row or a whole group?",
+  "orch-011":
+    "Several work-item IDs use the same group key. How many times is reduce called for that key, and which values does it receive?",
+  "orch-012":
+    "How many times does summarize run during one execution of a Map/Reduce script?",
+  "orch-013":
+    "getInputData runs again after a restart, but its READY search may now return different rows. How can the design keep the input set consistent?",
+  "orch-014":
+    "If getInputData creates a custom audit record, what restart behavior must the script handle?",
+  "orch-016":
+    "Why can increasing Buffer Size cause more keys to be processed again after a forceful interruption?",
+  "orch-017":
+    "What happens to key-value pairs written by a map batch that only partly completes?",
+  "orch-018":
+    "Why does context.write alone not prevent the external order-result record from being created twice after a restart?",
+  "orch-019":
+    "A synchronous script exceeds its governance limit halfway through several dependent steps. What can happen to the work before and after the failure?",
+  "orch-020":
+    "A high-volume job must process records one after another instead of in parallel. Why might a scheduled script be a better fit?",
+  "orch-022":
+    "When account capacity is available, which Map/Reduce deployment setting can let multiple jobs run at the same time?",
+  "orch-023":
+    "When a Map/Reduce job reaches a framework limit, how does NetSuite continue the remaining work?",
+  "orch-025":
+    "Which changes make the shown User Event and Map/Reduce process handle heavy load and restarts safely?",
+  "data-005":
+    "The User Event needs only the entity ID, email, and subsidiary before it updates two body fields. Why is search.lookupFields a good choice?",
+  "data-006":
+    "After record.submitFields succeeds, what value does it return?",
+  "data-007":
+    "Which execution context does the shown User Event intentionally skip?",
+  "data-008":
+    "Why should the script compare runtime.executionContext with runtime.ContextType instead of checking an unrelated event-type property?",
+  "data-009":
+    "A nightly script needs a few columns from hundreds of thousands of transactions and does not need editable record objects. Which API approach fits this job?",
+  "data-010":
+    "A Suitelet runs the same lookup query once for every row returned by another query. What should be changed to avoid this repeated-query performance problem?",
+  "data-011":
+    "Why is one SuiteQL request better than launching a separate browser query for every order shown on the dashboard?",
+  "data-012":
+    "When the shown Suitelet calls the RESTlet, which part of NetSuite supplies the authentication headers?",
+  "data-013":
+    "A user with a restricted role calls the shown RESTlet through https.requestRestlet. Which permissions are used for the RESTlet call?",
+  "data-014":
+    "Which security settings do not need to be weakened just so the shown Suitelet can call its RESTlet in the same account?",
+  "data-015":
+    "Can an external application use https.requestRestlet as its way to authenticate directly to the shown RESTlet?",
+  "data-017":
+    "Why must the batch-run custom record remain the permanent status record even when the status endpoint also uses N/cache?",
+  "data-018":
+    "A cache value is written with a 900-second TTL. Which assumption about how long the value remains available is unsafe?",
+  "data-020":
+    "Which kind of repeated work is a good use case for N/cache?",
+  "data-021":
+    "Which script task types run through SuiteCloud Processors?",
+  "data-022":
+    "Where do you set the processing priority for a Map/Reduce deployment?",
+  "data-023":
+    "Old scheduled-script deployments depend on one queue running jobs in FIFO order. What should be checked before removing the queues?",
+  "data-024":
+    "A server script that is not running as Administrator submits a customer-sync Map/Reduce task. Which permissions must its role have?",
+  "data-025":
+    "Two rapid edits try to submit the same Map/Reduce script and deployment while its first task is still unfinished. What should the design do to avoid the second submission failing?",
+  "sdf-rel-044":
+    "Which installation-script entry point cannot run before a SuiteApp is uninstalled?",
+  "sdf-rel-013":
+    "An Account Customization Project manifest references a file that is missing from the target account. Where is this reported during server validation?",
+  "sdf-rel-016":
+    "A CI job cannot open a browser for NetSuite login. Which SuiteCloud CLI command should configure its authentication?",
+  "sqlint-020":
+    "What can happen when a SuiteAnalytics Connect client keeps more than about 50 connections open?",
+  "flow-001":
+    "What does marking a workflow state as an exit state mean?",
+  "ssdev-2026-04":
+    "A script creates a record without setting isDynamic. Which record mode does NetSuite use?",
+  "ssdev-2026-48":
+    "A User Event should run for UI edits but not for web-services imports. Which deployment setting should filter those executions?",
+  "proc-001":
+    "Why can getInputData return a saved search instead of manually returning an array of every key-value pair?",
+  "proc-009":
+    "A Map/Reduce job reaches a soft limit after finishing one key. How does NetSuite preserve the work that is still unfinished?",
+  "proc-022":
+    "getInputData produces 800 key-value pairs and the map stage is enabled. If no calls fail, how many times does map run?",
+  "proc-025":
+    "A developer expects one map call to receive every value for a key. What does a map invocation actually receive?",
+  "sdf-lifecycle-adv-16":
+    "A cleanup routine must run after a SuiteApp and all its objects have been removed. Can the documented BeforeUndeploy entry point meet that requirement?",
+  "mr-advanced-05":
+    "A map function calls an external fulfillment service, and calling it twice would create a duplicate fulfillment. Buffer Size is increased from 1 to 50. If the processor is interrupted, what problems can this cause?",
+  "mr-advanced-14":
+    "An integration submits the same Map/Reduce deployment for customer A and immediately submits it again for customer B. Both tasks must be allowed to remain unfinished at the same time. How should the deployments be configured?",
+  "mr-advanced-19":
+    "A Map/Reduce script writes a 3,400-character key and an 11 MB JSON value. Both are too large. How should the script pass this data to the next stage?",
+  "ss-jobs-03":
+    "Why is high-volume input/output work often moved from a user-facing script to a scheduled script?",
+  "wf-ground-06":
+    "A workflow should run for UI edits but not for web-services updates. Which workflow setting filters those execution contexts?",
+  "ss-ground-03":
+    "An external notification must use a record only after NetSuite has saved it. Which User Event entry point should send the notification?",
+  "sdf-rel-022":
+    "An Account Customization Project uses WARNING for account-specific values in optional fields. What happens during deployment?",
+  "sdf-rel-023":
+    "An Account Customization Project uses WARNING, but an account-specific value appears in a required field. What happens during validation?",
+  "sdf-rel-038":
+    "A file has hideinbundle set to F, but hiding.xml applies HIDE to the same file. What happens during validation?",
+  "sdf-rel-047":
+    "An Account Customization Project contains an sdfinstallationscript object and a run element. Why is this invalid?"
+});
+const QUIZ_PLAIN_LANGUAGE_EXPLANATION_REPAIRS = Object.freeze({
+  "exam-perf-013":
+    "N/cache is temporary and its values can disappear. Store completion status in a persistent record when retries must know which work is already finished.",
+  "exam2-ui-001":
+    "The deployed-script debugger can select the script only while its deployment is in Testing status.",
+  "exam2-ui-002":
+    "Testing status is not enough. The person using the debugger must also be the script owner.",
+  "exam2-ui-007":
+    "error.create builds and returns an error object. Execution stops only when the code throws that object.",
+  "exam2-ui-008":
+    "Set notifyOff to false so NetSuite can send the unhandled-error notification.",
+  "exam2-ui-020":
+    "While the deployment is in Testing, only the script owner can run it. A broad Audience does not override that rule.",
+  "exam2-flow-027":
+    "Scheduled workflows run only when their release status is Released.",
+  "exam2-flow-035":
+    "Repeatedly transitioning a state back to itself creates an infinite loop and eventually reaches the workflow usage limit.",
+  "exam2-flow-037":
+    "Execute as Admin makes the workflow use Administrator privileges instead of the permissions of the user who started it.",
+  "exam2-flow-049":
+    "A custom field with Display Type set to Hidden does not perform sourcing.",
+  "sdf-rel-022":
+    "WARNING records a warning for account-specific values in optional fields, but it still allows the deployment to continue.",
+  "sdf-rel-023":
+    "The WARNING setting applies only to optional fields. An account-specific value in a required field still causes a validation error.",
+  "sdf-rel-038":
+    "NetSuite rejects a file when its hideinbundle attribute conflicts with the hiding preference for the same file.",
+  "sdf-rel-047":
+    "Account Customization Projects do not support SDF installation scripts; that feature is available only to SuiteApp projects."
+});
+const QUIZ_PLAIN_LANGUAGE_OPTION_REPAIRS = Object.freeze({
+  "sdf-rel-022": Object.freeze({
+    A: "NetSuite automatically converts the account-specific IDs.",
+    B: "NetSuite also allows account-specific values in required fields.",
+    C: "NetSuite records warnings and allows the deployment to continue.",
+    D: "The WARNING setting works only in SuiteApp projects."
+  }),
+  "sdf-rel-023": Object.freeze({
+    A: "Validation records only a warning.",
+    B: "Validation returns an error.",
+    C: "NetSuite changes the field to optional.",
+    D: "Validation ignores the value."
+  }),
+  "sdf-rel-038": Object.freeze({
+    A: "The hiding.xml preference overrides hideinbundle.",
+    B: "Validation rejects the conflicting settings.",
+    C: "The hideinbundle attribute overrides hiding.xml.",
+    D: "The conflict is allowed only for client scripts."
+  }),
+  "sdf-rel-047": Object.freeze({
+    A: "The run element must be moved into manifest.xml.",
+    B: "Account Customization Projects do not support SDF installation scripts.",
+    C: "The object must be changed to an unmanaged definition.",
+    D: "The object works only with SuiteCloud CLI for Java."
+  })
+});
+const QUIZ_UNCLEAR_PROMPT_PATTERNS = Object.freeze([
+  /\bauthoritative (?:completion )?ledger\b/i,
+  /\bcore reliability mistake\b/i,
+  /\bwhich (?:lifecycle placement|architecture improvement|execution boundary|performance mechanism|documented mechanism|framework contract|stage contract|context shape)\b/i,
+  /\bwhat lifecycle meaning should\b/i,
+  /\bwhere does this surface\??$/i,
+  /(?:^|[.!?]\s*)(?:likely cause|required fix|best fix|supported redesign|direct correction|first [^?]+ diagnostic|validation result|fundamental problem|result)\?$/i
+]);
+const QUIZ_CODE_LOOKUP_PROMPT_PATTERN =
+  /\bwhere\b|\b(?:which|what)\s+(?:api|property|object|field|method|function|module|value|expression|collection|member|path|source)\b/i;
+const QUIZ_EXPLICIT_CODE_CONTEXT_PATTERN =
+  /^\s*(?:this|the)\s+(?:(?:shown|following|imported|generated|current|existing|hand-edited)\s+){0,2}(?:code|snippet|fragment|script|expression|configuration|xml)\b|\b(?:code|snippet|fragment)\s+(?:shown|below|above)\b/i;
+const QUIZ_QUERY_STRUCTURE_PATTERN =
+  /\b(?:a|the|this)\s+(?:paged\s+|resumable\s+|parameterized\s+)?(?:suiteql\s+)?(?:query|statement|filter|report)\b|\b(?:query|report)\s+(?:returns|joins|groups|orders|filters|selects|seeks|uses)\b|\b(?:left|right|full|inner|cross)\s+(?:outer\s+)?join\b|\bpredicate\s+on\s+the\s+\w+\s+table\b|\bfilter\s+uses\b|\bpaged\s+export\s+orders\b/i;
+const QUIZ_LITERAL_CODE_COPY_PROMPT_PATTERN =
+  /\bwhich\b[\s\S]{0,80}\b(?:entry\s*points?|exports?|methods?|functions?|fields?|properties|members?|operations?|http(?:-style)?\s+operations?)\b[\s\S]{0,40}\b(?:exposed|exported|returned|listed|defined|included|supported)\b|\bwhich\b[\s\S]{0,40}\b(?:does|do)\b[\s\S]{0,40}\b(?:expose|export|return|list|define|include|support)\b/i;
+
+const stripQuizCitationMarkdown = (value) =>
+  String(value || "")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/(`+)([\s\S]*?)\1/g, "$2")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,;:!?])/g, "$1$2")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,;:!?])/g, "$1$2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/^"([\s\S]*)"$/, "$1")
+    .replace(/^“([\s\S]*)”$/, "$1")
+    .replace(/^'([\s\S]*)'$/, "$1")
+    .replace(/^‘([\s\S]*)’$/, "$1");
+
+const normalizeQuizCodeReference = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/\(\)/g, "");
+
+const extractQuizCodeReferences = (value) => {
+  const text = String(value || "");
+  const references =
+    text.match(
+      /[A-Za-z_$][\w$]*(?:\s*(?:\(\s*\))?\s*\.\s*[A-Za-z_$][\w$]*(?:\s*\(\s*\))?)+/g
+    ) || [];
+  const modulePaths =
+    text.match(/[A-Za-z][\w-]*(?:\/[A-Za-z][\w-]*)+/g) || [];
+  return [
+    ...new Set(
+      [...references, ...modulePaths]
+        .map(normalizeQuizCodeReference)
+        .filter(Boolean)
+    )
+  ];
+};
+
+const buildQuizCodeAliasMap = (code) => {
+  const aliases = new Map();
+  const assignmentPattern =
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)+)\s*;/g;
+  for (const match of String(code || "").matchAll(assignmentPattern)) {
+    aliases.set(
+      normalizeQuizCodeReference(match[1]),
+      normalizeQuizCodeReference(match[2])
+    );
+  }
+  return aliases;
+};
+
+const expandQuizCodeReference = (reference, aliases) => {
+  let expanded = normalizeQuizCodeReference(reference);
+  for (let depth = 0; depth < 5; depth += 1) {
+    const separatorIndex = expanded.indexOf(".");
+    const firstSegment =
+      separatorIndex >= 0 ? expanded.slice(0, separatorIndex) : expanded;
+    const alias = aliases.get(firstSegment);
+    if (!alias) break;
+    expanded =
+      alias + (separatorIndex >= 0 ? expanded.slice(separatorIndex) : "");
+  }
+  return expanded;
+};
+
+const findQuizCodeAnswerLeak = ({
+  prompt,
+  code,
+  options,
+  correctOptionIds
+}) => {
+  if (!code?.content || !QUIZ_CODE_LOOKUP_PROMPT_PATTERN.test(prompt)) {
+    return "";
+  }
+  const correctIds = new Set(correctOptionIds);
+  const correctReferences = options
+    .filter((option) => correctIds.has(option.id))
+    .flatMap((option) => extractQuizCodeReferences(option.text));
+  if (correctReferences.length === 0) return "";
+
+  const aliases = buildQuizCodeAliasMap(code.content);
+  const codeReferences = new Set(
+    extractQuizCodeReferences(code.content).flatMap((reference) => [
+      reference,
+      expandQuizCodeReference(reference, aliases)
+    ])
+  );
+  return (
+    correctReferences.find((reference) =>
+      codeReferences.has(expandQuizCodeReference(reference, aliases))
+    ) || ""
+  );
+};
+
+const findQuizLiteralCodeCopyAnswer = ({
+  prompt,
+  code,
+  options,
+  correctOptionIds
+}) => {
+  if (
+    !code?.content ||
+    !QUIZ_LITERAL_CODE_COPY_PROMPT_PATTERN.test(String(prompt || ""))
+  ) {
+    return "";
+  }
+
+  const correctIds = new Set(correctOptionIds);
+  const codeText = String(code.content);
+  return (
+    options
+      .filter((option) => correctIds.has(option.id))
+      .map((option) => String(option.text || "").trim().replace(/\(\)$/, ""))
+      .filter((answer) => /^[A-Za-z_$][\w$-]*$/.test(answer))
+      .find((answer) =>
+        new RegExp(
+          `(^|[^A-Za-z0-9_$-])${answer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9_$-]|$)`,
+          "i"
+        ).test(codeText)
+      ) || ""
+  );
+};
+
+const quizQuestionRequiresCode = (prompt, topic) => {
+  if (QUIZ_EXPLICIT_CODE_CONTEXT_PATTERN.test(prompt)) return true;
+  const queryContext = `${String(topic || "")} ${String(prompt || "")}`;
+  return (
+    /\b(?:suiteql|sql|query|join|aggregation|null semantics|pagination|parameters)\b/i.test(
+      queryContext
+    ) && QUIZ_QUERY_STRUCTURE_PATTERN.test(prompt)
+  );
+};
+
+const createJobId = () =>
+  typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `job-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+const clampJobProgress = (progress) => {
+  const value = Number(progress);
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
+
+const normalizeStoredJob = (value, now = Date.now()) => {
+  const input = value && typeof value === "object" ? value : {};
+  return {
+    ...input,
+    id: String(input.id || createJobId()),
+    title: String(input.title || "Magic NetSuite operation"),
+    status: [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled",
+      "retry-requested",
+      "cancel-requested"
+    ].includes(input.status)
+      ? input.status
+      : "queued",
+    progress: clampJobProgress(input.progress),
+    createdAt: Number(input.createdAt) || now,
+    updatedAt: Number(input.updatedAt) || now,
+    environment: String(input.environment || "unknown"),
+    account: String(input.account || "unknown"),
+    attempt: Math.max(1, Math.floor(Number(input.attempt) || 1))
+  };
+};
+
+const readStoredJobs = async () => {
+  const stored = await chrome.storage.local.get(JOBS_STORAGE_KEY);
+  const jobs = stored?.[JOBS_STORAGE_KEY];
+  return Array.isArray(jobs) ? jobs.map((job) => normalizeStoredJob(job)) : [];
+};
+
+const notifyJobsChanged = () => {
+  chrome.runtime.sendMessage({ type: "JOBS_CHANGED" }).catch(() => undefined);
+};
+
+const mutateStoredJobs = (mutation) => {
+  const pending = jobsWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const jobs = await readStoredJobs();
+      const result = await mutation(jobs);
+      jobs.sort((a, b) => b.updatedAt - a.updatedAt);
+      const activeJobs = jobs.filter(
+        (job) => !JOB_TERMINAL_STATUSES.has(job.status)
+      );
+      const completedJobs = jobs.filter((job) =>
+        JOB_TERMINAL_STATUSES.has(job.status)
+      );
+      const persistedJobs = [
+        ...activeJobs,
+        ...completedJobs.slice(
+          0,
+          Math.max(0, JOBS_MAX_HISTORY - activeJobs.length)
+        )
+      ].sort((a, b) => b.updatedAt - a.updatedAt);
+      await chrome.storage.local.set({
+        [JOBS_STORAGE_KEY]: persistedJobs
+      });
+      notifyJobsChanged();
+      return result;
+    });
+  jobsWriteQueue = pending.then(() => undefined, () => undefined);
+  return pending;
+};
+
+const createStoredJob = (input: AnyRecord = {}) =>
+  mutateStoredJobs((jobs) => {
+    const job = normalizeStoredJob(input);
+    if (jobs.some((candidate) => candidate.id === job.id)) {
+      throw new Error(`Job ${job.id} already exists.`);
+    }
+    jobs.push(job);
+    return job;
+  });
+
+const updateStoredJob = (id, patch: AnyRecord = {}) =>
+  mutateStoredJobs((jobs) => {
+    const index = jobs.findIndex((job) => job.id === id);
+    if (index < 0) return false;
+    const current = jobs[index];
+    const next = normalizeStoredJob({
+      ...current,
+      ...patch,
+      id: current.id,
+      createdAt: current.createdAt,
+      progress:
+        patch.progress === undefined ? current.progress : patch.progress,
+      updatedAt: patch.updatedAt ?? Date.now()
+    });
+    jobs[index] = next;
+    return true;
+  });
+
+const requestStoredJobAction = (id, action) =>
+  mutateStoredJobs((jobs) => {
+    const index = jobs.findIndex((job) => job.id === id);
+    if (index < 0) return false;
+    const job = jobs[index];
+    if (action === "retry" && JOB_RETRYABLE_STATUSES.has(job.status)) {
+      jobs[index] = normalizeStoredJob({
+        ...job,
+        status: "retry-requested",
+        progress: 0,
+        finishedAt: undefined,
+        updatedAt: Date.now()
+      });
+      return true;
+    }
+    if (action === "cancel" && JOB_CANCELLABLE_STATUSES.has(job.status)) {
+      jobs[index] = normalizeStoredJob({
+        ...job,
+        status: "cancel-requested",
+        updatedAt: Date.now()
+      });
+      return true;
+    }
+    return false;
+  });
+
+const clearStoredCompletedJobs = () =>
+  mutateStoredJobs((jobs) => {
+    const retained = jobs.filter(
+      (job) => !JOB_TERMINAL_STATUSES.has(job.status)
+    );
+    const removed = jobs.length - retained.length;
+    jobs.splice(0, jobs.length, ...retained);
+    return removed;
+  });
+
+const sendJobResponse = (sendResponse, operation) => {
+  Promise.resolve()
+    .then(operation)
+    .then((result) => sendResponse({ ok: true, result }))
+    .catch((error) =>
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    );
+  return true;
+};
+
+const handleJobsList = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await jobsWriteQueue.catch(() => undefined);
+    const jobs = await readStoredJobs();
+    return jobs.sort((a, b) => b.updatedAt - a.updatedAt);
+  });
+
+const handleJobsGet = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await jobsWriteQueue.catch(() => undefined);
+    return (await readStoredJobs()).find((job) => job.id === message.id) || null;
+  });
+
+const handleJobsCreate = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () => createStoredJob(message.job));
+
+const handleJobsUpdate = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    updateStoredJob(String(message.id || ""), message.patch)
+  );
+
+const handleJobsRequestAction = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    requestStoredJobAction(String(message.id || ""), message.action)
+  );
+
+const handleJobsClearCompleted = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, clearStoredCompletedJobs);
+
+const repairKnownQuizQuestionIssues = (quiz) => {
+  let changed = false;
+  const questions = Array.isArray(quiz?.questions)
+    ? quiz.questions.map((question) => {
+        const citations = Array.isArray(question?.citations)
+          ? question.citations.map((citation) => {
+              const quote = stripQuizCitationMarkdown(citation?.quote);
+              if (quote !== citation?.quote) changed = true;
+              return quote === citation?.quote
+                ? citation
+                : { ...citation, quote };
+            })
+          : question?.citations;
+        let repairedQuestion =
+          citations === question?.citations
+            ? question
+            : { ...question, citations };
+        if (
+          question?.prompt === CLIENT_EDIT_GUARD_PROMPT &&
+          Array.isArray(citations) &&
+          citations.some(
+            (citation) =>
+              citation?.quote === CLIENT_EDIT_GUARD_UNRELATED_QUOTE
+          )
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            explanation:
+              "The guard exits whenever the page mode is not create. Therefore, editing an existing record returns before setValue runs.",
+            citations: []
+          };
+        }
+        if (
+          repairedQuestion?.prompt === SUITELET_FILE_SOURCE_PROMPT &&
+          repairedQuestion?.code?.content?.includes(
+            SUITELET_FILE_SOURCE_VISIBLE_ANSWER
+          )
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            code: {
+              ...repairedQuestion.code,
+              content: repairedQuestion.code.content.replace(
+                SUITELET_FILE_SOURCE_VISIBLE_ANSWER,
+                SUITELET_FILE_SOURCE_REDACTION
+              )
+            }
+          };
+        }
+        const repairedPrompt =
+          QUIZ_PLAIN_LANGUAGE_PROMPT_REPAIRS[repairedQuestion?.id];
+        const repairedExplanation =
+          QUIZ_PLAIN_LANGUAGE_EXPLANATION_REPAIRS[repairedQuestion?.id];
+        const repairedOptions =
+          QUIZ_PLAIN_LANGUAGE_OPTION_REPAIRS[repairedQuestion?.id];
+        if (
+          repairedPrompt &&
+          repairedQuestion?.prompt !== repairedPrompt
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            prompt: repairedPrompt
+          };
+        }
+        if (
+          repairedExplanation &&
+          repairedQuestion?.explanation !== repairedExplanation
+        ) {
+          changed = true;
+          repairedQuestion = {
+            ...repairedQuestion,
+            explanation: repairedExplanation
+          };
+        }
+        if (repairedOptions && Array.isArray(repairedQuestion?.options)) {
+          const options = repairedQuestion.options.map((option) => {
+            const text = repairedOptions[option?.id];
+            return text && text !== option?.text
+              ? { ...option, text }
+              : option;
+          });
+          if (
+            options.some(
+              (option, index) =>
+                option !== repairedQuestion.options[index]
+            )
+          ) {
+            changed = true;
+            repairedQuestion = {
+              ...repairedQuestion,
+              options
+            };
+          }
+        }
+        return repairedQuestion;
+      })
+    : quiz?.questions;
+  return {
+    quiz: changed ? { ...quiz, questions, updatedAt: Date.now() } : quiz,
+    changed
+  };
+};
+
+const readStoredNetsuiteQuizzes = async () => {
+  const stored = await chrome.storage.local.get(NETSUITE_QUIZZES_STORAGE_KEY);
+  const quizzes = stored?.[NETSUITE_QUIZZES_STORAGE_KEY];
+  if (!Array.isArray(quizzes)) return [];
+
+  let changed = false;
+  const repaired = quizzes.map((quiz) => {
+    const result = repairKnownQuizQuestionIssues(quiz);
+    changed ||= result.changed;
+    return result.quiz;
+  });
+  if (changed) {
+    await chrome.storage.local.set({
+      [NETSUITE_QUIZZES_STORAGE_KEY]: repaired
+    });
+  }
+  return repaired;
+};
+
+const isNetsuiteHelpCitationUrl = (value) => {
+  try {
+    const url = new URL(String(value || ""));
+    return (
+      (url.hostname === "netsuite.com" ||
+        url.hostname.endsWith(".netsuite.com")) &&
+      url.pathname === "/app/help/helpcenter.nl"
+    );
+  } catch {
+    return false;
+  }
+};
+
+const normalizeQuizQuestion = (value, questionIndex) => {
+  const input = value && typeof value === "object" ? value : {};
+  const prompt = String(input.prompt || "").trim();
+  if (!prompt) {
+    throw new Error(`Question ${questionIndex + 1} must include a prompt.`);
+  }
+  const unclearPattern = QUIZ_UNCLEAR_PROMPT_PATTERNS.find((pattern) =>
+    pattern.test(prompt)
+  );
+  if (unclearPattern) {
+    throw new Error(
+      `Question ${questionIndex + 1} is written in vague or fragmented language. Rewrite it as a direct question for a working developer: name the concrete script, API, value, action, and failure being tested, and avoid corporate or academic shorthand.`
+    );
+  }
+  const type = String(input.type || "single").toLowerCase();
+  if (!["single", "multiple"].includes(type)) {
+    throw new Error(
+      `Question ${questionIndex + 1} type must be "single" or "multiple".`
+    );
+  }
+
+  if (!Array.isArray(input.options) || input.options.length < 2) {
+    throw new Error(
+      `Question ${questionIndex + 1} must include at least two options.`
+    );
+  }
+  const optionIds = new Set();
+  const options = input.options.map((option, optionIndex) => {
+    const optionInput =
+      option && typeof option === "object" ? option : { text: option };
+    const id = String(
+      optionInput.id || `option-${optionIndex + 1}`
+    ).trim();
+    const text = String(optionInput.text || "").trim();
+    if (!id || !text) {
+      throw new Error(
+        `Question ${questionIndex + 1}, option ${optionIndex + 1} must include id and text.`
+      );
+    }
+    if (optionIds.has(id)) {
+      throw new Error(
+        `Question ${questionIndex + 1} contains duplicate option id "${id}".`
+      );
+    }
+    optionIds.add(id);
+    return { id, text };
+  });
+
+  const correctOptionIds = [
+    ...new Set(
+      (Array.isArray(input.correctOptionIds) ? input.correctOptionIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    )
+  ];
+  const requiredCorrectAnswers = type === "single" ? 1 : 2;
+  if (
+    (type === "single" && correctOptionIds.length !== 1) ||
+    (type === "multiple" && correctOptionIds.length < requiredCorrectAnswers)
+  ) {
+    throw new Error(
+      `Question ${questionIndex + 1} must provide ${
+        type === "single" ? "exactly one" : "at least two"
+      } correct option id(s).`
+    );
+  }
+  const unknownCorrectId = correctOptionIds.find((id) => !optionIds.has(id));
+  if (unknownCorrectId) {
+    throw new Error(
+      `Question ${questionIndex + 1} references unknown correct option "${unknownCorrectId}".`
+    );
+  }
+
+  const explanation = String(input.explanation || "").trim();
+  if (!explanation) {
+    throw new Error(
+      `Question ${questionIndex + 1} must explain why the answer is correct.`
+    );
+  }
+
+  if (input.citations !== undefined && !Array.isArray(input.citations)) {
+    throw new Error(
+      `Question ${questionIndex + 1} citations must be an array when provided.`
+    );
+  }
+  const citations = (
+    Array.isArray(input.citations) ? input.citations : []
+  ).map((citation, citationIndex) => {
+    const citationInput =
+      citation && typeof citation === "object" ? citation : {};
+    const title = String(citationInput.title || "").trim();
+    const url = String(citationInput.url || "").trim();
+    const quote = stripQuizCitationMarkdown(citationInput.quote);
+    if (!title || !quote || !isNetsuiteHelpCitationUrl(url)) {
+      throw new Error(
+        `Question ${questionIndex + 1}, citation ${citationIndex + 1} must include a title, exact quote, and NetSuite Help Center URL.`
+      );
+    }
+    return { title, url, quote: quote.slice(0, 1000) };
+  });
+
+  let code;
+  if (input.code !== undefined && input.code !== null) {
+    if (typeof input.code !== "object" || Array.isArray(input.code)) {
+      throw new Error(
+        `Question ${questionIndex + 1} code must be an object.`
+      );
+    }
+    const content = String(input.code.content || "").trim();
+    if (!content) {
+      throw new Error(
+        `Question ${questionIndex + 1} code must include content.`
+      );
+    }
+    code = {
+      language: String(input.code.language || "text").trim() || "text",
+      content,
+      ...(String(input.code.caption || "").trim()
+        ? { caption: String(input.code.caption).trim() }
+        : {})
+    };
+  }
+
+  if (!code && quizQuestionRequiresCode(prompt, input.topic)) {
+    throw new Error(
+      `Question ${questionIndex + 1} describes a specific query or code fragment but does not include a code block. Include the exact snippet being analyzed; use a neutral placeholder only for an expression the learner must choose.`
+    );
+  }
+
+  const leakedReference = findQuizCodeAnswerLeak({
+    prompt,
+    code,
+    options,
+    correctOptionIds
+  });
+  if (leakedReference) {
+    throw new Error(
+      `Question ${questionIndex + 1} code reveals the correct answer "${leakedReference}". Hide the tested expression with /* choose the correct expression */ or ask a reasoning question whose answer is not copied from the snippet.`
+    );
+  }
+
+  const literalCopyAnswer = findQuizLiteralCodeCopyAnswer({
+    prompt,
+    code,
+    options,
+    correctOptionIds
+  });
+  if (literalCopyAnswer) {
+    throw new Error(
+      `Question ${questionIndex + 1} asks the learner to copy "${literalCopyAnswer}" directly from the visible code. Replace it with a question that requires tracing behavior, diagnosing a defect, predicting output, or choosing a justified correction.`
+    );
+  }
+
+  if (!code && citations.length === 0) {
+    throw new Error(
+      `Question ${questionIndex + 1} has neither a code block nor documentation evidence. Non-code NetSuite questions must include at least one exact supporting citation. Citation-free questions are allowed only when every fact needed to answer follows from the supplied code without relying on undocumented NetSuite behavior.`
+    );
+  }
+
+  return {
+    id: String(input.id || `question-${questionIndex + 1}`).trim(),
+    type,
+    prompt,
+    ...(code ? { code } : {}),
+    options,
+    correctOptionIds,
+    explanation,
+    citations,
+    ...(String(input.topic || "").trim()
+      ? { topic: String(input.topic).trim() }
+      : {})
+  };
+};
+
+const normalizeNetsuiteQuiz = (input: AnyRecord = {}) => {
+  const title = String(input.title || "").trim();
+  if (!title) throw new Error("Quiz title is required.");
+  const sourceBatchJobId = String(input.sourceBatchJobId || "").trim();
+  if (!sourceBatchJobId) {
+    throw new Error(
+      "sourceBatchJobId is required. Research the topics with netsuite_submit_docs_batch first."
+    );
+  }
+  if (!Array.isArray(input.questions)) {
+    throw new Error("Quiz questions must be an array.");
+  }
+  if (
+    input.questions.length < NETSUITE_QUIZ_MIN_QUESTIONS ||
+    input.questions.length > NETSUITE_QUIZ_MAX_QUESTIONS
+  ) {
+    throw new Error(
+      `A quiz must contain ${NETSUITE_QUIZ_MIN_QUESTIONS}–${NETSUITE_QUIZ_MAX_QUESTIONS} questions.`
+    );
+  }
+  const questions = input.questions.map(normalizeQuizQuestion);
+  const questionIds = new Set();
+  questions.forEach((question, index) => {
+    if (!question.id || questionIds.has(question.id)) {
+      throw new Error(
+        `Question ${index + 1} has a missing or duplicate question id.`
+      );
+    }
+    questionIds.add(question.id);
+  });
+  const now = Date.now();
+  return {
+    id: String(input.id || createJobId()),
+    title,
+    description: String(input.description || "").trim(),
+    questions,
+    sourceBatchJobId,
+    createdAt: Number(input.createdAt) || now,
+    updatedAt: now
+  };
+};
+
+const quizSummary = ({ questions, ...quiz }) => ({
+  ...quiz,
+  questionCount: Array.isArray(questions) ? questions.length : 0
+});
+
+const notifyQuizzesChanged = () => {
+  chrome.runtime
+    .sendMessage({ type: "QUIZZES_CHANGED" })
+    .catch(() => undefined);
+};
+
+const normalizeQuizEvidenceText = (value) =>
+  stripQuizCitationMarkdown(value).toLowerCase();
+
+const quizEvidenceUrlKey = (value) => {
+  try {
+    const url = new URL(String(value || ""));
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+};
+
+const validateQuizAgainstDocsBatch = async (quiz) => {
+  await netsuiteDocBatchWriteQueue.catch(() => undefined);
+  const batch = (await readNetsuiteDocBatches())[quiz.sourceBatchJobId];
+  if (!batch) {
+    throw new Error(
+      `Documentation batch "${quiz.sourceBatchJobId}" was not found or has expired.`
+    );
+  }
+  if (
+    !["completed", "completed_with_errors"].includes(batch.status)
+  ) {
+    throw new Error(
+      `Documentation batch "${quiz.sourceBatchJobId}" is ${batch.status}; wait for usable completed results before creating the quiz.`
+    );
+  }
+
+  const evidencePages = new Map();
+  (Array.isArray(batch.topics) ? batch.topics : []).forEach((topic) => {
+    (Array.isArray(topic?.pages) ? topic.pages : []).forEach((page) => {
+      const key = quizEvidenceUrlKey(page?.url);
+      if (key) evidencePages.set(key, normalizeQuizEvidenceText(page?.content));
+    });
+  });
+  quiz.questions.forEach((question, questionIndex) => {
+    question.citations.forEach((citation, citationIndex) => {
+      const pageContent = evidencePages.get(quizEvidenceUrlKey(citation.url));
+      if (!pageContent) {
+        throw new Error(
+          `Question ${questionIndex + 1}, citation ${citationIndex + 1} does not reference a page read by the source documentation batch.`
+        );
+      }
+      if (!pageContent.includes(normalizeQuizEvidenceText(citation.quote))) {
+        throw new Error(
+          `Question ${questionIndex + 1}, citation ${citationIndex + 1} quote was not found in the source page text.`
+        );
+      }
+    });
+  });
+};
+
+const createStoredNetsuiteQuiz = (input) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const quizzes = await readStoredNetsuiteQuizzes();
+      const quiz = normalizeNetsuiteQuiz(input);
+      await validateQuizAgainstDocsBatch(quiz);
+      if (
+        quizzes.some(
+          (candidate) =>
+            String(candidate?.title || "").toLowerCase() ===
+            quiz.title.toLowerCase()
+        )
+      ) {
+        throw new Error(
+          `Quiz "${quiz.title}" already exists. Use a distinct title.`
+        );
+      }
+      quizzes.unshift(quiz);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: quizzes.slice(
+          0,
+          NETSUITE_QUIZ_MAX_STORED
+        )
+      });
+      notifyQuizzesChanged();
+      return quiz;
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesList = ({ sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await netsuiteQuizWriteQueue.catch(() => undefined);
+    return (await readStoredNetsuiteQuizzes()).map(quizSummary);
+  });
+
+const handleQuizzesGet = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, async () => {
+    await netsuiteQuizWriteQueue.catch(() => undefined);
+    return (
+      (await readStoredNetsuiteQuizzes()).find(
+        (quiz) => quiz.id === String(message.id || "")
+      ) || null
+    );
+  });
+
+const deleteStoredNetsuiteQuiz = (idValue) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const id = String(idValue || "").trim();
+      if (!id) throw new Error("Quiz id is required.");
+      const quizzes = await readStoredNetsuiteQuizzes();
+      const index = quizzes.findIndex((quiz) => quiz.id === id);
+      if (index < 0) throw new Error(`Quiz "${id}" was not found.`);
+      const [deletedQuiz] = quizzes.splice(index, 1);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: quizzes
+      });
+      notifyQuizzesChanged();
+      return {
+        deleted: true,
+        quiz: quizSummary(deletedQuiz),
+        quizzes: quizzes.map(quizSummary)
+      };
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesDelete = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    deleteStoredNetsuiteQuiz(message.id)
+  );
+
+const getImportedQuizCandidates = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") {
+    throw new Error("The import does not contain quiz data.");
+  }
+  if (payload.format === "magic-netsuite-quizzes") {
+    if (payload.version !== 1) {
+      throw new Error(
+        `Unsupported quiz export version "${String(payload.version)}".`
+      );
+    }
+    if (!Array.isArray(payload.quizzes)) {
+      throw new Error(
+        "The quiz export package does not contain a quizzes array."
+      );
+    }
+    return payload.quizzes;
+  }
+  if (Array.isArray(payload.quizzes)) return payload.quizzes;
+  if (Array.isArray(payload.questions)) return [payload];
+  throw new Error("The import does not contain a quiz or quiz package.");
+};
+
+const importStoredNetsuiteQuizzes = (payload) => {
+  const pending = netsuiteQuizWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const candidates = getImportedQuizCandidates(payload);
+      if (candidates.length === 0) {
+        throw new Error("The quiz export package is empty.");
+      }
+      if (candidates.length > NETSUITE_QUIZ_MAX_STORED) {
+        throw new Error(
+          `A single import supports at most ${NETSUITE_QUIZ_MAX_STORED} quizzes.`
+        );
+      }
+
+      const importedAt = Date.now();
+      const imported = candidates.map((candidate) =>
+        normalizeNetsuiteQuiz({
+          ...(candidate && typeof candidate === "object" ? candidate : {}),
+          sourceBatchJobId:
+            String(candidate?.sourceBatchJobId || "").trim() ||
+            `imported:${importedAt}`
+        })
+      );
+      const quizzes = await readStoredNetsuiteQuizzes();
+      let added = 0;
+      let replaced = 0;
+
+      imported.forEach((quiz) => {
+        const titleKey = quiz.title.toLowerCase();
+        const existingIndex = quizzes.findIndex(
+          (candidate) =>
+            candidate?.id === quiz.id ||
+            String(candidate?.title || "").toLowerCase() === titleKey
+        );
+        if (existingIndex >= 0) {
+          quizzes.splice(existingIndex, 1);
+          replaced += 1;
+        } else {
+          added += 1;
+        }
+        quizzes.unshift({
+          ...quiz,
+          importedAt
+        });
+      });
+
+      const stored = quizzes.slice(0, NETSUITE_QUIZ_MAX_STORED);
+      await chrome.storage.local.set({
+        [NETSUITE_QUIZZES_STORAGE_KEY]: stored
+      });
+      notifyQuizzesChanged();
+      return {
+        imported: imported.length,
+        added,
+        replaced,
+        quizIds: imported.map((quiz) => quiz.id),
+        quizzes: imported.map(quizSummary)
+      };
+    });
+  netsuiteQuizWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+};
+
+const handleQuizzesImport = ({ message, sendResponse }) =>
+  sendJobResponse(sendResponse, () =>
+    importStoredNetsuiteQuizzes(message.payload)
+  );
+
+async function handleMagicCreateQuiz(args) {
+  const quiz = await createStoredNetsuiteQuiz(args);
+  return asMcpTextResult({
+    created: true,
+    quiz: quizSummary(quiz),
+    instruction:
+      "The quiz is now available in the NetSuite Quiz view. Use magic_netsuite_get_quiz to retrieve its full question bank."
+  });
+}
+
+async function handleMagicListQuizzes() {
+  await netsuiteQuizWriteQueue.catch(() => undefined);
+  return asMcpTextResult(
+    (await readStoredNetsuiteQuizzes()).map(quizSummary)
+  );
+}
+
+async function handleMagicGetQuiz(args) {
+  const id = String(args?.id || args?.quizId || "").trim();
+  if (!id) throw new Error("id is required.");
+  await netsuiteQuizWriteQueue.catch(() => undefined);
+  const quiz = (await readStoredNetsuiteQuizzes()).find(
+    (candidate) => candidate.id === id
+  );
+  if (!quiz) throw new Error(`Quiz "${id}" was not found.`);
+  return asMcpTextResult(quiz);
+}
+
+async function handleMagicDeleteQuiz(args) {
+  const result = await deleteStoredNetsuiteQuiz(args?.id || args?.quizId);
+  return asMcpTextResult({
+    deleted: true,
+    quiz: result.quiz,
+    remainingQuizzes: result.quizzes
+  });
+}
+
+const chromeCallback = (invoke: any): Promise<any> =>
+  new Promise<any>((resolve, reject) => {
+    invoke((result) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+
+const dashboardTabsQuery = (queryInfo) =>
+  chromeCallback((done) => chrome.tabs.query(queryInfo, done));
+const dashboardTabsGet = (tabId) =>
+  chromeCallback((done) => chrome.tabs.get(tabId, done));
+const dashboardTabsCreate = (createProperties) =>
+  chromeCallback((done) => chrome.tabs.create(createProperties, done));
+const dashboardTabsUpdate = (tabId, updateProperties) =>
+  chromeCallback((done) =>
+    chrome.tabs.update(tabId, updateProperties, done)
+  );
+const dashboardTabsRemove = (tabIds) =>
+  chromeCallback((done) => chrome.tabs.remove(tabIds, () => done()));
+const dashboardTabsGroup = (options) =>
+  chromeCallback((done) => chrome.tabs.group(options, done));
+const dashboardTabGroupsQuery = (queryInfo) =>
+  chromeCallback((done) => chrome.tabGroups.query(queryInfo, done));
+const dashboardTabGroupsGet = (groupId) =>
+  chromeCallback((done) => chrome.tabGroups.get(groupId, done));
+const dashboardTabGroupsUpdate = (groupId, updateProperties) =>
+  chromeCallback((done) =>
+    chrome.tabGroups.update(groupId, updateProperties, done)
+  );
+const dashboardWindowsUpdate = (windowId, updateInfo) =>
+  chromeCallback((done) => chrome.windows.update(windowId, updateInfo, done));
+
+const delay = (milliseconds: number): Promise<void> =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+const makeTemplateReviewId = () =>
+  `review_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const defaultTemplateReviewState = () => ({
+  reviewId: makeTemplateReviewId(),
+  title: "NetSuite Template Review",
+  templateFile: "invoice_template.ftl",
+  recordType: "invoice",
+  recordId: "",
+  recordTypeOptions: ["invoice"],
+  recordIdOptions: [],
+  recordTypeLabels: { invoice: "Invoice" },
+  recordIdLabels: {},
+  html: "",
+  freemarker: "",
+  pdfDataUrl: "",
+  renderError: "",
+  sessionId: "",
+  referenceImageDataUrl: "",
+  referenceImageUrl: "",
+  feedback: "",
+  comments: [],
+  status: "html_review",
+  version: 0,
+  renderedVersion: 0,
+  updatedAt: new Date().toISOString()
+});
+
+const normalizeTemplateReviewState = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const base = defaultTemplateReviewState();
+  return {
+    ...base,
+    ...value,
+    reviewId: String(value.reviewId || base.reviewId),
+    title: String(value.title || base.title),
+    templateFile: String(value.templateFile || base.templateFile),
+    recordType: String(value.recordType || base.recordType),
+    recordId: String(value.recordId || ""),
+    recordTypeOptions: Array.isArray(value.recordTypeOptions)
+      ? value.recordTypeOptions.filter((entry) => typeof entry === "string")
+      : base.recordTypeOptions,
+    recordIdOptions: Array.isArray(value.recordIdOptions)
+      ? value.recordIdOptions.filter((entry) => typeof entry === "string")
+      : [],
+    recordTypeLabels:
+      value.recordTypeLabels && typeof value.recordTypeLabels === "object"
+        ? value.recordTypeLabels
+        : {},
+    recordIdLabels:
+      value.recordIdLabels && typeof value.recordIdLabels === "object"
+        ? value.recordIdLabels
+        : {},
+    comments: Array.isArray(value.comments) ? value.comments : [],
+    version: Number(value.version) || 0,
+    renderedVersion: Number(value.renderedVersion) || 0,
+    updatedAt: String(value.updatedAt || base.updatedAt)
+  };
+};
+
+async function getTemplateReviewState() {
+  const stored = await chrome.storage.local.get(TEMPLATE_REVIEW_STATE_KEY);
+  return normalizeTemplateReviewState(stored[TEMPLATE_REVIEW_STATE_KEY]);
+}
+
+async function saveTemplateReviewState(state, { notify = true } = {}) {
+  const normalized = normalizeTemplateReviewState(state);
+  if (!normalized) throw new Error("Template review state is invalid.");
+  await chrome.storage.local.set({ [TEMPLATE_REVIEW_STATE_KEY]: normalized });
+  if (notify) {
+    chrome.runtime
+      .sendMessage({
+        type: "TEMPLATE_REVIEW_STATE_CHANGED",
+        reviewId: normalized.reviewId,
+        version: normalized.version
+      })
+      .catch(() => undefined);
+  }
+  return normalized;
+}
+
+async function updateTemplateReviewState(patch, { increment = true } = {}) {
+  const current = (await getTemplateReviewState()) || defaultTemplateReviewState();
+  const cleanPatch = Object.fromEntries(
+    Object.entries(patch || {}).filter(([, value]) => value !== undefined)
+  );
+  return saveTemplateReviewState({
+    ...current,
+    ...cleanPatch,
+    version: increment ? current.version + 1 : current.version,
+    updatedAt: increment ? new Date().toISOString() : current.updatedAt
+  });
+}
+
+const templateReviewTabUrl = (reviewId) => {
+  const url = new URL(chrome.runtime.getURL("dist/vue-ui/index.html"));
+  url.searchParams.set("magicTemplateReview", reviewId);
+  url.searchParams.set("initialRoute", `/template-review/${reviewId}`);
+  return url.href;
+};
+
+async function findTemplateReviewTab(reviewId = "") {
+  const tabs = await dashboardTabsQuery({
+    url: `${chrome.runtime.getURL("dist/vue-ui/index.html")}*`
+  });
+  return (
+    tabs.find((tab) => {
+      try {
+        const value = new URL(tab.url || tab.pendingUrl || "").searchParams.get(
+          "magicTemplateReview"
+        );
+        return value && (!reviewId || value === reviewId);
+      } catch {
+        return false;
+      }
+    }) || null
+  );
+}
+
+async function ensureTemplateReviewTab(reviewId, { active = true } = {}) {
+  let tab = await findTemplateReviewTab(reviewId);
+  const url = templateReviewTabUrl(reviewId);
+  if (!tab) {
+    const existing = await findTemplateReviewTab();
+    if (existing?.id) {
+      tab = await dashboardTabsUpdate(existing.id, { url, active });
+    } else {
+      tab = await dashboardTabsCreate({ url, active });
+    }
+  } else if (active && tab.id) {
+    tab = await dashboardTabsUpdate(tab.id, { active: true });
+  }
+  if (!tab?.id) throw new Error("Could not open the template review tab.");
+  await dashboardTabsUpdate(tab.id, { autoDiscardable: false }).catch(
+    () => undefined
+  );
+  await waitForTabComplete(tab.id, 12000).catch(() => undefined);
+  return (await dashboardTabsGet(tab.id).catch(() => tab)) || tab;
+}
+
+async function waitForTemplateReviewRendered(reviewId, version, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let state = null;
+  while (Date.now() < deadline) {
+    state = await getTemplateReviewState();
+    if (
+      state?.reviewId === reviewId &&
+      Number(state.renderedVersion) >= Number(version)
+    ) {
+      return state;
+    }
+    await delay(100);
+  }
+  return state;
+}
+
+async function captureTemplateReviewTab(tab) {
+  if (!tab?.id) return "";
+  const activeTabs = tab.windowId
+    ? await dashboardTabsQuery({ active: true, windowId: tab.windowId })
+    : [];
+  const previous = activeTabs[0];
+  if (tab.windowId) {
+    await dashboardWindowsUpdate(tab.windowId, { focused: true }).catch(
+      () => undefined
+    );
+  }
+  await dashboardTabsUpdate(tab.id, { active: true });
+  await delay(150);
+  const dataUrl = await chromeCallback((done) =>
+    chrome.tabs.captureVisibleTab(
+      tab.windowId,
+      { format: "jpeg", quality: 82 },
+      done
+    )
+  );
+  if (previous?.id && previous.id !== tab.id) {
+    await dashboardTabsUpdate(previous.id, { active: true }).catch(
+      () => undefined
+    );
+  }
+  return String(dataUrl || "").replace(/^data:image\/jpeg;base64,/, "");
+}
+
+const templateReviewToolResult = (state, screenshot = "") => {
+  const content: AnyRecord[] = [
+    {
+      type: "text",
+      text: JSON.stringify(
+        {
+          ...state,
+          pending: TEMPLATE_REVIEW_PENDING_STATUSES.has(state.status)
+        },
+        null,
+        2
+      )
+    }
+  ];
+  if (screenshot) {
+    content.push({ type: "image", data: screenshot, mimeType: "image/jpeg" });
+  }
+  return { content };
+};
+
+async function handleTemplateReviewSurfaceOpen(args) {
+  const current = await getTemplateReviewState();
+  const isRetry =
+    current &&
+    TEMPLATE_REVIEW_PENDING_STATUSES.has(current.status) &&
+    current.html === String(args.html || "") &&
+    current.title === String(args.title || "NetSuite Template Review");
+  const base = isRetry ? current : defaultTemplateReviewState();
+  const state = await saveTemplateReviewState({
+    ...base,
+    ...args,
+    reviewId: isRetry ? current.reviewId : makeTemplateReviewId(),
+    title: String(args.title || "NetSuite Template Review"),
+    templateFile: String(args.templateFile || "invoice_template.ftl"),
+    recordType: String(args.recordType || "invoice"),
+    recordId: String(args.recordId || ""),
+    recordTypeOptions:
+      Array.isArray(args.recordTypeOptions) && args.recordTypeOptions.length
+        ? args.recordTypeOptions
+        : [String(args.recordType || "invoice")],
+    recordIdOptions: Array.isArray(args.recordIdOptions)
+      ? args.recordIdOptions
+      : [],
+    recordTypeLabels:
+      args.recordTypeLabels && typeof args.recordTypeLabels === "object"
+        ? args.recordTypeLabels
+        : {},
+    recordIdLabels:
+      args.recordIdLabels && typeof args.recordIdLabels === "object"
+        ? args.recordIdLabels
+        : {},
+    html: String(args.html || ""),
+    freemarker: String(args.freemarker || ""),
+    pdfDataUrl: String(args.pdfDataUrl || ""),
+    renderError: "",
+    sessionId: String(args.sessionId || ""),
+    referenceImageDataUrl: String(args.referenceImageDataUrl || ""),
+    referenceImageUrl: String(args.referenceImageUrl || ""),
+    feedback: "",
+    comments: isRetry ? current.comments : [],
+    status: isRetry ? current.status : "html_review",
+    version: isRetry ? current.version + 1 : 1,
+    renderedVersion: 0,
+    updatedAt: new Date().toISOString()
+  });
+  const tab = await ensureTemplateReviewTab(state.reviewId, { active: true });
+  const rendered = (await waitForTemplateReviewRendered(
+    state.reviewId,
+    state.version
+  )) || state;
+  return templateReviewToolResult(
+    rendered,
+    await captureTemplateReviewTab(tab).catch(() => "")
+  );
+}
+
+async function handleTemplateReviewSurfaceUpdate(args) {
+  const current = await getTemplateReviewState();
+  if (!current) throw new Error("No template review is open.");
+  const state = await updateTemplateReviewState(args);
+  const tab = await ensureTemplateReviewTab(state.reviewId, { active: false });
+  const rendered = (await waitForTemplateReviewRendered(
+    state.reviewId,
+    state.version
+  )) || state;
+  return templateReviewToolResult(
+    rendered,
+    await captureTemplateReviewTab(tab).catch(() => "")
+  );
+}
+
+async function handleTemplateReviewSurfaceGet() {
+  const state = await getTemplateReviewState();
+  if (!state) throw new Error("No template review is open.");
+  return templateReviewToolResult(state);
+}
+
+async function handleTemplateReviewSurfaceScreenshot() {
+  const state = await getTemplateReviewState();
+  if (!state) throw new Error("No template review is open.");
+  const tab = await ensureTemplateReviewTab(state.reviewId, { active: false });
+  await waitForTemplateReviewRendered(state.reviewId, state.version);
+  return templateReviewToolResult(
+    state,
+    await captureTemplateReviewTab(tab).catch(() => "")
+  );
+}
+
+const TEMPLATE_DESIGN_SESSION_STORE_KEY =
+  "magic_netsuite_template_design_sessions_v1";
+const TEMPLATE_STUDIO_VIEW_STATE_KEY =
+  "magic_netsuite_template_studio_view_state";
+const TEMPLATE_STUDIO_CAPTURE_REQUEST_KEY =
+  "magic_netsuite_template_studio_capture_request";
+const TEMPLATE_STUDIO_CAPTURE_RESPONSE_KEY =
+  "magic_netsuite_template_studio_capture_response";
+const MAX_TEMPLATE_SESSION_REVISIONS = 30;
+
+const defaultTemplateDesignSessionStore = () => ({
+  schemaVersion: 1,
+  currentSessionId: "",
+  sessions: [],
+  updatedAt: new Date().toISOString()
+});
+
+const normalizeTemplateDesignSession = (value: AnyRecord = {}) => ({
+  id: String(value.id || ""),
+  name: String(value.name || "Untitled template"),
+  prompt: String(value.prompt || ""),
+  referenceImages: Array.isArray(value.referenceImages)
+    ? value.referenceImages.filter(
+        (image) =>
+          image &&
+          typeof image === "object" &&
+          image.id &&
+          image.dataUrl
+      )
+    : [],
+  contextMode:
+    value.contextMode === "transaction" ||
+    value.contextMode === "customrecord"
+      ? value.contextMode
+      : "freestyle",
+  recordType: String(value.recordType || ""),
+  recordId: String(value.recordId || ""),
+  recordLabel: String(value.recordLabel || ""),
+  accountId: String(value.accountId || ""),
+  freemarker: String(value.freemarker || ""),
+  pdfDataUrl: String(value.pdfDataUrl || ""),
+  renderError: String(value.renderError || ""),
+  feedback: Array.isArray(value.feedback)
+    ? value.feedback
+        .filter((feedback) => feedback?.id && feedback?.text)
+        .map((feedback) => ({
+          ...feedback,
+          status: feedback.status === "addressed" ? "addressed" : "open",
+          checked: Boolean(feedback.checked),
+          ...(feedback.checked
+            ? {
+                checkedAt: String(
+                  feedback.checkedAt ||
+                    feedback.addressedAt ||
+                    new Date().toISOString()
+                )
+              }
+            : { checkedAt: undefined })
+        }))
+    : [],
+  revisions: Array.isArray(value.revisions)
+    ? value.revisions.slice(0, MAX_TEMPLATE_SESSION_REVISIONS)
+    : [],
+  status: String(value.status || "brief_ready"),
+  version: Number(value.version) || 1,
+  sourceVersion:
+    Number(value.sourceVersion) || (String(value.freemarker || "") ? 1 : 0),
+  renderVersion: Number(value.renderVersion) || 0,
+  createdAt: String(value.createdAt || new Date().toISOString()),
+  updatedAt: String(value.updatedAt || new Date().toISOString()),
+  lastRenderedAt: String(value.lastRenderedAt || "")
+});
+
+const normalizeTemplateDesignSessionStore = (value) => {
+  if (!value || typeof value !== "object") {
+    return defaultTemplateDesignSessionStore();
+  }
+  const sessions = Array.isArray(value.sessions)
+    ? value.sessions
+        .map(normalizeTemplateDesignSession)
+        .filter((session) => session.id)
+    : [];
+  const requestedCurrent = String(value.currentSessionId || "");
+  return {
+    schemaVersion: 1,
+    currentSessionId: sessions.some(
+      (session) => session.id === requestedCurrent
+    )
+      ? requestedCurrent
+      : sessions[0]?.id || "",
+    sessions,
+    updatedAt: String(value.updatedAt || new Date().toISOString())
+  };
+};
+
+async function getTemplateDesignSessionStore() {
+  const result = await chrome.storage.local.get(
+    TEMPLATE_DESIGN_SESSION_STORE_KEY
+  );
+  return normalizeTemplateDesignSessionStore(
+    result[TEMPLATE_DESIGN_SESSION_STORE_KEY]
+  );
+}
+
+async function saveTemplateDesignSessionStore(store) {
+  const normalized = normalizeTemplateDesignSessionStore({
+    ...store,
+    updatedAt: new Date().toISOString()
+  });
+  await chrome.storage.local.set({
+    [TEMPLATE_DESIGN_SESSION_STORE_KEY]: normalized
+  });
+  return normalized;
+}
+
+function getTemplateDesignSessionFromStore(store, sessionId = "") {
+  const requestedId = String(sessionId || store.currentSessionId || "");
+  const session = store.sessions.find((entry) => entry.id === requestedId);
+  if (!session) {
+    throw new Error(
+      "No current Template Studio session exists. Commit one from the dashboard first."
+    );
+  }
+  return session;
+}
+
+const templateDesignSessionSummary = (
+  session,
+  { includeFreemarker = true, includeFeedbackHistory = false } = {}
+) => {
+  const activeFeedback = session.feedback.filter(
+    (feedback) => !feedback?.checked
+  );
+  return {
+  id: session.id,
+  name: session.name,
+  prompt: session.prompt,
+  references: session.referenceImages.map((image) => ({
+    id: image.id,
+    name: image.name,
+    mimeType: image.mimeType,
+    createdAt: image.createdAt
+  })),
+  contextMode: session.contextMode,
+  recordType: session.recordType,
+  recordId: session.recordId,
+  recordLabel: session.recordLabel,
+  accountId: session.accountId,
+  ...(includeFreemarker ? { freemarker: session.freemarker } : {}),
+  pdfReady: Boolean(session.pdfDataUrl),
+  renderError: session.renderError,
+  feedback: includeFeedbackHistory ? session.feedback : activeFeedback,
+  openFeedback: activeFeedback.filter(
+    (feedback) => feedback?.status === "open"
+  ),
+  addressedFeedback: activeFeedback.filter(
+    (feedback) => feedback?.status === "addressed"
+  ),
+  ...(includeFeedbackHistory
+    ? {
+        checkedFeedback: session.feedback.filter(
+          (feedback) => feedback?.checked
+        )
+      }
+    : {}),
+  revisions: session.revisions.map((revision) => ({
+    id: revision.id,
+    actor: revision.actor,
+    summary: revision.summary,
+    createdAt: revision.createdAt
+  })),
+  status: session.status,
+  version: session.version,
+  sourceVersion: session.sourceVersion,
+  renderVersion: session.renderVersion,
+  createdAt: session.createdAt,
+  updatedAt: session.updatedAt,
+  lastRenderedAt: session.lastRenderedAt
+  };
+};
+
+function appendTemplateReferenceImages(content, session) {
+  for (const reference of session.referenceImages) {
+    const match = String(reference.dataUrl || "").match(
+      /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i
+    );
+    if (!match) continue;
+    content.push({
+      type: "image",
+      data: match[2],
+      mimeType: match[1]
+    });
+  }
+}
+
+function templateDesignSessionToolResult(
+  session,
+  {
+    includeReferences = false,
+    includeFreemarker = false,
+    includeFeedbackHistory = false,
+    screenshot = "",
+    metadata = {}
+  } = {}
+) {
+  const content: AnyRecord[] = [
+    {
+      type: "text",
+      text: JSON.stringify(
+        {
+          ...templateDesignSessionSummary(session, {
+            includeFreemarker,
+            includeFeedbackHistory
+          }),
+          ...metadata
+        },
+        null,
+        2
+      )
+    }
+  ];
+  if (includeReferences) appendTemplateReferenceImages(content, session);
+  if (screenshot) {
+    content.push({
+      type: "image",
+      data: screenshot,
+      mimeType: "image/jpeg"
+    });
+  }
+  return { content };
+}
+
+async function handleTemplateDesignSessionList() {
+  const store = await getTemplateDesignSessionStore();
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            currentSessionId: store.currentSessionId,
+            sessions: store.sessions.map((session) =>
+              templateDesignSessionSummary(session, {
+                includeFreemarker: false
+              })
+            )
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+async function handleTemplateDesignSessionGetCurrent(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  return templateDesignSessionToolResult(session, {
+    includeReferences: args.includeReferences !== false,
+    includeFreemarker: args.includeFreemarker === true,
+    includeFeedbackHistory: args.includeFeedbackHistory === true
+  });
+}
+
+async function handleTemplateDesignSessionSetCurrent(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  store.currentSessionId = session.id;
+  await saveTemplateDesignSessionStore(store);
+  return templateDesignSessionToolResult(session);
+}
+
+const makeTemplateDesignRevision = (
+  freemarker,
+  summary,
+  actor = "assistant"
+) => ({
+  id: `revision_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+  actor,
+  summary: String(summary || "Updated FreeMarker design"),
+  freemarker,
+  createdAt: new Date().toISOString()
+});
+
+async function updateTemplateDesignSession(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  const index = store.sessions.findIndex((entry) => entry.id === session.id);
+  const nextFreemarker =
+    args.freemarker === undefined
+      ? session.freemarker
+      : String(args.freemarker || "");
+  const freemarkerChanged =
+    args.freemarker !== undefined && nextFreemarker !== session.freemarker;
+  const addressedIds = new Set(
+    Array.isArray(args.addressFeedbackIds)
+      ? args.addressFeedbackIds.map(String)
+      : []
+  );
+  const response = String(args.changeSummary || "").trim();
+  const next = normalizeTemplateDesignSession({
+    ...session,
+    ...(args.name !== undefined ? { name: String(args.name || "") } : {}),
+    ...(args.prompt !== undefined
+      ? { prompt: String(args.prompt || "") }
+      : {}),
+    ...(args.contextMode !== undefined
+      ? { contextMode: String(args.contextMode || "freestyle") }
+      : {}),
+    ...(args.recordType !== undefined
+      ? { recordType: String(args.recordType || "") }
+      : {}),
+    ...(args.recordId !== undefined
+      ? { recordId: String(args.recordId || "") }
+      : {}),
+    ...(args.recordLabel !== undefined
+      ? { recordLabel: String(args.recordLabel || "") }
+      : {}),
+    ...(args.accountId !== undefined
+      ? { accountId: String(args.accountId || "") }
+      : {}),
+    freemarker: nextFreemarker,
+    pdfDataUrl: freemarkerChanged ? "" : session.pdfDataUrl,
+    renderError: freemarkerChanged ? "" : session.renderError,
+    feedback: session.feedback.map((feedback) =>
+      addressedIds.has(String(feedback?.id))
+        ? {
+            ...feedback,
+            status: "addressed",
+            addressedAt: new Date().toISOString(),
+            ...(response ? { response } : {})
+          }
+        : feedback
+    ),
+    revisions: freemarkerChanged
+      ? [
+          makeTemplateDesignRevision(
+            nextFreemarker,
+            response || "Updated FreeMarker design"
+          ),
+          ...session.revisions
+        ].slice(0, MAX_TEMPLATE_SESSION_REVISIONS)
+      : session.revisions,
+    status: String(
+      args.status || (freemarkerChanged ? "designing" : session.status)
+    ),
+    sourceVersion: freemarkerChanged
+      ? session.sourceVersion + 1
+      : session.sourceVersion,
+    version: session.version + 1,
+    updatedAt: new Date().toISOString()
+  });
+  store.sessions[index] = next;
+  if (args.makeCurrent !== false) store.currentSessionId = next.id;
+  await saveTemplateDesignSessionStore(store);
+  return next;
+}
+
+const templateSourceLines = (freemarker) =>
+  String(freemarker || "").replace(/\r\n/g, "\n").split("\n");
+
+async function handleTemplateDesignSessionRead(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  const lines = templateSourceLines(session.freemarker);
+  const requestedSearch = String(args.search || "").trim().toLowerCase();
+  const contextLines = Math.min(
+    100,
+    Math.max(0, Number(args.contextLines) || 8)
+  );
+  let startLine = Math.max(1, Number(args.startLine) || 1);
+  let endLine = Math.min(
+    lines.length,
+    Number(args.endLine) || Math.min(lines.length, startLine + 199)
+  );
+  if (requestedSearch) {
+    const matchIndex = lines.findIndex((line) =>
+      line.toLowerCase().includes(requestedSearch)
+    );
+    if (matchIndex < 0) {
+      throw new Error(`Source text was not found: ${args.search}`);
+    }
+    startLine = Math.max(1, matchIndex + 1 - contextLines);
+    endLine = Math.min(lines.length, matchIndex + 1 + contextLines);
+  }
+  if (endLine < startLine) endLine = startLine;
+  const source = lines
+    .slice(startLine - 1, endLine)
+    .map(
+      (line, index) =>
+        `${String(startLine + index).padStart(5, " ")} | ${line}`
+    )
+    .join("\n");
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            sessionId: session.id,
+            sourceVersion: session.sourceVersion,
+            totalLines: lines.length,
+            startLine,
+            endLine,
+            source
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+const replaceTemplateSource = (source, edit, index) => {
+  const oldText = String(edit?.oldText || "");
+  const newText = String(edit?.newText || "");
+  if (!oldText) throw new Error(`Edit ${index + 1} requires oldText.`);
+  const occurrences = source.split(oldText).length - 1;
+  if (occurrences === 0) {
+    throw new Error(`Edit ${index + 1} oldText was not found.`);
+  }
+  if (occurrences > 1 && edit?.all !== true) {
+    throw new Error(
+      `Edit ${index + 1} matched ${occurrences} locations. Add more context or set all:true.`
+    );
+  }
+  return edit?.all === true
+    ? source.split(oldText).join(newText)
+    : source.replace(oldText, newText);
+};
+
+async function handleTemplateDesignSessionPatch(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  const expectedSourceVersion = Number(args.expectedSourceVersion);
+  if (
+    !Number.isFinite(expectedSourceVersion) ||
+    expectedSourceVersion !== session.sourceVersion
+  ) {
+    throw new Error(
+      `FreeMarker source changed. Expected sourceVersion ${args.expectedSourceVersion}, current is ${session.sourceVersion}. Read the affected section again before patching.`
+    );
+  }
+  const edits = Array.isArray(args.edits) ? args.edits.slice(0, 20) : [];
+  if (!edits.length) throw new Error("At least one source edit is required.");
+  const patched = edits.reduce(replaceTemplateSource, session.freemarker);
+  if (patched === session.freemarker) {
+    throw new Error("The source patch did not change the FreeMarker document.");
+  }
+  const updated = await updateTemplateDesignSession({
+    sessionId: session.id,
+    freemarker: patched,
+    changeSummary:
+      String(args.changeSummary || "").trim() ||
+      `Applied ${edits.length} incremental source edit${edits.length === 1 ? "" : "s"}.`,
+    addressFeedbackIds: args.addressFeedbackIds
+  });
+  if (args.render === true) {
+    return handleTemplateDesignSessionRender({
+      sessionId: updated.id,
+      screenshot: args.screenshot === true,
+      screenshotPage: args.screenshotPage,
+      screenshotWidth: args.screenshotWidth
+    });
+  }
+  return templateDesignSessionToolResult(updated, {
+    metadata: { editsApplied: edits.length }
+  });
+}
+
+async function handleTemplateDesignSessionUpdate(args: AnyRecord = {}) {
+  const session = await updateTemplateDesignSession(args);
+  if (args.render === true) {
+    return handleTemplateDesignSessionRender({
+      sessionId: session.id,
+      screenshot: args.screenshot === true,
+      screenshotPage: args.screenshotPage,
+      screenshotWidth: args.screenshotWidth
+    });
+  }
+  return templateDesignSessionToolResult(session);
+}
+
+async function renderTemplateDesignSession(args: AnyRecord = {}) {
+  let store = await getTemplateDesignSessionStore();
+  let session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  if (!session.freemarker.trim()) {
+    throw new Error(
+      "The current Template Studio session does not have a FreeMarker design yet."
+    );
+  }
+  if (
+    session.contextMode !== "freestyle" &&
+    (!session.recordType || !session.recordId)
+  ) {
+    throw new Error(
+      "Select a NetSuite record type and record in Template Studio before rendering."
+    );
+  }
+
+  let index = store.sessions.findIndex((entry) => entry.id === session.id);
+  session = normalizeTemplateDesignSession({
+    ...session,
+    status: "rendering",
+    renderError: "",
+    version: session.version + 1,
+    updatedAt: new Date().toISOString()
+  });
+  store.sessions[index] = session;
+  await saveTemplateDesignSessionStore(store);
+
+  try {
+    const result = await callNetsuiteRoute(
+      "RENDER_FREEMARKER_TEMPLATE",
+      {
+        template: session.freemarker,
+        recordType:
+          session.contextMode === "freestyle"
+            ? undefined
+            : session.recordType,
+        recordId:
+          session.contextMode === "freestyle" ? undefined : session.recordId
+      },
+      "Failed to render the Template Studio FreeMarker design."
+    );
+    const rendered = templateReviewPdfFromRenderResult(result);
+    if (rendered.renderError) throw new Error(rendered.renderError);
+    store = await getTemplateDesignSessionStore();
+    session = getTemplateDesignSessionFromStore(store, session.id);
+    index = store.sessions.findIndex((entry) => entry.id === session.id);
+    session = normalizeTemplateDesignSession({
+      ...session,
+      pdfDataUrl: rendered.pdfDataUrl,
+      renderError: "",
+      status: "rendered",
+      renderVersion: session.renderVersion + 1,
+      version: session.version + 1,
+      lastRenderedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    store.sessions[index] = session;
+    await saveTemplateDesignSessionStore(store);
+    return session;
+  } catch (error) {
+    store = await getTemplateDesignSessionStore();
+    session = getTemplateDesignSessionFromStore(store, session.id);
+    index = store.sessions.findIndex((entry) => entry.id === session.id);
+    session = normalizeTemplateDesignSession({
+      ...session,
+      pdfDataUrl: "",
+      renderError: error instanceof Error ? error.message : String(error),
+      status: "render_error",
+      renderVersion: session.renderVersion + 1,
+      version: session.version + 1,
+      lastRenderedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    store.sessions[index] = session;
+    await saveTemplateDesignSessionStore(store);
+    return session;
+  }
+}
+
+async function openTemplateStudioInDashboard(session) {
+  const live = await getLiveDashboardPreviewSession();
+  const embeddedDashboardTab = live?.dashboardTab?.id
+    ? null
+    : await findVisibleEmbeddedDashboardTab();
+  const dashboardTab = live?.dashboardTab || embeddedDashboardTab;
+  if (!dashboardTab?.id) {
+    throw new Error(
+      "Open the Magic NetSuite dashboard or its in-page workspace before requesting a Template Studio screenshot."
+    );
+  }
+  if (live?.dashboardTab?.id) {
+    await focusDashboardPreviewSession(live);
+  } else {
+    if (dashboardTab.windowId) {
+      await dashboardWindowsUpdate(dashboardTab.windowId, { focused: true })
+        .catch(() => undefined);
+    }
+    await dashboardTabsUpdate(dashboardTab.id, { active: true });
+  }
+  await chrome.storage.local.remove(TEMPLATE_STUDIO_VIEW_STATE_KEY);
+  await chrome.runtime
+    .sendMessage({
+      type: "OPEN_TEMPLATE_STUDIO",
+      sessionId: session.id
+    })
+    .catch(() => undefined);
+
+  const deadline = Date.now() + 10000;
+  let readyView = null;
+  while (Date.now() < deadline) {
+    const result = await chrome.storage.local.get(
+      TEMPLATE_STUDIO_VIEW_STATE_KEY
+    );
+    const view = result[TEMPLATE_STUDIO_VIEW_STATE_KEY];
+    if (
+      view?.sessionId === session.id &&
+      Number(view.renderVersion || 0) >= Number(session.renderVersion || 0)
+    ) {
+      readyView = view;
+      break;
+    }
+    await delay(100);
+  }
+  await delay(200);
+  if (!readyView) {
+    throw new Error(
+      "Template Studio did not finish loading the generated PDF. Keep the dashboard open and retry."
+    );
+  }
+  return readyView;
+}
+
+async function renderTemplatePdfPage(session, args: AnyRecord = {}) {
+  const page = args.page === undefined ? 1 : Number(args.page);
+  if (!Number.isInteger(page) || page < 1) {
+    throw new Error("PDF page must be a positive one-based integer.");
+  }
+  const targetWidth = Math.min(
+    2400,
+    Math.max(800, Math.trunc(Number(args.targetWidth) || 1600))
+  );
+  await openTemplateStudioInDashboard(session);
+  const requestId = `pdf_capture_${Date.now()}_${Math.random()
+    .toString(36)
+    .slice(2, 9)}`;
+  await chrome.storage.local.remove(TEMPLATE_STUDIO_CAPTURE_RESPONSE_KEY);
+  await chrome.storage.local.set({
+    [TEMPLATE_STUDIO_CAPTURE_REQUEST_KEY]: {
+      requestId,
+      sessionId: session.id,
+      renderVersion: session.renderVersion,
+      page,
+      targetWidth
+    }
+  });
+
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    const stored = await chrome.storage.local.get(
+      TEMPLATE_STUDIO_CAPTURE_RESPONSE_KEY
+    );
+    const response = stored[TEMPLATE_STUDIO_CAPTURE_RESPONSE_KEY];
+    if (response?.requestId === requestId) {
+      if (response.error) throw new Error(response.error);
+      if (!response.imageBase64) {
+        throw new Error("Template Studio returned an empty PDF page image.");
+      }
+      return response;
+    }
+    await delay(100);
+  }
+  throw new Error(
+    "Template Studio did not finish rasterizing the requested PDF page."
+  );
+}
+
+async function handleTemplateDesignSessionScreenshot(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  let session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  if (args.render === true) {
+    session = await renderTemplateDesignSession({ sessionId: session.id });
+  }
+  if (!session.pdfDataUrl) {
+    if (session.renderError) return templateDesignSessionToolResult(session);
+    throw new Error("Render the current FreeMarker session before capturing its PDF.");
+  }
+  const capture = await renderTemplatePdfPage(session, args);
+  return templateDesignSessionToolResult(session, {
+    screenshot: capture.imageBase64,
+    metadata: {
+      screenshotPage: capture.page,
+      pdfPageCount: capture.pageCount,
+      screenshotWidth: capture.width,
+      screenshotHeight: capture.height
+    }
+  });
+}
+
+async function handleTemplateDesignSessionRender(args: AnyRecord = {}) {
+  const session = await renderTemplateDesignSession(args);
+  if (args.screenshot === true) {
+    return handleTemplateDesignSessionScreenshot({
+      sessionId: session.id,
+      render: false,
+      page: args.screenshotPage,
+      targetWidth: args.screenshotWidth
+    });
+  }
+  return templateDesignSessionToolResult(session);
+}
+
+const handleTemplateDesignSessionRenderMessage = ({
+  message,
+  sendResponse
+}) => {
+  (async () => {
+    let jobId = "";
+    try {
+      try {
+        const store = await getTemplateDesignSessionStore();
+        const pendingSession = getTemplateDesignSessionFromStore(
+          store,
+          message.sessionId
+        );
+        const job = await createStoredJob({
+          title: `Render ${pendingSession.name || "FreeMarker template"}`,
+          kind: "template-studio-render",
+          status: "running",
+          progress: 0,
+          indeterminate: true,
+          startedAt: Date.now(),
+          environment: pendingSession.accountId || "unknown",
+          account: pendingSession.accountId || "unknown",
+          sourcePath: "/template-studio",
+          message: "Rendering with authenticated NetSuite services"
+        });
+        jobId = job.id;
+      } catch (jobError) {
+        console.warn(
+          "[Template Studio] Could not register render job.",
+          jobError
+        );
+      }
+
+      const session = await renderTemplateDesignSession({
+        sessionId: message.sessionId
+      });
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: session.status === "rendered" ? "succeeded" : "failed",
+          progress: 100,
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: session.renderError || undefined,
+          message:
+            session.status === "rendered"
+              ? "NetSuite PDF render completed"
+              : "NetSuite PDF render failed",
+          result: {
+            sessionId: session.id,
+            renderVersion: session.renderVersion,
+            status: session.status
+          }
+        }).catch(() => undefined);
+      }
+      sendResponse({
+        ok: session.status === "rendered",
+        error: session.renderError || "",
+        session: templateDesignSessionSummary(session)
+      });
+    } catch (error) {
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "failed",
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+          message: "Template Studio render failed"
+        }).catch(() => undefined);
+      }
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
+  return true;
+};
+
+// ── Download Analyzer ────────────────────────────────────────────────────────
+// Listeners remain registered so MV3 can wake the service worker, but they only
+// retain data while the user has explicitly enabled capture in the analyzer UI.
+const DOWNLOAD_ANALYZER_STORAGE_KEY = "magic_netsuite_download_analyzer";
+const DOWNLOAD_ANALYZER_MAX_ENTRIES = 250;
+const DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH = 32000;
+let downloadAnalyzerState = { enabled: false, entries: [] };
+let downloadAnalyzerMutation = Promise.resolve();
+
+const downloadAnalyzerReady = chrome.storage.local
+  .get(DOWNLOAD_ANALYZER_STORAGE_KEY)
+  .then((stored) => {
+    const saved = stored[DOWNLOAD_ANALYZER_STORAGE_KEY];
+    downloadAnalyzerState = {
+      enabled: Boolean(saved?.enabled),
+      entries: Array.isArray(saved?.entries)
+        ? saved.entries.slice(0, DOWNLOAD_ANALYZER_MAX_ENTRIES)
+        : []
+    };
+  })
+  .catch((error) => {
+    console.warn("[Download Analyzer] Could not restore state", error);
+  });
+
+const notifyDownloadAnalyzerChanged = () => {
+  chrome.runtime.sendMessage({ type: "DOWNLOAD_ANALYZER_UPDATED" }).catch(() => {});
+};
+
+const queueDownloadAnalyzerMutation = (mutation) => {
+  downloadAnalyzerMutation = downloadAnalyzerMutation
+    .then(() => downloadAnalyzerReady)
+    .then(async () => {
+      const changed = await mutation(downloadAnalyzerState);
+      if (changed === false) return;
+      downloadAnalyzerState.entries = downloadAnalyzerState.entries
+        .sort((a, b) => Number(b.startedAt || 0) - Number(a.startedAt || 0))
+        .slice(0, DOWNLOAD_ANALYZER_MAX_ENTRIES);
+      await chrome.storage.local.set({
+        [DOWNLOAD_ANALYZER_STORAGE_KEY]: downloadAnalyzerState
+      });
+      notifyDownloadAnalyzerChanged();
+    })
+    .catch((error) => {
+      console.error("[Download Analyzer] Failed to record event", error);
+    });
+  return downloadAnalyzerMutation;
+};
+
+const isNetSuiteUrl = (value) => {
+  if (!value) return false;
+  try {
+    return new URL(value).hostname.toLowerCase().endsWith(".netsuite.com");
+  } catch {
+    return false;
+  }
+};
+
+const isNetSuiteDownload = (item) =>
+  isNetSuiteUrl(item?.url) ||
+  isNetSuiteUrl(item?.finalUrl) ||
+  isNetSuiteUrl(item?.referrer);
+
+const truncateAnalyzerValue = (value, maxLength = DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH) => {
+  const text = String(value ?? "");
+  return text.length > maxLength
+    ? `${text.slice(0, maxLength)}\n[truncated ${text.length - maxLength} characters]`
+    : text;
+};
+
+const sanitizeHeaders = (headers = []) =>
+  headers.map(({ name, value, binaryValue }) => {
+    const lowerName = String(name || "").toLowerCase();
+    const hidden =
+      lowerName === "cookie" ||
+      lowerName === "set-cookie" ||
+      lowerName === "authorization";
+    return {
+      name,
+      value: hidden
+        ? "[redacted]"
+        : truncateAnalyzerValue(
+            value ?? (binaryValue ? `[${binaryValue.length} binary bytes]` : ""),
+            8000
+          )
+    };
+  });
+
+const serializeRequestBody = (requestBody) => {
+  if (!requestBody) return null;
+  if (requestBody.formData) {
+    return {
+      formData: Object.fromEntries(
+        Object.entries(requestBody.formData).map(([key, values]) => [
+          key,
+          (values as any[]).map((value) =>
+            truncateAnalyzerValue(value, 8000)
+          )
+        ])
+      )
+    };
+  }
+  const raw = (requestBody.raw || []).map((part) => {
+    if (!part.bytes) return { file: part.file || null };
+    try {
+      return { text: truncateAnalyzerValue(new TextDecoder("utf-8").decode(part.bytes)) };
+    } catch {
+      return { text: "[unreadable request body]" };
+    }
+  });
+  return raw.length ? { raw } : null;
+};
+
+const upsertDownloadAnalyzerEntry = (
+  id,
+  createEntry,
+  updateEntry?: (entry: AnyRecord) => AnyRecord
+) =>
+  queueDownloadAnalyzerMutation((state) => {
+    if (!state.enabled) return false;
+    const index = state.entries.findIndex((entry) => entry.id === id);
+    if (index < 0) {
+      const created = createEntry?.();
+      if (created) state.entries.unshift(created);
+      return Boolean(created);
+    }
+    state.entries[index] = updateEntry
+      ? updateEntry(state.entries[index])
+      : state.entries[index];
+    return Boolean(updateEntry);
+  });
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    const requestBody = serializeRequestBody(details.requestBody);
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      () => isNetSuiteUrl(details.url) ? ({
+        id: `request:${details.requestId}`,
+        kind: "request",
+        requestId: details.requestId,
+        startedAt: details.timeStamp,
+        state: "pending",
+        method: details.method,
+        url: details.url,
+        finalUrl: details.url,
+        requestUrls: [details.url],
+        requestType: details.type,
+        tabId: details.tabId,
+        frameId: details.frameId,
+        parentFrameId: details.parentFrameId,
+        initiator: details.initiator || null,
+        documentUrl: details.documentUrl || null,
+        requestBody,
+        requestHeaders: [],
+        responseHeaders: [],
+        redirects: []
+      }) : null,
+      (entry) => ({
+        ...entry,
+        requestBody: requestBody || entry.requestBody,
+        finalUrl: details.url,
+        requestUrls: Array.from(new Set([...(entry.requestUrls || []), details.url]))
+      })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["requestBody"]
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({ ...entry, requestHeaders: sanitizeHeaders(details.requestHeaders) })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["requestHeaders", "extraHeaders"]
+);
+
+chrome.webRequest.onHeadersReceived.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        statusCode: details.statusCode,
+        statusLine: details.statusLine,
+        ip: details.ip || null,
+        fromCache: Boolean(details.fromCache),
+        responseHeaders: sanitizeHeaders(details.responseHeaders)
+      })
+    );
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders", "extraHeaders"]
+);
+
+chrome.webRequest.onBeforeRedirect.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        statusCode: details.statusCode,
+        redirects: [
+          ...(entry.redirects || []),
+          {
+            at: details.timeStamp,
+            from: details.url,
+            to: details.redirectUrl,
+            statusCode: details.statusCode
+          }
+        ]
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onCompleted.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        state: "complete",
+        completedAt: details.timeStamp,
+        statusCode: details.statusCode,
+        fromCache: Boolean(details.fromCache),
+        ip: details.ip || entry.ip || null
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.webRequest.onErrorOccurred.addListener(
+  (details) => {
+    void upsertDownloadAnalyzerEntry(
+      `request:${details.requestId}`,
+      null,
+      (entry) => ({
+        ...entry,
+        state: "error",
+        completedAt: details.timeStamp,
+        error: details.error
+      })
+    );
+  },
+  { urls: ["<all_urls>"] }
+);
+
+chrome.downloads.onCreated.addListener((item) => {
+  if (!isNetSuiteDownload(item)) return;
+  void upsertDownloadAnalyzerEntry(`download:${item.id}`, () => ({
+    id: `download:${item.id}`,
+    kind: "download",
+    downloadId: item.id,
+    startedAt: Date.parse(item.startTime) || Date.now(),
+    state: item.state || "in_progress",
+    url: item.url,
+    finalUrl: item.finalUrl || item.url,
+    referrer: item.referrer || null,
+    filename: item.filename || "",
+    mime: item.mime || "",
+    totalBytes: item.totalBytes,
+    bytesReceived: item.bytesReceived,
+    fileSize: item.fileSize,
+    danger: item.danger,
+    incognito: item.incognito,
+    byExtensionId: item.byExtensionId || null,
+    byExtensionName: item.byExtensionName || null,
+    paused: item.paused,
+    canResume: item.canResume,
+    error: item.error || null
+  }));
+});
+
+chrome.downloads.onChanged.addListener((delta) => {
+  void upsertDownloadAnalyzerEntry(
+    `download:${delta.id}`,
+    null,
+    (entry) => {
+      const next = { ...entry };
+      for (const key of [
+        "state", "filename", "url", "finalUrl", "mime", "totalBytes",
+        "bytesReceived", "fileSize", "danger", "paused", "canResume", "error",
+        "endTime", "exists"
+      ]) {
+        if (delta[key]?.current !== undefined) next[key] = delta[key].current;
+      }
+      return next;
+    }
+  );
+});
+
+chrome.downloads.onErased.addListener((downloadId) => {
+  void upsertDownloadAnalyzerEntry(
+    `download:${downloadId}`,
+    null,
+    (entry) => ({ ...entry, erased: true })
+  );
+});
+
+const handleDownloadAnalyzerGetState = ({ sendResponse }) => {
+  downloadAnalyzerReady.then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
+const handleDownloadAnalyzerSetEnabled = ({ message, sendResponse }) => {
+  queueDownloadAnalyzerMutation((state) => {
+    state.enabled = Boolean(message.enabled);
+  }).then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
+const handleDownloadAnalyzerClear = ({ sendResponse }) => {
+  queueDownloadAnalyzerMutation((state) => {
+    state.entries = [];
+  }).then(() => sendResponse(downloadAnalyzerState));
+  return true;
+};
+
+// ── MCP: SuiteQL Agent Guide ──
+// Returned by the suiteql_get_guide tool so AI agents know exactly
+// how to use these tools without guessing or producing invalid SQL.
+const SUITEQL_GUIDE = `
+# SuiteQL Agent Guide — NetSuite MCP Server
+
+## CRITICAL RULES
+
+### 1. NEVER USE \`LIMIT\`
+SuiteQL is built on Oracle SQL. \`LIMIT\` does NOT exist and will throw an error.
+Use ROWNUM in a WHERE clause instead:
+  CORRECT: SELECT id, name FROM customer WHERE ROWNUM <= 10
+  WRONG:   SELECT id, name FROM customer LIMIT 10
+
+### 2. ALWAYS FOLLOW THE DISCOVERY WORKFLOW
+Never guess table names or column names — always verify first:
+  Step 1: suiteql_search_tables        — find the right table
+  Step 2: suiteql_get_table_fields     — get valid column names + types
+  Step 3: suiteql_discover_field_values — get valid values for WHERE filters
+  Step 4: suiteql_execute_query        — run the final verified query
+
+### 3. ALWAYS LIMIT ROWS
+Every query must include a ROWNUM guard to prevent runaway results:
+  WHERE ROWNUM <= 25
+
+## SYNTAX REFERENCE
+
+Row limiting (mandatory):
+  WHERE ROWNUM <= 25
+
+Date filtering:
+  WHERE trandate >= TO_DATE('2024-01-01', 'YYYY-MM-DD')
+
+NULL checks:
+  WHERE fieldname IS NOT NULL
+  WHERE fieldname IS NULL
+
+String comparison (case-sensitive in SuiteQL):
+  WHERE status = 'A'
+
+Numeric ID join pattern:
+  JOIN customer ON transaction.entity = customer.id
+
+Text search (slow — use only when necessary):
+  WHERE LOWER(name) LIKE '%keyword%'
+
+## COMMON TABLES
+  customer            Customer master records
+  transaction         All transaction types (invoices, bills, POs, etc.)
+  item                Inventory / non-inventory / service items
+  vendor              Vendor records
+  employee            Employee records
+  account             Chart of accounts
+  contact             Contact records
+  customrecord_*      Custom record types — discover with suiteql_search_tables
+
+## SCRIPT DEPLOYMENT IDS
+The SuiteQL scriptdeployment table is unusual:
+  - scriptdeployment.id is NOT the deployment record internal ID used by the NetSuite record API or deployment URL tools.
+  - scriptdeployment.primarykey IS the actual scriptdeployment record internal ID.
+  - When a SuiteQL query result for scriptdeployment will be used with netsuite_load_record(recordType: "scriptdeployment"), netsuite_get_script_deployment_url, execute/deployment tools, or a NetSuite deployment URL, use primarykey.
+  - Select it explicitly and alias it clearly:
+      SELECT sd.primarykey AS deployment_record_id, sd.scriptid, sd.deploymentid
+      FROM scriptdeployment sd
+      WHERE ROWNUM <= 25
+
+## RECORD-RELATED FILES AND REPORTS
+When the user asks for a report/file/document/PDF "for", "with", or "related to" a lead/customer/entity/transaction ID:
+  - Treat the number as the record ID unless the user explicitly says "file ID".
+  - Do NOT call netsuite_find_file(id: recordId) or netsuite_read_file(fileId: recordId).
+  - Use SuiteQL discovery to find the relationship table/field first.
+  - Loading the record can confirm identity, but it does not locate related files.
+
+Example: "find the report file with lead id 181"
+  1. suiteql_search_tables("lead") and/or suiteql_search_tables("report")
+  2. suiteql_get_table_fields / suiteql_get_table_joins on likely customer/customrecord tables
+  3. suiteql_execute_query against the related table where the lead/customer field = 181
+  4. Use netsuite_read_file only with a file ID returned by that query
+
+## FULL WORKFLOW EXAMPLE
+Goal: Find open invoices for customer ID 123
+
+  1. suiteql_search_tables("transaction")
+     → confirms table name is "transaction"
+
+  2. suiteql_get_table_fields("transaction")
+     → reveals columns: id, tranid, entity, status, type, trandate, amount
+
+  3. suiteql_discover_field_values("transaction", "type")
+     → invoice type value = "CustInvc"
+
+  4. suiteql_discover_field_values("transaction", "status")
+     → open invoice status = "CustInvc:A"
+
+  5. suiteql_execute_query:
+       SELECT t.id, t.tranid, t.trandate, t.amount
+       FROM transaction t
+       WHERE t.type = 'CustInvc'
+         AND t.status = 'CustInvc:A'
+         AND t.entity = 123
+         AND ROWNUM <= 25
+
+## JOINS
+Always call suiteql_get_table_joins before writing JOIN clauses.
+The join column names are not always obvious.
+`.trim();
+
+// ── MCP: Usage Tracking ──
+const mcpUsageLog = [];
+const MCP_USAGE_MAX = 100;
+
+const recordMcpUsage = (toolName, success, errorMsg, executionSide = "unknown") => {
+  mcpUsageLog.unshift({
+    tool: toolName,
+    timestamp: new Date().toISOString(),
+    success,
+    executionSide,
+    error: errorMsg || null
+  });
+  if (mcpUsageLog.length > MCP_USAGE_MAX) {
+    mcpUsageLog.length = MCP_USAGE_MAX;
+  }
+};
+
+const CUSTOM_RECORD_FIELD_TYPE_HINTS = [
+  "CHECKBOX",
+  "CURRENCY",
+  "DATE",
+  "DATETIME",
+  "DECIMAL",
+  "DOCUMENT",
+  "EMAIL",
+  "FREEFORMTEXT",
+  "HELP",
+  "HYPERLINK",
+  "INLINEHTML",
+  "INTEGER",
+  "LIST",
+  "LONGTEXT",
+  "MULTISELECT",
+  "PASSWORD",
+  "PERCENT",
+  "PHONE",
+  "RICHTEXT",
+  "TEXTAREA",
+  "TIMEOFDAY"
+];
+
+// PORT LISTENERS
+chrome.runtime.onConnect.addListener((port: any) => {
+  const connectPortMap = {
+    [CONNECT_PORT.SIDE_PANEL]: setPanelState,
+    [CONNECT_PORT.DISCONNECT]: disconnectPort
+  };
+
+  const connectPortHandler = connectPortMap[port.name];
+  if (!connectPortHandler) {
+    console.log("Port not found:", port.name);
+    return;
+  }
+
+  connectPortHandler({ port });
+});
+
+const setPanelState = ({ port }) => {
+  console.log("[PortListener][setPanelState] Panel state: ", panelState);
+  if (uiSource === UI_SOURCE.PANEL) {
+    panelState = PANEL_STATE.OPEN;
+    console.log("[PortListener][setPanelState] Panel state set to OPEN");
+  }
+
+  // It seems it doesn't disconnect if the UI page is still open, in this case when it is on mainsetup
+  port.onDisconnect.addListener(() => {
+    panelState = PANEL_STATE.CLOSE;
+    console.log(
+      "[PortListener][setPanelState] Panel state set to CLOSE (panel disconnected)"
+    );
+  });
+};
+
+const disconnectPort = ({ port }) => {
+  port.disconnect();
+  console.log("[PortListener][disconnectPort] Port disconnected");
+};
+
+// COMMANDS
+chrome.commands.onCommand.addListener((command: string) => {
+  console.log("Command:", command);
+  const commandMap = {
+    toggle_extension_ui: togglePanel,
+    open_panel_scripts: openCommandView,
+    open_panel_custom_records: openCommandView,
+    capture_element_screenshot: startElementScreenshotSelection
+  };
+
+  const commandHandler = commandMap[command];
+  if (!commandHandler) {
+    console.log("Command not found:", command);
+    return;
+  }
+
+  commandHandler({ command });
+});
+
+const togglePanel = () => {
+  if (panelState === PANEL_STATE.OPEN) {
+    chrome.sidePanel.setOptions({ enabled: false });
+    chrome.sidePanel.setOptions({ enabled: true });
+    console.log("[togglePanel] Panel closed");
+    return;
+  }
+
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    chrome.sidePanel.open({ tabId: tab.id });
+    panelState = PANEL_STATE.OPEN;
+    console.log("[togglePanel] Panel opened");
+  });
+};
+
+const openCommandView = ({ command }) => {
+  const commandsViewMap = {
+    open_panel_scripts: UI_VIEWS.SCRIPTS,
+    open_panel_custom_records: UI_VIEWS.CUSTOM_RECORDS
+  };
+
+  panelState = PANEL_STATE.OPEN;
+  let view = "home";
+
+  if (!commandsViewMap[command]) {
+    return;
+  }
+
+  view = commandsViewMap[command];
+  // store intent ONLY
+  chrome.storage.session.set({ openView: view });
+
+  // open EXACTLY like toggle
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab?.id) return;
+    chrome.sidePanel.open({ tabId: tab.id });
+  });
+};
+
+// MESSAGE LISTENERS
+chrome.runtime.onMessage.addListener(
+  (
+    message: RuntimeMessage,
+    sender: AnyRecord,
+    sendResponse: SendResponse
+  ) => {
+  console.log("Message: ", message.type);
+  const messageMap = {
+    CLOSE_PANEL: closeResetPanel,
+    OPEN_MAIN_SETUP: createTabOnMainSetup,
+    OPEN_NON_ACTIVE_TAB: openNonActiveTab,
+    UI_INJECTED: isUIInjectAllowed,
+    UI_SOURCE: setUISource,
+    MCP_CONNECT: handleMcpConnect,
+    MCP_DISCONNECT: handleMcpDisconnect,
+    MCP_STATUS: handleMcpStatus,
+    MCP_USAGE: handleMcpUsage,
+    MCP_USAGE_CLEAR: handleMcpUsageClear,
+    MCP_GET_TOOLS: handleMcpGetTools,
+    MCP_INSTALL_INFO: handleMcpInstallInfo,
+    NETSUITE_PROXY_FETCH: proxyNetsuiteIframeFetch,
+    LIST_OPEN_NETSUITE_ACCOUNTS: listOpenNetsuiteAccounts,
+    RECOVER_DASHBOARD_PREVIEW_SESSION: recoverDashboardPreviewSession,
+    OPEN_DASHBOARD_PREVIEW: openDashboardPreview,
+    SWITCH_DASHBOARD_ACCOUNT: switchDashboardAccount,
+    DASHBOARD_ENABLER_READY: dashboardEnablerReady,
+    START_ELEMENT_SCREENSHOT_SELECTION: startElementScreenshotSelection,
+    CAPTURE_ELEMENT_SCREENSHOT: captureElementScreenshot,
+    CLAUDE_CLI_START: handleClaudeCliStart,
+    CLAUDE_CLI_CANCEL: handleClaudeCliCancel,
+    CLAUDE_CLI_GET_STATE: handleClaudeCliGetState,
+    CLAUDE_CLI_CLEAR: handleClaudeCliClear,
+    DOWNLOAD_ANALYZER_GET_STATE: handleDownloadAnalyzerGetState,
+    DOWNLOAD_ANALYZER_SET_ENABLED: handleDownloadAnalyzerSetEnabled,
+    DOWNLOAD_ANALYZER_CLEAR: handleDownloadAnalyzerClear,
+    DOWNLOAD_FILE_CABINET_FILE: handleDownloadFileCabinetFile,
+    JOBS_LIST: handleJobsList,
+    JOBS_GET: handleJobsGet,
+    JOBS_CREATE: handleJobsCreate,
+    JOBS_UPDATE: handleJobsUpdate,
+    JOBS_REQUEST_ACTION: handleJobsRequestAction,
+    JOBS_CLEAR_COMPLETED: handleJobsClearCompleted,
+    QUIZZES_LIST: handleQuizzesList,
+    QUIZZES_GET: handleQuizzesGet,
+    QUIZZES_DELETE: handleQuizzesDelete,
+    QUIZZES_IMPORT: handleQuizzesImport,
+    TEMPLATE_DESIGN_SESSION_RENDER: handleTemplateDesignSessionRenderMessage,
+    ENSURE_RECORD_BINDING_SKILL: handleEnsureTemplateSkillsMessage,
+    ENSURE_TEMPLATE_SKILLS: handleEnsureTemplateSkillsMessage
+  };
+
+  const messageHandler = messageMap[message.type];
+  if (!messageHandler) {
+    console.log("Message not found:", message.type);
+    return;
+  }
+
+  const asynchronous = messageHandler({ message, sender, sendResponse });
+
+    return asynchronous;
+  }
+);
+
+const closeResetPanel = () => {
+  chrome.sidePanel.setOptions({ enabled: false });
+  chrome.sidePanel.setOptions({ enabled: true });
+  console.log("[OnMessage][closeResetPanel] Panel closed");
+
+  return true;
+};
+
+const createTabOnMainSetup = ({ sender }) => {
+  const tab = sender.tab;
+  if (!tab || !tab.url) return;
+
+  try {
+    const url = new URL(tab.url);
+    const baseUrl = `${url.protocol}//${url.hostname}`;
+    const newPath = "/app/setup/mainsetup.nl";
+    const newUrl = baseUrl + newPath;
+
+    chrome.tabs.create({ url: newUrl });
+  } catch (err) {
+    console.error(
+      "[OnMessage][createTabOnMainSetup] Invalid tab URL:",
+      tab.url,
+      err
+    );
+  }
+
+  return true;
+};
+
+const openNonActiveTab = ({ message }) => {
+  chrome.tabs.create({ url: message.url, active: false }); // active: false → background tab
+
+  return true;
+};
+
+const isUIInjectAllowed = ({ message, sender, sendResponse }) => {
+  const tab = sender.tab;
+  if (!tab || !tab.url) return;
+
+  sendResponse({
+    injectAllowed: tab.url.includes("/app/setup/mainsetup.nl")
+  });
+
+  return true; // True to allow Asyncronous message
+};
+
+const setUISource = ({ message }) => {
+  console.log("[OnMessage][setUISource] UI Source:", message.source);
+  uiSource = message.source;
+
+  return true; // True to allow Asyncronous message
+};
+
+const getDashboardPreviewSessions = async (): Promise<
+  Record<string, AnyRecord>
+> => {
+  const result = await chrome.storage.session.get(DASHBOARD_PREVIEW_SESSIONS_KEY);
+  return result[DASHBOARD_PREVIEW_SESSIONS_KEY] || {};
+};
+
+const saveDashboardPreviewSessions = async (sessions) => {
+  await chrome.storage.session.set({
+    [DASHBOARD_PREVIEW_SESSIONS_KEY]: sessions
+  });
+};
+
+const dashboardEnablerReady = ({ message, sender }) => {
+  const readyKey = `${message.sessionId}:${sender.tab?.id}`;
+  const waiter = dashboardEnablerReadyWaiters.get(readyKey);
+  if (waiter && sender.tab?.id === waiter.tabId) {
+    clearTimeout(waiter.timer);
+    dashboardEnablerReadyWaiters.delete(readyKey);
+    waiter.resolve();
+  } else {
+    readyDashboardEnablers.add(readyKey);
+  }
+  return false;
+};
+
+const waitForDashboardEnablerReady = (
+  sessionId: string,
+  tabId: number,
+  timeoutMs = 20000
+): Promise<void> =>
+  new Promise<void>((resolve) => {
+    const readyKey = `${sessionId}:${tabId}`;
+    if (readyDashboardEnablers.delete(readyKey)) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      dashboardEnablerReadyWaiters.delete(readyKey);
+      resolve();
+    }, timeoutMs);
+    dashboardEnablerReadyWaiters.set(readyKey, { tabId, timer, resolve });
+  });
+
+const buildDashboardEnablerUrl = (sourceUrl, sessionId) => {
+  const url = new URL("/app/setup/mainsetup.nl", sourceUrl.origin);
+  url.searchParams.set("sc", "-90");
+  url.searchParams.set("magicDashboardEnabler", sessionId);
+  return url.href;
+};
+
+const getAccountIdFromUrl = (url) =>
+  new URL(url).hostname.split(".")[0].toUpperCase().replace(/-/g, "_");
+
+const getDashboardSessionIdFromTab = (tab, parameterName) => {
+  try {
+    return new URL(tab.url || tab.pendingUrl).searchParams.get(parameterName);
+  } catch {
+    return null;
+  }
+};
+
+const getDashboardTabUrl = (tab) => tab.url || tab.pendingUrl || "";
+
+const getMagicDashboardGroups = async () => {
+  const groups = (await dashboardTabGroupsQuery({})).filter(
+    (group) =>
+      String(group.title || "").trim().toLowerCase() ===
+      DASHBOARD_GROUP_TITLE.toLowerCase()
+  );
+  const result = [];
+  for (const group of groups) {
+    const tabs = await dashboardTabsQuery({
+      groupId: group.id,
+      windowId: group.windowId
+    });
+    result.push({ group, tabs });
+  }
+  return result;
+};
+
+const openExistingMagicDashboardGroup = async () => {
+  // Derive groups from the actual open tabs. This includes collapsed groups
+  // and avoids relying on a title-filtered query result.
+  const allTabs = await dashboardTabsQuery({});
+  const groupIds = [
+    ...new Set(
+      allTabs
+        .map((tab) => tab.groupId)
+        .filter((groupId) => groupId !== TAB_GROUP_ID_NONE)
+    )
+  ];
+  const groups = (
+    await Promise.all(
+      groupIds.map((groupId) =>
+        dashboardTabGroupsGet(groupId).catch(() => null)
+      )
+    )
+  ).filter(
+    (group) =>
+      group &&
+      String(group.title || "").trim().toLowerCase() ===
+        DASHBOARD_GROUP_TITLE.toLowerCase()
+  );
+  if (!groups.length) return null;
+
+  const group = groups[0];
+  const tabs = allTabs.filter((tab) => tab.groupId === group.id);
+  const dashboardTab =
+    tabs.find((tab) =>
+      getDashboardTabUrl(tab).includes("magicDashboardPreview=")
+    ) ||
+    tabs.find((tab) => tab.active) ||
+    tabs[0];
+  await dashboardTabGroupsUpdate(group.id, { collapsed: false });
+  await dashboardWindowsUpdate(group.windowId, { focused: true });
+  if (dashboardTab?.id) {
+    await dashboardTabsUpdate(dashboardTab.id, { active: true });
+  }
+
+  return { group, tabs, dashboardTab };
+};
+
+const removeDuplicateMagicDashboardGroups = async (groups, keeperGroupId) => {
+  for (const entry of groups) {
+    if (entry.group.id === keeperGroupId) continue;
+    const tabIds = entry.tabs.map((tab) => tab.id).filter(Boolean);
+    if (tabIds.length) {
+      await dashboardTabsRemove(tabIds).catch(() => undefined);
+    }
+  }
+};
+
+const recoverDashboardSessionFromGroup = async (entry, storedSessions) => {
+  const dashboardTab = entry.tabs.find((tab) =>
+    getDashboardTabUrl(tab).includes("magicDashboardPreview=")
+  );
+  const enablerTab = entry.tabs.find((tab) =>
+    getDashboardTabUrl(tab).includes("magicDashboardEnabler=")
+  );
+  if (!dashboardTab?.id || !enablerTab?.id) return null;
+
+  const dashboardSessionId = getDashboardSessionIdFromTab(
+    dashboardTab,
+    "magicDashboardPreview"
+  );
+  const enablerSessionId = getDashboardSessionIdFromTab(
+    enablerTab,
+    "magicDashboardEnabler"
+  );
+  const sessionId = dashboardSessionId || enablerSessionId;
+  if (!sessionId) return null;
+
+  // Repair legacy mismatched marker IDs by navigating the worker to the
+  // dashboard's session ID. The existing worker tab is retained.
+  if (dashboardSessionId && enablerSessionId !== dashboardSessionId) {
+    const repairedUrl = new URL(getDashboardTabUrl(enablerTab));
+    repairedUrl.searchParams.set(
+      "magicDashboardEnabler",
+      dashboardSessionId
+    );
+    await dashboardTabsUpdate(enablerTab.id, {
+      url: repairedUrl.href,
+      active: false,
+      autoDiscardable: false
+    });
+    await waitForTabComplete(enablerTab.id);
+  }
+
+  const stored = storedSessions[sessionId] || {};
+  const enablerUrl = getDashboardTabUrl(enablerTab);
+  const accountDomain = new URL(enablerUrl).hostname;
+  const session = {
+    ...stored,
+    sessionId,
+    accountId: getAccountIdFromUrl(enablerUrl),
+    accountDomain,
+    enablerTabId: enablerTab.id,
+    dashboardTabId: dashboardTab.id,
+    groupId: entry.group.id,
+    createdAt: stored.createdAt || 0
+  };
+  return { sessionId, session, dashboardTab, enablerTab };
+};
+
+const getLiveDashboardPreviewSession = async () => {
+  const sessions = await getDashboardPreviewSessions();
+  const existingGroups = await getMagicDashboardGroups();
+
+  if (existingGroups.length) {
+    const recovered = [];
+    for (const entry of existingGroups) {
+      const live = await recoverDashboardSessionFromGroup(entry, sessions);
+      if (live) recovered.push({ entry, live });
+    }
+
+    const keeperEntry =
+      recovered[0]?.entry ||
+      existingGroups.find((entry) =>
+        entry.tabs.some((tab) =>
+          getDashboardTabUrl(tab).includes("magicDashboardPreview=")
+        )
+      ) ||
+      existingGroups[0];
+    await removeDuplicateMagicDashboardGroups(
+      existingGroups,
+      keeperEntry.group.id
+    );
+
+    const keeper = recovered.find(
+      ({ entry }) => entry.group.id === keeperEntry.group.id
+    )?.live;
+    if (keeper) {
+      await saveDashboardPreviewSessions({
+        [keeper.sessionId]: keeper.session
+      });
+      await dashboardTabGroupsUpdate(keeper.session.groupId, {
+          title: DASHBOARD_GROUP_TITLE,
+          color: "blue"
+        })
+        .catch(() => undefined);
+      return keeper;
+    }
+
+    // The group itself is authoritative. Even if legacy tabs cannot be paired
+    // into a session, expand and focus the existing group instead of creating
+    // another one.
+    const dashboardTab =
+      keeperEntry.tabs.find((tab) =>
+        getDashboardTabUrl(tab).includes("magicDashboardPreview=")
+      ) || keeperEntry.tabs[0];
+    await saveDashboardPreviewSessions({});
+    return {
+      sessionId: null,
+      session: {
+        groupId: keeperEntry.group.id,
+        dashboardTabId: dashboardTab?.id || null
+      },
+      dashboardTab,
+      enablerTab: keeperEntry.tabs.find((tab) =>
+        getDashboardTabUrl(tab).includes("magicDashboardEnabler=")
+      )
+    };
+  }
+
+  const allTabs = await dashboardTabsQuery({});
+  const dashboardTabs = allTabs.filter(
+    (tab) =>
+      tab.id &&
+      tab.url?.startsWith(chrome.runtime.getURL("dist/vue-ui/index.html")) &&
+      tab.url.includes("magicDashboardPreview=")
+  );
+  const enablerTabs = allTabs.filter(
+    (tab) => tab.id && tab.url?.includes("magicDashboardEnabler=")
+  );
+  const liveSessions = [];
+  const recoveredSessions = {};
+
+  for (const dashboardTab of dashboardTabs) {
+    const dashboardUrl = new URL(dashboardTab.url);
+    const sessionId = dashboardUrl.searchParams.get("magicDashboardPreview");
+    if (!sessionId) continue;
+    const enablerTab = enablerTabs.find((tab) => {
+      try {
+        return (
+          new URL(tab.url).searchParams.get("magicDashboardEnabler") ===
+          sessionId
+        );
+      } catch {
+        return false;
+      }
+    });
+    if (!enablerTab) continue;
+
+    const stored = sessions[sessionId] || {};
+    const accountDomain = new URL(enablerTab.url).hostname;
+    let groupId =
+      dashboardTab.groupId !== TAB_GROUP_ID_NONE
+        ? dashboardTab.groupId
+        : enablerTab.groupId;
+    if (groupId === TAB_GROUP_ID_NONE) {
+      groupId = await dashboardTabsGroup({
+        tabIds: [dashboardTab.id, enablerTab.id]
+      });
+    } else if (dashboardTab.groupId !== enablerTab.groupId) {
+      await dashboardTabsGroup({
+        groupId,
+        tabIds: [dashboardTab.id, enablerTab.id]
+      });
+    }
+
+    const session = {
+      ...stored,
+      sessionId,
+      accountId: getAccountIdFromUrl(enablerTab.url),
+      accountDomain,
+      enablerTabId: enablerTab.id,
+      dashboardTabId: dashboardTab.id,
+      groupId,
+      createdAt: stored.createdAt || 0
+    };
+    recoveredSessions[sessionId] = session;
+    liveSessions.push({ sessionId, session, dashboardTab, enablerTab });
+  }
+
+  liveSessions.sort(
+    (a, b) => Number(b.session.createdAt || 0) - Number(a.session.createdAt || 0)
+  );
+  const keeper = liveSessions[0] || null;
+
+  // Older duplicate preview groups can only come from previous versions of
+  // this flow. Consolidate them so there is exactly one live dashboard group.
+  for (const duplicate of liveSessions.slice(1)) {
+    delete recoveredSessions[duplicate.sessionId];
+    await dashboardTabsRemove([
+      duplicate.dashboardTab.id,
+      duplicate.enablerTab.id
+    ])
+      .catch(() => undefined);
+  }
+
+  await saveDashboardPreviewSessions(recoveredSessions);
+  if (keeper) {
+    await dashboardTabGroupsUpdate(keeper.session.groupId, {
+        title: DASHBOARD_GROUP_TITLE,
+        color: "blue"
+      })
+      .catch(() => undefined);
+  }
+  return keeper;
+};
+
+const focusDashboardPreviewSession = async (liveSession) => {
+  await dashboardTabGroupsUpdate(liveSession.session.groupId, {
+    collapsed: false
+  })
+    .catch(() => undefined);
+  const targetTab = liveSession.dashboardTab;
+  if (targetTab?.windowId) {
+    await dashboardWindowsUpdate(targetTab.windowId, { focused: true })
+      .catch(() => undefined);
+  }
+  if (targetTab?.id) {
+    await dashboardTabsUpdate(targetTab.id, { active: true });
+  }
+};
+
+const findVisibleEmbeddedDashboardTab = async () => {
+  const tabs = await dashboardTabsQuery({
+    url: ["*://*.app.netsuite.com/*"]
+  });
+  const ordered = [...tabs].sort(
+    (a, b) => Number(b.active) - Number(a.active)
+  );
+  for (const tab of ordered) {
+    if (!tab.id) continue;
+    try {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          const frame = document.getElementById("magic-netsuite-frame");
+          if (!(frame instanceof HTMLIFrameElement)) return false;
+          const style = window.getComputedStyle(frame);
+          const rect = frame.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            style.pointerEvents !== "none" &&
+            Number.parseFloat(style.opacity || "1") > 0 &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        }
+      });
+      if (result?.result === true) return tab;
+    } catch {
+      // Restricted or unloading tabs are not dashboard candidates.
+    }
+  }
+  return null;
+};
+
+const decorateDashboardPreviewTab = async (tabId, title) => {
+  try {
+    const faviconUrl = chrome.runtime.getURL("icons/icon32.png");
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (tabTitle, iconUrl) => {
+        const applyDecoration = () => {
+          if (document.title !== tabTitle) document.title = tabTitle;
+          document
+            .querySelectorAll('link[rel="icon"], link[rel="shortcut icon"]')
+            .forEach((node) => node.remove());
+          const icon = document.createElement("link");
+          icon.rel = "icon";
+          icon.type = "image/png";
+          icon.href = iconUrl;
+          document.head.appendChild(icon);
+        };
+
+        applyDecoration();
+        const root = document.head || document.documentElement;
+        const observer = new MutationObserver(() => {
+          if (document.title !== tabTitle) applyDecoration();
+        });
+        observer.observe(root, {
+          childList: true,
+          subtree: true,
+          characterData: true
+        });
+      },
+      args: [title, faviconUrl]
+    });
+  } catch (error) {
+    console.warn(`[Dashboard Preview] Could not decorate tab ${tabId}`, error);
+  }
+};
+
+const describeNetsuiteAccountTab = (tab, senderTabId) => {
+  try {
+    const url = new URL(tab.url);
+    const accountId = url.hostname
+      .split(".")[0]
+      .toUpperCase()
+      .replace(/-/g, "_");
+    const pageTitle = String(tab.title || "").trim();
+    return {
+      tabId: tab.id,
+      accountId,
+      label: pageTitle
+        ? `${accountId} — ${pageTitle}`
+        : accountId,
+      url: tab.url,
+      current: tab.id === senderTabId
+    };
+  } catch {
+    return null;
+  }
+};
+
+const listOpenNetsuiteAccounts = ({ message, sender, sendResponse }) => {
+  (async () => {
+    try {
+      const tabs = await dashboardTabsQuery({
+        url: "*://*.app.netsuite.com/*"
+      });
+      const candidates = tabs.filter(
+        (tab) =>
+          tab.id &&
+          tab.url &&
+          !tab.url.includes("tempTab=true") &&
+          !tab.url.includes("magicDashboardEnabler=")
+      );
+
+      const checks = await Promise.all(
+        candidates.map(async (tab) => {
+          try {
+            const response = await sendMessageToTab(tab.id, {
+              action: "CHECK_CONNECTION",
+              data: {},
+              mode: "normal"
+            });
+            return response?.message === "connected" ? tab : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const sessions = await getDashboardPreviewSessions();
+      const selectedAccount = message.sessionId
+        ? sessions[message.sessionId]?.accountId || null
+        : null;
+      const connectedAccounts = checks
+        .filter(Boolean)
+        .map((tab) => describeNetsuiteAccountTab(tab, sender.tab?.id))
+        .filter(Boolean);
+      const uniqueAccounts = Array.from(
+        new Map(
+          connectedAccounts.map((account) => [account.accountId, account])
+        ).values()
+      );
+      const accounts = uniqueAccounts
+        .map((account) => ({
+          ...account,
+          current: selectedAccount
+            ? account.accountId === selectedAccount
+            : account.current
+        }))
+        .sort((a, b) => Number(b.current) - Number(a.current));
+
+      sendResponse({ ok: true, accounts });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message, accounts: [] });
+    }
+  })();
+  return true;
+};
+
+const recoverDashboardPreviewSession = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      const liveSession = await getLiveDashboardPreviewSession();
+      if (!liveSession?.sessionId || !liveSession.session?.enablerTabId) {
+        throw new Error("Dashboard preview session could not be recovered.");
+      }
+      if (
+        message.sessionId &&
+        liveSession.sessionId !== message.sessionId
+      ) {
+        throw new Error("The open dashboard group belongs to another session.");
+      }
+      sendResponse({
+        ok: true,
+        sessionId: liveSession.sessionId,
+        session: liveSession.session
+      });
+    } catch (error) {
+      sendResponse({ ok: false, error: error.message });
+    }
+  })();
+  return true;
+};
+
+const ensureDashboardPreviewOpen = async (message, sender) => {
+    let enablerTab = null;
+    let dashboardTab = null;
+    try {
+      // First and absolute rule: if the Chrome group already exists, open it.
+      // Nothing else in this flow is allowed to run before this check.
+      const existingGroup = await openExistingMagicDashboardGroup();
+      if (existingGroup) {
+        return { ok: true, reused: true };
+      }
+
+      const existingSession = await getLiveDashboardPreviewSession();
+      if (existingSession) {
+        await focusDashboardPreviewSession(existingSession);
+        return {
+          ok: true,
+          sessionId: existingSession.sessionId,
+          reused: true
+        };
+      }
+
+      const sourceTabId = Number(message.tabId || sender.tab?.id);
+      const sourceTab = await dashboardTabsGet(sourceTabId);
+      if (
+        !sourceTab?.id ||
+        !sourceTab.url?.includes("app.netsuite.com") ||
+        !sourceTab.windowId
+      ) {
+        throw new Error("The selected NetSuite account tab is no longer available.");
+      }
+
+      const sourceUrl = new URL(sourceTab.url);
+      const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const accountId = getAccountIdFromUrl(sourceUrl.href);
+
+      enablerTab = await dashboardTabsCreate({
+        url: buildDashboardEnablerUrl(sourceUrl, sessionId),
+        active: false,
+        windowId: sourceTab.windowId,
+        openerTabId: sourceTab.id
+      });
+      if (!enablerTab.id) throw new Error("Could not create the NetSuite enabler tab.");
+      await dashboardTabsUpdate(enablerTab.id, { autoDiscardable: false });
+      const enablerReady = waitForDashboardEnablerReady(sessionId, enablerTab.id);
+      await waitForTabComplete(enablerTab.id);
+      await enablerReady;
+      await decorateDashboardPreviewTab(
+        enablerTab.id,
+        DASHBOARD_ENABLER_TAB_TITLE
+      );
+
+      const dashboardUrl = new URL(
+        chrome.runtime.getURL("dist/vue-ui/index.html")
+      );
+      dashboardUrl.searchParams.set("magicDashboardPreview", sessionId);
+      dashboardUrl.searchParams.set("account", accountId);
+
+      dashboardTab = await dashboardTabsCreate({
+        url: dashboardUrl.href,
+        active: false,
+        windowId: sourceTab.windowId,
+        openerTabId: sourceTab.id
+      });
+      if (!dashboardTab.id) throw new Error("Could not create the dashboard tab.");
+      await waitForTabComplete(dashboardTab.id);
+      await decorateDashboardPreviewTab(dashboardTab.id, DASHBOARD_TAB_TITLE);
+
+      const groupId = await dashboardTabsGroup({
+        tabIds: [enablerTab.id, dashboardTab.id]
+      });
+      await dashboardTabGroupsUpdate(groupId, {
+          title: DASHBOARD_GROUP_TITLE,
+          color: "blue",
+          collapsed: false
+        })
+        .catch(() => undefined);
+
+      const sessions = await getDashboardPreviewSessions();
+      sessions[sessionId] = {
+        sessionId,
+        accountId,
+        accountDomain: sourceUrl.hostname,
+        sourceTabId: sourceTab.id,
+        enablerTabId: enablerTab.id,
+        dashboardTabId: dashboardTab.id,
+        groupId,
+        createdAt: Date.now()
+      };
+      await saveDashboardPreviewSessions(sessions);
+      await dashboardTabsUpdate(dashboardTab.id, { active: true });
+
+      return { ok: true, sessionId };
+    } catch (error) {
+      if (dashboardTab?.id) {
+        await dashboardTabsRemove(dashboardTab.id).catch(() => undefined);
+      }
+      if (enablerTab?.id) {
+        await dashboardTabsRemove(enablerTab.id).catch(() => undefined);
+      }
+      return { ok: false, error: error.message };
+    }
+};
+
+const openDashboardPreview = ({ message, sender, sendResponse }) => {
+  // Acquire the single-flight lock synchronously, before any asynchronous
+  // group lookup. Concurrent clicks/messages share this exact promise.
+  if (!dashboardPreviewOpenPromise) {
+    dashboardPreviewOpenPromise = ensureDashboardPreviewOpen(message, sender)
+      .finally(() => {
+        dashboardPreviewOpenPromise = null;
+      });
+  }
+
+  dashboardPreviewOpenPromise
+    .then(sendResponse)
+    .catch((error) => {
+      sendResponse({ ok: false, error: error.message });
+    });
+
+  return true;
+};
+
+const switchDashboardAccount = ({ message, sendResponse }) => {
+  (async () => {
+    let jobId = "";
+    try {
+      const liveSession = await getLiveDashboardPreviewSession();
+      const sessions = await getDashboardPreviewSessions();
+      const session =
+        liveSession?.sessionId === message.sessionId
+          ? liveSession.session
+          : sessions[message.sessionId];
+      if (!session) throw new Error("Dashboard preview session not found.");
+
+      const sourceTab = await dashboardTabsGet(Number(message.tabId));
+      if (!sourceTab?.id || !sourceTab.url?.includes("app.netsuite.com")) {
+        throw new Error("The selected NetSuite account tab is unavailable.");
+      }
+
+      const sourceUrl = new URL(sourceTab.url);
+      const accountId = getAccountIdFromUrl(sourceUrl.href);
+      if (accountId === session.accountId) {
+        sendResponse({ ok: true, accountId, accountDomain: sourceUrl.hostname });
+        return;
+      }
+
+      try {
+        const job = await createStoredJob({
+          title: `Switch NetSuite context to ${accountId}`,
+          kind: "account-switch",
+          status: "running",
+          progress: 0,
+          indeterminate: true,
+          startedAt: Date.now(),
+          environment: sourceUrl.hostname,
+          account: accountId,
+          sourcePath: "/",
+          message: "Reloading the authenticated execution worker"
+        });
+        jobId = job.id;
+      } catch (jobError) {
+        console.warn("[Dashboard] Could not register account switch.", jobError);
+      }
+
+      const enablerTab = await dashboardTabsGet(session.enablerTabId);
+      const enablerReady = waitForDashboardEnablerReady(
+        message.sessionId,
+        enablerTab.id
+      );
+      await dashboardTabsUpdate(enablerTab.id, {
+        url: buildDashboardEnablerUrl(sourceUrl, message.sessionId),
+        active: false,
+        autoDiscardable: false
+      });
+      await waitForTabComplete(enablerTab.id);
+      await enablerReady;
+      await decorateDashboardPreviewTab(
+        enablerTab.id,
+        DASHBOARD_ENABLER_TAB_TITLE
+      );
+
+      await dashboardTabsGroup({
+        groupId: session.groupId,
+        tabIds: [enablerTab.id, session.dashboardTabId]
+      });
+
+      sessions[message.sessionId] = {
+        ...session,
+        accountId,
+        accountDomain: sourceUrl.hostname,
+        sourceTabId: sourceTab.id,
+        enablerTabId: enablerTab.id
+      };
+      await saveDashboardPreviewSessions(sessions);
+      await dashboardTabGroupsUpdate(session.groupId, {
+          title: DASHBOARD_GROUP_TITLE,
+          color: "blue",
+          collapsed: false
+        })
+        .catch(() => undefined);
+      await dashboardTabsUpdate(session.dashboardTabId, { active: true })
+        .catch(() => undefined);
+
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "succeeded",
+          progress: 100,
+          indeterminate: false,
+          finishedAt: Date.now(),
+          message: `Execution worker connected to ${accountId}`,
+          result: {
+            accountId,
+            accountDomain: sourceUrl.hostname
+          }
+        }).catch(() => undefined);
+      }
+      sendResponse({ ok: true, accountId, accountDomain: sourceUrl.hostname });
+    } catch (error) {
+      if (jobId) {
+        await updateStoredJob(jobId, {
+          status: "failed",
+          indeterminate: false,
+          finishedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+          message: "NetSuite context switch failed"
+        }).catch(() => undefined);
+      }
+      sendResponse({ ok: false, error: error.message });
+    }
+  })();
+  return true;
+};
+
+const startElementScreenshotSelection = (
+  { sendResponse }: { sendResponse?: SendResponse } = {}
+) => {
+  chrome.tabs.query({ active: true, currentWindow: true }, async ([tab]) => {
+    try {
+      if (!tab?.id || !/^https?:\/\//i.test(tab.url || "")) {
+        throw new Error("Open a regular web page before starting element screenshot selection.");
+      }
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content/elementScreenshotPicker.js"]
+      });
+
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        files: ["content/elementScreenshotPicker.js"]
+      }).catch((error) => {
+        console.warn("[ElementScreenshot] Some frames could not receive the picker:", error);
+      });
+
+      await chrome.storage.local.set({
+        magic_netsuite_element_screenshot_request: {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          source: "background"
+        }
+      });
+
+      sendResponse?.({ ok: true });
+    } catch (error) {
+      console.error("[ElementScreenshot] Failed to start selection:", error);
+      sendResponse?.({ ok: false, error: error?.message || String(error) });
+    }
+  });
+
+  return true;
+};
+
+const captureElementScreenshot = ({ sender, sendResponse }) => {
+  const tabId = sender?.tab?.id;
+  if (!tabId) {
+    sendResponse({ ok: false, error: "No tab found for screenshot request." });
+    return true;
+  }
+
+  chrome.tabs.captureVisibleTab(
+    sender.tab.windowId,
+    { format: "png" },
+    (dataUrl) => {
+      if (chrome.runtime.lastError || !dataUrl) {
+        sendResponse({
+          ok: false,
+          error: chrome.runtime.lastError?.message || "Unable to capture visible tab."
+        });
+        return;
+      }
+
+      sendResponse({ ok: true, dataUrl });
+    }
+  );
+
+  return true;
+};
+
+// MCP MESSAGE HANDLERS
+const handleMcpConnect = ({ sendResponse }) => {
+  mcpConnect().then(() => {
+    sendResponse({
+      status: getMcpBridgeStatus(),
+      connections: getMcpConnectionDetails(),
+      dedicatedTab: getMcpDedicatedTabInfo()
+    });
+  });
+  return true; // async
+};
+
+const handleMcpDisconnect = ({ sendResponse }) => {
+  mcpDisconnect().then(() => {
+    sendResponse({
+      status: "disconnected",
+      connections: getMcpConnectionDetails(),
+      dedicatedTab: getMcpDedicatedTabInfo()
+    });
+  });
+  return true;
+};
+
+const handleMcpStatus = ({ sendResponse }) => {
+  sendResponse({
+    status: getMcpBridgeStatus(),
+    connections: getMcpConnectionDetails(),
+    dedicatedTab: getMcpDedicatedTabInfo()
+  });
+  return true;
+};
+
+const handleMcpUsage = ({ sendResponse }) => {
+  const stats = {};
+  mcpUsageLog.forEach((entry) => {
+    if (!stats[entry.tool]) {
+      stats[entry.tool] = { calls: 0, errors: 0 };
+    }
+    stats[entry.tool].calls++;
+    if (!entry.success) {
+      stats[entry.tool].errors++;
+    }
+  });
+  sendResponse({ log: mcpUsageLog, stats });
+  return true;
+};
+
+const handleMcpUsageClear = ({ sendResponse }) => {
+  mcpUsageLog.length = 0;
+  sendResponse({ ok: true });
+  return true;
+};
+
+const handleMcpInstallInfo = ({ sendResponse }) => {
+  sendResponse({ extensionId: chrome.runtime.id });
+  return true;
+};
+
+const handleMcpGetTools = ({ sendResponse }) => {
+  // Return ALL tool definitions — the UI needs to see disabled tools too so users can re-enable them.
+  const tools = MCP_TOOL_DEFINITIONS.map(({ name, description }) => ({ name, description }));
+  sendResponse(tools);
+  return true;
+};
+
+const handleDownloadFileCabinetFile = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      const targetUrl = new URL(String(message.url || ""));
+      if (!targetUrl.hostname.toLowerCase().endsWith(".netsuite.com")) {
+        throw new Error("Blocked download outside NetSuite.");
+      }
+
+      const downloadId = await chromeCallback((done) =>
+        chrome.downloads.download(
+          {
+            url: targetUrl.href,
+            saveAs: false,
+            conflictAction: "uniquify"
+          },
+          done
+        )
+      );
+      sendResponse({ ok: true, downloadId });
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  })();
+  return true;
+};
+
+const proxyNetsuiteIframeFetch = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      const { url, method = "GET", headers = {}, body = null } = message.payload || {};
+      const targetUrl = new URL(url);
+      const allowedPaths = new Set([
+        "/app/common/scripting/nlapijsonhandler.nl",
+        "/app/site/hosting/scriptlet.nl"
+      ]);
+
+      if (!/\.app\.netsuite\.com$/i.test(targetUrl.hostname)) {
+        throw new Error("Blocked proxy request outside NetSuite application domain.");
+      }
+
+      if (!allowedPaths.has(targetUrl.pathname)) {
+        throw new Error(`Blocked proxy request to unsupported path: ${targetUrl.pathname}`);
+      }
+
+      const cleanHeaders = {};
+      const forbiddenHeaders = new Set([
+        "accept-encoding",
+        "connection",
+        "content-length",
+        "cookie",
+        "host",
+        "origin",
+        "referer",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site"
+      ]);
+
+      Object.entries(headers || {}).forEach(([key, value]) => {
+        if (!key || value == null) return;
+        if (forbiddenHeaders.has(key.toLowerCase())) return;
+        cleanHeaders[key] = value;
+      });
+
+      const response = await fetch(targetUrl.href, {
+        method,
+        headers: cleanHeaders,
+        body: body == null ? undefined : body,
+        credentials: "include",
+        redirect: "follow"
+      });
+
+      const responseHeaders = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+
+      sendResponse({
+        ok: true,
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url,
+        headers: responseHeaders,
+        body: await response.text()
+      });
+    } catch (error) {
+      console.error("[SuiteletProxy] Request failed:", error);
+      sendResponse({
+        ok: false,
+        error: error?.message || String(error)
+      });
+    }
+  })();
+
+  return true;
+};
+
+// TAB LISTENERS
+const notifyTabChange = (reason, tab) => {
+  chrome.runtime.sendMessage({
+    type: "TAB_CONTEXT_CHANGED",
+    reason,
+    url: tab.url,
+    tabId: tab.id
+  });
+};
+
+// URL changes → wait for load complete
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === "complete" && tab.url) {
+    notifyTabChange("url-loaded", tab);
+    if (tab.url.includes("magicDashboardEnabler=")) {
+      decorateDashboardPreviewTab(
+        tabId,
+        DASHBOARD_ENABLER_TAB_TITLE
+      ).catch(() => undefined);
+    } else if (
+      tab.url.startsWith(chrome.runtime.getURL("dist/vue-ui/index.html")) &&
+      tab.url.includes("magicDashboardPreview=")
+    ) {
+      decorateDashboardPreviewTab(tabId, DASHBOARD_TAB_TITLE).catch(
+        () => undefined
+      );
+    }
+  }
+});
+
+// Tab activated → wait until loaded
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  const tab = await dashboardTabsGet(tabId);
+  if (tab.status === "complete") {
+    notifyTabChange("tab-activated", tab);
+  }
+});
+
+// New tab → wait for load complete
+chrome.tabs.onCreated.addListener((tab) => {
+  if (tab.status === "complete" && tab.url) {
+    notifyTabChange("tab-created", tab);
+  }
+});
+
+/* MCP SERVER */
+// background.js — Chrome Extension Service Worker
+// Uses Chrome Native Messaging instead of scanning localhost bridge ports.
+// Chrome starts the native host; the host owns a local named-pipe relay used by
+// any AI-facing MCP stdio process that needs to call into the extension.
+const MCP_NATIVE_HOST_NAME = "com.magicnetsuite.mcp_bridge";
+
+let mcpNativePort = null;
+let mcpNativeConnecting = false;
+let mcpNativeLastError = null;
+
+// ── MCP: Dedicated Tab for Governance ──
+// When a tab runs out of SuiteScript governance, the MCP server creates a
+// persistent (non-temporary) tab on mainsetup.nl for the preferred account.
+// This tab stays open and auto-refreshes when governance drops below the threshold.
+let mcpDedicatedTabId = null;
+let mcpDedicatedTabAccountId = null;
+const MCP_GOVERNANCE_THRESHOLD = 100;
+let mcpDedicatedTabRefreshing = false;
+let mcpDedicatedTabCreating = false;
+const MAGIC_NETSUITE_SERVER_SCRIPT_ID = "customscript_magic_netsuite_server";
+const MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID = "customdeploy_magic_netsuite_server_dp";
+let mcpSuiteletServerUrlCache = null;
+
+const SKILLS_DB_NAME = "MagicNetsuiteSkills";
+const SKILLS_STORE_NAME = "skills";
+const RECORD_BINDING_SKILL_SEED_KEY =
+  "magic_netsuite_record_binding_skill_seed_v1";
+const TEMPLATE_DESIGN_SKILL_SEED_KEY =
+  "magic_netsuite_template_design_skill_seed_v1";
+
+function openSkillsDb(): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    // Do not pin a version here: the Vue UI owns schema migrations and may
+    // already have upgraded this IndexedDB database beyond the background
+    // worker's local schema knowledge. Opening without a version attaches to
+    // the current database version instead of throwing VersionError.
+    const request = indexedDB.open(SKILLS_DB_NAME);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const store = db.objectStoreNames.contains(SKILLS_STORE_NAME)
+        ? request.transaction.objectStore(SKILLS_STORE_NAME)
+        : db.createObjectStore(SKILLS_STORE_NAME, {
+            keyPath: "id",
+            autoIncrement: true
+          });
+
+      ["name", "tags", "description", "enabled", "domain"].forEach((indexName) => {
+        if (!store.indexNames.contains(indexName)) {
+          store.createIndex(indexName, indexName);
+        }
+      });
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Failed to open skills database."));
+  });
+}
+
+async function withSkillsStore(mode, operation): Promise<any> {
+  const db = await openSkillsDb();
+  try {
+    return await new Promise<any>((resolve, reject) => {
+      const tx = db.transaction(SKILLS_STORE_NAME, mode);
+      const store = tx.objectStore(SKILLS_STORE_NAME);
+      const value = operation(store);
+      tx.oncomplete = () => resolve(value);
+      tx.onerror = () => reject(tx.error || new Error("Skills database transaction failed."));
+      tx.onabort = () => reject(tx.error || new Error("Skills database transaction was aborted."));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function requestToPromise(request): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Skills database request failed."));
+  });
+}
+
+async function getAllStoredSkills(): Promise<AnyRecord[]> {
+  return withSkillsStore("readonly", (store) => requestToPromise(store.getAll()));
+}
+
+async function ensureBundledSkill(seedKey, skillPath, loadErrorMessage) {
+  const seedState = await chrome.storage.local.get(seedKey);
+  if (seedState[seedKey]) return null;
+
+  const response = await fetch(chrome.runtime.getURL(skillPath));
+  if (!response.ok) {
+    throw new Error(loadErrorMessage);
+  }
+  const definition = await response.json();
+  const storedSkills = await getAllStoredSkills();
+  const existing = storedSkills.find(
+    (skill) =>
+      String(skill.name || "").toLowerCase() ===
+      String(definition.name || "").toLowerCase()
+  );
+  let skillId = existing?.id || null;
+  if (!existing) {
+    const timestamp = new Date().toISOString();
+    skillId = await withSkillsStore("readwrite", (store) =>
+      requestToPromise(
+        store.add({
+          ...definition,
+          enabled: true,
+          supersedes: [],
+          dependencies: [],
+          lastReviewedAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        })
+      )
+    );
+  }
+  await chrome.storage.local.set({
+    [seedKey]: {
+      skillId,
+      seededAt: new Date().toISOString()
+    }
+  });
+  return skillId;
+}
+
+const ensureRecordBindingSkill = () =>
+  ensureBundledSkill(
+    RECORD_BINDING_SKILL_SEED_KEY,
+    "skills/bind-freemarker-record.json",
+    "Could not load the bundled record-binding skill."
+  );
+
+const ensureTemplateDesignSkill = () =>
+  ensureBundledSkill(
+    TEMPLATE_DESIGN_SKILL_SEED_KEY,
+    "skills/design-freemarker-template.json",
+    "Could not load the bundled FreeMarker design skill."
+  );
+
+const ensureTemplateSkills = async () => {
+  const [recordBindingSkillId, templateDesignSkillId] = await Promise.all([
+    ensureRecordBindingSkill(),
+    ensureTemplateDesignSkill()
+  ]);
+  return { recordBindingSkillId, templateDesignSkillId };
+};
+
+function handleEnsureTemplateSkillsMessage({ sendResponse }) {
+  ensureTemplateSkills()
+    .then((skillIds) => sendResponse({ ok: true, ...skillIds }))
+    .catch((error) =>
+      sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    );
+  return true;
+}
+
+function normalizeSkillPayload(args) {
+  const name = String(args?.name || "").trim();
+  const content = String(args?.content || args?.markdown || "").trim();
+  if (!name) throw new Error("Skill name is required.");
+  if (!content) throw new Error("Skill content or markdown is required.");
+
+  const domain = args?.domain === "sql" ? "sql" : "global";
+  return {
+    name,
+    description: String(args?.description || "").trim(),
+    tags: Array.isArray(args?.tags)
+      ? args.tags.map((tag) => String(tag).trim()).filter(Boolean).join(", ")
+      : String(args?.tags || "").trim(),
+    content,
+    enabled: args?.enabled === undefined ? true : Boolean(args.enabled),
+    domain,
+    triggers: String(args?.triggers || "").trim(),
+    status: ["active", "draft", "deprecated"].includes(args?.status)
+      ? args.status
+      : "active",
+    priority: Math.min(100, Math.max(0, Number(args?.priority ?? 50))),
+    source: String(args?.source || "ai_saved"),
+    dependencies: Array.isArray(args?.dependencies)
+      ? [
+          ...new Set(
+            args.dependencies
+              .map(Number)
+              .filter((id) => Number.isInteger(id) && id > 0)
+          )
+        ]
+      : []
+  };
+}
+
+async function handleMagicSaveSkill(args) {
+  const now = new Date().toISOString();
+  const payload = normalizeSkillPayload(args);
+  const dependenciesSpecified = Array.isArray(args?.dependencies);
+  const idArg = Number(args?.id);
+  const upsertByName = args?.upsertByName !== false;
+  const storedSkills = await getAllStoredSkills();
+  const existing =
+    (Number.isFinite(idArg) && idArg > 0
+      ? storedSkills.find((skill) => Number(skill.id) === idArg)
+      : null) ||
+    (upsertByName
+      ? storedSkills.find(
+          (skill) =>
+            String(skill.name || "").toLowerCase() ===
+            payload.name.toLowerCase()
+        )
+      : null);
+  if (existing?.id) {
+    const preserveWhenOmitted = [
+      "description",
+      "tags",
+      "enabled",
+      "domain",
+      "triggers",
+      "status",
+      "priority",
+      "source"
+    ];
+    for (const field of preserveWhenOmitted) {
+      if (args?.[field] === undefined && existing[field] !== undefined) {
+        payload[field] = existing[field];
+      }
+    }
+    if (!dependenciesSpecified) {
+      payload.dependencies = Array.isArray(existing.dependencies)
+        ? existing.dependencies.map(Number)
+        : [];
+    }
+    payload.dependencies = payload.dependencies.filter(
+      (dependencyId) => dependencyId !== Number(existing.id)
+    );
+    const dependencyMap = new Map(
+      storedSkills.map((skill) => [
+        Number(skill.id),
+        Number(skill.id) === Number(existing.id)
+          ? payload.dependencies
+          : Array.isArray(skill.dependencies)
+            ? skill.dependencies.map(Number)
+            : []
+      ])
+    );
+    const visiting = new Set();
+    const visited = new Set();
+    const hasCycle = (skillId) => {
+      if (visiting.has(skillId)) return true;
+      if (visited.has(skillId)) return false;
+      visiting.add(skillId);
+      for (const dependencyId of
+        (dependencyMap.get(skillId) as number[]) || []) {
+        if (dependencyMap.has(dependencyId) && hasCycle(dependencyId)) {
+          return true;
+        }
+      }
+      visiting.delete(skillId);
+      visited.add(skillId);
+      return false;
+    };
+    if (hasCycle(Number(existing.id))) {
+      throw new Error("Skill dependencies cannot contain a cycle.");
+    }
+  }
+
+  const savedId = await withSkillsStore("readwrite", async (store) => {
+    if (existing?.id) {
+      await requestToPromise(
+        store.put({
+          ...existing,
+          ...payload,
+          id: existing.id,
+          createdAt: existing.createdAt || now,
+          updatedAt: now
+        })
+      );
+      return existing.id;
+    }
+
+    return requestToPromise(
+      store.add({
+        ...payload,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+  });
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            saved: true,
+            id: savedId,
+            name: payload.name,
+            enabled: payload.enabled,
+            domain: payload.domain
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+async function handleMagicListSkills(args) {
+  await ensureTemplateSkills();
+  const includeDisabled = args?.includeDisabled !== false;
+  const skills = (await getAllStoredSkills())
+    .filter((skill) => includeDisabled || skill.enabled !== false)
+    .map(({ id, name, description, tags, enabled, domain, dependencies, updatedAt }) => ({
+      id,
+      name,
+      description,
+      tags,
+      enabled: enabled !== false,
+      domain: domain || "global",
+      dependencies: Array.isArray(dependencies) ? dependencies : [],
+      updatedAt
+    }));
+  return { content: [{ type: "text", text: JSON.stringify({ skills }, null, 2) }] };
+}
+
+async function handleMagicSearchSkills(args) {
+  await ensureTemplateSkills();
+  const query = String(args?.query || "").trim().toLowerCase();
+  const includeDisabled = Boolean(args?.includeDisabled);
+  const normalizeSearchText = (value) =>
+    String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  const normalizedQuery = normalizeSearchText(query);
+  const terms = normalizedQuery
+    .split(/\s+/)
+    .filter((term) => term.length > 1);
+  const results = (await getAllStoredSkills())
+    .filter((skill) => includeDisabled || skill.enabled !== false)
+    .map((skill) => {
+      const name = normalizeSearchText(skill.name);
+      const metadata = normalizeSearchText(
+        `${skill.name || ""} ${skill.description || ""} ${skill.tags || ""}`
+      );
+      const content = normalizeSearchText(skill.content);
+      const triggers = String(skill.triggers || "")
+        .split(/[\n,]+/)
+        .map(normalizeSearchText)
+        .filter(Boolean);
+      const exactTrigger = triggers.some(
+        (trigger) => normalizedQuery && normalizedQuery.includes(trigger)
+      );
+      const triggerTermMatches = terms.filter((term) =>
+        triggers.some((trigger) => trigger.includes(term))
+      ).length;
+      const metadataMatches = terms.filter((term) =>
+        metadata.includes(term)
+      ).length;
+      const contentMatches = terms.filter((term) =>
+        content.includes(term)
+      ).length;
+      const score = terms.length
+        ? (exactTrigger ? 120 : 0) +
+          (normalizedQuery.includes(name) ? 45 : 0) +
+          triggerTermMatches * 10 +
+          metadataMatches * 6 +
+          Math.min(12, contentMatches)
+        : 1;
+      return { skill, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Number(b.skill.priority || 50) - Number(a.skill.priority || 50)
+    )
+    .map(({ skill, score }) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tags: skill.tags,
+      triggers: skill.triggers || "",
+      enabled: skill.enabled !== false,
+      domain: skill.domain || "global",
+      status: skill.status || "active",
+      priority: Number(skill.priority || 50),
+      source: skill.source || "manual",
+      score,
+      dependencies: Array.isArray(skill.dependencies)
+        ? skill.dependencies
+        : []
+    }));
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ matched: results.length, results }, null, 2)
+      }
+    ]
+  };
+}
+
+async function handleMagicLoadSkill(args) {
+  await ensureTemplateSkills();
+  const id = Number(args?.id ?? args?.skillId);
+  if (!Number.isFinite(id)) throw new Error("Skill id is required.");
+  const skills = await getAllStoredSkills();
+  const byId = new Map(skills.map((skill) => [Number(skill.id), skill]));
+  const skill = byId.get(id);
+  if (!skill) throw new Error(`Skill with ID ${id} was not found.`);
+  const loaded = new Set([id]);
+  const dependencies = [];
+  const sections = [String(skill.content || "")];
+  const appendDependencies = (parent, depth) => {
+    if (depth > 8) return;
+    for (const dependencyId of parent.dependencies || []) {
+      const normalizedId = Number(dependencyId);
+      if (loaded.has(normalizedId)) continue;
+      const dependency = byId.get(normalizedId);
+      if (
+        !dependency ||
+        dependency.enabled === false ||
+        dependency.status === "deprecated"
+      ) continue;
+      loaded.add(normalizedId);
+      dependencies.push({ id: normalizedId, name: dependency.name });
+      sections.push(
+        `\n\n---\n\n## Sub-skill: ${dependency.name}\n\n${dependency.content || ""}`
+      );
+      appendDependencies(dependency, depth + 1);
+    }
+  };
+  appendDependencies(skill, 1);
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            ...skill,
+            content: sections.join(""),
+            resolvedDependencies: dependencies
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+async function handleMagicSetSkillEnabled(args) {
+  const id = Number(args?.id ?? args?.skillId);
+  if (!Number.isFinite(id)) throw new Error("Skill id is required.");
+  const enabled = Boolean(args?.enabled);
+
+  await withSkillsStore("readwrite", async (store) => {
+    const skill = await requestToPromise(store.get(id));
+    if (!skill) throw new Error(`Skill with ID ${id} was not found.`);
+    await requestToPromise(
+      store.put({
+        ...skill,
+        enabled,
+        updatedAt: new Date().toISOString()
+      })
+    );
+  });
+
+  return { content: [{ type: "text", text: JSON.stringify({ id, enabled }, null, 2) }] };
+}
+
+const CUSTOM_TOOLS_STORAGE_KEY = "magic_netsuite_custom_tools_v1";
+const CUSTOM_TOOL_BOTH_MODULES = [
+  "record", "search", "query", "runtime", "log", "url", "format", "email",
+  "https", "http", "xml", "currency", "transaction"
+];
+const CUSTOM_TOOL_CLIENT_MODULES = ["currentRecord", "dialog", "message"];
+const CUSTOM_TOOL_SERVER_MODULES = ["file", "render", "task", "workflow", "encode", "error", "redirect"];
+const CUSTOM_TOOL_ALL_MODULES = new Set([
+  ...CUSTOM_TOOL_BOTH_MODULES, ...CUSTOM_TOOL_CLIENT_MODULES, ...CUSTOM_TOOL_SERVER_MODULES
+]);
+
+function customToolDomainModules(domain) {
+  if (domain === "client") return new Set([...CUSTOM_TOOL_BOTH_MODULES, ...CUSTOM_TOOL_CLIENT_MODULES]);
+  if (domain === "server") return new Set([...CUSTOM_TOOL_BOTH_MODULES, ...CUSTOM_TOOL_SERVER_MODULES]);
+  return new Set(CUSTOM_TOOL_BOTH_MODULES);
+}
+
+function normalizeCustomTool(tool) {
+  const hasServerOnlyModule = (tool?.modules || []).some((module) => CUSTOM_TOOL_SERVER_MODULES.includes(module));
+  return {
+    ...tool,
+    domain: tool?.domain || (hasServerOnlyModule ? "server" : "both"),
+    testInput: tool?.testInput && typeof tool.testInput === "object" && !Array.isArray(tool.testInput) ? tool.testInput : {}
+  };
+}
+
+async function getStoredCustomTools() {
+  const stored = await chrome.storage.local.get(CUSTOM_TOOLS_STORAGE_KEY);
+  const tools = stored[CUSTOM_TOOLS_STORAGE_KEY];
+  return Array.isArray(tools) ? tools.map(normalizeCustomTool) : [];
+}
+
+async function saveStoredCustomTools(tools) {
+  await chrome.storage.local.set({ [CUSTOM_TOOLS_STORAGE_KEY]: tools });
+}
+
+async function syncCustomToolsManifest(port = mcpNativePort) {
+  if (!port) return;
+  const tools = await getStoredCustomTools();
+  port.postMessage({
+    type: "CUSTOM_TOOLS_SYNC",
+    tools: tools.map((tool) => ({
+      id: tool.id,
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      domain: tool.domain,
+      risk: tool.risk,
+      enabled: tool.enabled,
+      status: tool.status,
+      inputSchema: tool.inputSchema
+    }))
+  });
+}
+
+async function saveStoredCustomToolTestState(id, testInput, result, domain) {
+  const tools = await getStoredCustomTools();
+  await saveStoredCustomTools(tools.map((tool) => tool.id === id ? {
+    ...tool,
+    testInput,
+    lastTestResult: result,
+    lastTestedAt: new Date().toISOString(),
+    lastTestDomain: domain
+  } : tool));
+}
+
+function validateCustomToolDefinition(tool, existing, currentId?: string) {
+  const errors = [];
+  if (!/^[a-z][a-z0-9_]{2,63}$/.test(tool.name || "")) errors.push("Tool name must be 3-64 lowercase letters, numbers, or underscores and start with a letter.");
+  if (!String(tool.displayName || "").trim()) errors.push("displayName is required.");
+  if (!String(tool.description || "").trim()) errors.push("description is required.");
+  if (!["client", "server", "both"].includes(tool.domain)) errors.push("domain must be client, server, or both.");
+  if (!tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema) || tool.inputSchema.type !== "object") errors.push('inputSchema must be an object schema with type "object".');
+  if (!String(tool.code || "").trim()) errors.push("code is required.");
+  if (existing.some((candidate) => candidate.name === tool.name && candidate.id !== currentId)) errors.push(`A custom tool named "${tool.name}" already exists.`);
+  const allowed = customToolDomainModules(tool.domain);
+  for (const module of tool.modules || []) {
+    if (!CUSTOM_TOOL_ALL_MODULES.has(module) || !allowed.has(module)) errors.push(`Module ${module} is not available in the ${tool.domain} domain.`);
+  }
+  if (errors.length) throw new Error(errors.join("\n"));
+}
+
+async function handleMagicCreateCustomTool(args) {
+  const existing = await getStoredCustomTools();
+  const now = new Date().toISOString();
+  const tool = {
+    id: globalThis.crypto?.randomUUID?.() || `custom_tool_${Date.now()}`,
+    name: String(args?.name || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64),
+    displayName: String(args?.displayName || "").trim(),
+    description: String(args?.description || "").trim(),
+    tags: Array.isArray(args?.tags) ? [...new Set(args.tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : [],
+    domain: String(args?.domain || "both"),
+    modules: Array.isArray(args?.modules) ? [...new Set(args.modules.map(String))] : [],
+    inputSchema: args?.inputSchema,
+    testInput: args?.testInput && typeof args.testInput === "object" && !Array.isArray(args.testInput) ? args.testInput : {},
+    code: String(args?.code || ""),
+    status: "draft",
+    risk: args?.risk === "write" ? "write" : "read",
+    enabled: true,
+    createdAt: now,
+    updatedAt: now
+  };
+  const duplicate = existing.find((candidate) => candidate.name === tool.name);
+  if (duplicate) throw new Error(`Custom tool "${tool.name}" already exists. Use magic_netsuite_update_custom_tool to edit it.`);
+  validateCustomToolDefinition(tool, existing);
+  await saveStoredCustomTools([...existing, tool]);
+  return asMcpTextResult({ created: true, status: "draft", tool });
+}
+
+async function handleMagicUpdateCustomTool(args) {
+  const tools = await getStoredCustomTools();
+  const toolName = String(args?.toolName || "").trim().toLowerCase();
+  if (!toolName) throw new Error("toolName is required.");
+  const existing = tools.find((candidate) => String(candidate.name || "").toLowerCase() === toolName);
+  if (!existing) throw new Error(`Custom tool "${toolName}" was not found.`);
+  const has = (field) => Object.prototype.hasOwnProperty.call(args || {}, field);
+  const updated = {
+    ...existing,
+    name: has("name") ? String(args.name || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) : existing.name,
+    displayName: has("displayName") ? String(args.displayName || "").trim() : existing.displayName,
+    description: has("description") ? String(args.description || "").trim() : existing.description,
+    tags: has("tags") ? (Array.isArray(args.tags) ? [...new Set(args.tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : []) : existing.tags,
+    domain: has("domain") ? String(args.domain) : existing.domain,
+    modules: has("modules") ? (Array.isArray(args.modules) ? [...new Set(args.modules.map(String))] : []) : existing.modules,
+    inputSchema: has("inputSchema") ? args.inputSchema : existing.inputSchema,
+    testInput: has("testInput") ? (args.testInput && typeof args.testInput === "object" && !Array.isArray(args.testInput) ? args.testInput : {}) : existing.testInput,
+    code: has("code") ? String(args.code || "") : existing.code,
+    risk: has("risk") ? (args.risk === "write" ? "write" : "read") : existing.risk,
+    enabled: has("enabled") ? Boolean(args.enabled) : existing.enabled,
+    status: "draft",
+    updatedAt: new Date().toISOString()
+  };
+  validateCustomToolDefinition(updated, tools, existing.id);
+  await saveStoredCustomTools(tools.map((tool) => tool.id === existing.id ? updated : tool));
+  return asMcpTextResult({ updated: true, status: "draft", tool: updated });
+}
+
+async function handleMagicSearchCustomTools(args) {
+  const terms = String(args?.query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const results = (await getStoredCustomTools())
+    .filter((tool) => tool?.enabled !== false && tool?.status === "active")
+    .map((tool) => {
+      const nameText = `${tool.name || ""} ${tool.displayName || ""}`.toLowerCase();
+      const metadata = `${tool.description || ""} ${(tool.tags || []).join(" ")} ${(tool.modules || []).join(" ")}`.toLowerCase();
+      const score = terms.length === 0 ? 1 : terms.reduce(
+        (sum, term) => sum + (nameText.includes(term) ? 8 : 0) + (metadata.includes(term) ? 3 : 0),
+        0
+      );
+      return { tool, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || String(b.tool.updatedAt || "").localeCompare(String(a.tool.updatedAt || "")))
+    .map(({ tool, score }) => ({
+      id: tool.id,
+      name: tool.name,
+      displayName: tool.displayName,
+      description: tool.description,
+      tags: tool.tags || [],
+      modules: tool.modules || [],
+      domain: tool.domain,
+      inputSchema: tool.inputSchema || { type: "object", properties: {} },
+      risk: tool.risk || "write",
+      score
+    }));
+  return { content: [{ type: "text", text: JSON.stringify({ matched: results.length, results }, null, 2) }] };
+}
+
+async function executeStoredCustomTool(tool, args) {
+  const toolName = String(args?.toolName || args?.name || "").trim().toLowerCase();
+  if (!toolName) throw new Error("toolName is required.");
+  const input = args?.input && typeof args.input === "object" && !Array.isArray(args.input)
+    ? args.input
+    : {};
+  const required = Array.isArray(tool.inputSchema?.required) ? tool.inputSchema.required : [];
+  for (const field of required) {
+    if (input[field] === undefined || input[field] === null || input[field] === "") {
+      throw new Error(`Missing required input: ${field}`);
+    }
+  }
+  const properties = tool.inputSchema?.properties && typeof tool.inputSchema.properties === "object"
+    ? tool.inputSchema.properties
+    : {};
+  for (const [field, value] of Object.entries(input)) {
+    const expectedType = properties[field]?.type;
+    if (!expectedType || value === null || value === undefined) continue;
+    const valid = expectedType === "array"
+      ? Array.isArray(value)
+      : expectedType === "object"
+        ? typeof value === "object" && !Array.isArray(value)
+        : expectedType === "integer"
+          ? Number.isInteger(value)
+          : typeof value === expectedType;
+    if (!valid) throw new Error(`Invalid input type for ${field}: expected ${expectedType}.`);
+  }
+  const requestedDomain = args?.executionDomain;
+  if (requestedDomain && !["client", "server"].includes(requestedDomain)) throw new Error("executionDomain must be client or server.");
+  const executionDomain = tool.domain === "both" ? (requestedDomain || "client") : tool.domain;
+  if (requestedDomain && tool.domain !== "both" && requestedDomain !== tool.domain) throw new Error(`This tool is restricted to ${tool.domain} execution.`);
+  const allowedModules = customToolDomainModules(tool.domain);
+  const modules = Array.isArray(tool.modules)
+    ? tool.modules.filter((module) => allowedModules.has(module))
+    : [];
+  const inputJson = JSON.stringify(JSON.stringify(input));
+  const metadataJson = JSON.stringify(JSON.stringify({
+    toolName: tool.name,
+    displayName: tool.displayName,
+    modules, domain: executionDomain,
+    executedAt: new Date().toISOString()
+  }));
+  const moduleObject = modules.map((module) => `${module}: ${module}`).join(", ");
+  const invocation = executionDomain === "server"
+    ? `(function(input, context) {\n${String(tool.code || "")}\n})(__customToolInput, __customToolContext)`
+    : `(async function(input, context) {\n${String(tool.code || "")}\n})(__customToolInput, __customToolContext)`;
+  const code = [
+    `const __customToolInput = JSON.parse(${inputJson});`,
+    `const __customToolContext = Object.freeze({ ...JSON.parse(${metadataJson}), modules: Object.freeze({ ${moduleObject} }) });`,
+    `return ${invocation};`
+  ].join("\n");
+  const execution = await callNetsuiteRoute(
+    executionDomain === "server" ? "RUN_QUICK_SCRIPT_SERVER" : "RUN_QUICK_SCRIPT",
+    { code },
+    `Custom tool "${tool.name}" failed.`
+  );
+  if (execution?.error) throw new Error(String(execution.error));
+  return asMcpTextResult({
+    tool: tool.name, executionDomain,
+    result: execution?.result ?? execution,
+    logs: execution?.logs ?? []
+  });
+}
+
+async function handleMagicCallCustomTool(args) {
+  const toolName = String(args?.toolName || args?.name || "").trim().toLowerCase();
+  if (!toolName) throw new Error("toolName is required.");
+  const tool = (await getStoredCustomTools()).find((candidate) => String(candidate?.name || "").toLowerCase() === toolName);
+  if (!tool || tool.enabled === false || tool.status !== "active") throw new Error(`Active custom tool "${toolName}" was not found.`);
+  return executeStoredCustomTool(tool, args);
+}
+
+async function handleMagicTestCustomTool(args) {
+  const toolName = String(args?.toolName || args?.name || "").trim().toLowerCase();
+  if (!toolName) throw new Error("toolName is required.");
+  const tool = (await getStoredCustomTools()).find((candidate) => String(candidate?.name || "").toLowerCase() === toolName);
+  if (!tool) throw new Error(`Custom tool "${toolName}" was not found.`);
+  const testInput = args?.input && typeof args.input === "object" && !Array.isArray(args.input) ? args.input : tool.testInput;
+  const domain = tool.domain === "both" ? (args?.executionDomain || "client") : tool.domain;
+  try {
+    const result = await executeStoredCustomTool(tool, { ...args, input: testInput, executionDomain: domain });
+    await saveStoredCustomToolTestState(tool.id, testInput, result, domain);
+    return result;
+  } catch (error) {
+    await saveStoredCustomToolTestState(tool.id, testInput, { error: error?.message || String(error) }, domain);
+    throw error;
+  }
+}
+
+const MCP_SERVER_SIDE_TOOL_NAMES = new Set([
+  "suiteql_search_tables",
+  "suiteql_get_table_fields",
+  "suiteql_get_table_joins",
+  "suiteql_execute_query",
+  "suiteql_discover_field_values",
+  "netsuite_load_record",
+  "netsuite_get_record_sublists",
+  "netsuite_get_record_fields",
+  "netsuite_list_record_types",
+  "netsuite_lists",
+  "netsuite_list_items",
+  "netsuite_create_list",
+  "netsuite_update_list",
+  "netsuite_create_record",
+  "netsuite_update_record_fields",
+  "netsuite_inspect_custom_record_field",
+  "netsuite_find_file",
+  "netsuite_find_folder",
+  "netsuite_list_folder",
+  "netsuite_read_file",
+  "netsuite_create_folder",
+  "netsuite_upload_file",
+  "netsuite_update_file_content",
+  "netsuite_rename_file",
+  "netsuite_rename_folder",
+  "netsuite_delete_file",
+  "netsuite_delete_folder",
+  "netsuite_move_items",
+  "netsuite_get_scripts",
+  "netsuite_get_script_files",
+  "netsuite_get_deployed_scripts",
+  "netsuite_get_logs",
+  "netsuite_sdf_deploy",
+  "netsuite_sdf_list_objects",
+  "netsuite_sdf_import_object",
+  "netsuite_create_script_field",
+  "netsuite_update_script_field",
+  "netsuite_update_metadata_record",
+  "netsuite_run_quick_script",
+  "netsuite_submit_task",
+  "netsuite_check_task_status",
+  "netsuite_server_info"
+]);
+
+// ── MCP: Direct Queries to Native Host ──
+// Allows the side panel to query the native host directly (e.g. for install path)
+// without going through the MCP client request pipeline.
+let mcpDirectQueryId = 0;
+const mcpDirectQueryPending = new Map<
+  string,
+  {
+    resolve: (value: unknown) => void;
+    reject: (reason?: any) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }
+>();
+
+function queryNativeHostDirect(message: AnyRecord): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    if (!mcpNativePort) {
+      reject(new Error("Native host not connected"));
+      return;
+    }
+    const requestId = `direct-${++mcpDirectQueryId}`;
+    const timer = setTimeout(() => {
+      mcpDirectQueryPending.delete(requestId);
+      reject(new Error("Native host query timeout"));
+    }, 10000);
+
+    const pending = {
+      resolve,
+      reject,
+      timer
+    };
+
+    mcpDirectQueryPending.set(requestId, pending);
+    try {
+      mcpNativePort.postMessage({ ...message, requestId });
+    } catch (err) {
+      mcpDirectQueryPending.delete(requestId);
+      clearTimeout(timer);
+      reject(err);
+    }
+  });
+}
+
+// ── Claude CLI runs ──
+// The native host starts the locally installed `claude -p` process. The
+// background worker only retains a compact, restorable view of its JSONL stream.
+const CLAUDE_CLI_RUNS_KEY = "magic_netsuite_claude_cli_runs";
+let claudeCliRuns = null;
+let claudeCliPersistTimer = null;
+
+async function ensureClaudeCliRuns(): Promise<AnyRecord> {
+  if (claudeCliRuns) return claudeCliRuns;
+  const stored = await chrome.storage.session.get([CLAUDE_CLI_RUNS_KEY]);
+  claudeCliRuns = stored?.[CLAUDE_CLI_RUNS_KEY] || {};
+  return claudeCliRuns;
+}
+
+function persistClaudeCliRunsSoon() {
+  clearTimeout(claudeCliPersistTimer);
+  claudeCliPersistTimer = setTimeout(() => {
+    chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: claudeCliRuns || {} }).catch(() => {});
+  }, 200);
+}
+
+function claudeTextDelta(event) {
+  if (event?.type !== "stream_event") return "";
+  const streamEvent = event.event;
+  if (streamEvent?.type === "content_block_delta" && streamEvent?.delta?.type === "text_delta") {
+    return String(streamEvent.delta.text || "");
+  }
+  return "";
+}
+
+function compactClaudeCliEvent(event) {
+  try {
+    const raw = JSON.stringify(event);
+    if (raw.length <= 60000) return event;
+    return {
+      type: event?.type || "large_event",
+      subtype: event?.subtype,
+      truncated: true,
+      preview: raw.slice(0, 60000),
+      message: "Event was truncated in restored history; the live event was still delivered to the open view."
+    };
+  } catch {
+    return { type: event?.type || "invalid_event", message: "Event could not be saved in run history." };
+  }
+}
+
+async function recordClaudeCliEvent(message) {
+  const runs = await ensureClaudeCliRuns();
+  const run = runs[message.runId];
+  if (!run) return;
+  const event = message.event || {};
+  const delta = claudeTextDelta(event);
+
+  if (delta) {
+    run.liveText = `${run.liveText || ""}${delta}`.slice(-500000);
+  } else if (event.type !== "stream_event") {
+    run.events = [...(run.events || []), compactClaudeCliEvent(event)].slice(-300);
+  }
+
+  if (event.type === "process_started") {
+    Object.assign(run, event, { status: "running" });
+  } else if (event.type === "system" && event.subtype === "init") {
+    run.sessionId = event.session_id || run.sessionId;
+    run.model = event.model || run.model;
+  } else if (event.type === "result") {
+    run.result = event.result || "";
+    run.sessionId = event.session_id || run.sessionId;
+    run.costUsd = event.total_cost_usd;
+    run.durationMs = event.duration_ms;
+    run.turns = event.num_turns;
+    run.status = event.is_error ? "failed" : "completed";
+  } else if (event.type === "process_error") {
+    run.error = event.message || "Claude CLI failed to start.";
+    run.status = "failed";
+  } else if (event.type === "process_exit") {
+    run.finishedAt = event.finishedAt || new Date().toISOString();
+    run.exitCode = event.exitCode;
+    run.status = event.cancelled ? "cancelled" : event.exitCode === 0 ? "completed" : "failed";
+  }
+  run.updatedAt = new Date().toISOString();
+  persistClaudeCliRunsSoon();
+}
+
+async function waitForNativeHost() {
+  await mcpConnect();
+  for (let attempt = 0; attempt < 20 && !mcpNativePort; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (!mcpNativePort) throw new Error(mcpNativeLastError || "Native host is not connected.");
+}
+
+const handleClaudeCliStart = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      await waitForNativeHost();
+      const runs = await ensureClaudeCliRuns();
+      const runId = `claude-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      runs[runId] = {
+        runId,
+        prompt: String(message.prompt || ""),
+        cwd: String(message.cwd || ""),
+        model: message.model || "default",
+        permissionMode: message.permissionMode || "plan",
+        maxTurns: Number(message.maxTurns) || 12,
+        status: "starting",
+        startedAt: new Date().toISOString(),
+        liveText: "",
+        events: []
+      };
+      await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+      const response = await queryNativeHostDirect({ ...message, type: "CLAUDE_CLI_START", runId });
+      if (response.success === false) {
+        runs[runId].status = "failed";
+        runs[runId].error = response.error || "Claude CLI failed to start.";
+        await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+        throw new Error(runs[runId].error);
+      }
+      sendResponse({ ok: true, runId, ...(response.result || {}) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  return true;
+};
+
+const handleClaudeCliCancel = ({ message, sendResponse }) => {
+  (async () => {
+    try {
+      await waitForNativeHost();
+      const response = await queryNativeHostDirect({ type: "CLAUDE_CLI_CANCEL", runId: message.runId });
+      sendResponse(response.success === false
+        ? { ok: false, error: response.error }
+        : { ok: true, ...(response.result || {}) });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  return true;
+};
+
+const handleClaudeCliGetState = ({ sendResponse }) => {
+  (async () => {
+    const runs = await ensureClaudeCliRuns();
+    sendResponse({
+      ok: true,
+      runs: Object.values(runs).sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt))),
+      nativeConnected: Boolean(mcpNativePort),
+      nativeError: mcpNativeLastError
+    });
+  })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+};
+
+const handleClaudeCliClear = ({ message, sendResponse }) => {
+  (async () => {
+    const runs = await ensureClaudeCliRuns();
+    if (message.runId) {
+      if (runs[message.runId]?.status === "running") throw new Error("Cancel the run before clearing it.");
+      delete runs[message.runId];
+    } else {
+      for (const [runId, run] of Object.entries(runs)) {
+        if (!['running', 'starting'].includes(run.status)) delete runs[runId];
+      }
+    }
+    await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
+    sendResponse({ ok: true });
+  })().catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+  return true;
+};
+
+// -----------------------------
+// Entry point: check settings and connect if enabled
+// -----------------------------
+(async () => {
+  const mcpEnabled = await isMcpEnabled();
+  if (mcpEnabled) {
+    mcpConnect();
+  }
+})();
+
+// -----------------------------
+// MCP enabled check
+// -----------------------------
+async function isMcpEnabled() {
+  try {
+    const result = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    return result?.magic_netsuite_settings?.mcpEnabled !== false; // default true
+  } catch {
+    return true;
+  }
+}
+
+// -----------------------------
+// Public connect/disconnect
+// -----------------------------
+async function mcpConnect() {
+  if (mcpNativePort || mcpNativeConnecting) return;
+
+  mcpNativeConnecting = true;
+  mcpNativeLastError = null;
+
+  try {
+    const port = chrome.runtime.connectNative(MCP_NATIVE_HOST_NAME);
+    mcpNativePort = port;
+
+    port.onMessage.addListener((message) => {
+      handleNativeBridgeMessage(port, message);
+    });
+
+    port.onDisconnect.addListener(() => {
+      const message = chrome.runtime.lastError?.message || null;
+      mcpNativeLastError = message;
+      console.warn("[MCP Native Bridge] disconnected", message || "");
+      if (mcpNativePort === port) {
+        mcpNativePort = null;
+      }
+    });
+
+    port.postMessage({
+      type: "extensionReady",
+      name: "Magic Netsuite",
+      version: chrome.runtime.getManifest?.().version || "unknown"
+    });
+    await syncCustomToolsManifest(port);
+
+    console.log("[MCP Native Bridge] connected to native host");
+  } catch (err) {
+    mcpNativePort = null;
+    mcpNativeLastError = err instanceof Error ? err.message : String(err);
+    console.error("[MCP Native Bridge] failed to connect", err);
+  } finally {
+    mcpNativeConnecting = false;
+  }
+}
+
+async function mcpDisconnect() {
+  if (mcpNativePort) {
+    try { mcpNativePort.disconnect(); } catch {}
+  }
+  mcpNativePort = null;
+  mcpNativeConnecting = false;
+  console.log("[MCP Native Bridge] manually disconnected");
+}
+
+function getMcpBridgeStatus() {
+  return mcpNativePort ? "connected" : "disconnected";
+}
+
+function getMcpConnectionDetails() {
+  return [
+    {
+      id: MCP_NATIVE_HOST_NAME,
+      label: "Native host",
+      state: mcpNativePort ? "open" : "closed",
+      error: mcpNativeLastError
+    }
+  ];
+}
+
+function getMcpDedicatedTabInfo() {
+  return mcpDedicatedTabId
+    ? { tabId: mcpDedicatedTabId, accountId: mcpDedicatedTabAccountId }
+    : null;
+}
+
+// -----------------------------
+// MCP Dedicated Tab Management
+//
+// When an MCP tool call detects low governance on the selected tab, it creates
+// a persistent tab at /app/setup/mainsetup.nl for the preferred account.
+// This tab stays open (not temporary) and auto-refreshes to replenish
+// governance when it drops below MCP_GOVERNANCE_THRESHOLD.
+// -----------------------------
+
+/**
+ * Checks SuiteScript governance remaining on a tab.
+ * Returns the remaining units or -1 if unknown.
+ */
+async function checkTabGovernance(tabId) {
+  try {
+    const response = await sendMessageToTab(tabId, {
+      action: "CHECK_GOVERNANCE",
+      data: {},
+      mode: "normal"
+    });
+    if (response?.status === "ok" && response.message?.remaining !== undefined) {
+      return response.message.remaining;
+    }
+    return -1;
+  } catch {
+    return -1;
+  }
+}
+
+/**
+ * Waits for a tab to finish loading (status = "complete").
+ * Resolves once the tab is ready.
+ */
+function waitForTabComplete(tabId, timeoutMs = 15000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error(`Tab ${tabId} did not finish loading in ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        // Allow a small delay for the content script to initialize
+        setTimeout(() => resolve(), 500);
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+
+    // Check if the tab is already complete
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError) {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        reject(new Error(`Tab ${tabId} no longer exists`));
+        return;
+      }
+      if (tab.status === "complete") {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        setTimeout(() => resolve(), 500);
+      }
+    });
+  });
+}
+
+/**
+ * Creates a persistent dedicated MCP tab for the given account domain.
+ * This is NOT a temporary tab — it stays open and is reused across MCP calls.
+ */
+async function createMcpDedicatedTab(accountDomain) {
+  // Guard: if another creation is in progress, wait for it to finish
+  if (mcpDedicatedTabCreating) {
+    console.log(`[MCP Dedicated Tab] Creation already in progress, waiting...`);
+    return waitForExistingDedicatedTab(accountDomain);
+  }
+
+  const url = `https://${accountDomain}/app/setup/mainsetup.nl?sc=-90`;
+
+  console.log(`[MCP Dedicated Tab] Creating persistent tab for ${accountDomain}`);
+
+  mcpDedicatedTabCreating = true;
+
+  return new Promise((resolve, reject) => {
+    chrome.tabs.create({ url, active: false }, async (tab) => {
+      if (!tab?.id) {
+        mcpDedicatedTabCreating = false;
+        return reject(new Error("Failed to create dedicated MCP tab"));
+      }
+
+      try {
+        await waitForTabComplete(tab.id);
+        mcpDedicatedTabId = tab.id;
+        mcpDedicatedTabAccountId = extractAccountIdFromUrl(tab.url || url);
+        mcpDedicatedTabCreating = false;
+        console.log(`[MCP Dedicated Tab] Created tab ${tab.id} for account ${mcpDedicatedTabAccountId}`);
+        resolve(tab);
+      } catch (err) {
+        mcpDedicatedTabCreating = false;
+        // Tab failed to load — clean up
+        try { chrome.tabs.remove(tab.id); } catch {}
+        reject(err);
+      }
+    });
+  });
+}
+
+/**
+ * Waits for an already-in-progress dedicated tab creation to complete.
+ * Polls every 200ms up to 30s for mcpDedicatedTabId to be set.
+ */
+async function waitForExistingDedicatedTab(accountDomain) {
+  const start = Date.now();
+  const timeout = 30000;
+  while (Date.now() - start < timeout) {
+    if (mcpDedicatedTabId) {
+      const tab = await validateDedicatedTab();
+      if (tab) return tab;
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  // Timed out — the creating call might have failed; create a new one
+  console.warn(`[MCP Dedicated Tab] Timed out waiting for existing creation, forcing new tab`);
+  mcpDedicatedTabCreating = false;
+  return createMcpDedicatedTab(accountDomain);
+}
+
+/**
+ * Returns the domain (hostname) for a given account ID by finding a matching
+ * NetSuite tab's URL. Falls back to constructing it from the account ID.
+ */
+function getAccountDomain(accountId) {
+  // Convert account ID format (e.g. "9937091_SB1") back to subdomain format ("9937091-sb1")
+  const subdomain = accountId.toLowerCase().replace(/_/g, "-");
+  return `${subdomain}.app.netsuite.com`;
+}
+
+/**
+ * Validates the dedicated MCP tab still exists and is usable.
+ * Returns the tab if valid, null otherwise.
+ */
+async function validateDedicatedTab() {
+  if (!mcpDedicatedTabId) return null;
+
+  try {
+    const tab = await dashboardTabsGet(mcpDedicatedTabId);
+    if (!tab || !tab.url?.includes("app.netsuite.com")) {
+      // Tab was closed or navigated away
+      mcpDedicatedTabId = null;
+      mcpDedicatedTabAccountId = null;
+      return null;
+    }
+
+    // Check that the content script is still connected
+    const response = await sendMessageToTab(tab.id, {
+      action: "CHECK_CONNECTION",
+      data: {},
+      mode: "normal"
+    });
+
+    if (response?.message !== "connected") {
+      mcpDedicatedTabId = null;
+      mcpDedicatedTabAccountId = null;
+      return null;
+    }
+
+    return tab;
+  } catch {
+    mcpDedicatedTabId = null;
+    mcpDedicatedTabAccountId = null;
+    return null;
+  }
+}
+
+/**
+ * Refreshes the dedicated MCP tab to replenish governance.
+ * Reloads the tab and waits for it to finish loading.
+ */
+async function refreshDedicatedTab() {
+  if (!mcpDedicatedTabId || mcpDedicatedTabRefreshing) return;
+
+  mcpDedicatedTabRefreshing = true;
+  console.log(`[MCP Dedicated Tab] Refreshing tab ${mcpDedicatedTabId} to replenish governance`);
+
+  try {
+    chrome.tabs.reload(mcpDedicatedTabId);
+    await waitForTabComplete(mcpDedicatedTabId);
+    console.log(`[MCP Dedicated Tab] Tab ${mcpDedicatedTabId} refreshed successfully`);
+  } catch (err) {
+    console.error(`[MCP Dedicated Tab] Failed to refresh tab: ${err.message}`);
+    // Tab may have been closed — invalidate
+    mcpDedicatedTabId = null;
+    mcpDedicatedTabAccountId = null;
+  } finally {
+    mcpDedicatedTabRefreshing = false;
+  }
+}
+
+/**
+ * Checks governance on the dedicated tab and refreshes it if below threshold.
+ * Called after each MCP tool call to ensure the tab is ready for the next call.
+ */
+async function checkAndRefreshDedicatedTabGovernance() {
+  if (!mcpDedicatedTabId) return;
+
+  const remaining = await checkTabGovernance(mcpDedicatedTabId);
+  if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
+    console.log(`[MCP Dedicated Tab] Governance low (${remaining} remaining), refreshing tab`);
+    await refreshDedicatedTab();
+  }
+}
+
+// Listen for tab removal to clear the dedicated tab reference
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === mcpDedicatedTabId) {
+    console.log(`[MCP Dedicated Tab] Tab ${tabId} was closed`);
+    mcpDedicatedTabId = null;
+    mcpDedicatedTabAccountId = null;
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  (async () => {
+    const sessions = await getDashboardPreviewSessions();
+    let changed = false;
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      if (
+        session.dashboardTabId === tabId ||
+        session.enablerTabId === tabId
+      ) {
+        delete sessions[sessionId];
+        changed = true;
+      }
+    }
+    if (changed) await saveDashboardPreviewSessions(sessions);
+  })().catch(() => undefined);
+});
+
+// Listen for account preference changes to reset the dedicated tab
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local" && changes[CUSTOM_TOOLS_STORAGE_KEY]) {
+    syncCustomToolsManifest().catch((error) => {
+      console.warn("[MCP Native Bridge] failed to sync custom tools manifest", error);
+    });
+    return;
+  }
+  if (areaName !== "sync") return;
+  const settingsChange = changes.magic_netsuite_settings;
+  if (!settingsChange) return;
+
+  const oldAccount = settingsChange.oldValue?.mcpPreferredAccount || "";
+  const newAccount = settingsChange.newValue?.mcpPreferredAccount || "";
+
+  if (oldAccount !== newAccount && mcpDedicatedTabId) {
+    console.log(
+      `[MCP Dedicated Tab] Account changed from "${oldAccount}" to "${newAccount}" — ` +
+      `dedicated tab ${mcpDedicatedTabId} will no longer be used`
+    );
+    // Don't close the old tab (it may be useful for other work),
+    // just stop using it as the dedicated MCP tab.
+    mcpDedicatedTabId = null;
+    mcpDedicatedTabAccountId = null;
+  }
+});
+
+// -----------------------------
+// Native host message handling
+// -----------------------------
+async function handleNativeBridgeMessage(port, message) {
+  console.debug("[MCP Native Bridge] ←", message);
+
+  if (message.type === "CLAUDE_CLI_EVENT") {
+    await recordClaudeCliEvent(message);
+    chrome.runtime.sendMessage(message).catch(() => {});
+    return;
+  }
+
+  // Handle direct query responses (not MCP client pipeline)
+  if (message.requestId && mcpDirectQueryPending.has(message.requestId)) {
+    const pending = mcpDirectQueryPending.get(message.requestId);
+    mcpDirectQueryPending.delete(message.requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(message);
+    return;
+  }
+
+  const response = await handleRequest(message);
+
+  console.debug("[MCP Native Bridge] →", response);
+
+  try {
+    port.postMessage(response);
+  } catch (err) {
+    mcpNativeLastError = err instanceof Error ? err.message : String(err);
+    console.error("[MCP Native Bridge] failed to post response", err);
+  }
+}
+
+// -----------------------------
+// MCP Tool Definitions
+// -----------------------------
+const FREEMARKER_PREVIEW_SESSIONS_KEY = "magic_netsuite_freemarker_preview_sessions";
+const MAX_PERSISTED_FREEMARKER_SESSIONS = 8;
+const freemarkerPreviewSessions = new Map();
+const freemarkerPreviewSessionsReady = chrome.storage.local
+  .get(FREEMARKER_PREVIEW_SESSIONS_KEY)
+  .then((stored) => {
+    const sessions = stored?.[FREEMARKER_PREVIEW_SESSIONS_KEY];
+    if (!sessions || typeof sessions !== "object" || Array.isArray(sessions)) return;
+    Object.entries(sessions).forEach(([sessionId, session]) => {
+      if (session && typeof session === "object") {
+        freemarkerPreviewSessions.set(sessionId, session);
+      }
+    });
+  })
+  .catch((error) => {
+    console.warn("[FreeMarker Preview] Failed to restore persisted sessions.", error);
+  });
+
+async function persistFreemarkerPreviewSessions() {
+  const sessions = [...freemarkerPreviewSessions.entries()]
+    .sort(([, a], [, b]) => String(b?.updatedAt || "").localeCompare(String(a?.updatedAt || "")))
+    .slice(0, MAX_PERSISTED_FREEMARKER_SESSIONS);
+  freemarkerPreviewSessions.clear();
+  sessions.forEach(([sessionId, session]) => freemarkerPreviewSessions.set(sessionId, session));
+  const persistedSessions = sessions.map(([sessionId, session]) => {
+    const renderResult =
+      session?.renderResult && typeof session.renderResult === "object"
+        ? Object.fromEntries(
+            Object.entries(session.renderResult).filter(([key]) => key !== "pdf")
+          )
+        : session?.renderResult;
+    return [sessionId, { ...session, renderResult }];
+  });
+  await chrome.storage.local.set({
+    [FREEMARKER_PREVIEW_SESSIONS_KEY]: Object.fromEntries(persistedSessions)
+  });
+}
+
+const NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    id: {
+      type: "string",
+      description: "Stable unique question ID within this quiz."
+    },
+    type: {
+      type: "string",
+      enum: ["single", "multiple"],
+      description:
+        "single requires exactly one correct option; multiple requires at least two."
+    },
+    prompt: {
+      type: "string",
+      description:
+        "A direct, complete question written in plain English for a working developer. State the concrete script, API, value, action, and failure being tested; do not use clipped fragments, management language, or vague abstractions. If it refers to or describes a specific query, code fragment, expression, XML fragment, or configuration, the code field is required so the learner can inspect the actual artifact."
+    },
+    topic: {
+      type: "string",
+      description: "Optional short topic label shown above the question."
+    },
+    code: {
+      type: "object",
+      description:
+        "Code sample for genuine code-reasoning questions. Required whenever the prompt refers to or describes a specific query, code/XML fragment, expression, or configuration; do not force the learner to reconstruct an omitted artifact from prose. Never show the correct answer, tested API/property/path, or a line that directly states the correct option. Do not ask learners to transcribe entry points, exports, methods, fields, properties, or operations that are visibly listed in the snippet. Code questions must require tracing behavior, diagnosing a defect, predicting output, or choosing a justified correction. For fill-in or identifier questions, replace the tested expression with a neutral placeholder such as /* choose the correct expression */. Supports SuiteScript, SuiteQL, FreeMarker, JSON, XML, and other text languages.",
+      properties: {
+        language: {
+          type: "string",
+          description:
+            "Language identifier such as javascript, sql, freemarker, json, or xml."
+        },
+        content: {
+          type: "string",
+          description:
+            "Exact code shown to the learner. It must not contain the literal answer or the exact identifier/property/method/module/path being asked for."
+        },
+        caption: { type: "string", description: "Optional compact code-block caption." }
+      },
+      required: ["language", "content"]
+    },
+    options: {
+      type: "array",
+      minItems: 2,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          text: { type: "string" }
+        },
+        required: ["id", "text"]
+      }
+    },
+    correctOptionIds: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string" },
+      description: "Option IDs that comprise the complete correct answer."
+    },
+    explanation: {
+      type: "string",
+      description:
+        "A plain-English explanation of why the answer is correct. Use concrete NetSuite behavior and avoid vague architecture or strategy language. It may reason directly from a supplied code block."
+    },
+    citations: {
+      type: "array",
+      description:
+        "Exact documentation evidence. Every question without a code block must include at least one citation whose literal quote directly supports the complete correct answer. A code question may omit citations only when every fact needed to answer follows from the supplied snippet without relying on NetSuite platform behavior or general best-practice claims.",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "NetSuite Help page title." },
+          url: {
+            type: "string",
+            description: "NetSuite Help Center page URL returned by the docs batch."
+          },
+          quote: {
+            type: "string",
+            description:
+              "Exact literal supporting text copied from the returned page. Do not add Markdown backticks, emphasis, links, quotation marks, or other decoration. The UI highlights this exact text in the live page."
+          }
+        },
+        required: ["title", "url", "quote"]
+      }
+    }
+  },
+  required: [
+    "id",
+    "type",
+    "prompt",
+    "options",
+    "correctOptionIds",
+    "explanation"
+  ]
+};
+
+const MCP_TOOL_DEFINITIONS = [
+  {
+    name: "ping",
+    description: "Ping the Chrome extension. Returns pong.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "Optional message to echo back"
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_save_skill",
+    description:
+      "Save or update a reusable Markdown skill in the Magic NetSuite extension skill library. Use this when the user asks you to create a skill for Magic NetSuite. Skills are available to the Vue Skills view and local agent harnesses.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Optional existing skill ID to update." },
+        name: { type: "string", description: "Short skill name." },
+        description: { type: "string", description: "One-sentence description for search results." },
+        tags: {
+          anyOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+          description: "Comma-separated tags or an array of tags."
+        },
+        content: { type: "string", description: "Markdown skill content." },
+        markdown: { type: "string", description: "Alias for content." },
+        domain: { type: "string", enum: ["global", "sql"], description: "Skill scope. Defaults to global." },
+        dependencies: {
+          type: "array",
+          items: { type: "number" },
+          description: "Ordered skill IDs to load recursively as reusable sub-skills."
+        },
+        enabled: { type: "boolean", description: "Whether the skill is enabled. Defaults to true." },
+        upsertByName: { type: "boolean", description: "Update a same-name skill if found. Defaults to true." }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "magic_netsuite_list_skills",
+    description: "List Magic NetSuite skill metadata from the extension skill library.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        includeDisabled: { type: "boolean", description: "Include disabled skills. Defaults to true." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_search_skills",
+    description: "Search the local Magic NetSuite skill library by name, description, and tags. Use this BEFORE netsuite_search_docs or other external documentation for NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions. Returns metadata only; call magic_netsuite_load_skill for relevant results.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms. Leave empty to list all enabled skills." },
+        includeDisabled: { type: "boolean", description: "Include disabled skills. Defaults to false." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_load_skill",
+    description: "Load one Magic NetSuite skill by ID and recursively compose its enabled sub-skill dependencies. Cycles and duplicate dependencies are suppressed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Skill ID." },
+        skillId: { type: "number", description: "Alias for id." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_set_skill_enabled",
+    description: "Enable or disable a Magic NetSuite skill by ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "number", description: "Skill ID." },
+        skillId: { type: "number", description: "Alias for id." },
+        enabled: { type: "boolean", description: "True to enable, false to disable." }
+      },
+      required: ["enabled"]
+    }
+  },
+  {
+    name: "magic_netsuite_create_quiz",
+    description:
+      "Create a persistent NetSuite quiz question bank after researching official documentation with netsuite_submit_docs_batch and netsuite_get_docs_batch. The quiz must contain 10–60 meaningful questions with explanations. Write for working developers in plain English: name the concrete script, API, value, action, and failure being tested. Do not use clipped fragments or corporate/academic shorthand such as authoritative ledger, lifecycle placement, execution boundary, architecture improvement, mechanism, or contract when a direct question says the same thing. Options and explanations must also be complete and understandable without decoding vague abstractions. Every non-code question requires exact documentation evidence that directly supports the complete answer; broad architecture, security, reliability, performance, or best-practice claims without evidence are rejected. A code question may omit citations only when every fact needed to answer follows from the shown code without NetSuite platform knowledge. Include the actual code/query/XML/configuration whenever the prompt describes one. Never ask learners to copy identifiers, entry points, exports, methods, fields, properties, or operations visibly listed in a snippet. Code questions must require behavioral tracing, diagnosis, output prediction, or a justified correction, and must not reveal the tested answer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        sourceBatchJobId: {
+          type: "string",
+          description:
+            "Completed NetSuite documentation batch job used to produce this quiz."
+        },
+        questions: {
+          type: "array",
+          minItems: NETSUITE_QUIZ_MIN_QUESTIONS,
+          maxItems: NETSUITE_QUIZ_MAX_QUESTIONS,
+          items: NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA
+        }
+      },
+      required: ["title", "sourceBatchJobId", "questions"]
+    }
+  },
+  {
+    name: "magic_netsuite_list_quizzes",
+    description:
+      "List saved NetSuite quiz metadata and question counts without returning full question banks.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "magic_netsuite_get_quiz",
+    description:
+      "Get one complete saved NetSuite quiz, including questions, options, code blocks, answers, explanations, and citations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Quiz ID from magic_netsuite_list_quizzes." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "magic_netsuite_delete_quiz",
+    description:
+      "Permanently delete one saved NetSuite quiz question bank. List quizzes first and pass the exact quiz ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Quiz ID from magic_netsuite_list_quizzes." }
+      },
+      required: ["id"]
+    }
+  },
+  {
+    name: "magic_netsuite_search_custom_tools",
+    description: "Search active user-created Magic NetSuite tools. Returns metadata, execution domain, selected modules, risk, and inputSchema without returning implementation source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Keywords describing the needed custom capability. Leave empty to list all active custom tools." }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_create_custom_tool",
+    description: "Create a new editable custom NetSuite tool as a draft. If the name already exists, use magic_netsuite_update_custom_tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string" }, displayName: { type: "string" }, description: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        domain: { type: "string", enum: ["client", "server", "both"] },
+        modules: { type: "array", items: { type: "string" } },
+        inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string" },
+        risk: { type: "string", enum: ["read", "write"] }
+      },
+      required: ["name", "displayName", "description", "domain", "modules", "inputSchema", "testInput", "code", "risk"]
+    }
+  },
+  {
+    name: "magic_netsuite_update_custom_tool",
+    description: "Partially update an existing custom NetSuite tool by exact name. Omitted fields are preserved and AI edits return the tool to draft status for review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toolName: { type: "string" }, name: { type: "string" }, displayName: { type: "string" },
+        description: { type: "string" }, tags: { type: "array", items: { type: "string" } },
+        domain: { type: "string", enum: ["client", "server", "both"] },
+        modules: { type: "array", items: { type: "string" } }, inputSchema: { type: "object" }, testInput: { type: "object" },
+        code: { type: "string" }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
+      },
+      required: ["toolName"]
+    }
+  },
+  {
+    name: "magic_netsuite_test_custom_tool",
+    description: "Test a saved active or draft custom tool in an allowed domain. Uses its saved testInput when input is omitted and stores the latest result on that tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toolName: { type: "string" }, input: { type: "object" },
+        executionDomain: { type: "string", enum: ["client", "server"] }
+      },
+      required: ["toolName", "executionDomain"]
+    }
+  },
+  {
+    name: "magic_netsuite_call_custom_tool",
+    description: "Execute an active user-created Magic NetSuite tool in the authenticated NetSuite tab. Search first, then pass the exact toolName and an input object matching its inputSchema.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toolName: { type: "string" },
+        input: { type: "object" },
+        executionDomain: { type: "string", enum: ["client", "server"] }
+      },
+      required: ["toolName", "input"]
+    }
+  },
+  {
+    name: "netsuite_switch_environment",
+    description:
+      "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
+      "Pass an account ID such as 1964539 or 9937091_SB1. The extension selects a connected tab for that account, " +
+      "or opens a dedicated background tab when necessary. Use an empty accountId to restore active-tab routing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        accountId: {
+          type: "string",
+          description:
+            "NetSuite account ID from the account subdomain, e.g. 1964539 or 9937091_SB1. Empty string clears the preference."
+        }
+      },
+      required: ["accountId"]
+    }
+  },
+  {
+    name: "suiteql_get_guide",
+    description:
+      "CALL THIS FIRST before any SuiteQL work. Returns the complete usage guide: correct syntax rules (no LIMIT — use ROWNUM), the mandatory discovery workflow, common table names, and worked examples.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  // ── SuiteQL Tools ──
+  {
+    name: "suiteql_search_tables",
+    description: "Search available SuiteQL tables by keyword. Returns table IDs and labels matching the search term.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search keyword to filter tables (e.g. 'customer', 'transaction'). Leave empty to list all tables."
+        }
+      }
+    }
+  },
+  {
+    name: "suiteql_get_table_fields",
+    description: "Get all columns/fields for a specific SuiteQL table. Returns field IDs, labels, and data types.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: {
+          type: "string",
+          description: "The exact table ID (e.g. 'customer', 'transaction', 'item')."
+        }
+      },
+      required: ["tableName"]
+    }
+  },
+  {
+    name: "suiteql_get_table_joins",
+    description: "Get available joins/relationships for a specific SuiteQL table. Returns join labels, target tables, and join conditions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: {
+          type: "string",
+          description: "The exact table ID to get joins for."
+        }
+      },
+      required: ["tableName"]
+    }
+  },
+  {
+    name: "suiteql_execute_query",
+    description:
+      "Execute a SuiteQL query. NEVER use LIMIT — it is not valid SuiteQL syntax and will error. Use ROWNUM in a WHERE clause to limit rows: WHERE ROWNUM <= 25. IMPORTANT: when querying scriptdeployment, select primarykey; it is the actual deployment record internal ID. scriptdeployment.id is not.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sql: {
+          type: "string",
+          description:
+            "Valid SuiteQL query. Must use ROWNUM <= N for row limiting, never LIMIT. For scriptdeployment, select primarykey when you need the deployment record internal ID."
+        }
+      },
+      required: ["sql"]
+    }
+  },
+  {
+    name: "suiteql_discover_field_values",
+    description: "Sample DISTINCT actual values for a specific column in a table. Use this to discover exact values for WHERE clauses.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tableName: {
+          type: "string",
+          description: "The exact table ID (e.g. 'transaction', 'customrecord_foo')."
+        },
+        fieldId: {
+          type: "string",
+          description: "The column ID to sample values for (e.g. 'status', 'custrecord_ctkc_enrichment_status')."
+        }
+      },
+      required: ["tableName", "fieldId"]
+    }
+  },
+  // ── NetSuite Docs Tools ──
+  {
+    name: "netsuite_search_docs",
+    description:
+      "Search the official NetSuite help documentation. Returns a list of matching pages with title, URL, and summary. For NetSuite, SuiteScript, FreeMarker, SuiteQL, UI workflow, or project-specific knowledge questions, first call magic_netsuite_search_skills and load any relevant local skill. Use this docs tool only when local skills are missing or insufficient, then call 'netsuite_read_doc_page' with a returned URL to get the full content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search keywords (e.g. 'SuiteScript record load', 'saved search filters', 'revenue recognition')."
+        }
+      },
+      required: ["query"]
+    }
+  },
+  {
+    name: "netsuite_read_doc_page",
+    description:
+      "Read a NetSuite documentation page. Pass a URL returned by 'netsuite_search_docs' or a link returned by a previous 'netsuite_read_doc_page' call. Returns the page's literal main text (up to 10 000 characters) without Markdown decoration, plus a structured links array for deeper follow-up research. Always include a References section with the page URL in your response after reading.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Full NetSuite help center URL, either from netsuite_search_docs results or from the links array returned by netsuite_read_doc_page."
+        }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_submit_docs_batch",
+    description:
+      "Submit many official NetSuite Help Center topics as one non-blocking background job. Returns a jobId immediately, allowing this agent and other agents to continue using the MCP/browser bridge while the shared FIFO worker searches and reads documentation. Use netsuite_get_docs_batch later with the jobId to collect progress and answers. Prefer this over repeated netsuite_search_docs calls when researching several topics or when multiple agents share the NetSuite browser session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: NETSUITE_DOC_BATCH_MAX_TOPICS,
+          description:
+            "Independent documentation questions or keyword searches. Duplicate and blank queries are removed."
+        },
+        pagesPerQuery: {
+          type: "integer",
+          minimum: 0,
+          maximum: NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC,
+          description:
+            "How many top search results to read for each query. Defaults to 1; use 0 for search-result metadata only."
+        },
+        maxSearchResults: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description:
+            "Maximum search matches retained per query. Defaults to 5."
+        }
+      },
+      required: ["queries"]
+    }
+  },
+  {
+    name: "netsuite_get_docs_batch",
+    description:
+      "Get status, progress, and completed answers for a job returned by netsuite_submit_docs_batch. This call never waits for the browser worker. Poll later while status is queued or running. By default it returns every topic including read page content; use topicIndexes to retrieve only this agent's topics or includeContent=false for a compact progress check.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        jobId: {
+          type: "string",
+          description: "The jobId returned by netsuite_submit_docs_batch."
+        },
+        topicIndexes: {
+          type: "array",
+          items: { type: "integer", minimum: 0 },
+          description:
+            "Optional zero-based topic indexes to retrieve. Omit to retrieve all topics."
+        },
+        includeContent: {
+          type: "boolean",
+          description:
+            "Include full documentation page text. Defaults to true. Set false for a small status/progress response."
+        }
+      },
+      required: ["jobId"]
+    }
+  },
+  // ── Script Tools ──
+  {
+    name: "netsuite_get_scripts",
+    description:
+      "Search and list scripts from a live NetSuite account. Returns scriptid, id, name, scripttype, owner, scriptfile. " +
+      "Supports SQL-level filtering by scriptId (exact match), scriptType, name (partial match), and owner (partial match) — these run server-side and reduce data transfer. " +
+      "Also supports a client-side 'search' parameter for fuzzy keyword matching across all fields when you don't know which field to filter on. " +
+      "Call with no parameters to list ALL scripts. Pass the numeric 'id' values to netsuite_get_script_files to read source code.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptId: {
+          type: "string",
+          description: "Exact script ID string (e.g. 'customscript_my_suitelet'). Only use when you know the full exact ID."
+        },
+        scriptType: {
+          type: "string",
+          description: "Filter by script type (e.g. 'CLIENT', 'USEREVENT', 'SCRIPTLET', 'MAPREDUCE', 'SCHEDULED', 'SUITELET', 'RESTLET', 'WORKFLOWACTION', 'PORTLET', 'BUNDLEINSTALLATION', 'MASSUPDATESCRIPT'). Case-insensitive. Filters at the SQL level."
+        },
+        name: {
+          type: "string",
+          description: "Partial script name to search for (case-insensitive LIKE match). Filters at the SQL level."
+        },
+        owner: {
+          type: "string",
+          description: "Partial owner name to filter by (case-insensitive LIKE match). Filters at the SQL level."
+        },
+        search: {
+          type: "string",
+          description: "Fuzzy client-side keyword search across name, scriptid, owner, and scriptfile (case-insensitive). Applied AFTER server-side filters."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_get_script_files",
+    description:
+      "Fetch the full source code for one or more scripts by their internal numeric IDs (the 'id' field from netsuite_get_scripts).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "One or more script internal numeric IDs (e.g. [523] or [523, 841])."
+        }
+      },
+      required: ["scriptIds"]
+    }
+  },
+  {
+    name: "netsuite_get_deployed_scripts",
+    description:
+      "Get all currently deployed scripts attached to a specific record type, including full source code for analysis. " +
+      "Pass a record type ID from netsuite_list_record_types, such as 'salesorder', 'customer', 'itemfulfillment', or 'customrecord_my_type'. " +
+      "Returns scriptName, scriptType, scriptId, internal numeric id, and scriptFile content for each deployed script.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description:
+            "The NetSuite record type ID. Use netsuite_list_record_types first if you do not know the exact value."
+        }
+      },
+      required: ["recordType"]
+    }
+  },
+  {
+    name: "netsuite_get_logs",
+    description:
+      "Get script execution logs from a live NetSuite account. Defaults to the last 7 days. Filter by scriptIds for targeted debugging. Focus on 'ERROR' and 'System' type logs for failures.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        startDate: {
+          type: "string",
+          description: "Start date ISO string. Defaults to 7 days ago."
+        },
+        endDate: {
+          type: "string",
+          description: "End date ISO string. Defaults to now."
+        },
+        scriptIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "Filter by script internal IDs."
+        },
+        type: {
+          type: "string",
+          description: "Log type filter: 'ERROR', 'DEBUG', 'AUDIT', 'EMERGENCY', or 'System'."
+        }
+      }
+    }
+  },
+  // ── Record Tools ──
+  // Workflow: show/view/get any record → netsuite_load_record (directly, no other steps needed)
+  //           unsure of recordType string → netsuite_list_record_types first
+  //           want to know what fields a type has → netsuite_get_record_fields
+  {
+    name: "netsuite_load_record",
+    description:
+      "ALWAYS use this tool when the user asks to 'show', 'view', 'display', 'get', or 'load' a NetSuite record by ID. " +
+      "Returns body fields only (no sublist rows) — fast and token-efficient. " +
+      "If the user also needs line items or sublist rows, call netsuite_get_record_sublists afterward. " +
+      "Do NOT use SuiteQL as a substitute — this tool returns all body field values (value + display text) directly from the record API. " +
+      "Common recordType values: 'script' (SuiteScript), 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'item', 'customrecord_<scriptid>' for custom records. " +
+      "If you are unsure of the correct recordType string, call netsuite_list_record_types first.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID. Examples: 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_foo'. Call netsuite_list_record_types if unsure."
+        },
+        recordId: {
+          type: "string",
+          description: "The internal numeric ID of the record to load (e.g. '3309')."
+        }
+      },
+      required: ["recordType", "recordId"]
+    }
+  },
+  {
+    name: "netsuite_get_record_sublists",
+    description:
+      "Get the sublist rows (line items) for a NetSuite record. " +
+      "Use this after netsuite_load_record when the user specifically needs line-item data (e.g. order items, expense lines, inventory lines). " +
+      "Do NOT call this unless sublists are explicitly needed — sublist data can be very large. " +
+      "Specify sublistIds to limit which sublists are returned; omit to get all sublists. " +
+      "Common sublists: 'item' (line items), 'expense' (expense lines), 'apply' (applied transactions), 'links' (related records).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID (e.g. 'salesorder', 'invoice', 'purchaseorder')."
+        },
+        recordId: {
+          type: "string",
+          description: "The internal numeric ID of the record (e.g. '3309')."
+        },
+        sublistIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional: limit which sublists are returned (e.g. ['item', 'expense']). Omit to return all sublists — can be large on transactions."
+        }
+      },
+      required: ["recordType", "recordId"]
+    }
+  },
+  {
+    name: "netsuite_list_record_types",
+    description:
+      "List ALL available NetSuite record types — both standard built-in types and custom record types in this account. Returns { name, id } pairs. " +
+      "Use this ONLY when you need to discover the correct `recordType` string to pass to netsuite_load_record or netsuite_get_record_fields and you cannot infer it from context. " +
+      "Most common types (no lookup needed): 'script', 'scriptdeployment', 'customer', 'salesorder', 'invoice', 'purchaseorder', 'employee', 'vendor', 'customrecord_<scriptid>'.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_lists",
+    description:
+      "List NetSuite custom lists from the current account. Returns metadata only: name, internalId, and inactive status. " +
+      "Use this to discover the listId to pass to netsuite_list_items. Optional query filters by list name or internal ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Optional partial list name or internal ID filter."
+        },
+        includeInactive: {
+          type: "boolean",
+          description: "Include inactive custom lists. Defaults to false."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_list_items",
+    description:
+      "Load a NetSuite custom list and return its values from the customvalue sublist. " +
+      "Pass listId from netsuite_lists. Returns each value's internalId, display value, line number, and inactive status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        listId: {
+          type: "string",
+          description: "The custom list internal ID returned by netsuite_lists, or a valid customlist script ID when supported by NetSuite record.load."
+        },
+        includeInactive: {
+          type: "boolean",
+          description: "Include inactive list values. Defaults to false."
+        }
+      },
+      required: ["listId"]
+    }
+  },
+  {
+    name: "netsuite_create_list",
+    description:
+      "Create a NetSuite custom list using the native custlist.nl form POST. " +
+      "Destructive: creates metadata in the account. Pass name, scriptId, and values. " +
+      "The scriptId accepts customlist_my_list, my_list, or _my_list and is normalized to NetSuite's metadata suffix format.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Custom list display name." },
+        scriptId: { type: "string", description: "Custom list script ID, e.g. customlist_ai_session_status, ai_session_status, or _ai_session_status." },
+        description: { type: "string" },
+        isOrdered: { type: "boolean", description: "Whether the custom list is ordered. Defaults to true." },
+        isHierarchical: { type: "boolean", description: "Whether the custom list is hierarchical. Defaults to false." },
+        values: {
+          type: "array",
+          items: {
+            anyOf: [
+              { type: "string" },
+              {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                  abbreviation: { type: "string" },
+                  isInactive: { type: "boolean" },
+                  scriptId: { type: "string" }
+                },
+                required: ["value"]
+              }
+            ]
+          },
+          description: "Custom list values. Strings are accepted, or objects like { value: 'IN_PROGRESS', abbreviation: 'I' }."
+        },
+        listFields: { type: "object", description: "Additional raw form fieldId-to-value pairs to include in the custlist.nl POST." }
+      },
+      required: ["name", "scriptId", "values"]
+    }
+  },
+  {
+    name: "netsuite_update_list",
+    description:
+      "Update a NetSuite custom list using the native custlist.nl edit form POST. " +
+      "Destructive: modifies metadata in the account. Use valuesToAdd to append missing values, valuesToUpdate to rename/change existing values, or replaceAllValues to replace the whole value set. " +
+      "The tool fetches the existing edit form first and preserves NetSuite row tokens/translation metadata where possible.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        listId: { type: "string", description: "Internal ID of the custom list to edit." },
+        name: { type: "string", description: "Optional new custom list display name." },
+        scriptId: { type: "string", description: "Optional custom list script ID, e.g. customlist_ai_session_status or _ai_session_status." },
+        description: { type: "string" },
+        isOrdered: { type: "boolean", description: "Whether the custom list is ordered." },
+        isHierarchical: { type: "boolean", description: "Whether the custom list is hierarchical." },
+        valuesToAdd: {
+          type: "array",
+          items: { type: "object", properties: { value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" }, scriptId: { type: "string" } }, required: ["value"] },
+          description: "Values to add if missing, e.g. [{ value: 'FAILED', abbreviation: 'F' }]. Existing matching values are skipped."
+        },
+        valuesToUpdate: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" }, internalId: { type: "string" }, currentValue: { type: "string" }, value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" } }, required: ["value"] },
+          description: "Existing values to update. Match by id/internalId when known, otherwise by currentValue; value is the new display value."
+        },
+        replaceAllValues: {
+          type: "array",
+          items: { type: "object", properties: { id: { type: "string" }, internalId: { type: "string" }, value: { type: "string" }, abbreviation: { type: "string" }, isInactive: { type: "boolean" } }, required: ["value"] },
+          description: "Complete desired value set. Existing rows are preserved by id/internalId/currentValue/value where possible; omitted rows are removed from the submitted list."
+        },
+        listFields: { type: "object", description: "Additional raw form fieldId-to-value pairs to include in the custlist.nl POST." }
+      },
+      required: ["listId"]
+    }
+  },
+  {
+    name: "netsuite_create_record",
+    description:
+      "Create a NetSuite standard or custom record using SuiteScript record.create, Record.setValue, and Record.save. " +
+      "Destructive: this creates data in the account. Pass recordType and a values object mapping body field IDs to values. " +
+      "Date fields are normalized automatically: DATE, DATETIME, and DATETIMETZ fields receive SuiteScript Date objects. " +
+      "For custom records, recordType is the custom record script ID such as customrecord_my_type. This tool does not create sublist lines or subrecords.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID, e.g. customer, task, customrecord_my_type."
+        },
+        values: {
+          type: "object",
+          description: "Body field values keyed by field ID, e.g. { \"companyname\": \"Acme\" }."
+        },
+        defaultValues: {
+          type: "object",
+          description: "Optional defaultValues passed to record.create for record types that require creation defaults."
+        },
+        isDynamic: {
+          type: "boolean",
+          description: "Create the record in dynamic mode. Defaults to false."
+        },
+        enableSourcing: {
+          type: "boolean",
+          description: "Record.save enableSourcing option. Defaults to true."
+        },
+        ignoreMandatoryFields: {
+          type: "boolean",
+          description: "Record.save ignoreMandatoryFields option. Defaults to false."
+        }
+      },
+      required: ["recordType", "values"]
+    }
+  },
+  {
+    name: "netsuite_update_record_fields",
+    description:
+      "Update body fields on an existing NetSuite record using SuiteScript record.submitFields. " +
+      "Destructive: this modifies data in the account. This is for body fields only; NetSuite does not allow submitFields to update sublist line fields or subrecords. " +
+      "Date fields are normalized automatically: DATE, DATETIME, and DATETIMETZ fields receive SuiteScript Date objects. " +
+      "Pass recordType, recordId, and a values object mapping field IDs to values.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The SuiteScript record type ID, e.g. customer, salesorder, customrecord_my_type."
+        },
+        recordId: {
+          type: "string",
+          description: "Internal ID of the record to update."
+        },
+        values: {
+          type: "object",
+          description: "Body field values keyed by field ID, e.g. { \"memo\": \"Updated by MCP\" }."
+        },
+        enableSourcing: {
+          type: "boolean",
+          description: "record.submitFields enableSourcing option. Defaults to true."
+        },
+        ignoreMandatoryFields: {
+          type: "boolean",
+          description: "record.submitFields ignoreMandatoryFields option. Defaults to false."
+        }
+      },
+      required: ["recordType", "recordId", "values"]
+    }
+  },
+  {
+    name: "netsuite_get_record_fields",
+    description:
+      "Get the list of available body fields and sublist fields for a record type, WITHOUT loading a real record. " +
+      "Use this as a metadata/discovery tool when you need to know what fields a type exposes before querying or building logic around it. " +
+      "You do NOT need to call this before netsuite_load_record — load_record already returns all fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        recordType: {
+          type: "string",
+          description: "The record type ID (e.g. 'script', 'salesorder', 'customer', 'customrecord_foo')."
+        }
+      },
+      required: ["recordType"]
+    }
+  },
+  {
+    name: "netsuite_create_script_field",
+    description:
+      "Find or create a NetSuite script parameter field using the native scriptcustfield.nl form POST. " +
+      "Uses the same fieldType and selectRecordType values as custom record fields. " +
+      "The scriptId key accepts either 'custscript_my_param' or 'my_param' and is normalized to NetSuite's metadata suffix format.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptInternalId: {
+          type: "string",
+          description: "Internal ID of the parent script record; posted as scripttype."
+        },
+        scriptRecordId: {
+          type: "string",
+          description: "Alias for scriptInternalId."
+        },
+        label: { type: "string" },
+        scriptId: {
+          type: "string",
+          description: "Convenience value for the script parameter scriptid field. Passing 'custscript_my_param' or 'my_param' is normalized to '_my_param'."
+        },
+        fieldType: {
+          type: "string",
+          examples: CUSTOM_RECORD_FIELD_TYPE_HINTS,
+          description: "Convenience value for the fieldtype field, using the example values listed above."
+        },
+        selectRecordType: {
+          type: "string",
+          description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
+        },
+        description: { type: "string" },
+        storeValue: { type: "boolean" },
+        fieldValues: {
+          type: "object",
+          description: "Additional raw form fieldId-to-value pairs to include in the scriptcustfield.nl POST. scripttype is always set by the tool."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_update_script_field",
+    description:
+      "Edit an existing NetSuite script parameter field using the native scriptcustfield.nl edit form POST. " +
+      "The tool loads the existing edit form first, preserves NetSuite metadata/sublist fields, and overrides only the provided friendly fields and fieldValues.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        scriptFieldId: {
+          type: "string",
+          description: "Internal ID of the script parameter field to edit."
+        },
+        fieldId: {
+          type: "string",
+          description: "Alias for scriptFieldId."
+        },
+        scriptInternalId: {
+          type: "string",
+          description: "Internal ID of the parent script record; posted as scripttype."
+        },
+        scriptRecordId: {
+          type: "string",
+          description: "Alias for scriptInternalId."
+        },
+        label: { type: "string" },
+        fieldType: {
+          type: "string",
+          examples: CUSTOM_RECORD_FIELD_TYPE_HINTS,
+          description: "Optional new fieldtype value. If omitted, the existing type is preserved."
+        },
+        selectRecordType: {
+          type: "string",
+          description: "Convenience value for selectrecordtype when fieldType is SELECT or MULTISELECT."
+        },
+        description: { type: "string" },
+        storeValue: { type: "boolean" },
+        fieldValues: {
+          type: "object",
+          description: "Additional raw form fieldId-to-value pairs to include in the scriptcustfield.nl POST. scripttype and id are always set by the tool."
+        }
+      },
+      required: ["scriptFieldId", "scriptInternalId"]
+    }
+  },
+  {
+    name: "netsuite_inspect_custom_record_field",
+    description:
+      "Load an existing NetSuite customrecordcustomfield metadata record and return its actual body field IDs, values, display text, field metadata, and fieldtype/selectrecordtype select options. " +
+      "Use this to verify how custom record fields are structured in the current account before creating or debugging fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        customFieldId: {
+          type: "string",
+          description: "Internal ID of a custom record field metadata record to load directly."
+        },
+        customRecordTypeId: {
+          type: "string",
+          description: "Internal ID of a custom record type. If customFieldId is omitted, the tool loads the first field on this record type or the field matching scriptId."
+        },
+        customRecordTypeInternalId: {
+          type: "string",
+          description: "Alias for customRecordTypeId."
+        },
+        scriptId: {
+          type: "string",
+          description: "Optional custom field script ID to find on customRecordTypeId, e.g. custrecord_my_field or my_field."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_update_metadata_record",
+    description:
+      "Edit an existing NetSuite METADATA record in place with SuiteScript record.load -> setValue -> save. " +
+      "Destructive: this modifies customization metadata in the account. " +
+      "Handles four metadata record types via metadataType: 'customrecordtype' (custom record type definition, e.g. rename via recordname), " +
+      "'customrecordcustomfield' (a custom record's field, e.g. change label or fieldtype), " +
+      "'scriptcustomfield' (a script parameter), and 'script' (a script record). " +
+      "Identify the target by numeric internal id, OR by scriptId (resolved to the internal id via SuiteQL; scriptid is matched case-insensitively). " +
+      "Pass values as a map of metadata field id to new value, e.g. { recordname: 'New Name' } for a record type, " +
+      "or { label: 'New Label', fieldtype: 'CLOBTEXT' } for a field. Returns before/after values for the changed fields. " +
+      "PREFER this tool over netsuite_sdf_deploy for editing any of these four existing metadata types — it is faster and needs no object XML or redeploy. " +
+      "This edits existing objects only; use netsuite_sdf_deploy to CREATE new custom records/fields/scripts or to add/remove fields and make larger structural changes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        metadataType: {
+          type: "string",
+          enum: ["customrecordtype", "customrecordcustomfield", "scriptcustomfield", "script"],
+          description: "The SuiteScript record type to edit. Aliases accepted: customrecord->customrecordtype, customrecordfield/field->customrecordcustomfield, scriptparameter/scriptparam->scriptcustomfield."
+        },
+        id: {
+          type: "string",
+          description: "Numeric internal id of the metadata record. Provide this or scriptId."
+        },
+        scriptId: {
+          type: "string",
+          description: "Script id of the metadata record (e.g. customrecord_my_type, custrecord_my_field, custscript_my_param, customscript_my_script). Resolved to the internal id if id is omitted."
+        },
+        values: {
+          type: "object",
+          description: "Map of metadata field id to new value. Record type: { recordname, description, ... }. Field: { label, fieldtype, selectrecordtype, ... }. Script param: { label, fieldtype, ... }."
+        }
+      },
+      required: ["metadataType", "values"]
+    }
+  },
+  // ── Bundle Tools ──
+  {
+    name: "netsuite_list_bundles",
+    description:
+      "List SuiteApp bundles in the current NetSuite account. Returns each bundle's name, ID, version, app ID, abstract, creator, dates, and a `type` field ('installed' or 'created'). Use the `filter` parameter to narrow results: 'installed' returns only marketplace/3rd-party bundles, 'created' returns only bundles built and published in-house, 'all' (default) returns both.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filter: {
+          type: "string",
+          enum: ["all", "installed", "created"],
+          description:
+            "'all' (default) – both installed and created bundles. 'installed' – only bundles downloaded from the SuiteApp marketplace (type=I). 'created' – only bundles built and published in-house (type=S)."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_get_bundle_components",
+    description:
+      "Get the detailed list of components installed by a specific bundle, identified by its Bundle ID. Returns components grouped by category (e.g. 'Script Files', 'Custom Records') and subcategory, with each component's name, script/record ID, references, and lock status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bundleId: {
+          type: "string",
+          description: "The numeric Bundle ID to inspect (e.g. '123456'). Obtain this from netsuite_list_bundles."
+        },
+        bundleName: {
+          type: "string",
+          description: "Optional bundle name for context."
+        }
+      },
+      required: ["bundleId"]
+    }
+  },
+  // ── File Cabinet Tools ──
+  // Recommended workflow:
+  //   1. netsuite_find_folder(name:"test") → get folder id
+  //   2. netsuite_list_folder(folderId:"123") → see files + subfolders
+  //   3. netsuite_find_file(name:"foo") → locate a specific file globally
+  {
+    name: "netsuite_find_folder",
+    description:
+      "Search the ENTIRE NetSuite File Cabinet for folders matching a name or ID. Searches globally (not just root). " +
+      "Use this first when you don't know a folder's ID. " +
+      "After finding the folder, call netsuite_list_folder with the returned id to see its contents. " +
+      "Returns matching folders with id, name, and parent folder id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Exact internal ID of the folder (e.g. '67890'). Use for direct lookup."
+        },
+        name: {
+          type: "string",
+          description: "Partial folder name to search for globally (case-insensitive). E.g. 'test to remove' will find any folder containing that text anywhere in the File Cabinet."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_list_folder",
+    description:
+      "List the immediate contents of a File Cabinet folder — returns both files and subfolders in a single call. " +
+      "Use this after netsuite_find_folder to explore a folder's contents. " +
+      "Returns { folderId, subfolders: [{id, name}], files: [{id, name, filesize, filetype, url}] }.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "string",
+          description: "Internal ID of the folder to list (e.g. '12345'). Obtain from netsuite_find_folder."
+        }
+      },
+      required: ["folderId"]
+    }
+  },
+  {
+    name: "netsuite_find_file",
+    description:
+      "Search the ENTIRE NetSuite File Cabinet for files matching a file name or internal FILE ID. Searches globally across all folders. " +
+      "Returns matching files with id, name, folder (parent folder id), filesize, filetype, and url. " +
+      "Do NOT pass a lead/customer/entity/transaction ID as `id`. If the user asks for a report/file related to a record ID (for example 'lead id 181'), use SuiteQL relationship discovery first and only use this tool with a verified File Cabinet file ID or distinctive file name. " +
+      "To read the actual content of a file after finding it, call netsuite_read_file with the file id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "Exact internal File Cabinet file ID (e.g. '12345'). Do not use a lead/customer/entity/transaction ID here."
+        },
+        name: {
+          type: "string",
+          description: "Partial file name to search globally (case-insensitive LIKE match). E.g. 'myScript' will match 'myScript.js' anywhere in the File Cabinet."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_read_file",
+    description:
+      "Read the actual content of a NetSuite File Cabinet file by its internal ID. " +
+      "ALWAYS use this tool when you have a file ID (e.g. from a SuiteQL query result or from netsuite_find_file) and the user wants to see or display the file contents. " +
+      "Do NOT use a lead/customer/entity/transaction record ID as fileId. Resolve related files with SuiteQL first. " +
+      "Returns the file name, content type, and full text content. PDFs are extracted to text by the MCP bridge when possible; other binary files may return base64. " +
+      "Works with PDFs and text-based files: .js, .json, .xml, .csv, .html, .ftl, .txt, etc.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "string",
+          description: "The internal numeric File Cabinet file ID to read (e.g. '21301'). Obtain this from a SuiteQL relationship query or from netsuite_find_file, never from a lead/customer/entity ID."
+        }
+      },
+      required: ["fileId"]
+    }
+  },
+  {
+    name: "netsuite_create_folder",
+    description:
+      "Create a new folder in the NetSuite File Cabinet. Destructive: creates data. " +
+      "If no parentFolderId is provided, the tool uses -15 (SuiteScripts root). Returns the new folder ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Folder name to create."
+        },
+        parentFolderId: {
+          type: "number",
+          description: "Parent folder internal ID. Defaults to -15 (SuiteScripts root)."
+        }
+      },
+      required: ["name"]
+    }
+  },
+  {
+    name: "netsuite_upload_file",
+    description:
+      "Upload a file to the NetSuite File Cabinet. Destructive: creates a file. " +
+      "When called through the local MCP server, prefer localPath/localPaths/files so the MCP server reads and encodes local files for you. " +
+      "Use fileContent for generated text files or fileContentBase64 plus mimeType for already encoded binary files. " +
+      "If no folderId is provided, the tool uses -15 (SuiteScripts root).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        localPath: {
+          type: "string",
+          description: "Local filesystem path to upload. Supported by the local MCP server."
+        },
+        localPaths: {
+          type: "array",
+          items: { type: "string" },
+          description: "Multiple local filesystem paths to upload. Supported by the local MCP server."
+        },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              localPath: {
+                type: "string",
+                description: "Local filesystem path to upload."
+              },
+              fileName: {
+                type: "string",
+                description: "Optional NetSuite file name override."
+              },
+              folderId: {
+                type: "number",
+                description: "Optional target folder override for this file."
+              },
+              mimeType: {
+                type: "string",
+                description: "Optional MIME type override."
+              }
+            },
+            required: ["localPath"]
+          },
+          description: "Batch upload specs. Supported by the local MCP server."
+        },
+        fileName: {
+          type: "string",
+          description: "Name of the file to upload, e.g. my_script.js. Required only for fileContent/fileContentBase64 mode."
+        },
+        fileContent: {
+          type: "string",
+          description: "Raw text content to upload."
+        },
+        fileContentBase64: {
+          type: "string",
+          description: "Base64 content for binary files. Use instead of fileContent."
+        },
+        mimeType: {
+          type: "string",
+          description: "Optional MIME type for base64 uploads."
+        },
+        folderId: {
+          type: "number",
+          description: "Target folder internal ID. Defaults to -15 (SuiteScripts root)."
+        }
+      },
+      required: ["fileName"]
+    }
+  },
+  {
+    name: "netsuite_update_file_content",
+    description:
+      "Replace the content of an existing NetSuite File Cabinet file. Destructive: modifies a file. " +
+      "For text/script files, pass fileId and fileContent. fileName, folderId, and mediaType are optional and will be looked up when omitted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the File Cabinet file to update."
+        },
+        fileContent: {
+          type: "string",
+          description: "New raw text content for the file."
+        },
+        fileName: {
+          type: "string",
+          description: "Optional current file name. Looked up if omitted."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional parent folder ID. Looked up if omitted."
+        },
+        mediaType: {
+          type: "string",
+          description: "Optional NetSuite media/file type such as JAVASCRIPT, PLAINTEXT, HTMLDOC, XMLDOC, JSON."
+        }
+      },
+      required: ["fileId", "fileContent"]
+    }
+  },
+  {
+    name: "netsuite_rename_file",
+    description:
+      "Rename an existing File Cabinet file without changing content. Destructive: modifies file metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the file to rename."
+        },
+        newName: {
+          type: "string",
+          description: "New file name."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional current parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["fileId", "newName"]
+    }
+  },
+  {
+    name: "netsuite_rename_folder",
+    description:
+      "Rename an existing File Cabinet folder. Destructive: modifies folder metadata.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "number",
+          description: "Internal ID of the folder to rename."
+        },
+        newName: {
+          type: "string",
+          description: "New folder name."
+        },
+        parentFolderId: {
+          type: "number",
+          description: "Optional parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["folderId", "newName"]
+    }
+  },
+  {
+    name: "netsuite_delete_file",
+    description:
+      "Delete a File Cabinet file. Destructive and irreversible unless NetSuite recovery applies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "number",
+          description: "Internal ID of the file to delete."
+        },
+        folderId: {
+          type: "number",
+          description: "Optional current parent folder ID. Looked up if omitted."
+        }
+      },
+      required: ["fileId"]
+    }
+  },
+  {
+    name: "netsuite_delete_folder",
+    description:
+      "Delete a File Cabinet folder. Destructive. The folder must be deletable in NetSuite.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "number",
+          description: "Internal ID of the folder to delete."
+        }
+      },
+      required: ["folderId"]
+    }
+  },
+  {
+    name: "netsuite_move_items",
+    description:
+      "Move File Cabinet files and/or folders from one folder to another. Destructive: changes file/folder locations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        srcFolderId: {
+          type: "number",
+          description: "Source folder internal ID."
+        },
+        dstFolderId: {
+          type: "number",
+          description: "Destination folder internal ID."
+        },
+        fileIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "File IDs to move."
+        },
+        folderIds: {
+          type: "array",
+          items: { type: "number" },
+          description: "Folder IDs to move."
+        }
+      },
+      required: ["srcFolderId", "dstFolderId"]
+    }
+  },
+  {
+    name: "netsuite_sdf_deploy",
+    description:
+      "Deploy NetSuite customizations via the bundled SuiteCloud SDF deploy tool. THE tool for CREATING scripts+deployments, CUSTOM RECORD TYPES (with all their fields in one shot), and advanced PDF/HTML TEMPLATES — do not create these piecemeal with other tools. Deploying again with the same script/object IDs UPDATES the existing objects (create-or-update semantics). " +
+      "For simply EDITING an already-existing customrecordtype, customrecordcustomfield, scriptcustomfield, or script (e.g. rename, change a field's label/type, tweak one property), PREFER netsuite_update_metadata_record — it is a fast in-place record.load/setValue/save that needs no object XML or full redeploy. Use SDF for those types when creating them, adding/removing fields, or making larger structural changes. " +
+      "PREFER THE STRUCTURED PAYLOADS — do NOT hand-write SDF XML: (1) SCRIPT: scriptType + scriptFile + deployments; (2) customRecords: record types with their fields; (3) templates: advanced PDF/HTML templates with FreeMarker source. " +
+      "The raw `objects` array (full SDF object XML) is ONLY for other object types or XML obtained from netsuite_sdf_import_object. " +
+      "Runs locally against the currently selected MCP account; if that account has no SuiteCloud login yet, a browser login console opens and the user must authenticate (first call for a new account may take longer or time out — retry after login). " +
+      "Script deployment defaults: RELEASED (NOTSCHEDULED for scheduled/mapreduce), DEBUG log, all internal roles for suitelet/restlet, runs as ADMINISTRATOR where supported. " +
+      "Required features (CUSTOMRECORDS, ADVANCEDPRINTING, ...) are declared automatically. " +
+      "Executed by the bundled companion via the MCP client (e.g. Claude Desktop); it is not available to the in-browser agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        customRecords: {
+          type: "array",
+          description: "STRUCTURED custom record types to create/update (preferred over raw XML). Field types: TEXT, TEXTAREA, CLOBTEXT, CHECKBOX, INTEGER, FLOAT, CURRENCY, PERCENT, DATE, DATETIMETZ, EMAIL, PHONE, HYPERLINK, SELECT, MULTISELECT, RICHTEXT, INLINEHTML, IMAGE, DOCUMENT, PASSWORD, TIMEOFDAY (aliases: FREEFORMTEXT, LONGTEXT, DECIMAL, LIST, DATETIME).",
+          items: {
+            type: "object",
+            properties: {
+              scriptId: { type: "string", description: "e.g. customrecord_my_type (prefix added if missing)." },
+              name: { type: "string", description: "Record display name (recordname)." },
+              description: { type: "string" },
+              includeNameField: { type: "boolean", description: "Defaults to true." },
+              showId: { type: "boolean" },
+              hierarchical: { type: "boolean" },
+              inactive: { type: "boolean" },
+              enableNumbering: { type: "boolean" },
+              numberingPrefix: { type: "string" },
+              fields: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    scriptId: { type: "string", description: "e.g. custrecord_my_field (prefix added if missing)." },
+                    label: { type: "string" },
+                    fieldType: { type: "string", description: "See list above. Defaults to TEXT." },
+                    mandatory: { type: "boolean" },
+                    storeValue: { type: "boolean", description: "Defaults to true." },
+                    showInList: { type: "boolean", description: "Defaults to true." },
+                    selectRecordType: { type: "string", description: "SELECT/MULTISELECT target: customrecord_/customlist_ scriptid (auto-wrapped) or numeric list id." },
+                    isParent: { type: "boolean", description: "Marks a parent-child SELECT field." },
+                    parentSubtab: { type: "string", description: "Parent record subtab ref, e.g. customrecord_parent.custrecordtab_children." },
+                    defaultValue: { type: "string" },
+                    defaultChecked: { type: "boolean" },
+                    description: { type: "string" },
+                    help: { type: "string" },
+                    displayType: { type: "string", description: "NORMAL (default), HIDDEN, DISABLED, INLINE." }
+                  },
+                  required: ["scriptId", "label"]
+                }
+              },
+              subtabs: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    scriptId: { type: "string", description: "e.g. custrecordtab_my_tab (prefix added if missing)." },
+                    title: { type: "string" }
+                  },
+                  required: ["scriptId", "title"]
+                }
+              }
+            },
+            required: ["scriptId", "name"]
+          }
+        },
+        templates: {
+          type: "array",
+          description: "STRUCTURED advanced PDF/HTML templates to create/update (preferred over raw XML).",
+          items: {
+            type: "object",
+            properties: {
+              scriptId: { type: "string", description: "e.g. custtmpl_my_template (prefix added if missing)." },
+              title: { type: "string" },
+              standard: { type: "string", description: "Base standard template id, e.g. STDTMPLCUSTINVC (invoice), STDTMPLSALESORD (sales order), STDTMPLESTIMATE (quote)." },
+              content: { type: "string", description: "FreeMarker template source (the <pdf>...</pdf> document)." },
+              localPath: { type: "string", description: "Local file with the FreeMarker source, instead of content." },
+              description: { type: "string" },
+              preferred: { type: "boolean" },
+              inactive: { type: "boolean" }
+            },
+            required: ["scriptId", "title", "standard"]
+          }
+        },
+        objects: {
+          type: "array",
+          description: "Raw SDF object XML pass-through — ONLY for object types not covered by the structured payloads, or XML returned by netsuite_sdf_import_object. Root tag must carry a scriptid attribute.",
+          items: {
+            type: "object",
+            properties: {
+              xml: { type: "string", description: "Full SDF object XML, e.g. <customrecordtype scriptid=\"customrecord_x\">...</customrecordtype>." },
+              template: {
+                type: "object",
+                description: "Template source sidecar (<scriptid>.template.xml) for advanced PDF/HTML templates.",
+                properties: {
+                  content: { type: "string", description: "Inline template source (FreeMarker XML)." },
+                  localPath: { type: "string", description: "Absolute local path of an existing template file." }
+                }
+              }
+            },
+            required: ["xml"]
+          }
+        },
+        scriptType: {
+          type: "string",
+          enum: ["suitelet", "restlet", "clientscript", "usereventscript", "scheduledscript", "mapreducescript"],
+          description: "SDF script type (only for the structured script payload). Aliases accepted: scriptlet->suitelet, client->clientscript, userevent/ue->usereventscript, scheduled/ss->scheduledscript, mapreduce/mr->mapreducescript."
+        },
+        scriptId: {
+          type: "string",
+          description: "Script ID, e.g. customscript_my_script (customscript_ prefix added if missing)."
+        },
+        name: { type: "string", description: "Human-readable script name." },
+        description: { type: "string", description: "Optional script description." },
+        accountId: {
+          type: "string",
+          description: "Optional NetSuite account ID override, e.g. 1964539 or 9937091_SB1. Defaults to the currently selected MCP account."
+        },
+        scriptFile: {
+          type: "object",
+          description: "The SuiteScript source file. cabinetPath is the File Cabinet target path; provide content (inline source) or localPath (existing local file).",
+          properties: {
+            cabinetPath: { type: "string", description: "Path under the File Cabinet, e.g. SuiteScripts/MyTool/my_script.js." },
+            content: { type: "string", description: "Inline JavaScript source of the script." },
+            localPath: { type: "string", description: "Absolute local path of an existing .js file to upload instead of content." }
+          },
+          required: ["cabinetPath"]
+        },
+        parameters: {
+          type: "array",
+          description: "Optional script parameters (custscript custom fields).",
+          items: {
+            type: "object",
+            properties: {
+              scriptId: { type: "string", description: "Parameter ID, e.g. custscript_my_param." },
+              label: { type: "string" },
+              fieldType: { type: "string", description: "TEXT, TEXTAREA, SELECT, CHECKBOX, INTEGER, DATE, ..." },
+              mandatory: { type: "boolean" },
+              storeValue: { type: "boolean" },
+              selectRecordType: { type: "string" },
+              description: { type: "string" },
+              help: { type: "string" },
+              defaultValue: { type: "string" }
+            },
+            required: ["scriptId", "label"]
+          }
+        },
+        deployments: {
+          type: "array",
+          description: "Deployments to create. At least one required for the structured script payload.",
+          items: {
+            type: "object",
+            properties: {
+              scriptId: { type: "string", description: "Deployment ID, e.g. customdeploy_my_script." },
+              title: { type: "string" },
+              status: { type: "string", description: "RELEASED, TESTING, or NOTSCHEDULED (scheduled/mapreduce)." },
+              logLevel: { type: "string", description: "DEBUG, AUDIT, ERROR, EMERGENCY." },
+              isDeployed: { type: "boolean" },
+              allRoles: { type: "boolean" },
+              audienceRoles: { type: "array", items: { type: "string" }, description: "Explicit role list when allRoles is false." },
+              isOnline: { type: "boolean", description: "Suitelet: available without login." },
+              recordType: { type: "string", description: "Client/UserEvent: record type, e.g. SALESORDER." },
+              eventType: { type: "string", description: "UserEvent: CREATE, EDIT, VIEW, DELETE... blank = all." },
+              executionContext: { type: "string", description: "Pipe-joined contexts, e.g. USERINTERFACE|CSVIMPORT." },
+              runAsRole: { type: "string", description: "e.g. ADMINISTRATOR." },
+              bufferSize: { type: "number" },
+              concurrencyLimit: { type: "number" },
+              queueAllStagesAtOnce: { type: "boolean" },
+              yieldAfterMins: { type: "number" },
+              recurrence: {
+                type: "object",
+                description: "Scheduled/MapReduce single-run schedule.",
+                properties: {
+                  type: { type: "string", enum: ["single"] },
+                  startDate: { type: "string", description: "YYYY-MM-DD" },
+                  startTime: { type: "string", description: "HH:mm:ssZ, e.g. 22:00:00Z" },
+                  repeat: { type: "string" }
+                }
+              },
+              parameterValues: { type: "object", description: "Deployment-level parameter values keyed by parameter scriptId." }
+            },
+            required: ["scriptId"]
+          }
+        }
+      },
+      required: []
+    }
+  },
+  {
+    name: "netsuite_sdf_list_objects",
+    description:
+      "List custom objects deployed in the currently selected NetSuite account, as {type, scriptId} entries, via the SuiteCloud SDF tool. " +
+      "Use this to discover objects to import/edit with netsuite_sdf_import_object. Optionally filter by object type(s) and/or a scriptid substring. " +
+      "For SDF object types see the SuiteCloud object reference (e.g. customrecordtype, advancedpdftemplate, savedsearch, role, customlist, ...). " +
+      "Executed by the bundled companion via the MCP client (e.g. Claude Desktop); not available to the in-browser agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: {
+          type: "array",
+          items: { type: "string" },
+          description: "Object type(s) to list, e.g. [\"customrecordtype\",\"advancedpdftemplate\"]. Omit to list all."
+        },
+        scriptId: { type: "string", description: "Only list objects whose script id contains this value." },
+        accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
+      },
+      required: []
+    }
+  },
+  {
+    name: "netsuite_sdf_import_object",
+    description:
+      "Import an existing custom object's SDF XML from the currently selected account and return it, so you can edit it and redeploy the change with netsuite_sdf_deploy (create-or-update). " +
+      "OBJECTS ONLY (custom records, templates, saved searches, roles, lists, ...); script records/deployments have their own tooling and are rejected here. " +
+      "For advanced PDF/HTML templates the FreeMarker source is returned as templateXml. " +
+      "Workflow: import -> edit the returned xml (and templateXml) -> call netsuite_sdf_deploy with objects:[{ xml, template:{content} }] using the SAME scriptid. " +
+      "Executed by the bundled companion via the MCP client (e.g. Claude Desktop); not available to the in-browser agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "SDF object type, e.g. customrecordtype, advancedpdftemplate, savedsearch, role, customlist." },
+        scriptId: {
+          oneOf: [
+            { type: "string" },
+            { type: "array", items: { type: "string" } }
+          ],
+          description: "Script id(s) of the object(s) to import, e.g. customrecord_my_type."
+        },
+        includeTemplate: { type: "boolean", description: "Include the template source sidecar for template objects. Defaults to true." },
+        accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
+      },
+      required: ["type", "scriptId"]
+    }
+  },
+  {
+    name: "netsuite_run_quick_script",
+    description:
+      "Run a small SuiteScript/JavaScript snippet in the authenticated NetSuite page context. " +
+      "Use this to quickly test N/* module calls or JavaScript expressions. Return values and console/N.log output are returned as { result, logs }. " +
+      "The snippet runs inside an async function with N modules destructured, so you can use await and modules such as record, search, query, runtime, file, log.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: {
+          type: "string",
+          description:
+            "SuiteScript/JavaScript body to execute, e.g. \"console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;\""
+        }
+      },
+      required: ["code"]
+    }
+  },
+  {
+    name: "magic_netsuite_deploy_server_components",
+    description:
+      "Deploy or repair the Magic NetSuite server-side components used by server Quick Script, FreeMarker rendering, and MCP Suitelet-backed tools. Returns before/after component status.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_list",
+    description:
+      "List durable Template Studio design sessions and identify the current session. Sessions are created and selected from the Magic NetSuite dashboard.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_get_current",
+    description:
+      "Load current Template Studio metadata, references, record context, render status, and active fix-request todos. The MCP hosts automatically search and load relevant local/custom FreeMarker design skills for a new session before the first draft. Checked history and FreeMarker source are omitted by default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Optional explicit session ID. Defaults to the current dashboard session."
+        },
+        includeReferences: {
+          type: "boolean",
+          description: "Include the session reference images. Defaults to true."
+        },
+        includeFreemarker: {
+          type: "boolean",
+          description: "Include the complete FreeMarker source. Defaults to false; prefer the read tool."
+        },
+        includeFeedbackHistory: {
+          type: "boolean",
+          description: "Include checked fix-request history. Defaults to false."
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_set_current",
+    description:
+      "Make an existing Template Studio session current so the dashboard and subsequent Claude tools operate on it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Template Studio session ID." }
+      },
+      required: ["sessionId"]
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_read",
+    description:
+      "Read only the needed FreeMarker lines from the current session, with line numbers and sourceVersion. Use search for a compact context window or explicit startLine/endLine.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        startLine: { type: "number" },
+        endLine: { type: "number" },
+        search: { type: "string" },
+        contextLines: {
+          type: "number",
+          description: "Lines before and after a search match. Defaults to 8."
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_patch",
+    description:
+      "Apply compact exact-text edits to the saved FreeMarker without resending the whole document. Requires the sourceVersion returned by read/get-current and rejects stale or ambiguous edits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        expectedSourceVersion: { type: "number" },
+        edits: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              oldText: { type: "string" },
+              newText: { type: "string" },
+              all: {
+                type: "boolean",
+                description: "Replace every exact match. Defaults to false and requires a unique match."
+              }
+            },
+            required: ["oldText", "newText"]
+          }
+        },
+        changeSummary: { type: "string" },
+        addressFeedbackIds: {
+          type: "array",
+          items: { type: "string" }
+        },
+        render: { type: "boolean" },
+        screenshot: {
+          type: "boolean",
+          description: "With render:true, rasterize and return one complete PDF page."
+        },
+        screenshotPage: {
+          type: "number",
+          description: "One-based PDF page to return. Defaults to page 1."
+        },
+        screenshotWidth: {
+          type: "number",
+          description: "Raster width in pixels, clamped to 800-2400. Defaults to 1600."
+        }
+      },
+      required: ["expectedSourceVersion", "edits"]
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_update",
+    description:
+      "Create the initial complete FreeMarker document or replace it explicitly. Before the initial draft, call template_session_get_current and apply its automatically loaded localSkillPreflight. For later revisions use template_session_read + template_session_patch to avoid retransmitting unchanged source.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Optional session ID. Defaults to the current session."
+        },
+        freemarker: {
+          type: "string",
+          description: "Complete BFO-compatible FreeMarker <pdf> document."
+        },
+        changeSummary: {
+          type: "string",
+          description: "Concise description of the design changes saved in this revision."
+        },
+        addressFeedbackIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Open fix-request IDs resolved by this revision."
+        },
+        name: { type: "string" },
+        prompt: { type: "string" },
+        contextMode: {
+          type: "string",
+          enum: ["freestyle", "transaction", "customrecord"]
+        },
+        recordType: { type: "string" },
+        recordId: { type: "string" },
+        recordLabel: { type: "string" },
+        accountId: { type: "string" },
+        status: {
+          type: "string",
+          enum: [
+            "brief_ready",
+            "designing",
+            "rendering",
+            "rendered",
+            "render_error",
+            "completed"
+          ]
+        },
+        makeCurrent: { type: "boolean" },
+        render: {
+          type: "boolean",
+          description: "Render through NetSuite after saving. Defaults to false."
+        },
+        screenshot: {
+          type: "boolean",
+          description: "With render:true, also rasterize one complete PDF page."
+        },
+        screenshotPage: {
+          type: "number",
+          description: "One-based PDF page to return. Defaults to page 1."
+        },
+        screenshotWidth: {
+          type: "number",
+          description: "Raster width in pixels, clamped to 800-2400. Defaults to 1600."
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_render",
+    description:
+      "Render the current session's saved FreeMarker directly through NetSuite. The resulting PDF and any render error are written back into the durable session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Optional session ID. Defaults to the current session."
+        },
+        screenshot: {
+          type: "boolean",
+          description: "Rasterize and return one complete PDF page after rendering."
+        },
+        screenshotPage: {
+          type: "number",
+          description: "One-based PDF page to return. Defaults to page 1."
+        },
+        screenshotWidth: {
+          type: "number",
+          description: "Raster width in pixels, clamped to 800-2400. Defaults to 1600."
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_template_session_screenshot",
+    description:
+      "Rasterize one complete generated PDF page directly from the PDF bytes. Page selection is explicit and independent of viewer zoom, scroll, and viewport; no browser screenshot, Playwright, or chrome.debugger is used.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Optional session ID. Defaults to the current session."
+        },
+        render: {
+          type: "boolean",
+          description: "Rerender before capturing. Defaults to false."
+        },
+        page: {
+          type: "number",
+          description: "One-based PDF page to return. Defaults to page 1."
+        },
+        targetWidth: {
+          type: "number",
+          description: "Raster width in pixels, clamped to 800-2400. Defaults to 1600."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_freemarker_preview_html",
+    description:
+      "Guarded FreeMarker renderer workflow, not the first step for template recreation. Use only after local BFO-safe template work and browser-tab screenshot review, or when the user explicitly asks for renderer approval. If required server components are missing, this returns needsDeploymentApproval and the agent must ask the user before retrying with deployIfMissing:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        html: { type: "string", description: "The proposed HTML preview to show to the user before FreeMarker conversion." },
+        title: { type: "string", description: "Optional preview title." },
+        recordType: { type: "string", description: "NetSuite record type to use later for the FreeMarker render, e.g. invoice." },
+        recordId: { type: "string", description: "NetSuite internal ID to use later for the FreeMarker render." },
+        deployIfMissing: { type: "boolean", description: "Only true after explicit user approval to deploy/repair renderer server components." }
+      },
+      required: ["html"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_set_approval",
+    description:
+      "Mark a FreeMarker HTML preview session as approved or needing changes. Agents should only call this based on explicit user feedback from the MCP app preview.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Preview session ID returned by netsuite_freemarker_preview_html." },
+        approved: { type: "boolean", description: "True when the user approves the HTML preview; false when fixes are requested." },
+        feedback: { type: "string", description: "User fix notes when approved is false." }
+      },
+      required: ["sessionId", "approved"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_approval_status",
+    description:
+      "Read the current approval status and feedback for a FreeMarker preview session before converting.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Preview session ID." }
+      },
+      required: ["sessionId"]
+    }
+  },
+  {
+    name: "netsuite_freemarker_convert_approved",
+    description:
+      "POST-APPROVAL ONLY. Convert an approved HTML preview session into a FreeMarker Advanced PDF template, or rerender a revised FreeMarker template from that approved session, against the selected NetSuite record.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string", description: "Approved preview session ID." },
+        renderPdf: { type: "boolean", description: "Render the converted FreeMarker template immediately. Defaults to true." },
+        freemarker: { type: "string", description: "Optional revised FreeMarker/BFO template to render instead of regenerating it from the approved HTML." },
+        recordType: { type: "string", description: "Optional record type override for the render." },
+        recordId: { type: "string", description: "Optional record internal ID override for the render." }
+      },
+      required: ["sessionId"]
+    }
+  },
+  {
+    name: "netsuite_server_info",
+    description:
+      "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in settings.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_submit_task",
+    description:
+      "Submit a NetSuite task using the server-side N/task module from the deployed MCP Suitelet. Destructive/side-effecting depending on task type.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskType: {
+          type: "string",
+          description: "N/task TaskType key or value, e.g. SCHEDULED_SCRIPT, MAP_REDUCE, CSV_IMPORT."
+        },
+        values: {
+          type: "object",
+          description: "Task object properties to assign before submit, such as scriptId, deploymentId, params, or importFile."
+        }
+      },
+      required: ["taskType"]
+    }
+  },
+  {
+    name: "netsuite_check_task_status",
+    description:
+      "Check a NetSuite task status using the server-side N/task module from the deployed MCP Suitelet.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: {
+          type: "string",
+          description: "Task ID returned by netsuite_submit_task or another NetSuite task submit call."
+        }
+      },
+      required: ["taskId"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_start",
+    description:
+      "Start an interactive Suitelet viewer session for the MCP App. Opens the provided NetSuite Suitelet URL, or uses the preferred NetSuite tab when no URL is provided.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Optional Suitelet URL to open and stream. If omitted, the current/preferred NetSuite tab is used."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_list",
+    description:
+      "List deployed Suitelets available in the preferred NetSuite account so the MCP App can open one in a hidden viewer tab.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Optional search text for Suitelet script name, script ID, or deployment ID."
+        }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_frame",
+    description:
+      "Capture the latest screenshot frame for the active Suitelet viewer session.",
+    inputSchema: {
+      type: "object",
+      properties: {}
+    }
+  },
+  {
+    name: "netsuite_suitelet_stream_input",
+    description:
+      "Send mouse, wheel, or keyboard input to the active Suitelet viewer session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        event: {
+          type: "object",
+          description: "Input event with type click, mousemove, wheel, keydown, or keyup. Mouse coordinates are normalized 0..1."
+        }
+      },
+      required: ["event"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_probe_url",
+    description:
+      "Fetch a Suitelet URL from the extension with NetSuite credentials and return diagnostics such as status, final URL, frame-blocking headers, and response hints.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Suitelet URL to diagnose."
+        }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_fetch_html",
+    description:
+      "Fetch Suitelet HTML with NetSuite credentials so the MCP App can render it with srcdoc when direct iframe embedding is blank.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Suitelet URL to fetch."
+        }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_proxy_request",
+    description:
+      "Proxy a Suitelet runtime fetch/XHR request through the Chrome extension with NetSuite credentials.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        method: { type: "string" },
+        headers: { type: "object" },
+        body: { type: "string" }
+      },
+      required: ["url"]
+    }
+  },
+  {
+    name: "netsuite_dump_cookies",
+    description:
+      "Return the current NetSuite session cookies (including HttpOnly auth cookies) read from a logged-in NetSuite browser tab via the debugger. Used to hand the real browser session to an external automated browser (Playwright) so it doesn't have to log in again. Requires a NetSuite tab to be open in the browser.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "netsuite_suitelet_control_open",
+    description:
+      "START HERE to drive a Suitelet. Opens it in a real NetSuite browser tab (foreground) and attaches the controller. This toolset is fully self-contained — do NOT use Claude-in-Chrome, tab-context, navigate, or any other browser/screenshot tools; use this family (inspect/fill/click/read/eval/screenshot) for everything. PREFERRED: pass { query: \"<suitelet name>\" } (e.g. \"CTK SuiteQL\") and the correct account URL is resolved automatically — never invent or guess a URL. Alternatively pass { scriptId, deployId } from netsuite_suitelet_stream_list, or a full scriptlet.nl url. Omit all to control the already-active NetSuite tab. Returns the controlled url+title, the matched Suitelet, alternatives, a screenshot, and a snapshot of visible interactive elements for fill/click/read.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Suitelet name or keyword to look up and open (recommended, e.g. \"CTK SuiteQL\")." },
+        scriptId: { type: "string", description: "Script internal id (use with deployId)." },
+        deployId: { type: "string", description: "Deployment id (use with scriptId)." },
+        url: { type: "string", description: "Full scriptlet.nl URL (only if you already have the exact account URL)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_inspect",
+    description:
+      "List the visible interactive elements (inputs, textareas, selects, buttons, links) of the controlled Suitelet with stable CSS selectors and labels. Call before fill/click to discover targets.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "netsuite_suitelet_screenshot",
+    description:
+      "Capture a screenshot (image) of the controlled Suitelet tab. Use THIS to visually see the page — never use Claude-in-Chrome or other browser screenshot tools.",
+    inputSchema: { type: "object", properties: {} }
+  },
+  {
+    name: "netsuite_suitelet_hover",
+    description:
+      "Hover the mouse over an element in the controlled Suitelet (by CSS selector, or x/y viewport coordinates) and return a screenshot. Triggers native CSS :hover plus pointer/mouseover events, so tooltips, dropdown menus, and hover-reveal UI appear.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the element to hover over." },
+        x: { type: "number", description: "Viewport X coordinate (CSS px) to hover, if no selector." },
+        y: { type: "number", description: "Viewport Y coordinate (CSS px) to hover, if no selector." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_scroll",
+    description:
+      "Scroll the controlled Suitelet (window, or a specific scrollable element by selector) and return a screenshot of the new view. Use to reveal content below the fold such as a results table. Omit args to page down; use to:\"bottom\"/\"top\", a dy pixel delta, or a selector to scroll an element into view.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector to scroll into view, or the scrollable container to scroll." },
+        to: { type: "string", description: "\"top\" or \"bottom\" to jump to an edge." },
+        dy: { type: "number", description: "Vertical pixels to scroll by (positive = down). Defaults to ~600 for window." },
+        dx: { type: "number", description: "Horizontal pixels to scroll by." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_fill",
+    description:
+      "Set the value of an input/textarea/select in the controlled Suitelet by CSS selector, firing input/change events (works with framework-bound fields).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the field to fill." },
+        value: { type: "string", description: "Value to set." }
+      },
+      required: ["selector"]
+    }
+  },
+  {
+    name: "netsuite_suitelet_click",
+    description:
+      "Click an element in the controlled Suitelet, either by CSS selector or by visible button/link text (e.g. \"Run Query\").",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector of the element to click." },
+        text: { type: "string", description: "Visible text of the button/link to click (used when selector is omitted)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_read",
+    description:
+      "Read text/value from the controlled Suitelet — a specific element by CSS selector, or the whole page body when no selector is given. Use to read query results, messages, or rendered output.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        selector: { type: "string", description: "CSS selector to read. Omit to read the page body text." },
+        maxLength: { type: "number", description: "Max characters to return (default 8000)." }
+      }
+    }
+  },
+  {
+    name: "netsuite_suitelet_eval",
+    description:
+      "Run a JavaScript expression or snippet in the controlled Suitelet tab and return the (JSON-serializable) result. The most flexible control primitive; prefer fill/click/read for common actions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        expression: { type: "string", description: "JavaScript expression or statements to evaluate in the page." }
+      },
+      required: ["expression"]
+    }
+  }
+];
+
+// -----------------------------
+// MCP tool handling
+// -----------------------------
+const MCP_JOB_TOOL_PATTERN =
+  /(?:^|_)(?:create|update|delete|upload|rename|move|deploy|import|save|set|patch|render|screenshot|convert|fill|click|eval)(?:_|$)|run_quick_script|call_custom_tool|test_custom_tool|switch_environment|stream_start|stream_input|control_open|proxy_request/;
+
+const shouldTrackMcpJob = (toolName) =>
+  MCP_JOB_TOOL_PATTERN.test(String(toolName || ""));
+
+const formatMcpJobTitle = (toolName) =>
+  String(toolName || "MCP operation")
+    .replace(/^magic_netsuite_|^netsuite_/, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const getMcpJobSourcePath = (toolName) => {
+  if (toolName.includes("template")) return "/template-studio";
+  if (toolName.includes("bundle") || toolName.includes("sdf")) return "/bundles";
+  if (toolName.includes("custom_tool")) return "/custom-tools";
+  return "/mcp-server";
+};
+
+async function handleRequest({ requestId, method, params }) {
+  try {
+    let result;
+
+    if (method === "tools/list") {
+      const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+      const disabledTools = storageResult?.magic_netsuite_settings?.mcpDisabledTools ?? [];
+      result = {
+        tools: disabledTools.length > 0
+          ? MCP_TOOL_DEFINITIONS.filter(t => !disabledTools.includes(t.name))
+          : MCP_TOOL_DEFINITIONS
+      };
+    } else if (method === "tools/call") {
+      const { name, arguments: args = {} } = params;
+
+      // Reject calls to disabled tools before execution
+      const storageForCall = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+      const disabledToolsForCall = storageForCall?.magic_netsuite_settings?.mcpDisabledTools ?? [];
+      if (disabledToolsForCall.includes(name)) {
+        throw new Error(`Tool "${name}" is disabled. Enable it in the MCP Server settings.`);
+      }
+
+      let executionSide = "client";
+      let executionJobId = "";
+      if (shouldTrackMcpJob(name)) {
+        try {
+          const account =
+            mcpDedicatedTabAccountId ||
+            storageForCall?.magic_netsuite_settings?.mcpPreferredAccount ||
+            "unknown";
+          const job = await createStoredJob({
+            title: formatMcpJobTitle(name),
+            kind: "mcp-tool-execution",
+            status: "running",
+            progress: 0,
+            indeterminate: true,
+            startedAt: Date.now(),
+            environment: account,
+            account,
+            sourcePath: getMcpJobSourcePath(name),
+            message: `Running ${name}`
+          });
+          executionJobId = job.id;
+        } catch (jobError) {
+          console.warn("[MCP] Could not register execution job.", jobError);
+        }
+      }
+      try {
+        result = await callMcpSuiteletServerTool(name, args);
+
+        if (result) {
+          executionSide = "server";
+        } else if (name === "netsuite_switch_environment") {
+          result = await handleNetsuiteSwitchEnvironment(args);
+          executionSide = "local";
+        } else if (name === "ping") {
+          // Include account info so agents can discover which account is targeted
+          const storageForPing = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+          const pingAccount = storageForPing?.magic_netsuite_settings?.mcpPreferredAccount || null;
+          const text = args.message ? `pong: ${args.message}` : "pong";
+          const accountInfo = pingAccount ? ` (account: ${pingAccount})` : "";
+          result = { content: [{ type: "text", text: text + accountInfo }] };
+          executionSide = "local";
+        } else if (name === "magic_netsuite_save_skill") {
+          result = await handleMagicSaveSkill(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_list_skills") {
+          result = await handleMagicListSkills(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_search_skills") {
+          result = await handleMagicSearchSkills(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_load_skill") {
+          result = await handleMagicLoadSkill(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_set_skill_enabled") {
+          result = await handleMagicSetSkillEnabled(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_create_quiz") {
+          result = await handleMagicCreateQuiz(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_list_quizzes") {
+          result = await handleMagicListQuizzes();
+          executionSide = "local";
+        } else if (name === "magic_netsuite_get_quiz") {
+          result = await handleMagicGetQuiz(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_delete_quiz") {
+          result = await handleMagicDeleteQuiz(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_search_custom_tools") {
+          result = await handleMagicSearchCustomTools(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_create_custom_tool") {
+          result = await handleMagicCreateCustomTool(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_update_custom_tool") {
+          result = await handleMagicUpdateCustomTool(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_test_custom_tool") {
+          result = await handleMagicTestCustomTool(args);
+          executionSide = args?.executionDomain || "client";
+        } else if (name === "magic_netsuite_call_custom_tool") {
+          result = await handleMagicCallCustomTool(args);
+          executionSide = args?.executionDomain || "client";
+        } else if (name === "suiteql_get_guide") {
+          result = { content: [{ type: "text", text: SUITEQL_GUIDE }] };
+          executionSide = "local";
+        } else if (name.startsWith("suiteql_")) {
+          result = await handleSuiteQLTool(name, args);
+        } else if (name === "netsuite_search_docs") {
+          result = await handleNetsuiteSearchDocs(args);
+        } else if (name === "netsuite_read_doc_page") {
+          result = await handleNetsuiteReadDocPage(args);
+        } else if (name === "netsuite_submit_docs_batch") {
+          result = await handleNetsuiteSubmitDocsBatch(args);
+          executionSide = "local";
+        } else if (name === "netsuite_get_docs_batch") {
+          result = await handleNetsuiteGetDocsBatch(args);
+          executionSide = "local";
+        } else if (name === "netsuite_list_bundles") {
+          result = await handleNetsuitListBundles(args);
+        } else if (name === "netsuite_get_bundle_components") {
+          result = await handleNetsuiteGetBundleComponents(args);
+        } else if (name === "netsuite_list_record_types") {
+          result = await handleNetsuiteListRecordTypes();
+        } else if (name === "netsuite_lists") {
+          result = await handleNetsuiteLists(args);
+        } else if (name === "netsuite_list_items") {
+          result = await handleNetsuiteListItems(args);
+        } else if (name === "netsuite_create_list") {
+          result = await handleNetsuiteCreateList(args);
+        } else if (name === "netsuite_update_list") {
+          result = await handleNetsuiteUpdateList(args);
+        } else if (name === "netsuite_create_record") {
+          result = await handleNetsuiteCreateRecord(args);
+        } else if (name === "netsuite_update_record_fields") {
+          result = await handleNetsuiteUpdateRecordFields(args);
+        } else if (name === "netsuite_load_record") {
+          result = await handleNetsuiteLoadRecord(args);
+        } else if (name === "netsuite_get_record_sublists") {
+          result = await handleNetsuiteGetRecordSublists(args);
+        } else if (name === "netsuite_get_record_fields") {
+          result = await handleNetsuiteGetRecordFields(args);
+        } else if (name === "netsuite_inspect_custom_record_field") {
+          result = await handleNetsuiteInspectCustomRecordField(args);
+        } else if (name === "netsuite_create_script_field") {
+          result = await handleNetsuiteCreateScriptField(args);
+        } else if (name === "netsuite_update_script_field") {
+          result = await handleNetsuiteUpdateScriptField(args);
+        } else if (name === "netsuite_update_metadata_record") {
+          result = await handleNetsuiteUpdateMetadataRecord(args);
+        } else if (name === "netsuite_read_file") {
+          result = await handleNetsuiteReadFile(args);
+        } else if (name === "netsuite_find_file") {
+          result = await handleNetsuiteFindFile(args);
+        } else if (name === "netsuite_find_folder") {
+          result = await handleNetsuiteFindFolder(args);
+        } else if (name === "netsuite_list_folder") {
+          result = await handleNetsuiteListFolder(args);
+        } else if (name === "netsuite_create_folder") {
+          result = await handleNetsuiteCreateFolder(args);
+        } else if (name === "netsuite_upload_file") {
+          result = await handleNetsuiteUploadFile(args);
+        } else if (name === "netsuite_update_file_content") {
+          result = await handleNetsuiteUpdateFileContent(args);
+        } else if (name === "netsuite_rename_file") {
+          result = await handleNetsuiteRenameFile(args);
+        } else if (name === "netsuite_rename_folder") {
+          result = await handleNetsuiteRenameFolder(args);
+        } else if (name === "netsuite_delete_file") {
+          result = await handleNetsuiteDeleteFile(args);
+        } else if (name === "netsuite_delete_folder") {
+          result = await handleNetsuiteDeleteFolder(args);
+        } else if (name === "netsuite_move_items") {
+          result = await handleNetsuiteMoveItems(args);
+        } else if (name === "netsuite_get_scripts") {
+          result = await handleNetsuiteGetScripts(args);
+        } else if (name === "netsuite_get_script_files") {
+          result = await handleNetsuiteGetScriptFiles(args);
+        } else if (name === "netsuite_get_deployed_scripts") {
+          result = await handleNetsuiteGetDeployedScripts(args);
+        } else if (
+          name === "netsuite_sdf_deploy" ||
+          name === "netsuite_sdf_list_objects" ||
+          name === "netsuite_sdf_import_object"
+        ) {
+          result = await handleNetsuiteSdfDeploy(args);
+        } else if (name === "netsuite_run_quick_script") {
+          result = await handleNetsuiteRunQuickScript(args);
+        } else if (name === "magic_netsuite_deploy_server_components") {
+          result = await handleMagicDeployServerComponents();
+        } else if (name === "magic_netsuite_template_session_list") {
+          result = await handleTemplateDesignSessionList();
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_get_current") {
+          result = await handleTemplateDesignSessionGetCurrent(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_set_current") {
+          result = await handleTemplateDesignSessionSetCurrent(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_read") {
+          result = await handleTemplateDesignSessionRead(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_patch") {
+          result = await handleTemplateDesignSessionPatch(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_update") {
+          result = await handleTemplateDesignSessionUpdate(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_render") {
+          result = await handleTemplateDesignSessionRender(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_session_screenshot") {
+          result = await handleTemplateDesignSessionScreenshot(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_preview_html") {
+          result = await handleFreemarkerPreviewHtml(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_set_approval") {
+          result = await handleFreemarkerSetApproval(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_approval_status") {
+          result = await handleFreemarkerApprovalStatus(args);
+          executionSide = "local";
+        } else if (name === "netsuite_freemarker_convert_approved") {
+          result = await handleFreemarkerConvertApproved(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_review_surface_open") {
+          result = await handleTemplateReviewSurfaceOpen(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_review_surface_update") {
+          result = await handleTemplateReviewSurfaceUpdate(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_review_surface_get") {
+          result = await handleTemplateReviewSurfaceGet();
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_review_surface_screenshot") {
+          result = await handleTemplateReviewSurfaceScreenshot();
+          executionSide = "local";
+        } else if (name === "netsuite_get_logs") {
+          result = await handleNetsuiteGetLogs(args);
+        } else if (name === "netsuite_suitelet_stream_start") {
+          result = await handleSuiteletStreamStart(args);
+        } else if (name === "netsuite_suitelet_stream_list") {
+          result = await handleSuiteletStreamList(args);
+        } else if (name === "netsuite_suitelet_stream_frame") {
+          result = await handleSuiteletStreamFrame();
+        } else if (name === "netsuite_suitelet_stream_input") {
+          result = await handleSuiteletStreamInput(args);
+        } else if (name === "netsuite_suitelet_probe_url") {
+          result = await handleSuiteletProbeUrl(args);
+        } else if (name === "netsuite_suitelet_fetch_html") {
+          result = await handleSuiteletFetchHtml(args);
+        } else if (name === "netsuite_suitelet_proxy_request") {
+          result = await handleSuiteletProxyRequest(args);
+        } else if (name === "netsuite_dump_cookies") {
+          result = await handleDumpNetsuiteCookies();
+        } else if (name === "netsuite_suitelet_control_open") {
+          result = await handleSuiteletControlOpen(args);
+        } else if (name === "netsuite_suitelet_inspect") {
+          result = await handleSuiteletInspect(args);
+        } else if (name === "netsuite_suitelet_screenshot") {
+          result = await handleSuiteletScreenshot(args);
+        } else if (name === "netsuite_suitelet_scroll") {
+          result = await handleSuiteletScroll(args);
+        } else if (name === "netsuite_suitelet_hover") {
+          result = await handleSuiteletHover(args);
+        } else if (name === "netsuite_suitelet_fill") {
+          result = await handleSuiteletFill(args);
+        } else if (name === "netsuite_suitelet_click") {
+          result = await handleSuiteletClick(args);
+        } else if (name === "netsuite_suitelet_read") {
+          result = await handleSuiteletRead(args);
+        } else if (name === "netsuite_suitelet_eval") {
+          result = await handleSuiteletEval(args);
+        } else {
+          throw new Error(`Unknown tool: ${name}`);
+        }
+        recordMcpUsage(name, true, null, executionSide);
+        if (executionJobId) {
+          await updateStoredJob(executionJobId, {
+            status: "succeeded",
+            progress: 100,
+            indeterminate: false,
+            finishedAt: Date.now(),
+            message: `${name} completed`,
+            result: {
+              tool: name,
+              executionSide,
+              completed: true
+            }
+          }).catch(() => undefined);
+        }
+
+        // After a successful tool call, check governance on the dedicated tab
+        // and refresh it if needed for the next call.
+        // Fire-and-forget — don't block the response.
+        if (!name.startsWith("netsuite_suitelet_")) {
+          checkAndRefreshDedicatedTabGovernance().catch((err) => {
+            console.debug(`[MCP] Post-call governance check failed: ${err.message}`);
+          });
+        }
+      } catch (toolErr) {
+        recordMcpUsage(name, false, toolErr.message, executionSide);
+        if (executionJobId) {
+          await updateStoredJob(executionJobId, {
+            status: "failed",
+            indeterminate: false,
+            finishedAt: Date.now(),
+            error:
+              toolErr instanceof Error ? toolErr.message : String(toolErr),
+            message: `${name} failed`,
+            result: {
+              tool: name,
+              executionSide,
+              completed: false
+            }
+          }).catch(() => undefined);
+        }
+        throw toolErr;
+      }
+    } else {
+      throw new Error(`Unknown method: ${method}`);
+    }
+
+    const responseStorage = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+    const responseAccount =
+      mcpDedicatedTabAccountId ||
+      responseStorage?.magic_netsuite_settings?.mcpPreferredAccount ||
+      null;
+    return { requestId, success: true, result, account: responseAccount };
+  } catch (err) {
+    // Handle non-Error throws (plain objects, strings) that have no .message
+    const msg =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+        ? err
+        : JSON.stringify(err);
+    return { requestId, success: false, error: msg };
+  }
+}
+
+// -----------------------------
+// SuiteQL Tool Handler
+// -----------------------------
+async function handleNetsuiteSwitchEnvironment(args: AnyRecord = {}) {
+  const requestedAccount = String(args.accountId ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/-/g, "_");
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const settings = storageResult?.magic_netsuite_settings || {};
+
+  await chrome.storage.sync.set({
+    magic_netsuite_settings: {
+      ...settings,
+      mcpPreferredAccount: requestedAccount
+    }
+  });
+
+  if (!requestedAccount) {
+    const tab = await getActiveNetsuiteTab();
+    return asMcpTextResult({
+      switched: true,
+      accountId: extractAccountIdFromUrl(tab.url),
+      routing: "active-tab",
+      tabId: tab.id
+    });
+  }
+
+  const tab = await getPreferredNetsuiteTab();
+  const resolvedAccount = extractAccountIdFromUrl(tab.url);
+  if (resolvedAccount !== requestedAccount) {
+    throw new Error(
+      `Could not route MCP calls to account ${requestedAccount}; selected tab belongs to ${resolvedAccount || "unknown"}.`
+    );
+  }
+
+  return asMcpTextResult({
+    switched: true,
+    accountId: resolvedAccount,
+    routing: tab.id === mcpDedicatedTabId ? "dedicated-tab" : "connected-tab",
+    tabId: tab.id,
+    url: tab.url
+  });
+}
+
+async function handleSuiteQLTool(toolName, args) {
+  const actionMap = {
+    "suiteql_search_tables": "FETCH_SUITEQL_TABLES",
+    "suiteql_get_table_fields": "FETCH_SUITEQL_TABLE_DETAIL",
+    "suiteql_get_table_joins": "FETCH_SUITEQL_TABLE_DETAIL",
+    "suiteql_execute_query": "RUN_SUITEQL_QUERY",
+    "suiteql_discover_field_values": "RUN_SUITEQL_QUERY"
+  };
+
+  const action = actionMap[toolName];
+  if (!action) {
+    throw new Error(`Unknown SuiteQL tool: ${toolName}`);
+  }
+
+  // Get preferred NetSuite tab (account-aware for MCP)
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) {
+    throw new Error("No suitable NetSuite tab found");
+  }
+
+  // Prepare payload based on tool
+  let payload: AnyRecord = {};
+  if (toolName === "suiteql_search_tables") {
+    // No specific payload needed, the API returns all tables and we filter
+  } else if (toolName === "suiteql_get_table_fields" || toolName === "suiteql_get_table_joins") {
+    payload = { tableName: args.tableName };
+  } else if (toolName === "suiteql_execute_query") {
+    // Guard: LIMIT is not valid SuiteQL syntax (Oracle SQL uses ROWNUM)
+    if (/\bLIMIT\b/i.test(args.sql)) {
+      throw new Error(
+        "LIMIT is not valid SuiteQL syntax and will cause an error. " +
+        "Use ROWNUM in a WHERE clause instead. " +
+        "Example: SELECT id, name FROM customer WHERE ROWNUM <= 10"
+      );
+    }
+    payload = { sql: args.sql };
+  } else if (toolName === "suiteql_discover_field_values") {
+    const sql = `SELECT DISTINCT ${args.fieldId} FROM ${args.tableName} WHERE ${args.fieldId} IS NOT NULL AND ROWNUM <= 20`;
+    payload = { sql, limit: 20 };
+  }
+
+  // Send message to content script
+  const response = await sendMessageToTab(tab.id, {
+    action,
+    data: payload,
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    // response.message can be an object (e.g. a NetSuite error payload) — serialize it
+    const rawMsg = response?.message;
+    const errMsg =
+      rawMsg
+        ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+        : "Failed to execute SuiteQL tool";
+    throw new Error(errMsg);
+  }
+
+  // Process response based on tool
+  let resultData = response.message;
+
+  if (toolName === "suiteql_search_tables") {
+    const data = resultData?.data ?? (Array.isArray(resultData) ? resultData : []);
+    const query = (args.query || "").toLowerCase();
+    const filtered = query
+      ? data.filter(t =>
+          t.id.toLowerCase().includes(query) ||
+          t.label.toLowerCase().includes(query)
+        )
+      : data;
+
+    resultData = {
+      total: data.length,
+      matched: filtered.length,
+      tables: filtered.slice(0, 50)
+    };
+  } else if (toolName === "suiteql_get_table_fields") {
+    const data = resultData?.data ?? resultData ?? {};
+    const fields = (data.fields ?? [])
+      .filter(f => f.isColumn)
+      .map(f => ({
+        id: f.id,
+        label: f.label,
+        dataType: f.dataType
+      }));
+
+    resultData = {
+      table: args.tableName,
+      fieldCount: fields.length,
+      fields
+    };
+  } else if (toolName === "suiteql_get_table_joins") {
+    const data = resultData?.data ?? resultData ?? {};
+    const joins = (data.joins ?? []).map(j => ({
+      id: j.id,
+      label: j.label,
+      joinType: j.joinType,
+      cardinality: j.cardinality,
+      targetTable: j.sourceTargetType?.id ?? null,
+      joinCondition: j.sourceTargetType?.joinPairs?.[0]?.label ?? null
+    }));
+
+    resultData = {
+      table: args.tableName,
+      joinCount: joins.length,
+      joins
+    };
+  } else if (toolName === "suiteql_execute_query") {
+    const payload = resultData?.results ?? resultData ?? [];
+    const results = Array.isArray(payload) ? payload : (payload.results ?? []);
+    const totalCount = Array.isArray(payload)
+      ? results.length
+      : (payload.totalCount ?? results.length);
+    const columns = results.length > 0 ? Object.keys(results[0]) : [];
+
+    resultData = {
+      success: true,
+      columns,
+      rowCount: results.length,
+      totalCount,
+      results,
+      note: totalCount > 5
+        ? `Showing 5 of ${totalCount} total rows (preview mode).`
+        : undefined
+    };
+  } else if (toolName === "suiteql_discover_field_values") {
+    const payload = resultData?.results ?? resultData ?? [];
+    const results = Array.isArray(payload) ? payload : (payload.results ?? []);
+    const values = results
+      .map(r => r[args.fieldId] ?? Object.values(r)[0])
+      .filter(v => v !== null && v !== undefined && v !== "");
+
+    resultData = {
+      success: true,
+      table: args.tableName,
+      field: args.fieldId,
+      sampleCount: values.length,
+      distinctValues: values
+    };
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(resultData, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// NetSuite Docs Tool Helpers
+// -----------------------------
+
+async function searchNetsuiteDocs(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { protocol, host } = new URL(tab.url);
+  const baseUrl = `${protocol}//${host}`;
+  const searchUrl = `${baseUrl}/app/help/helpcenter.nl?search=${encodeURIComponent(String(args.query ?? ""))}`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_HELP_PAGE",
+    data: { url: searchUrl, operation: "search", baseUrl },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch NetSuite docs");
+  }
+
+  const results = response.message?.results ?? [];
+  const payload = results.length === 0
+    ? { results: [], message: "No results found for the given query." }
+    : { results };
+
+  return payload;
+}
+
+async function handleNetsuiteSearchDocs(args) {
+  const payload = await searchNetsuiteDocs(args);
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+}
+
+async function readNetsuiteDocPage(args) {
+  const url = String(args.url ?? "");
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    throw new Error("url must be a valid NetSuite help page URL.");
+  }
+
+  const isNetsuiteHost = parsedUrl.hostname === "netsuite.com" || parsedUrl.hostname.endsWith(".netsuite.com");
+  const isHelpCenterPage = parsedUrl.pathname === "/app/help/helpcenter.nl";
+  if (!isNetsuiteHost || !isHelpCenterPage) {
+    throw new Error("URL must point to a NetSuite help center page.");
+  }
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_HELP_PAGE",
+    data: { url, operation: "read" },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch doc page");
+  }
+
+  const content = response.message?.content ?? "";
+  if (!content) throw new Error("Could not parse content from the page.");
+
+  const links = Array.isArray(response.message?.links) ? response.message.links : [];
+  const payload = {
+    url,
+    ...(response.message?.title ? { title: response.message.title } : {}),
+    content: content.slice(0, 10_000),
+    contentLength: content.length,
+    contentTruncated: content.length > 10_000,
+    links,
+    linkCount: response.message?.linkCount ?? links.length,
+    linksTruncated: Boolean(response.message?.linksTruncated)
+  };
+
+  return payload;
+}
+
+async function handleNetsuiteReadDocPage(args) {
+  const payload = await readNetsuiteDocPage(args);
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(payload, null, 2)
+    }]
+  };
+}
+
+function normalizeNetsuiteDocBatchQueries(value) {
+  if (!Array.isArray(value)) {
+    throw new Error("queries must be an array of documentation topics.");
+  }
+
+  const seen = new Set();
+  const queries = [];
+  value.forEach((item) => {
+    const query = String(item ?? "").trim().replace(/\s+/g, " ");
+    const key = query.toLocaleLowerCase();
+    if (!query || seen.has(key)) return;
+    seen.add(key);
+    queries.push(query);
+  });
+
+  if (queries.length === 0) {
+    throw new Error("queries must contain at least one non-empty topic.");
+  }
+  if (queries.length > NETSUITE_DOC_BATCH_MAX_TOPICS) {
+    throw new Error(
+      `A documentation batch supports at most ${NETSUITE_DOC_BATCH_MAX_TOPICS} unique topics.`
+    );
+  }
+  return queries;
+}
+
+function clampNetsuiteDocBatchInteger(value, fallback, minimum, maximum) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`Expected an integer between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
+async function readNetsuiteDocBatches(): Promise<AnyRecord> {
+  const stored = await chrome.storage.local.get(
+    NETSUITE_DOC_BATCHES_STORAGE_KEY
+  );
+  const batches = stored?.[NETSUITE_DOC_BATCHES_STORAGE_KEY];
+  return batches && typeof batches === "object" && !Array.isArray(batches)
+    ? batches
+    : {};
+}
+
+function mutateNetsuiteDocBatches(mutation) {
+  const pending = netsuiteDocBatchWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const batches = await readNetsuiteDocBatches();
+      const result = await mutation(batches);
+      const ordered = Object.values(batches).sort(
+        (left, right) =>
+          Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0)
+      );
+      const active = ordered.filter(
+        (batch) =>
+          !NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch?.status)
+      );
+      const terminal = ordered.filter((batch) =>
+        NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch?.status)
+      );
+      const retained = [
+        ...active,
+        ...terminal.slice(
+          0,
+          Math.max(0, NETSUITE_DOC_BATCH_MAX_HISTORY - active.length)
+        )
+      ];
+      await chrome.storage.local.set({
+        [NETSUITE_DOC_BATCHES_STORAGE_KEY]: Object.fromEntries(
+          retained.map((batch) => [batch.id, batch])
+        )
+      });
+      return result;
+    });
+  netsuiteDocBatchWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
+  return pending;
+}
+
+async function updateNetsuiteDocBatch(jobId, updater) {
+  return mutateNetsuiteDocBatches((batches) => {
+    const current = batches[jobId];
+    if (!current) return null;
+    const next =
+      typeof updater === "function"
+        ? updater(current)
+        : { ...current, ...updater };
+    batches[jobId] = {
+      ...next,
+      id: current.id,
+      createdAt: current.createdAt,
+      updatedAt: Date.now()
+    };
+    return batches[jobId];
+  });
+}
+
+function summarizeNetsuiteDocBatch(batch) {
+  const topics = Array.isArray(batch?.topics) ? batch.topics : [];
+  const completedTopics = topics.filter((topic) =>
+    ["succeeded", "completed_with_errors", "failed"].includes(topic.status)
+  ).length;
+  const failedTopics = topics.filter((topic) => topic.status === "failed")
+    .length;
+  const topicsWithWarnings = topics.filter(
+    (topic) => topic.status === "completed_with_errors"
+  ).length;
+  return {
+    totalTopics: topics.length,
+    completedTopics,
+    successfulTopics: completedTopics - failedTopics,
+    failedTopics,
+    topicsWithWarnings,
+    progress:
+      topics.length === 0 ? 0 : Math.round((completedTopics / topics.length) * 100)
+  };
+}
+
+function scheduleNetsuiteDocBatchWorker() {
+  if (netsuiteDocBatchWorkerActive) return;
+  netsuiteDocBatchWorkerActive = true;
+  let completedNormally = false;
+  Promise.resolve()
+    .then(processNetsuiteDocBatchQueue)
+    .then(() => {
+      completedNormally = true;
+    })
+    .catch((error) => {
+      console.error("[NetSuite Docs Batch] Worker failed.", error);
+    })
+    .finally(() => {
+      netsuiteDocBatchWorkerActive = false;
+      if (!completedNormally) return;
+      netsuiteDocBatchWriteQueue
+        .catch(() => undefined)
+        .then(readNetsuiteDocBatches)
+        .then((batches) => {
+          if (
+            Object.values(batches).some((batch) =>
+              ["queued", "running"].includes(batch?.status)
+            )
+          ) {
+            scheduleNetsuiteDocBatchWorker();
+          }
+        })
+        .catch((error) => {
+          console.error(
+            "[NetSuite Docs Batch] Could not check for queued work.",
+            error
+          );
+        });
+    });
+}
+
+async function processNetsuiteDocBatchQueue() {
+  while (true) {
+    await netsuiteDocBatchWriteQueue.catch(() => undefined);
+    const batches = await readNetsuiteDocBatches();
+    const batch = Object.values(batches)
+      .filter((candidate) =>
+        ["queued", "running"].includes(candidate?.status)
+      )
+      .sort(
+        (left, right) =>
+          Number(left?.createdAt || 0) - Number(right?.createdAt || 0)
+      )[0];
+    if (!batch) return;
+
+    const jobId = String(batch.id);
+    await updateNetsuiteDocBatch(jobId, (current) => ({
+      ...current,
+      status: "running",
+      startedAt: current.startedAt || Date.now()
+    }));
+    await updateStoredJob(jobId, {
+      status: "running",
+      startedAt: batch.startedAt || Date.now(),
+      indeterminate: false,
+      message: "Searching official NetSuite documentation"
+    }).catch(() => undefined);
+
+    for (let index = 0; index < batch.topics.length; index += 1) {
+      await netsuiteDocBatchWriteQueue.catch(() => undefined);
+      const latest = (await readNetsuiteDocBatches())[jobId];
+      const currentTopic = latest?.topics?.[index];
+      if (
+        !currentTopic ||
+        ["succeeded", "completed_with_errors", "failed"].includes(
+          currentTopic.status
+        )
+      ) {
+        continue;
+      }
+
+      await updateNetsuiteDocBatch(jobId, (current) => {
+        const topics = [...current.topics];
+        topics[index] = {
+          ...topics[index],
+          status: "running",
+          startedAt: topics[index].startedAt || Date.now()
+        };
+        return { ...current, topics };
+      });
+
+      try {
+        const searchPayload = await searchNetsuiteDocs({
+          query: currentTopic.query
+        });
+        const searchResults = (searchPayload.results || []).slice(
+          0,
+          latest.maxSearchResults
+        );
+        const pages = [];
+        const pageErrors = [];
+        for (
+          let pageIndex = 0;
+          pageIndex < Math.min(latest.pagesPerQuery, searchResults.length);
+          pageIndex += 1
+        ) {
+          const searchResult = searchResults[pageIndex];
+          try {
+            pages.push(
+              await readNetsuiteDocPage({ url: searchResult.url })
+            );
+          } catch (error) {
+            pageErrors.push({
+              url: searchResult.url,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+
+        await updateNetsuiteDocBatch(jobId, (current) => {
+          const topics = [...current.topics];
+          topics[index] = {
+            ...topics[index],
+            status:
+              pageErrors.length > 0 ? "completed_with_errors" : "succeeded",
+            finishedAt: Date.now(),
+            searchResults,
+            pages,
+            pageErrors
+          };
+          return { ...current, topics };
+        });
+      } catch (error) {
+        await updateNetsuiteDocBatch(jobId, (current) => {
+          const topics = [...current.topics];
+          topics[index] = {
+            ...topics[index],
+            status: "failed",
+            finishedAt: Date.now(),
+            error: error instanceof Error ? error.message : String(error)
+          };
+          return { ...current, topics };
+        });
+      }
+
+      const progressBatch = (await readNetsuiteDocBatches())[jobId];
+      const progress = summarizeNetsuiteDocBatch(progressBatch);
+      await updateStoredJob(jobId, {
+        progress: progress.progress,
+        message: `Completed ${progress.completedTopics} of ${progress.totalTopics} documentation topics`
+      }).catch(() => undefined);
+    }
+
+    const completedBatch = (await readNetsuiteDocBatches())[jobId];
+    const summary = summarizeNetsuiteDocBatch(completedBatch);
+    const finalStatus =
+      summary.failedTopics === summary.totalTopics
+        ? "failed"
+        : summary.failedTopics > 0 || summary.topicsWithWarnings > 0
+          ? "completed_with_errors"
+          : "completed";
+    await updateNetsuiteDocBatch(jobId, {
+      status: finalStatus,
+      finishedAt: Date.now(),
+      ...summary
+    });
+    await updateStoredJob(jobId, {
+      status: finalStatus === "failed" ? "failed" : "succeeded",
+      progress: 100,
+      indeterminate: false,
+      finishedAt: Date.now(),
+      message:
+        finalStatus === "completed"
+          ? "NetSuite documentation batch completed"
+          : `NetSuite documentation batch completed with ${summary.failedTopics + summary.topicsWithWarnings} issue(s)`,
+      result: {
+        docBatchJobId: jobId,
+        status: finalStatus,
+        ...summary
+      }
+    }).catch(() => undefined);
+  }
+}
+
+async function handleNetsuiteSubmitDocsBatch(args) {
+  const queries = normalizeNetsuiteDocBatchQueries(args?.queries);
+  const pagesPerQuery = clampNetsuiteDocBatchInteger(
+    args?.pagesPerQuery,
+    1,
+    0,
+    NETSUITE_DOC_BATCH_MAX_PAGES_PER_TOPIC
+  );
+  const maxSearchResults = clampNetsuiteDocBatchInteger(
+    args?.maxSearchResults,
+    5,
+    1,
+    10
+  );
+  const now = Date.now();
+  const jobId = createJobId();
+  const batch = {
+    id: jobId,
+    status: "queued",
+    createdAt: now,
+    updatedAt: now,
+    pagesPerQuery,
+    maxSearchResults,
+    totalTopics: queries.length,
+    completedTopics: 0,
+    successfulTopics: 0,
+    failedTopics: 0,
+    topicsWithWarnings: 0,
+    progress: 0,
+    topics: queries.map((query, index) => ({
+      index,
+      query,
+      status: "queued",
+      searchResults: [],
+      pages: [],
+      pageErrors: []
+    }))
+  };
+
+  await mutateNetsuiteDocBatches((batches) => {
+    batches[jobId] = batch;
+    return batch;
+  });
+
+  const settings = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const account =
+    mcpDedicatedTabAccountId ||
+    settings?.magic_netsuite_settings?.mcpPreferredAccount ||
+    "unknown";
+  await createStoredJob({
+    id: jobId,
+    title: `Research ${queries.length} NetSuite documentation topic${queries.length === 1 ? "" : "s"}`,
+    kind: "netsuite-docs-batch",
+    status: "queued",
+    progress: 0,
+    indeterminate: false,
+    environment: account,
+    account,
+    sourcePath: "/mcp-server",
+    message: "Queued for the shared NetSuite documentation worker",
+    result: { docBatchJobId: jobId }
+  }).catch(() => undefined);
+
+  scheduleNetsuiteDocBatchWorker();
+  const payload = {
+    jobId,
+    status: "queued",
+    topicCount: queries.length,
+    topics: batch.topics.map(({ index, query, status }) => ({
+      index,
+      query,
+      status
+    })),
+    instruction:
+      "Continue with other work. Call netsuite_get_docs_batch with this jobId for a non-blocking progress check or to retrieve completed answers."
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
+  };
+}
+
+async function handleNetsuiteGetDocsBatch(args) {
+  const jobId = String(args?.jobId || "").trim();
+  if (!jobId) throw new Error("jobId is required.");
+  await netsuiteDocBatchWriteQueue.catch(() => undefined);
+  const batch = (await readNetsuiteDocBatches())[jobId];
+  if (!batch) {
+    throw new Error(
+      `NetSuite documentation batch "${jobId}" was not found or has expired.`
+    );
+  }
+
+  if (!NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch.status)) {
+    scheduleNetsuiteDocBatchWorker();
+  }
+
+  const requestedIndexes = Array.isArray(args?.topicIndexes)
+    ? new Set(
+        args.topicIndexes
+          .map((value) => Number(value))
+          .filter((value) => Number.isInteger(value) && value >= 0)
+      )
+    : null;
+  const includeContent = args?.includeContent !== false;
+  const selectedTopics = batch.topics
+    .filter((topic) => !requestedIndexes || requestedIndexes.has(topic.index))
+    .map((topic) => {
+      if (includeContent) return topic;
+      return {
+        ...topic,
+        pages: topic.pages.map(({ content, ...page }) => page)
+      };
+    });
+  const summary = summarizeNetsuiteDocBatch(batch);
+  const payload = {
+    jobId,
+    status: batch.status,
+    createdAt: batch.createdAt,
+    startedAt: batch.startedAt,
+    finishedAt: batch.finishedAt,
+    pagesPerQuery: batch.pagesPerQuery,
+    maxSearchResults: batch.maxSearchResults,
+    ...summary,
+    topics: selectedTopics,
+    nextAction: NETSUITE_DOC_BATCH_TERMINAL_STATUSES.has(batch.status)
+      ? "Use the returned official documentation and cite the page URLs in your answer."
+      : "Continue other work and call netsuite_get_docs_batch again later. This status call does not wait for the browser worker."
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }]
+  };
+}
+
+// -----------------------------
+// Bundle Tool Helpers
+// -----------------------------
+
+async function handleNetsuitListBundles(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { hostname } = new URL(tab.url);
+
+  // Map friendly filter names to NetSuite type codes
+  const filterMap = { installed: "I", created: "S", all: "both" };
+  const bundleType = filterMap[args?.filter] ?? "both";
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_BUNDLES",
+    data: { domain: hostname, bundleType },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? "Failed to fetch bundle list");
+  }
+
+  const bundles = response.message?.bundles ?? [];
+  const installed = bundles.filter(b => b.type === "installed").length;
+  const created = bundles.filter(b => b.type === "created").length;
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ bundles, count: bundles.length, installed, created }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetBundleComponents(args) {
+  const bundleId = String(args.bundleId ?? "");
+  if (!bundleId) throw new Error("bundleId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab || !tab.url) {
+    throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+  }
+
+  const { hostname } = new URL(tab.url);
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "FETCH_BUNDLE_COMPONENTS",
+    data: { domain: hostname, bundleId },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    throw new Error(response?.message ?? `Failed to fetch components for bundle ${bundleId}`);
+  }
+
+  const components = response.message?.components ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ bundleId, components, count: components.length }, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// Record Tool Helpers
+// -----------------------------
+
+async function handleNetsuiteLoadRecord(args) {
+  const recordType = String(args.recordType ?? "");
+  const recordId = String(args.recordId ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "LOAD_RECORD",
+    data: { type: recordType, id: recordId },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to load record ${recordType}/${recordId}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetRecordSublists(args) {
+  const recordType = String(args.recordType ?? "");
+  const recordId = String(args.recordId ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "LOAD_RECORD_SUBLISTS",
+    data: { type: recordType, id: recordId, sublistIds: args.sublistIds ?? null },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to load sublists for record ${recordType}/${recordId}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetRecordFields(args) {
+  const recordType = String(args.recordType ?? "");
+  if (!recordType) throw new Error("recordType is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "GET_RECORD_FIELDS",
+    data: { type: recordType },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : `Failed to get fields for record type ${recordType}`;
+    throw new Error(errMsg);
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(response.message, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListRecordTypes() {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "GET_ALL_RECORD_TYPES",
+    data: {},
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to get record types";
+    throw new Error(errMsg);
+  }
+
+  const records = response.message ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: records.length, recordTypes: records }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteLists(args) {
+  const result = await callNetsuiteRoute(
+    "GET_CUSTOM_LISTS",
+    {
+      query: args?.query ?? "",
+      includeInactive: args?.includeInactive === true
+    },
+    "Failed to get custom lists."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListItems(args) {
+  const listId = String(args?.listId ?? "").trim();
+  if (!listId) throw new Error("listId is required.");
+
+  const result = await callNetsuiteRoute(
+    "GET_CUSTOM_LIST_ITEMS",
+    {
+      listId,
+      includeInactive: args?.includeInactive === true
+    },
+    `Failed to get custom list items for ${listId}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteCreateList(args) {
+  const name = String(args?.name ?? "").trim();
+  const scriptId = String(args?.scriptId ?? args?.scriptid ?? "").trim();
+  const values = args?.values ?? args?.listValues;
+  if (!name) throw new Error("name is required.");
+  if (!scriptId) throw new Error("scriptId is required.");
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("values must contain at least one custom list value.");
+  }
+
+  const result = await callNetsuiteRoute(
+    "CREATE_CUSTOM_LIST",
+    { ...args, name, scriptId, values },
+    "Failed to create custom list."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateList(args) {
+  const listId = String(args?.listId ?? args?.id ?? "").trim();
+  if (!listId) throw new Error("listId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_CUSTOM_LIST",
+    { ...args, listId },
+    "Failed to update custom list."
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteCreateRecord(args) {
+  const recordType = String(args?.recordType ?? args?.type ?? "").trim();
+  if (!recordType) throw new Error("recordType is required.");
+
+  const result = await callNetsuiteRoute(
+    "CREATE_RECORD",
+    {
+      ...args,
+      recordType
+    },
+    `Failed to create record ${recordType}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateRecordFields(args) {
+  const recordType = String(args?.recordType ?? args?.type ?? "").trim();
+  const recordId = String(args?.recordId ?? args?.id ?? "").trim();
+  if (!recordType) throw new Error("recordType is required.");
+  if (!recordId) throw new Error("recordId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_RECORD_FIELDS",
+    {
+      ...args,
+      recordType,
+      recordId
+    },
+    `Failed to update record ${recordType}/${recordId}.`
+  );
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+function getRouteResult(response, fallbackMessage) {
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message ?? response?.error;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : fallbackMessage;
+    throw new Error(errMsg);
+  }
+
+  return response.message ?? response;
+}
+
+async function callNetsuiteRoute(action, data, fallbackMessage) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action,
+    data,
+    mode: "normal"
+  });
+
+  return getRouteResult(response, fallbackMessage);
+}
+
+async function handleNetsuiteInspectCustomRecordField(args) {
+  const result = await callNetsuiteRoute(
+    "INSPECT_CUSTOM_RECORD_FIELD",
+    args,
+    "Failed to inspect custom record field."
+  );
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteCreateScriptField(args) {
+  const result = await callNetsuiteRoute(
+    "CREATE_SCRIPT_FIELD",
+    args,
+    "Failed to create script field."
+  );
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateScriptField(args) {
+  const scriptFieldId = String(args?.scriptFieldId ?? args?.fieldId ?? args?.id ?? "").trim();
+  const scriptInternalId = String(args?.scriptInternalId ?? args?.scriptRecordId ?? args?.parentScriptId ?? "").trim();
+  if (!scriptFieldId) throw new Error("scriptFieldId is required.");
+  if (!scriptInternalId) throw new Error("scriptInternalId is required.");
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_SCRIPT_FIELD",
+    {
+      ...args,
+      scriptFieldId,
+      scriptInternalId
+    },
+    "Failed to update script field."
+  );
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteUpdateMetadataRecord(args) {
+  const metadataType = String(args?.metadataType ?? args?.type ?? "").trim();
+  const id = String(args?.id ?? "").trim();
+  const scriptId = String(args?.scriptId ?? "").trim();
+  if (!metadataType) throw new Error("metadataType is required.");
+  if (!id && !scriptId) throw new Error("Provide id (numeric internal id) or scriptId.");
+  if (!args?.values || typeof args.values !== "object" || Array.isArray(args.values)) {
+    throw new Error("values must be an object mapping metadata field IDs to values.");
+  }
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_METADATA_RECORD",
+    { ...args, metadataType, ...(id ? { id } : {}), ...(scriptId ? { scriptId } : {}) },
+    "Failed to update metadata record."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteFindFile(args) {
+  const { id, name } = args ?? {};
+  if (!id && !name) throw new Error("At least one of 'id' or 'name' is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const conditions = [];
+  if (id) conditions.push(`id = ${parseInt(id, 10)}`);
+  if (name) conditions.push(`LOWER(name) LIKE LOWER('%${String(name).replace(/'/g, "''")}%')`);
+  const whereClause = conditions.length === 1 ? conditions[0] : `(${conditions.join(" OR ")})`;
+  const sql = `SELECT id, name, folder, filesize, filetype, url FROM file WHERE ${whereClause} AND ROWNUM <= 25`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 25 },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to find files";
+    throw new Error(errMsg);
+  }
+
+  const files = response.message ?? [];
+  const fileRows = Array.isArray(files) ? files : (files?.results ?? []);
+  const totalCount = Array.isArray(files)
+    ? fileRows.length
+    : (files?.totalCount ?? fileRows.length);
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        count: totalCount,
+        files,
+        ...(
+          id && !name && totalCount === 0
+            ? {
+                hint:
+                  "No File Cabinet file has that internal ID. If this number came from a lead/customer/entity/transaction request, it is a record ID; use SuiteQL relationship discovery to find the linked file ID."
+              }
+            : {}
+        )
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteFindFolder(args) {
+  const { id, name } = args ?? {};
+  if (!id && !name) throw new Error("At least one of 'id' or 'name' is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const conditions = [];
+  if (id) conditions.push(`id = ${parseInt(id, 10)}`);
+  if (name) conditions.push(`LOWER(name) LIKE LOWER('%${String(name).replace(/'/g, "''")}%')`);
+  const whereClause = conditions.length === 1 ? conditions[0] : `(${conditions.join(" OR ")})`;
+  const sql = `SELECT id, name, parent FROM MediaItemFolder WHERE ${whereClause} AND ROWNUM <= 25`;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 25 },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    const errMsg = rawMsg
+      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      : "Failed to find folders";
+    throw new Error(errMsg);
+  }
+
+  const folders = response.message ?? [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: folders.length, folders }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteListFolder(args) {
+  const folderId = String(args?.folderId ?? "").trim();
+  if (!folderId) throw new Error("folderId is required.");
+  const idNum = parseInt(folderId, 10);
+  if (isNaN(idNum)) throw new Error("folderId must be a numeric folder ID.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  // Run both queries in parallel
+  const [subfoldersResp, filesResp] = await Promise.all([
+    sendMessageToTab(tab.id, {
+      action: "RUN_SUITEQL_QUERY",
+      data: { sql: `SELECT id, name FROM MediaItemFolder WHERE parent = ${idNum} AND ROWNUM <= 200`, limit: 200 },
+      mode: "normal"
+    }),
+    sendMessageToTab(tab.id, {
+      action: "RUN_SUITEQL_QUERY",
+      data: { sql: `SELECT id, name, filesize, filetype, url FROM file WHERE folder = ${idNum} AND ROWNUM <= 200`, limit: 200 },
+      mode: "normal"
+    })
+  ]);
+
+  if (!subfoldersResp || subfoldersResp.status === "error") {
+    const msg = subfoldersResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list subfolders");
+  }
+  if (!filesResp || filesResp.status === "error") {
+    const msg = filesResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list files");
+  }
+
+  const subfolders = subfoldersResp.message ?? [];
+  const files = filesResp.message ?? [];
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        folderId: idNum,
+        subfolderCount: subfolders.length,
+        fileCount: files.length,
+        subfolders,
+        files
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteReadFile(args) {
+  const fileId = String(args?.fileId ?? "").trim();
+  if (!fileId) throw new Error("fileId is required.");
+  const idNum = parseInt(fileId, 10);
+  if (isNaN(idNum)) throw new Error("fileId must be a numeric file ID.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  // Step 1: Resolve the file URL via SuiteQL
+  const urlResp = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql: `SELECT id, name, url, filetype, filesize FROM file WHERE id = ${idNum} AND ROWNUM <= 1`, limit: 1 },
+    mode: "normal"
+  });
+
+  if (!urlResp || urlResp.status === "error") {
+    const msg = urlResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : `Failed to look up file ${fileId}`);
+  }
+
+  const rows = urlResp.message ?? [];
+  const fileRow = Array.isArray(rows) ? rows[0] : (rows?.results?.[0] ?? null);
+  if (!fileRow) throw new Error(`File with ID ${fileId} not found in the File Cabinet.`);
+
+  const { name: fileName, url: fileUrl, filetype, filesize } = fileRow;
+  if (!fileUrl) throw new Error(`File ${fileId} exists but has no accessible URL.`);
+
+  // Step 2: Fetch the actual file content
+  const contentResp = await sendMessageToTab(tab.id, {
+    action: "FETCH_FILE_CONTENT",
+    data: { fileUrl },
+    mode: "normal"
+  });
+
+  if (!contentResp || contentResp.status === "error") {
+    const msg = contentResp?.message;
+    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : `Failed to fetch content of file ${fileId}`);
+  }
+
+  const { content, contentType, binary } = contentResp.message ?? {};
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        fileId: idNum,
+        fileName,
+        filetype,
+        filesize,
+        contentType,
+        binary: binary ?? false,
+        content: content ?? ""
+      }, null, 2)
+    }]
+  };
+}
+
+async function lookupFileCabinetFile(fileId) {
+  const idNum = parseInt(String(fileId ?? ""), 10);
+  if (isNaN(idNum)) throw new Error("fileId must be a numeric file ID.");
+
+  const result = await callNetsuiteRoute(
+    "RUN_SUITEQL_QUERY",
+    {
+      sql: `SELECT id, name, folder, filetype, filesize, url FROM file WHERE id = ${idNum} AND ROWNUM <= 1`,
+      limit: 1
+    },
+    `Failed to look up file ${fileId}.`
+  );
+  const rows = Array.isArray(result) ? result : (result?.results ?? []);
+  const file = rows[0];
+  if (!file) throw new Error(`File with ID ${fileId} not found.`);
+  return file;
+}
+
+async function lookupFileCabinetFolder(folderId) {
+  const idNum = parseInt(String(folderId ?? ""), 10);
+  if (isNaN(idNum)) throw new Error("folderId must be a numeric folder ID.");
+
+  const result = await callNetsuiteRoute(
+    "RUN_SUITEQL_QUERY",
+    {
+      sql: `SELECT id, name, parent FROM MediaItemFolder WHERE id = ${idNum} AND ROWNUM <= 1`,
+      limit: 1
+    },
+    `Failed to look up folder ${folderId}.`
+  );
+  const rows = Array.isArray(result) ? result : (result?.results ?? []);
+  const folder = rows[0];
+  if (!folder) throw new Error(`Folder with ID ${folderId} not found.`);
+  return folder;
+}
+
+function asMcpTextResult(result) {
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify(result, null, 2)
+    }]
+  };
+}
+
+async function callMcpSuiteletServerTool(name, args) {
+  if (!MCP_SERVER_SIDE_TOOL_NAMES.has(name)) return null;
+
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const overrideUrl = String(storageResult?.magic_netsuite_settings?.mcpSuiteletDeploymentUrl || "").trim();
+  const suiteletUrl = overrideUrl || await resolveMcpSuiteletServerUrl();
+  if (!suiteletUrl) return null;
+
+  const body = new URLSearchParams();
+  body.set("action", "mcpToolCall");
+  body.set("name", name);
+  body.set("arguments", JSON.stringify(args || {}));
+
+  const response = await fetch(suiteletUrl, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: body.toString()
+  });
+
+  if (!response.ok) {
+    throw new Error(`MCP Suitelet server route failed with HTTP ${response.status}: ${await response.text()}`);
+  }
+
+  const payload = await response.json();
+  if (payload?.unsupported) return null;
+  if (payload?.ok === undefined) return null;
+  if (!payload?.ok) {
+    const raw = payload?.error;
+    throw new Error(raw ? (typeof raw === "string" ? raw : JSON.stringify(raw)) : "MCP Suitelet server route failed.");
+  }
+  return payload.result;
+}
+
+async function resolveMcpSuiteletServerUrl() {
+  if (mcpSuiteletServerUrlCache?.url && Date.now() - mcpSuiteletServerUrlCache.at < 60000) {
+    return mcpSuiteletServerUrlCache.url;
+  }
+
+  const { suitelets } = await querySuitelets(MAGIC_NETSUITE_SERVER_SCRIPT_ID);
+  const matched = suitelets.find((suitelet) =>
+    String(suitelet.scriptId || "").toLowerCase() === MAGIC_NETSUITE_SERVER_SCRIPT_ID ||
+    String(suitelet.deploymentScriptId || "").toLowerCase() === MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID
+  ) || suitelets[0];
+
+  if (!matched?.url) return "";
+  mcpSuiteletServerUrlCache = { url: matched.url, at: Date.now(), matched };
+  return matched.url;
+}
+
+async function handleNetsuiteCreateFolder(args) {
+  const name = String(args?.name ?? "").trim();
+  if (!name) throw new Error("name is required.");
+
+  const result = await callNetsuiteRoute(
+    "CREATE_FOLDER",
+    {
+      name,
+      parentFolder: args?.parentFolderId ?? -15
+    },
+    "Failed to create folder."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteUploadFile(args) {
+  if (
+    (args?.localPath || args?.path || args?.localPaths || args?.files) &&
+    args?.fileContent === undefined &&
+    args?.fileContentBase64 === undefined
+  ) {
+    throw new Error(
+      "localPath uploads must be sent through the local MCP server. The Chrome extension cannot read local filesystem paths directly."
+    );
+  }
+
+  const fileName = String(args?.fileName ?? "").trim();
+  if (!fileName) throw new Error("fileName is required.");
+  if (args?.fileContent === undefined && args?.fileContentBase64 === undefined) {
+    throw new Error("Either fileContent or fileContentBase64 is required.");
+  }
+
+  const result = await callNetsuiteRoute(
+    "UPLOAD_FILE",
+    {
+      fileName,
+      fileContent: args.fileContent,
+      fileContentBase64: args.fileContentBase64,
+      mimeType: args.mimeType,
+      folderId: args.folderId ?? -15
+    },
+    "Failed to upload file."
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteUpdateFileContent(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  if (args?.fileContent === undefined) throw new Error("fileContent is required.");
+
+  const file = (!args.fileName || !args.folderId || !args.mediaType)
+    ? await lookupFileCabinetFile(fileId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "UPDATE_FILE_CONTENT",
+    {
+      fileId,
+      fileContent: args.fileContent,
+      fileName: args.fileName ?? file?.name ?? `file_${fileId}`,
+      folderId: args.folderId ?? file?.folder,
+      mediaType: args.mediaType ?? file?.filetype ?? "JAVASCRIPT"
+    },
+    `Failed to update file ${fileId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteRenameFile(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  const newName = String(args?.newName ?? "").trim();
+  if (!newName) throw new Error("newName is required.");
+
+  const file = (!args.folderId || !args.filetype || !args.filesize)
+    ? await lookupFileCabinetFile(fileId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "RENAME_FILE",
+    {
+      fileId,
+      newName,
+      folderId: args.folderId ?? file?.folder,
+      filetype: args.filetype ?? file?.filetype,
+      filesize: args.filesize ?? file?.filesize
+    },
+    `Failed to rename file ${fileId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteRenameFolder(args) {
+  const folderId = parseInt(String(args?.folderId ?? ""), 10);
+  if (isNaN(folderId)) throw new Error("folderId must be a numeric folder ID.");
+  const newName = String(args?.newName ?? "").trim();
+  if (!newName) throw new Error("newName is required.");
+
+  const folder = args.parentFolderId === undefined
+    ? await lookupFileCabinetFolder(folderId)
+    : null;
+
+  const result = await callNetsuiteRoute(
+    "RENAME_FOLDER",
+    {
+      folderId,
+      newName,
+      parentFolderId: args.parentFolderId ?? folder?.parent ?? -15
+    },
+    `Failed to rename folder ${folderId}.`
+  );
+  return asMcpTextResult(result);
+}
+
+async function handleNetsuiteDeleteFile(args) {
+  const fileId = parseInt(String(args?.fileId ?? ""), 10);
+  if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
+  const file = args.folderId === undefined ? await lookupFileCabinetFile(fileId) : null;
+
+  const result = await callNetsuiteRoute(
+    "DELETE_FILE",
+    {
+      fileId,
+      folderId: args.folderId ?? file?.folder
+    },
+    `Failed to delete file ${fileId}.`
+  );
+  return asMcpTextResult({ fileId, result });
+}
+
+async function handleNetsuiteDeleteFolder(args) {
+  const folderId = parseInt(String(args?.folderId ?? ""), 10);
+  if (isNaN(folderId)) throw new Error("folderId must be a numeric folder ID.");
+
+  const result = await callNetsuiteRoute(
+    "DELETE_FOLDER",
+    { folderId },
+    `Failed to delete folder ${folderId}.`
+  );
+  return asMcpTextResult({ folderId, result: result ?? "success" });
+}
+
+async function handleNetsuiteMoveItems(args) {
+  const srcFolderId = parseInt(String(args?.srcFolderId ?? ""), 10);
+  const dstFolderId = parseInt(String(args?.dstFolderId ?? ""), 10);
+  if (isNaN(srcFolderId)) throw new Error("srcFolderId must be numeric.");
+  if (isNaN(dstFolderId)) throw new Error("dstFolderId must be numeric.");
+
+  const result = await callNetsuiteRoute(
+    "MOVE_ITEMS",
+    {
+      srcFolderId,
+      dstFolderId,
+      fileIds: Array.isArray(args?.fileIds) ? args.fileIds : [],
+      folderIds: Array.isArray(args?.folderIds) ? args.folderIds : []
+    },
+    "Failed to move File Cabinet items."
+  );
+  return asMcpTextResult(result);
+}
+
+// netsuite_sdf_deploy executes in the bundled sdfDeploy companion, spawned by
+// the MCP server (magiNetsuiteMCPServer.js) for MCP-client calls. It never
+// reaches the extension over the bridge. This in-browser stub only exists so
+// the tool appears in the MCP server view and returns a clear message if the
+// in-browser agent (which cannot spawn the SuiteCloud CLI) tries to run it.
+function handleNetsuiteSdfDeploy(args?: AnyRecord): Promise<any>;
+async function handleNetsuiteSdfDeploy() {
+  throw new Error(
+    "The SDF tools (netsuite_sdf_deploy / netsuite_sdf_list_objects / " +
+    "netsuite_sdf_import_object) run through the bundled SuiteCloud SDF " +
+    "companion, launched by the MCP server (e.g. Claude Desktop). They are " +
+    "not available to the in-browser agent."
+  );
+}
+
+// -----------------------------
+// Script Tool Helpers (MCP bridge)
+// -----------------------------
+
+async function handleNetsuiteGetScripts(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "SCRIPTS",
+    data: {
+      scriptId: args.scriptId,
+      scriptType: args.scriptType,
+      name: args.name,
+      owner: args.owner
+    },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch scripts");
+  }
+
+  let results = response.message;
+  if (args.search && !args.scriptId && Array.isArray(results)) {
+    const term = String(args.search).toLowerCase();
+    results = results.filter(s =>
+      String(s.name ?? "").toLowerCase().includes(term) ||
+      String(s.scriptid ?? "").toLowerCase().includes(term) ||
+      String(s.owner ?? "").toLowerCase().includes(term) ||
+      String(s.scriptfile ?? "").toLowerCase().includes(term)
+    );
+  }
+
+  return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+}
+
+async function handleNetsuiteGetScriptFiles(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "SCRIPT_FILES",
+    data: { scriptIds: args.scriptIds },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch script files");
+  }
+
+  return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
+}
+
+async function handleNetsuiteRunQuickScript(args) {
+  const code = String(args?.code ?? "").trim();
+  if (!code) throw new Error("code is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_QUICK_SCRIPT",
+    data: { code, mode: "normal" },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to run quick script");
+  }
+
+  return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
+}
+
+async function handleMagicDeployServerComponents() {
+  const result = await callNetsuiteRoute(
+    "DEPLOY_SERVER_COMPONENTS",
+    {},
+    "Failed to deploy Magic NetSuite server components."
+  );
+  return asMcpTextResult(result);
+}
+
+function makeFreemarkerSessionId() {
+  return `fm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getFreemarkerSession(sessionId) {
+  const id = String(sessionId ?? "").trim();
+  if (!id) throw new Error("sessionId is required.");
+  const session = freemarkerPreviewSessions.get(id);
+  if (!session) throw new Error(`FreeMarker preview session "${id}" was not found.`);
+  return session;
+}
+
+function summarizeFreemarkerSession(session, includeHtml = false) {
+  return {
+    sessionId: session.sessionId,
+    title: session.title,
+    recordType: session.recordType,
+    recordId: session.recordId,
+    status: session.status,
+    approved: session.approved,
+    feedback: session.feedback,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    ...(includeHtml ? { html: session.html } : {}),
+    ...(session.freemarker ? { freemarker: session.freemarker } : {}),
+    ...(session.renderResult ? { renderResult: session.renderResult } : {})
+  };
+}
+
+function normalizePreviewHtml(html, title = "FreeMarker Preview") {
+  const source = String(html ?? "").trim();
+  if (!source) throw new Error("html is required.");
+  if (/<!doctype\s+html|<html[\s>]/i.test(source)) return source;
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtmlText(title)}</title>
+</head>
+<body>
+${source}
+</body>
+</html>`;
+}
+
+function escapeHtmlText(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function extractHtmlBody(html) {
+  const bodyMatch = String(html).match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  return (bodyMatch ? bodyMatch[1] : String(html))
+    .replace(/<script\b[\s\S]*?<\/script>/gi, "")
+    .trim();
+}
+
+function extractHtmlStyles(html) {
+  const styles = [];
+  const re = /<style\b[^>]*>([\s\S]*?)<\/style>/gi;
+  let match;
+  while ((match = re.exec(String(html)))) {
+    if (match[1]?.trim()) styles.push(match[1].trim());
+  }
+  return styles.join("\n\n");
+}
+
+function htmlToFreemarkerPdf(html, { title = "FreeMarker Template" } = {}) {
+  const body = extractHtmlBody(html) || "<div></div>";
+  const styles = extractHtmlStyles(html);
+  return `<?xml version="1.0"?>
+<!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
+<pdf>
+  <head>
+    <title>${escapeHtmlText(title)}</title>${styles ? `
+    <style type="text/css">
+${styles}
+    </style>` : ""}
+  </head>
+  <body size="Letter">
+${body}
+  </body>
+</pdf>`;
+}
+
+function isRendererReady(status) {
+  if (!status || typeof status !== "object") return false;
+  if (status.allReady === true || status.ready === true || status.isReady === true) return true;
+  const components = Array.isArray(status.components) ? status.components : [];
+  return components.length > 0 && components.every(component =>
+    component?.ready === true ||
+    component?.exists === true ||
+    component?.status === "ready" ||
+    component?.status === "deployed"
+  );
+}
+
+async function ensureFreemarkerRendererReady(deployIfMissing) {
+  const before = await callNetsuiteRoute(
+    "CHECK_SERVER_COMPONENTS",
+    {},
+    "Failed to check Magic NetSuite server components."
+  );
+
+  if (isRendererReady(before)) return { ready: true, before, after: before };
+
+  if (!deployIfMissing) {
+    return {
+      ready: false,
+      needsDeploymentApproval: true,
+      before,
+      message:
+        "FreeMarker renderer server components are not deployed. Ask the user whether to deploy them. If the user refuses, stop. If approved, call this tool again with deployIfMissing:true."
+    };
+  }
+
+  const deployed = await callNetsuiteRoute(
+    "DEPLOY_SERVER_COMPONENTS",
+    {},
+    "Failed to deploy Magic NetSuite server components."
+  );
+  const after = await callNetsuiteRoute(
+    "CHECK_SERVER_COMPONENTS",
+    {},
+    "Failed to verify Magic NetSuite server components after deployment."
+  );
+  return { ready: isRendererReady(after), before, deployed, after };
+}
+
+async function handleFreemarkerPreviewHtml(args: AnyRecord = {}) {
+  await freemarkerPreviewSessionsReady;
+  const title = String(args.title ?? "FreeMarker Preview").trim() || "FreeMarker Preview";
+  const readiness = await ensureFreemarkerRendererReady(args.deployIfMissing === true);
+
+  if (!readiness.ready) {
+    return asMcpTextResult({
+      ok: false,
+      needsDeploymentApproval: true,
+      message: readiness.message || "FreeMarker renderer server components are not ready.",
+      readiness
+    });
+  }
+
+  const html = normalizePreviewHtml(args.html, title);
+  const now = new Date().toISOString();
+  const session = {
+    sessionId: makeFreemarkerSessionId(),
+    title,
+    html,
+    recordType: String(args.recordType ?? "").trim(),
+    recordId: String(args.recordId ?? "").trim(),
+    status: "pending_approval",
+    approved: false,
+    feedback: "",
+    createdAt: now,
+    updatedAt: now
+  };
+  freemarkerPreviewSessions.set(session.sessionId, session);
+  await persistFreemarkerPreviewSessions();
+
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session, true),
+    instructions:
+      "Show this HTML preview to the user. If approved, call netsuite_freemarker_set_approval with approved:true, then netsuite_freemarker_convert_approved. If fixes are requested, set approved:false with feedback and regenerate the HTML preview."
+  });
+}
+
+async function handleFreemarkerSetApproval(args: AnyRecord = {}) {
+  await freemarkerPreviewSessionsReady;
+  const session = getFreemarkerSession(args.sessionId);
+  const approved = args.approved === true;
+  const feedback = String(args.feedback ?? "").trim();
+  session.approved = approved;
+  session.feedback = feedback;
+  session.status = approved ? "approved" : "needs_changes";
+  session.updatedAt = new Date().toISOString();
+  freemarkerPreviewSessions.set(session.sessionId, session);
+  await persistFreemarkerPreviewSessions();
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session),
+    nextStep: approved
+      ? "Call netsuite_freemarker_convert_approved to convert the approved HTML."
+      : "Use feedback to revise the HTML, then create a new preview session."
+  });
+}
+
+async function handleFreemarkerApprovalStatus(args: AnyRecord = {}) {
+  await freemarkerPreviewSessionsReady;
+  const session = getFreemarkerSession(args.sessionId);
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session, true)
+  });
+}
+
+function templateReviewPdfFromRenderResult(value) {
+  if (!value || typeof value !== "object") {
+    return {
+      pdfDataUrl: "",
+      renderError: value ? "NetSuite returned an invalid PDF render result." : ""
+    };
+  }
+  if (value.success === false || value.error) {
+    return {
+      pdfDataUrl: "",
+      renderError: String(value.error || "NetSuite PDF rendering failed.")
+    };
+  }
+  const pdf = typeof value.pdf === "string" ? value.pdf.trim() : "";
+  if (!pdf) {
+    return {
+      pdfDataUrl: "",
+      renderError: "NetSuite did not return PDF data."
+    };
+  }
+  const mimeType =
+    typeof value.mimeType === "string" && value.mimeType
+      ? value.mimeType
+      : "application/pdf";
+  return {
+    pdfDataUrl: pdf.startsWith("data:") ? pdf : `data:${mimeType};base64,${pdf}`,
+    renderError: ""
+  };
+}
+
+async function syncTemplateReviewFromFreemarkerSession(session) {
+  const review = await getTemplateReviewState();
+  if (!review || review.sessionId !== session.sessionId) return;
+  const rendered = templateReviewPdfFromRenderResult(session.renderResult);
+  await updateTemplateReviewState({
+    freemarker: String(session.freemarker || ""),
+    pdfDataUrl: rendered.pdfDataUrl,
+    renderError: rendered.renderError,
+    recordType: String(session.recordType || review.recordType || ""),
+    recordId: String(session.recordId || review.recordId || ""),
+    sessionId: session.sessionId,
+    status: "freemarker_review",
+    feedback: ""
+  });
+}
+
+async function handleFreemarkerConvertApproved(args: AnyRecord = {}) {
+  await freemarkerPreviewSessionsReady;
+  const session = getFreemarkerSession(args.sessionId);
+  if (!session.approved) {
+    return asMcpTextResult({
+      ok: false,
+      sessionId: session.sessionId,
+      status: session.status,
+      approved: session.approved,
+      feedback: session.feedback,
+      message: "Conversion is blocked until the user approves the HTML preview."
+    });
+  }
+
+  const recordType = String(args.recordType ?? session.recordType ?? "").trim();
+  const recordId = String(args.recordId ?? session.recordId ?? "").trim();
+  const renderPdf = args.renderPdf !== false;
+  const freemarkerOverride = String(args.freemarker ?? "").trim();
+  const freemarker = freemarkerOverride || htmlToFreemarkerPdf(session.html, { title: session.title });
+  let renderResult = null;
+
+  if (renderPdf) {
+    if (!recordType || !recordId) {
+      throw new Error("recordType and recordId are required to render the approved FreeMarker template.");
+    }
+    renderResult = await callNetsuiteRoute(
+      "RENDER_FREEMARKER_TEMPLATE",
+      { template: freemarker, recordType, recordId },
+      "Failed to render approved FreeMarker template."
+    );
+  }
+
+  session.freemarker = freemarker;
+  session.renderResult = renderResult;
+  session.recordType = recordType;
+  session.recordId = recordId;
+  session.status = renderPdf ? "rendered" : "converted";
+  session.updatedAt = new Date().toISOString();
+  freemarkerPreviewSessions.set(session.sessionId, session);
+  await persistFreemarkerPreviewSessions();
+  await syncTemplateReviewFromFreemarkerSession(session);
+
+  return asMcpTextResult({
+    ok: true,
+    ...summarizeFreemarkerSession(session),
+    freemarker,
+    renderResult
+  });
+}
+
+async function handleNetsuiteGetDeployedScripts(args) {
+  const recordType = String(args.recordType ?? "").trim();
+  if (!recordType) throw new Error("recordType is required.");
+
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "SCRIPTS_DEPLOYED",
+    data: { recordType },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : `Failed to fetch deployed scripts for ${recordType}`);
+  }
+
+  const scripts = Array.isArray(response.message) ? response.message : [];
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ recordType, count: scripts.length, scripts }, null, 2)
+    }]
+  };
+}
+
+async function handleNetsuiteGetLogs(args) {
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const normalizeNumericIds = (value) => {
+    if (!Array.isArray(value)) return [];
+    return value.map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0);
+  };
+
+  const now = new Date();
+  const defaultStartDate = new Date(now);
+  defaultStartDate.setDate(defaultStartDate.getDate() - 7);
+  defaultStartDate.setHours(0, 0, 0, 0);
+
+  const payload = {
+    startDate: args.startDate || defaultStartDate.toISOString(),
+    endDate: args.endDate || now.toISOString(),
+    scriptIds: normalizeNumericIds(args.scriptIds),
+    deploymentIds: normalizeNumericIds(args.deploymentIds),
+    scriptTypes: args.scriptTypes || [],
+    type: args.type
+  };
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "LOGS",
+    data: payload,
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch logs");
+  }
+
+  let results = response.message;
+  if (Array.isArray(results) && results.length > 50) {
+    const total = results.length;
+    results = results.slice(0, 50);
+    results.push({ _note: `Showing 50 of ${total} logs. Narrow your date range or add type filter for more specific results.` });
+  }
+
+  return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+}
+
+// -----------------------------
+// Suitelet Viewer Stream Tools
+// -----------------------------
+let suiteletStreamSession = null;
+let suiteletDebuggerAttached = false;
+const SUITELET_DEBUGGER_PROTOCOL_VERSION = "1.3";
+
+function normalizeSuiteletViewerUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return "";
+
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("Suitelet viewer URL must be http or https.");
+  }
+  if (!/\.netsuite\.com$/i.test(url.hostname)) {
+    throw new Error("Suitelet viewer only supports NetSuite URLs.");
+  }
+  return url.href;
+}
+
+function waitForTabLoaded(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(listener);
+      reject(new Error("Timed out waiting for Suitelet tab to load."));
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(tab);
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || done) return;
+      if (tab?.status === "complete") {
+        done = true;
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(tab);
+      }
+    });
+  });
+}
+
+async function focusSuiteletStreamTab(tab) {
+  if (!tab?.id || !tab.windowId) throw new Error("Suitelet stream tab is unavailable.");
+  await dashboardWindowsUpdate(tab.windowId, { focused: true });
+  await dashboardTabsUpdate(tab.id, { active: true });
+}
+
+function getTabOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
+}
+
+async function getSuiteletViewport(tabId) {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        scrollX: window.scrollX || 0,
+        scrollY: window.scrollY || 0,
+        title: document.title || ""
+      })
+    });
+    return result?.result || { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
+  } catch {
+    return { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
+  }
+}
+
+async function ensureSuiteletDebugger(tabId) {
+  if (suiteletDebuggerAttached && suiteletStreamSession?.tabId === tabId) return;
+  await chrome.debugger.attach({ tabId }, SUITELET_DEBUGGER_PROTOCOL_VERSION);
+  suiteletDebuggerAttached = true;
+  await chrome.debugger.sendCommand({ tabId }, "Page.enable", {}).catch(() => null);
+}
+
+async function sendSuiteletDebuggerCommand(tabId, method, params) {
+  await ensureSuiteletDebugger(tabId);
+  return chrome.debugger.sendCommand({ tabId }, method, params);
+}
+
+// Read the live NetSuite session cookies (incl. HttpOnly auth cookies) so
+// Playwright can reuse the real browser session instead of logging in again.
+// Uses chrome.cookies (needs the "cookies" permission) — NOT the debugger — so
+// it does not flash the "… is in debug mode" banner and needs no open tab.
+const SAME_SITE_MAP = { no_restriction: "None", lax: "Lax", strict: "Strict" };
+
+async function handleDumpNetsuiteCookies() {
+  // Pick the account the SAME way the MCP bridge does: getPreferredNetsuiteTab()
+  // honors the mcpPreferredAccount setting (falls back to the active NS tab).
+  // Then dump ONLY that account's cookies via getAll({url}), which returns the
+  // cookies that would be sent to that origin (its host cookies + shared
+  // .netsuite.com) and EXCLUDES other logged-in accounts' host cookies.
+  let origin = "";
+  try {
+    const tab = await getPreferredNetsuiteTab();
+    if (tab?.url) origin = getTabOrigin(tab.url);
+  } catch { /* fall back below */ }
+
+  const raw = origin
+    ? await chrome.cookies.getAll({ url: `${origin}/` })
+    : await chrome.cookies.getAll({ domain: "netsuite.com" });
+
+  const cookies = (raw || []).map((c) => {
+    const out: AnyRecord = {
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path || "/",
+      httpOnly: Boolean(c.httpOnly),
+      secure: Boolean(c.secure)
+    };
+    if (!c.session && typeof c.expirationDate === "number") {
+      out.expires = Math.floor(c.expirationDate);
+    }
+    const sameSite = SAME_SITE_MAP[c.sameSite];
+    if (sameSite) out.sameSite = sameSite;
+    return out;
+  });
+
+  if (!cookies.length) {
+    throw new Error("No NetSuite cookies found. Log into NetSuite in your browser first.");
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ ok: true, origin, count: cookies.length, cookies }, null, 2)
+    }]
+  };
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (suiteletStreamSession?.tabId === tabId) {
+    suiteletStreamSession = null;
+    suiteletDebuggerAttached = false;
+  }
+});
+
+chrome.debugger.onDetach.addListener((source) => {
+  if (suiteletStreamSession?.tabId === source.tabId) {
+    suiteletDebuggerAttached = false;
+  }
+});
+
+async function handleSuiteletStreamStart(args) {
+  const requestedUrl = normalizeSuiteletViewerUrl(args?.url);
+  const previousTabId = suiteletStreamSession?.tabId || null;
+  const openActive = args?.active === true;
+  let tab;
+
+  if (requestedUrl) {
+    tab = await dashboardTabsCreate({ url: requestedUrl, active: openActive });
+    await waitForTabLoaded(tab.id).catch(() => null);
+  } else {
+    tab = await getPreferredNetsuiteTab();
+    if (!tab) throw new Error("No suitable NetSuite tab found. Open a Suitelet or pass a Suitelet URL.");
+  }
+
+  if (!tab?.id || !tab.windowId) {
+    throw new Error("Could not start Suitelet stream: no tab was available.");
+  }
+
+  const freshTab = await dashboardTabsGet(tab.id);
+  if (previousTabId && previousTabId !== tab.id && suiteletDebuggerAttached) {
+    await chrome.debugger.detach({ tabId: previousTabId }).catch(() => null);
+  }
+  suiteletStreamSession = {
+    tabId: tab.id,
+    windowId: tab.windowId,
+    url: freshTab.url || requestedUrl,
+    startedAt: new Date().toISOString(),
+    latestFrame: null
+  };
+  suiteletDebuggerAttached = previousTabId === tab.id && suiteletDebuggerAttached;
+
+  const viewport = await getSuiteletViewport(tab.id);
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        session: suiteletStreamSession,
+        viewport
+      }, null, 2)
+    }]
+  };
+}
+
+// Shared deployed-Suitelet lookup. Returns { origin, suitelets } where each
+// suitelet carries a real, account-correct scriptlet.nl URL.
+async function querySuitelets(query) {
+  const normalized = String(query || "").trim().toLowerCase();
+  const tab = await getPreferredNetsuiteTab();
+  if (!tab) throw new Error("No suitable NetSuite tab found. Make sure a NetSuite page is open.");
+
+  const conditions = [
+    "UPPER(script.scripttype) = UPPER('SCRIPTLET')",
+    "scriptdeployment.isdeployed = 'T'"
+  ];
+
+  if (normalized) {
+    const escaped = normalized.replace(/'/g, "''");
+    const searchParts = [
+      `LOWER(script.name) LIKE LOWER('%${escaped}%')`,
+      `LOWER(script.scriptid) LIKE LOWER('%${escaped}%')`,
+      `LOWER(scriptdeployment.scriptid) LIKE LOWER('%${escaped}%')`
+    ];
+
+    if (/^\d+$/.test(normalized)) {
+      searchParts.push(`script.id = ${Number(normalized)}`);
+      searchParts.push(`scriptdeployment.deploymentid = ${Number(normalized)}`);
+    }
+
+    conditions.push(`(
+      ${searchParts.join("\n      OR ")}
+    )`);
+  }
+
+  // ROWNUM is assigned BEFORE ORDER BY in SuiteQL/Oracle, so ordering + capping in
+  // the same SELECT returns an arbitrary slice. Order in a subquery, cap outside.
+  const sql = `
+    SELECT * FROM (
+      SELECT
+        script.id AS scriptinternalid,
+        script.scriptid AS scriptscriptid,
+        script.name AS scriptname,
+        scriptdeployment.primarykey AS deploymentrecordid,
+        scriptdeployment.deploymentid,
+        scriptdeployment.scriptid AS deploymentscriptid,
+        scriptdeployment.status,
+        scriptdeployment.isdeployed
+      FROM scriptdeployment
+      INNER JOIN script ON scriptdeployment.script = script.id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY script.name, scriptdeployment.deploymentid
+    ) WHERE ROWNUM <= 1000
+  `;
+
+  const response = await sendMessageToTab(tab.id, {
+    action: "RUN_SUITEQL_QUERY",
+    data: { sql, limit: 1000 },
+    mode: "normal"
+  });
+
+  if (!response || response.status === "error") {
+    const rawMsg = response?.message;
+    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelets");
+  }
+
+  const origin = getTabOrigin(tab.url);
+  const rows = Array.isArray(response.message) ? response.message : (response.message?.results ?? []);
+  const suitelets = rows
+    .map((row) => {
+      const scriptId = String(row.scriptinternalid || row.scriptInternalId || row.id || "");
+      const deployId = String(row.deploymentid || row.deploymentId || "").trim();
+      const deploymentRecordId = String(row.deploymentrecordid || row.deploymentRecordId || row.primarykey || "").trim();
+      const scriptName = String(row.scriptname || row.scriptName || "Suitelet");
+      const deploymentScriptId = String(row.deploymentscriptid || row.deploymentScriptId || "");
+      const scriptScriptId = String(row.scriptscriptid || row.scriptScriptId || row.scriptid || "");
+      return {
+        scriptInternalId: scriptId,
+        scriptId: scriptScriptId,
+        scriptName,
+        deploymentId: deployId,
+        deploymentRecordId,
+        deploymentScriptId,
+        status: String(row.status || ""),
+        url: origin && scriptId && deployId
+          ? `${origin}/app/site/hosting/scriptlet.nl?script=${encodeURIComponent(scriptId)}&deploy=${encodeURIComponent(deployId)}`
+          : ""
+      };
+    })
+    .filter((suitelet) => suitelet.url)
+    .slice(0, 1000);
+
+  return { origin, suitelets };
+}
+
+async function handleSuiteletStreamList(args) {
+  const { suitelets } = await querySuitelets(args?.query);
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
+    }]
+  };
+}
+
+// Resolve what to open for control: an explicit scriptlet URL, a scriptId+deployId,
+// or a name/query lookup. Never lets the caller invent a host.
+async function resolveSuiteletTarget(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (rawUrl) {
+    let parsed;
+    try { parsed = new URL(rawUrl); } catch { throw new Error(`Invalid Suitelet URL: ${rawUrl}`); }
+    if (!/\.app\.netsuite\.com$/i.test(parsed.hostname) || parsed.pathname !== "/app/site/hosting/scriptlet.nl") {
+      throw new Error(
+        `Refusing to open "${rawUrl}" — not a Suitelet (expected an <account>.app.netsuite.com/app/site/hosting/scriptlet.nl URL). ` +
+        `Pass { query: "<name>" } or { scriptId, deployId } instead and the URL will be resolved for you.`
+      );
+    }
+    return { url: parsed.href, matched: null, alternatives: [] };
+  }
+
+  const scriptId = String(args?.scriptId ?? args?.scriptInternalId ?? "").trim();
+  const deployId = String(args?.deployId ?? args?.deploymentId ?? "").trim();
+  if (/^\d+$/.test(scriptId) && /^\d+$/.test(deployId)) {
+    const tab = await getPreferredNetsuiteTab();
+    const origin = tab ? getTabOrigin(tab.url) : "";
+    if (!origin) throw new Error("No NetSuite tab open to resolve the account URL. Open a NetSuite page first.");
+    return { url: `${origin}/app/site/hosting/scriptlet.nl?script=${scriptId}&deploy=${deployId}`, matched: null, alternatives: [] };
+  }
+
+  const query = String(args?.query ?? args?.name ?? "").trim();
+  if (query) {
+    const { suitelets } = await querySuitelets(query);
+    if (!suitelets.length) throw new Error(`No deployed Suitelet matches "${query}".`);
+    return {
+      url: suitelets[0].url,
+      matched: suitelets[0],
+      alternatives: suitelets.slice(1, 6).map((s) => ({ scriptName: s.scriptName, scriptInternalId: s.scriptInternalId, deploymentId: s.deploymentId, url: s.url }))
+    };
+  }
+
+  return { url: "", matched: null, alternatives: [] }; // fall back to active tab
+}
+
+async function handleSuiteletProbeUrl(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet probe only supports NetSuite URLs.");
+  }
+
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+
+  const headers = {};
+  response.headers.forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  const body = await response.text();
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(body)?.[1]
+    ?.replace(/\s+/g, " ")
+    .trim() || "";
+  const bodyText = body
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+
+  const csp = headers["content-security-policy"] || "";
+  const xFrameOptions = headers["x-frame-options"] || "";
+  const frameBlockedByHeaders = Boolean(
+    xFrameOptions ||
+    /frame-ancestors/i.test(csp)
+  );
+  const looksLikeLogin = /login|system\.netsuite|email address|password|compid/i.test(`${title} ${bodyText}`);
+  const looksEmpty = body.trim().length < 200;
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        requestedUrl: targetUrl.href,
+        finalUrl: response.url,
+        redirected: response.redirected,
+        headers,
+        title,
+        bodyLength: body.length,
+        bodyPreview: bodyText,
+        hints: {
+          frameBlockedByHeaders,
+          xFrameOptions: xFrameOptions || null,
+          frameAncestors: /frame-ancestors([^;]+)/i.exec(csp)?.[0] || null,
+          looksLikeLogin,
+          looksEmpty
+        }
+      }, null, 2)
+    }]
+  };
+}
+
+function suiteletProxyBootstrapScript(originalUrl = "") {
+  let originalHash = "";
+  const baselineParams = {};
+  try {
+    const parsed = new URL(String(originalUrl));
+    originalHash = parsed.hash || "";
+    // Preserve the Suitelet identity params so that relative runtime requests
+    // (e.g. fetch("?action=x")) that resolve against the <base> URL and would
+    // otherwise drop script/deploy/compid don't 404.
+    ["script", "deploy", "compid"].forEach((key) => {
+      const value = parsed.searchParams.get(key);
+      if (value != null && value !== "") baselineParams[key] = value;
+    });
+  } catch {}
+  const hashScript = originalHash
+    ? `try { if (!window.location.hash) window.location.hash = ${JSON.stringify(originalHash)}; } catch (e) {}`
+    : "";
+
+  let nsOrigin = "";
+  try { nsOrigin = new URL(String(originalUrl)).origin; } catch {}
+
+  return `
+<script>
+(function magicNetsuiteSuiteletProxy() {
+  ${hashScript}
+  var BASELINE_PARAMS = ${JSON.stringify(baselineParams)};
+  var NS_BASE = ${JSON.stringify(String(originalUrl))};
+  var NS_ORIGIN = ${JSON.stringify(nsOrigin)};
+  var EMBED_PARAMS = { ifrmcntnr: "T", popup: "T", whence: "" };
+  var REQUEST_TYPE = "MAGIC_NS_SRC_PROXY_FETCH";
+  var RESPONSE_TYPE = "MAGIC_NS_SRC_PROXY_FETCH_RESPONSE";
+  var LOG_TYPE = "MAGIC_NS_SRC_PROXY_LOG";
+  var nextId = 0;
+  var pending = {};
+
+  function proxyLog(level, message) {
+    try {
+      window.parent.postMessage({ type: LOG_TYPE, level: level, message: String(message) }, "*");
+    } catch (e) {}
+    try { (level === "error" ? console.error : level === "warn" ? console.warn : console.log)("[magic-ns] " + message); } catch (e) {}
+  }
+
+  proxyLog("info", "Suitelet proxy bootstrap installed. baseURI=" + (document.baseURI || location.href) + " hash=" + (location.hash || "(none)"));
+
+  // In a srcdoc iframe, window.location and the document origin are the MCP host
+  // (e.g. claudemcpcontent.com), NOT NetSuite — and the host strips our <base>.
+  // So both the SPA (which builds URLs from location.pathname/search) and
+  // NetSuite's own framework (absolute "/app/..." paths) target the wrong host
+  // and 404. mapToNetsuite() rewrites any host-origin / location-derived request
+  // back onto the real NetSuite origin so it can be proxied with credentials.
+  // The embedder URL (what document.baseURI points at, e.g.
+  // claudemcpcontent.com/mcp_apps). In a srcdoc frame window.location is
+  // about:srcdoc, so we MUST key off baseURI, not location.
+  var EMBEDDER_ORIGIN = "";
+  var EMBEDDER_PATH = "";
+  var EMBEDDER_PARAM_KEYS = {};
+  try {
+    var embedder = new URL(document.baseURI);
+    EMBEDDER_ORIGIN = embedder.origin;
+    EMBEDDER_PATH = embedder.pathname;
+    embedder.searchParams.forEach(function(_v, k) { EMBEDDER_PARAM_KEYS[k] = true; });
+  } catch (e) {}
+
+  // NetSuite asset/handler paths that should keep their path and just swap origin.
+  function looksLikeNetsuitePath(pathname) {
+    return /^\\/(app|assets|javascript|core|services|rest|c\\.|site)\\b/i.test(pathname) ||
+      /\\.(nl|jsp|js|css|png|jpe?g|gif|svg|woff2?|ttf|json|map)$/i.test(pathname);
+  }
+
+  function mapToNetsuite(value) {
+    var raw = String(value || "");
+    var abs;
+    try { abs = new URL(raw, document.baseURI || location.href); }
+    catch (e) { return raw; }
+
+    // Non-http schemes (data:, blob:, javascript:, about:) pass through untouched.
+    if (abs.protocol !== "http:" && abs.protocol !== "https:") return abs.href;
+    // Already pointed at NetSuite.
+    if (/\\.netsuite\\.com$/i.test(abs.hostname)) return abs.href;
+    if (!NS_ORIGIN || !NS_BASE) return abs.href;
+
+    var sameAsEmbedder = EMBEDDER_ORIGIN && abs.origin === EMBEDDER_ORIGIN;
+
+    // SPA api calls are built from location.pathname/search + "&action=<x>". Because
+    // the srcdoc location is about:srcdoc, that base is garbage — but the tell-tale
+    // "action=" survives. Rebuild the call on the real Suitelet URL, carrying the
+    // action (and any other params the SPA appended that aren't embedder params).
+    var actionMatch = raw.match(/[?&]action=([^&#]*)/i);
+    var isAssetPath = looksLikeNetsuitePath(abs.pathname);
+    if (actionMatch && (sameAsEmbedder || !isAssetPath)) {
+      try {
+        var spaUrl = new URL(NS_BASE);
+        abs.searchParams.forEach(function(val, key) {
+          if (!EMBEDDER_PARAM_KEYS[key]) spaUrl.searchParams.set(key, val);
+        });
+        spaUrl.searchParams.set("action", decodeURIComponent(actionMatch[1]));
+        return spaUrl.href;
+      } catch (e) {}
+    }
+
+    // Absolute-path NetSuite resources aimed at the embedder origin: swap origin.
+    if (sameAsEmbedder) {
+      try {
+        var resourceUrl = new URL(NS_ORIGIN);
+        resourceUrl.pathname = abs.pathname;
+        resourceUrl.search = abs.search;
+        resourceUrl.hash = abs.hash;
+        return resourceUrl.href;
+      } catch (e) {}
+    }
+    return abs.href;
+  }
+
+  // Back-compat alias: every caller now resolves through the NetSuite mapper.
+  function absoluteUrl(value) {
+    return mapToNetsuite(value);
+  }
+
+  window.addEventListener("error", function(event) {
+    proxyLog("error", "Page error: " + (event && event.message ? event.message : "unknown") + (event && event.filename ? " @ " + event.filename + ":" + event.lineno : ""));
+  });
+  window.addEventListener("unhandledrejection", function(event) {
+    var reason = event && event.reason ? (event.reason.message || event.reason) : "unknown";
+    proxyLog("error", "Unhandled promise rejection: " + reason);
+  });
+  window.addEventListener("hashchange", function() {
+    proxyLog("info", "hashchange → " + (location.hash || "(none)"));
+  });
+  window.addEventListener("beforeunload", function() {
+    proxyLog("warn", "Page is navigating/unloading (href=" + location.href + "). A full navigation leaves the proxied srcdoc document and usually causes a blank panel.");
+  });
+
+  function shouldProxy(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      return /\.netsuite\.com$/i.test(url.hostname);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function shouldPatchUrl(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      return (
+        /\.netsuite\.com$/i.test(url.hostname) &&
+        (
+          url.pathname === "/app/site/hosting/scriptlet.nl" ||
+          url.pathname === "/app/common/scripting/nlapijsonhandler.nl"
+        )
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function withEmbedParams(value) {
+    try {
+      var url = new URL(absoluteUrl(value));
+      if (!shouldPatchUrl(url.href)) return url.href;
+      // Only scriptlet.nl needs the identity params re-applied; the JSON handler
+      // carries its own routing in the body.
+      if (url.pathname === "/app/site/hosting/scriptlet.nl") {
+        Object.keys(BASELINE_PARAMS).forEach(function(key) {
+          if (!url.searchParams.has(key) || url.searchParams.get(key) === "") {
+            url.searchParams.set(key, BASELINE_PARAMS[key]);
+          }
+        });
+      }
+      Object.keys(EMBED_PARAMS).forEach(function(key) {
+        if (!url.searchParams.has(key)) url.searchParams.set(key, EMBED_PARAMS[key]);
+      });
+      return url.href;
+    } catch (e) {
+      return absoluteUrl(value);
+    }
+  }
+
+  function hasHeader(headers, name) {
+    name = String(name).toLowerCase();
+    return Object.keys(headers || {}).some(function(key) { return key.toLowerCase() === name; });
+  }
+
+  function normalizeBodyAndHeaders(body, headers) {
+    headers = headers || {};
+    if (body == null) return { body: null, headers: headers };
+    if (typeof body === "string") return { body: body, headers: headers };
+    if (body instanceof URLSearchParams) {
+      if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/x-www-form-urlencoded;charset=UTF-8";
+      return { body: body.toString(), headers: headers };
+    }
+    if (body instanceof FormData) {
+      var params = new URLSearchParams();
+      body.forEach(function(value, key) {
+        params.append(key, value instanceof File ? value.name : String(value));
+      });
+      if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/x-www-form-urlencoded;charset=UTF-8";
+      return { body: params.toString(), headers: headers };
+    }
+    if (body instanceof Blob || body instanceof ArrayBuffer) {
+      return { unsupported: true, body: null, headers: headers };
+    }
+    return { body: String(body), headers: headers };
+  }
+
+  function patchForms() {
+    try {
+      Array.prototype.forEach.call(document.querySelectorAll("form"), function(form) {
+        var action = form.getAttribute("action") || location.href;
+        if (shouldPatchUrl(action)) form.setAttribute("action", withEmbedParams(action));
+      });
+    } catch (e) {}
+  }
+
+  function proxyRequest(payload) {
+    return new Promise(function(resolve, reject) {
+      var id = "src-proxy-" + Date.now() + "-" + (++nextId);
+      var timer = setTimeout(function() {
+        delete pending[id];
+        reject(new Error("Suitelet proxy request timed out."));
+      }, 45000);
+      pending[id] = { resolve: resolve, reject: reject, timer: timer };
+      window.parent.postMessage({ type: REQUEST_TYPE, id: id, payload: payload }, "*");
+    });
+  }
+
+  window.addEventListener("message", function(event) {
+    var data = event.data || {};
+    if (data.type !== RESPONSE_TYPE || !pending[data.id]) return;
+    var entry = pending[data.id];
+    clearTimeout(entry.timer);
+    delete pending[data.id];
+    if (data.response && data.response.ok) entry.resolve(data.response);
+    else entry.reject(new Error((data.response && data.response.error) || "Suitelet proxy request failed."));
+  });
+
+  var nativeFetch = window.fetch;
+  if (typeof nativeFetch === "function") {
+    window.fetch = function(input, init) {
+      var inputUrl = input && input.url ? input.url : input;
+      var fetchMethod = (init && init.method) || (input && input.method) || "GET";
+      if (!shouldProxy(inputUrl)) {
+        proxyLog("info", "fetch passthrough (not NetSuite): " + fetchMethod + " " + absoluteUrl(inputUrl));
+        return nativeFetch.apply(this, arguments);
+      }
+      init = init || {};
+      var headers = {};
+      try { new Headers(init.headers || (input && input.headers)).forEach(function(value, key) { headers[key] = value; }); } catch (e) {}
+      var normalized = normalizeBodyAndHeaders(init.body == null ? null : init.body, headers);
+      if (normalized.unsupported) {
+        proxyLog("warn", "fetch passthrough (unsupported body type, cannot proxy): " + fetchMethod + " " + absoluteUrl(inputUrl));
+        return nativeFetch.apply(this, arguments);
+      }
+      proxyLog("info", "fetch intercepted: " + fetchMethod + " " + withEmbedParams(inputUrl));
+      return proxyRequest({
+        url: withEmbedParams(inputUrl),
+        originalUrl: absoluteUrl(inputUrl),
+        source: "fetch",
+        method: init.method || (input && input.method) || "GET",
+        headers: normalized.headers,
+        body: normalized.body
+      }).then(function(response) {
+        proxyLog(
+          (response.status || 0) >= 400 ? "warn" : "info",
+          "fetch result " + (response.status || "?") + " " + (response.statusText || "") + " (" + ((response.body || "").length) + " bytes) " + (response.url || withEmbedParams(inputUrl))
+        );
+        return new Response(response.body || "", {
+          status: response.status || 200,
+          statusText: response.statusText || "OK",
+          headers: response.headers || {}
+        });
+      }).catch(function(error) {
+        proxyLog("error", "fetch proxy failed: " + (error && error.message ? error.message : error) + " for " + withEmbedParams(inputUrl));
+        throw error;
+      });
+    };
+  }
+
+  var NativeXHR = window.XMLHttpRequest;
+  function ProxyXHR() {
+    this._listeners = {};
+    this._headers = {};
+    this.readyState = 0;
+    this.status = 0;
+    this.statusText = "";
+    this.responseText = "";
+    this.response = "";
+    this.responseURL = "";
+  }
+  ProxyXHR.UNSENT = 0; ProxyXHR.OPENED = 1; ProxyXHR.HEADERS_RECEIVED = 2; ProxyXHR.LOADING = 3; ProxyXHR.DONE = 4;
+  ProxyXHR.prototype.open = function(method, url, async) {
+    this._method = method || "GET";
+    this._originalUrl = absoluteUrl(url);
+    this._url = withEmbedParams(url);
+    this._proxy = shouldProxy(this._url);
+    if (!this._proxy) {
+      proxyLog("info", "XHR passthrough (not NetSuite): " + this._method + " " + this._url);
+      this._native = new NativeXHR();
+      wireNative(this);
+      return this._native.open.apply(this._native, arguments);
+    }
+    proxyLog("info", "XHR intercepted: " + this._method + " " + this._url);
+    this.readyState = 1;
+    this._emit("readystatechange");
+  };
+  ProxyXHR.prototype.setRequestHeader = function(name, value) {
+    if (this._native) return this._native.setRequestHeader(name, value);
+    this._headers[name] = value;
+  };
+  ProxyXHR.prototype.send = function(body) {
+    var self = this;
+    if (this._native) return this._native.send(body);
+    var normalized = normalizeBodyAndHeaders(body, this._headers);
+    if (normalized.unsupported) {
+      self.status = 0;
+      self.statusText = "Unsupported Suitelet proxy request body.";
+      self.readyState = 4;
+      self._emit("readystatechange");
+      self._emit("error");
+      self._emit("loadend");
+      return;
+    }
+    proxyRequest({ url: this._url, originalUrl: this._originalUrl, source: "xhr", method: this._method, headers: normalized.headers, body: normalized.body })
+      .then(function(response) {
+        self.status = response.status || 200;
+        self.statusText = response.statusText || "OK";
+        self.responseText = response.body || "";
+        try {
+          self.response = self.responseType === "json" ? JSON.parse(self.responseText || "null") : self.responseText;
+        } catch (e) {
+          self.response = self.responseText;
+        }
+        self.responseURL = response.url || self._url;
+        self.readyState = 4;
+        proxyLog(
+          self.status >= 400 ? "warn" : "info",
+          "XHR result " + self.status + " " + self.statusText + " (" + self.responseText.length + " bytes) " + self.responseURL
+        );
+        self._emit("readystatechange");
+        self._emit("load");
+        self._emit("loadend");
+      })
+      .catch(function(error) {
+        self.status = 0;
+        self.statusText = error.message || "Suitelet proxy request failed.";
+        self.readyState = 4;
+        proxyLog("error", "XHR proxy failed: " + self.statusText + " for " + self._url);
+        self._emit("readystatechange");
+        self._emit("error");
+        self._emit("loadend");
+      });
+  };
+  ProxyXHR.prototype.addEventListener = function(type, listener) {
+    (this._listeners[type] || (this._listeners[type] = [])).push(listener);
+    if (this._native) this._native.addEventListener(type, listener);
+  };
+  ProxyXHR.prototype.removeEventListener = function(type, listener) {
+    this._listeners[type] = (this._listeners[type] || []).filter(function(item) { return item !== listener; });
+    if (this._native) this._native.removeEventListener(type, listener);
+  };
+  ProxyXHR.prototype.abort = function() { if (this._native) return this._native.abort(); this._emit("abort"); };
+  ProxyXHR.prototype.getResponseHeader = function() { return this._native ? this._native.getResponseHeader.apply(this._native, arguments) : null; };
+  ProxyXHR.prototype.getAllResponseHeaders = function() { return this._native ? this._native.getAllResponseHeaders.apply(this._native, arguments) : ""; };
+  ProxyXHR.prototype._emit = function(type) {
+    var event = new Event(type);
+    if (typeof this["on" + type] === "function") this["on" + type](event);
+    (this._listeners[type] || []).forEach(function(listener) { listener.call(this, event); }, this);
+  };
+  function wireNative(proxy) {
+    ["readystatechange", "load", "error", "abort", "loadend"].forEach(function(type) {
+      proxy._native.addEventListener(type, function(event) {
+        proxy.readyState = proxy._native.readyState;
+        proxy.status = proxy._native.status;
+        proxy.statusText = proxy._native.statusText;
+        proxy.responseText = proxy._native.responseText;
+        proxy.response = proxy._native.response;
+        proxy.responseURL = proxy._native.responseURL;
+        proxy._emit(type, event);
+      });
+    });
+  }
+  window.XMLHttpRequest = ProxyXHR;
+
+  // Fragment anchors (<a href="#/providers">) resolve against document.baseURI,
+  // which in a srcdoc frame is the embedder URL — so a click triggers a FULL
+  // navigation to claudemcpcontent.com/...#/providers and blanks the panel.
+  // Intercept them and perform a same-document hash change instead, which is
+  // what the SPA's hashchange router actually listens for.
+  document.addEventListener("click", function(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+    if (!anchor) return;
+    var href = anchor.getAttribute("href");
+    if (!href || href.charAt(0) !== "#") return;
+    event.preventDefault();
+    try {
+      if (("#" + location.hash.replace(/^#/, "")) === href || location.hash === href) {
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } else {
+        location.hash = href;
+      }
+      proxyLog("info", "Hash nav → " + href);
+    } catch (e) {
+      proxyLog("error", "Hash nav failed for " + href + ": " + (e && e.message ? e.message : e));
+    }
+  }, true);
+
+  document.addEventListener("submit", function(event) {
+    if (!event || !event.target) return;
+    var form = event.target;
+    var action = form.getAttribute && (form.getAttribute("action") || location.href);
+    if (action && shouldPatchUrl(action)) form.setAttribute("action", withEmbedParams(action));
+  }, true);
+  patchForms();
+  try {
+    new MutationObserver(patchForms).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+})();
+</script>`;
+}
+
+function absolutizeSuiteletUrl(value, baseUrl) {
+  try {
+    return new URL(decodeHtmlAttribute(String(value)), baseUrl).href;
+  } catch {
+    return String(value || "");
+  }
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function rewriteCssUrls(css, cssUrl) {
+  return String(css || "").replace(/url\((['"]?)(?!data:|https?:|#)([^'")]+)\1\)/gi, (_match, quote, value) => {
+    return `url(${quote}${absolutizeSuiteletUrl(value, cssUrl)}${quote})`;
+  });
+}
+
+async function fetchTextForSuiteletRender(resourceUrl) {
+  const targetUrl = new URL(resourceUrl);
+  const allowedAssetHosts = new Set([
+    "cdn.datatables.net",
+    "maxcdn.bootstrapcdn.com",
+    "stackpath.bootstrapcdn.com",
+    "code.jquery.com",
+    "cdnjs.cloudflare.com"
+  ]);
+  const allowed =
+    /\.netsuite\.com$/i.test(targetUrl.hostname) ||
+    allowedAssetHosts.has(targetUrl.hostname.toLowerCase());
+  if (!allowed) {
+    throw new Error(`Blocked render resource host: ${targetUrl.hostname}`);
+  }
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  return {
+    url: response.url || targetUrl.href,
+    text: await response.text()
+  };
+}
+
+async function inlineSuiteletAssets(html, finalUrl) {
+  let output = String(html || "");
+  const stats = {
+    stylesheetsFound: 0,
+    stylesheetsInlined: 0,
+    scriptsFound: 0,
+    scriptsInlined: 0,
+    failures: []
+  };
+
+  const stylesheetPattern = /<link\b([^>]*?rel=["'][^"']*stylesheet[^"']*["'][^>]*?)>/gi;
+  output = await replaceAsync(output, stylesheetPattern, async (match, attrs) => {
+    stats.stylesheetsFound += 1;
+    const href = /href=["']([^"']+)["']/i.exec(attrs)?.[1];
+    if (!href) return match;
+    const resourceUrl = absolutizeSuiteletUrl(href, finalUrl);
+    try {
+      const fetched = await fetchTextForSuiteletRender(resourceUrl);
+      stats.stylesheetsInlined += 1;
+      return `<style data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">${rewriteCssUrls(fetched.text, fetched.url)}</style>`;
+    } catch (error) {
+      stats.failures.push({ type: "stylesheet", url: resourceUrl, error: String(error?.message || error) });
+      return `<!-- Magic NetSuite failed to inline stylesheet ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+    }
+  });
+
+  const scriptPattern = /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>\s*<\/script>/gi;
+  output = await replaceAsync(output, scriptPattern, async (match, before, src, after) => {
+    stats.scriptsFound += 1;
+    const resourceUrl = absolutizeSuiteletUrl(src, finalUrl);
+    try {
+      const fetched = await fetchTextForSuiteletRender(resourceUrl);
+      stats.scriptsInlined += 1;
+      return `<script${before}${after} data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">\n${fetched.text}\n//# sourceURL=${fetched.url}\n</script>`;
+    } catch (error) {
+      stats.failures.push({ type: "script", url: resourceUrl, error: String(error?.message || error) });
+      return `<!-- Magic NetSuite failed to inline script ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+    }
+  });
+
+  return { html: output, stats };
+}
+
+async function replaceAsync(source, pattern, replacer) {
+  const parts = [];
+  let lastIndex = 0;
+  for (const match of source.matchAll(pattern)) {
+    parts.push(source.slice(lastIndex, match.index));
+    parts.push(await replacer(...match));
+    lastIndex = match.index + match[0].length;
+  }
+  parts.push(source.slice(lastIndex));
+  return parts.join("");
+}
+
+async function prepareSuiteletHtmlForSrcdoc(html, finalUrl, originalUrl = finalUrl) {
+  const baseTag = `<base href="${String(finalUrl).replace(/"/g, "&quot;")}">`;
+  const inlined = await inlineSuiteletAssets(html, finalUrl);
+  let output = inlined.html;
+
+  // CSP delivered inside the HTML can block srcdoc rendering in the MCP app even
+  // when the network response itself is valid.
+  output = output.replace(/<meta[^>]+http-equiv=["']content-security-policy["'][^>]*>/gi, "");
+  output = output.replace(/<meta[^>]+http-equiv=["']x-frame-options["'][^>]*>/gi, "");
+
+  if (/<head[^>]*>/i.test(output)) {
+    return {
+      html: output.replace(/<head([^>]*)>/i, `<head$1>${baseTag}${suiteletProxyBootstrapScript(originalUrl)}`),
+      stats: inlined.stats
+    };
+  }
+  return {
+    html: `${baseTag}${suiteletProxyBootstrapScript(originalUrl)}${output}`,
+    stats: inlined.stats
+  };
+}
+
+async function handleSuiteletFetchHtml(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet HTML fetch only supports NetSuite URLs.");
+  }
+
+  const response = await fetch(targetUrl.href, {
+    method: "GET",
+    credentials: "include",
+    redirect: "follow"
+  });
+  const html = await response.text();
+  const prepared = await prepareSuiteletHtmlForSrcdoc(html, response.url || targetUrl.href, targetUrl.href);
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        requestedUrl: targetUrl.href,
+        finalUrl: response.url,
+        html: prepared.html,
+        htmlLength: prepared.html.length,
+        assetStats: prepared.stats
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletProxyRequest(args) {
+  const rawUrl = String(args?.url || "").trim();
+  if (!rawUrl) throw new Error("url is required.");
+
+  const targetUrl = new URL(rawUrl);
+  if (!/\.netsuite\.com$/i.test(targetUrl.hostname)) {
+    throw new Error("Suitelet proxy only supports NetSuite URLs.");
+  }
+
+  const cleanHeaders = {};
+  const forbiddenHeaders = new Set([
+    "accept-encoding",
+    "connection",
+    "content-length",
+    "cookie",
+    "host",
+    "origin",
+    "referer",
+    "sec-fetch-dest",
+    "sec-fetch-mode",
+    "sec-fetch-site"
+  ]);
+
+  Object.entries(args?.headers || {}).forEach(([key, value]) => {
+    if (!key || value == null) return;
+    if (forbiddenHeaders.has(String(key).toLowerCase())) return;
+    cleanHeaders[key] = String(value);
+  });
+
+  const response = await fetch(targetUrl.href, {
+    method: String(args?.method || "GET"),
+    headers: cleanHeaders,
+    body: args?.body == null ? undefined : String(args.body),
+    credentials: "include",
+    redirect: "follow"
+  });
+
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+  const responseBody = await response.text();
+  const responsePreview = responseBody
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700);
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        requestedUrl: targetUrl.href,
+        originalUrl: String(args?.originalUrl || ""),
+        source: String(args?.source || ""),
+        rewritten: Boolean(args?.originalUrl && String(args.originalUrl) !== targetUrl.href),
+        requestMethod: String(args?.method || "GET"),
+        requestBodyLength: args?.body == null ? 0 : String(args.body).length,
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url,
+        contentType: responseHeaders["content-type"] || "",
+        headers: responseHeaders,
+        bodyLength: responseBody.length,
+        bodyPreview: response.status >= 400 ? responsePreview : "",
+        body: responseBody
+      }, null, 2)
+    }]
+  };
+}
+
+async function handleSuiteletStreamFrame() {
+  if (!suiteletStreamSession?.tabId || !suiteletStreamSession.windowId) {
+    throw new Error("No Suitelet stream session is active. Start one from the MCP app first.");
+  }
+
+  const tab = await dashboardTabsGet(suiteletStreamSession.tabId);
+  const viewport = await getSuiteletViewport(suiteletStreamSession.tabId);
+  suiteletStreamSession.url = tab.url || suiteletStreamSession.url;
+  const screenshot = await sendSuiteletDebuggerCommand(
+    suiteletStreamSession.tabId,
+    "Page.captureScreenshot",
+    {
+      format: "jpeg",
+      quality: 58,
+      optimizeForSpeed: true,
+      fromSurface: true,
+      captureBeyondViewport: false
+    }
+  );
+  const capturedAt = new Date().toISOString();
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        ok: true,
+        dataUrl: `data:image/jpeg;base64,${screenshot?.data || ""}`,
+        url: tab.url || suiteletStreamSession.url,
+        title: tab.title || viewport.title || "Suitelet",
+        capturedAt,
+        transport: "cdp-screenshot-fallback",
+        viewport
+      }, null, 2)
+    }]
+  };
+}
+
+async function dispatchSuiteletSyntheticInput(tabId, event, x, y) {
+  return chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: ({ event, x, y }) => {
+      const target = document.elementFromPoint(x, y) || document.body || document.documentElement;
+      if (!target) return false;
+
+      if (event.type === "wheel") {
+        target.dispatchEvent(new WheelEvent("wheel", {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y,
+          deltaX: Number(event.deltaX || 0),
+          deltaY: Number(event.deltaY || 0)
+        }));
+        return true;
+      }
+
+      if (event.type === "mousemove") {
+        target.dispatchEvent(new MouseEvent("mousemove", {
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y
+        }));
+        return true;
+      }
+
+      target.dispatchEvent(new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0
+      }));
+      target.dispatchEvent(new MouseEvent("mouseup", {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0
+      }));
+      if (typeof (target as HTMLElement).click === "function")
+        (target as HTMLElement).click();
+      return true;
+    },
+    args: [{ event, x, y }]
+  });
+}
+
+async function handleSuiteletStreamInput(args) {
+  if (!suiteletStreamSession?.tabId) {
+    throw new Error("No Suitelet stream session is active. Start one from the MCP app first.");
+  }
+
+  const event = args?.event || {};
+  const type = String(event.type || "");
+  const tabId = suiteletStreamSession.tabId;
+  const viewport = await getSuiteletViewport(tabId);
+  const x = Math.max(0, Math.min(1, Number(event.x ?? 0))) * Number(viewport.width || 1280);
+  const y = Math.max(0, Math.min(1, Number(event.y ?? 0))) * Number(viewport.height || 720);
+
+  try {
+    if (type === "click") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1
+      });
+    } else if (type === "mousemove") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x,
+        y
+      });
+    } else if (type === "wheel") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x,
+        y,
+        deltaX: Number(event.deltaX || 0),
+        deltaY: Number(event.deltaY || 0)
+      });
+    } else if (type === "keydown" || type === "keyup") {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+        type: type === "keydown" ? "keyDown" : "keyUp",
+        key: String(event.key || ""),
+        code: String(event.code || ""),
+        text: type === "keydown" && String(event.key || "").length === 1 ? String(event.key) : undefined,
+        windowsVirtualKeyCode: Number(event.keyCode || 0)
+      });
+    } else {
+      throw new Error(`Unsupported Suitelet input event: ${type}`);
+    }
+  } catch (error) {
+    if (type === "click" || type === "wheel" || type === "mousemove") {
+      await dispatchSuiteletSyntheticInput(tabId, event, x, y);
+    } else {
+      throw error;
+    }
+  }
+
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ ok: true, type, x, y }, null, 2)
+    }]
+  };
+}
+
+// -----------------------------
+// Suitelet programmatic control (CDP Runtime.evaluate on the real NetSuite tab)
+// -----------------------------
+
+function requireSuiteletControlTab() {
+  if (!suiteletStreamSession?.tabId) {
+    throw new Error("No Suitelet control session is active. Open one first with magic_netsuite_suitelet_control_open.");
+  }
+  return suiteletStreamSession.tabId;
+}
+
+// Runs a JS expression in the controlled Suitelet tab and returns its value.
+async function evalInSuiteletTab(expression, { awaitPromise = true } = {}) {
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  await chrome.debugger.sendCommand({ tabId }, "Runtime.enable", {}).catch(() => null);
+  const result = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+    expression,
+    returnByValue: true,
+    awaitPromise,
+    userGesture: true,
+    allowUnsafeEvalBlockedByCSP: true
+  });
+  if (result?.exceptionDetails) {
+    const ex = result.exceptionDetails;
+    throw new Error(ex.exception?.description || ex.text || "Suitelet evaluation error");
+  }
+  return result?.result?.value;
+}
+
+const SUITELET_INSPECT_EXPRESSION = `(function () {
+  function visible(el) {
+    var rect = el.getBoundingClientRect();
+    var style = window.getComputedStyle(el);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  }
+  function selectorFor(el) {
+    if (el.id) return "#" + CSS.escape(el.id);
+    if (el.getAttribute("name")) return el.tagName.toLowerCase() + "[name=\\"" + el.getAttribute("name") + "\\"]";
+    if (el.getAttribute("data-input-id")) return el.tagName.toLowerCase() + "[data-input-id=\\"" + el.getAttribute("data-input-id") + "\\"]";
+    var path = [];
+    var node = el;
+    while (node && node.nodeType === 1 && path.length < 5) {
+      var part = node.tagName.toLowerCase();
+      var parent = node.parentNode;
+      if (parent && parent.children) {
+        var idx = Array.prototype.indexOf.call(parent.children, node) + 1;
+        part += ":nth-child(" + idx + ")";
+      }
+      path.unshift(part);
+      if (node.id) { path[0] = "#" + CSS.escape(node.id); break; }
+      node = node.parentNode;
+    }
+    return path.join(" > ");
+  }
+  var nodes = Array.prototype.slice.call(
+    document.querySelectorAll("input, textarea, select, button, a[href], [role=button], [onclick], .ddarrowSpan, .uir-field-dropdown-arrow, [data-input-id], .uir-field-wrapper[data-nsps-label]")
+  );
+  var out = [];
+  for (var i = 0; i < nodes.length && out.length < 120; i++) {
+    var el = nodes[i];
+    if (!visible(el)) continue;
+    var labelledBy = el.getAttribute("aria-labelledby") ? document.getElementById(el.getAttribute("aria-labelledby")) : null;
+    var fieldWrapper = el.closest ? el.closest(".uir-field-wrapper[data-nsps-label]") : null;
+    out.push({
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute("type") || "",
+      id: el.id || "",
+      name: el.getAttribute("name") || "",
+      selector: selectorFor(el),
+      label: (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || (labelledBy && labelledBy.innerText) || el.getAttribute("title") || el.getAttribute("data-nsps-label") || (fieldWrapper && fieldWrapper.getAttribute("data-nsps-label")) || "").trim().slice(0, 100)
+    });
+  }
+  return { title: document.title, url: location.href, count: out.length, elements: out };
+})()`;
+
+// Bring the controlled Suitelet tab to the foreground so the user can watch.
+async function focusSuiteletControlTab() {
+  const tabId = suiteletStreamSession?.tabId;
+  if (!tabId) return;
+  try {
+    await dashboardTabsUpdate(tabId, { active: true });
+    const tab = await dashboardTabsGet(tabId);
+    if (tab?.windowId) {
+      await dashboardWindowsUpdate(tab.windowId, { focused: true });
+    }
+  } catch (e) { /* tab may have closed; ignore */ }
+}
+
+async function handleSuiteletControlOpen(args) {
+  // Resolve the real account-correct URL — never trust a caller-invented host.
+  const target = await resolveSuiteletTarget(args);
+  // Open in the foreground so the execution is visible to the user.
+  await handleSuiteletStreamStart({ url: target.url, active: true });
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  await chrome.debugger.sendCommand({ tabId }, "Runtime.enable", {}).catch(() => null);
+  await focusSuiteletControlTab();
+
+  let snapshot = null;
+  try { snapshot = await evalInSuiteletTab(SUITELET_INSPECT_EXPRESSION); } catch (e) { snapshot = { error: String(e?.message || e) }; }
+
+  let screenshotData = "";
+  try {
+    const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 60,
+      fromSurface: true,
+      captureBeyondViewport: false
+    });
+    screenshotData = shot?.data || "";
+  } catch (e) { /* screenshot is best-effort */ }
+
+  const tab = await dashboardTabsGet(tabId).catch(() => null);
+  const content: AnyRecord[] = [{
+    type: "text",
+    text: JSON.stringify({
+      ok: true,
+      session: suiteletStreamSession,
+      controlledUrl: tab?.url || suiteletStreamSession?.url || "",
+      controlledTitle: tab?.title || "",
+      matched: target.matched,
+      alternatives: target.alternatives,
+      snapshot
+    }, null, 2)
+  }];
+  if (screenshotData) {
+    content.push({ type: "image", data: screenshotData, mimeType: "image/jpeg" });
+  }
+  return { content };
+}
+
+function handleSuiteletInspect(args?: AnyRecord): Promise<any>;
+async function handleSuiteletInspect() {
+  const snapshot = await evalInSuiteletTab(SUITELET_INSPECT_EXPRESSION);
+  return { content: [{ type: "text", text: JSON.stringify({ ok: true, ...snapshot }, null, 2) }] };
+}
+
+async function captureSuiteletScreenshotData(tabId) {
+  try {
+    const shot = await sendSuiteletDebuggerCommand(tabId, "Page.captureScreenshot", {
+      format: "jpeg",
+      quality: 60,
+      fromSurface: true,
+      captureBeyondViewport: false
+    });
+    return shot?.data || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function handleSuiteletScreenshot(args?: AnyRecord): Promise<any>;
+async function handleSuiteletScreenshot() {
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  const data = await captureSuiteletScreenshotData(tabId);
+  const tab = await dashboardTabsGet(tabId).catch(() => null);
+  const content: AnyRecord[] = [{
+    type: "text",
+    text: JSON.stringify({ ok: true, url: tab?.url || "", title: tab?.title || "" }, null, 2)
+  }];
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletHover(args) {
+  const tabId = requireSuiteletControlTab();
+  await focusSuiteletControlTab();
+  const selector = String(args?.selector || "").trim();
+  let x = Number(args?.x);
+  let y = Number(args?.y);
+  let resolved = null;
+
+  if (selector) {
+    resolved = await evalInSuiteletTab(`(function () {
+      var el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return { ok: false };
+      el.scrollIntoView({ block: "center", inline: "center" });
+      var r = el.getBoundingClientRect();
+      return { ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2, label: (el.innerText || el.value || el.getAttribute("title") || "").trim().slice(0, 100) };
+    })()`);
+    if (!resolved || !resolved.ok) throw new Error(`Element not found: ${selector}`);
+    x = resolved.x;
+    y = resolved.y;
+  }
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error("Provide a selector, or x and y viewport coordinates, to hover.");
+  }
+
+  // Native :hover requires a real pointer move through CDP.
+  try {
+    await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, buttons: 0 });
+  } catch (e) { /* fall back to synthetic events below */ }
+
+  // Synthetic pointer/mouse events for JS-driven tooltips/menus.
+  await evalInSuiteletTab(`(function () {
+    var el = document.elementFromPoint(${x}, ${y});
+    if (!el) return { ok: false };
+    ["pointerover", "pointerenter", "mouseover", "mouseenter", "mousemove"].forEach(function (type) {
+      try {
+        el.dispatchEvent(new MouseEvent(type, { bubbles: type.indexOf("enter") === -1, cancelable: true, clientX: ${x}, clientY: ${y} }));
+      } catch (e) {}
+    });
+    return { ok: true };
+  })()`).catch(() => null);
+
+  const data = await captureSuiteletScreenshotData(tabId);
+  const content: AnyRecord[] = [{
+    type: "text",
+    text: JSON.stringify({ ok: true, target: selector || `${x},${y}`, x, y, label: resolved?.label || "" }, null, 2)
+  }];
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletScroll(args) {
+  const tabId = requireSuiteletControlTab();
+  await focusSuiteletControlTab();
+  const selector = String(args?.selector || "").trim();
+  const to = String(args?.to || "").trim().toLowerCase(); // "top" | "bottom" | ""
+  const dy = Number(args?.dy);
+  const dx = Number(args?.dx);
+  const expression = `(function () {
+    var selector = ${JSON.stringify(selector)};
+    var to = ${JSON.stringify(to)};
+    var dy = ${Number.isFinite(dy) ? dy : "null"};
+    var dx = ${Number.isFinite(dx) ? dx : "null"};
+
+    // Find the most relevant scrollable element on the page (e.g. a DataTables
+    // results body with overflow:auto and a fixed height), preferring the tallest.
+    function findScrollable() {
+      var best = null, bestScore = -1;
+      var all = document.querySelectorAll("*");
+      for (var i = 0; i < all.length; i++) {
+        var node = all[i];
+        var overflowable = node.scrollHeight - node.clientHeight > 40;
+        if (!overflowable) continue;
+        var oy = getComputedStyle(node).overflowY;
+        if (oy !== "auto" && oy !== "scroll") continue;
+        var score = (node.scrollHeight - node.clientHeight) * Math.max(1, node.clientHeight);
+        if (score > bestScore) { bestScore = score; best = node; }
+      }
+      return best;
+    }
+
+    var el = selector ? document.querySelector(selector) : null;
+    if (selector && !el) return { ok: false, error: "Element not found: " + selector };
+
+    // Pure "scroll into view" when a selector is given with no movement args.
+    if (el && dy == null && dx == null && !to) {
+      el.scrollIntoView({ block: "center", inline: "nearest" });
+      var r0 = el.getBoundingClientRect();
+      return { ok: true, target: selector, scrolledIntoView: true };
+    }
+
+    // Choose what to scroll: explicit selector, else the detected inner container,
+    // else the document. Scroll both the chosen element AND the window so we move
+    // regardless of which one actually overflows.
+    var inner = el || findScrollable();
+    var docEl = document.scrollingElement || document.documentElement;
+    var pageEl = (inner === docEl || inner === document.body || inner == null) ? null : inner;
+
+    function curTop(node) { return node === docEl ? (window.scrollY || docEl.scrollTop || 0) : node.scrollTop; }
+    var beforePage = pageEl ? curTop(pageEl) : null;
+    var beforeWin = window.scrollY || docEl.scrollTop || 0;
+
+    function applyTo(node, isWindow) {
+      if (to === "bottom") { if (isWindow) window.scrollTo(0, docEl.scrollHeight); else node.scrollTop = node.scrollHeight; }
+      else if (to === "top") { if (isWindow) window.scrollTo(0, 0); else node.scrollTop = 0; }
+      else { var ddy = (dy == null ? 600 : dy); if (isWindow) window.scrollBy(dx || 0, ddy); else { node.scrollTop += ddy; node.scrollLeft += (dx || 0); } }
+    }
+    if (pageEl) applyTo(pageEl, false);
+    applyTo(docEl, true);
+
+    var afterPage = pageEl ? curTop(pageEl) : null;
+    var afterWin = window.scrollY || docEl.scrollTop || 0;
+    var movedContainer = pageEl ? (afterPage - beforePage) : 0;
+    var movedWindow = afterWin - beforeWin;
+    var ref = pageEl || docEl;
+    var refTop = pageEl ? afterPage : afterWin;
+    return {
+      ok: true,
+      target: selector || (pageEl ? "auto-detected scroll container" : "window"),
+      movedContainerPx: movedContainer,
+      movedWindowPx: movedWindow,
+      moved: Math.abs(movedContainer) + Math.abs(movedWindow) > 0,
+      scrollTop: refTop,
+      scrollHeight: ref.scrollHeight,
+      clientHeight: ref.clientHeight || window.innerHeight,
+      atBottom: refTop + (ref.clientHeight || window.innerHeight) >= (ref.scrollHeight || 0) - 2
+    };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  const data = await captureSuiteletScreenshotData(tabId);
+  const content: AnyRecord[] = [{ type: "text", text: JSON.stringify(value, null, 2) }];
+  if (data) content.push({ type: "image", data, mimeType: "image/jpeg" });
+  return { content };
+}
+
+async function handleSuiteletFill(args) {
+  const selector = String(args?.selector || "").trim();
+  if (!selector) throw new Error("selector is required.");
+  const value = args?.value == null ? "" : String(args.value);
+  await focusSuiteletControlTab();
+  const expression = `(function () {
+    var el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return { ok: false, error: "Element not found: " + ${JSON.stringify(selector)} };
+    var value = ${JSON.stringify(value)};
+
+    function findNetsuiteDropdownParts(node) {
+      var input = null;
+      if (node && node.matches && node.matches("input.dropdownInput, input.nldropdown")) input = node;
+      if (!input && node && node.getAttribute && node.getAttribute("data-input-id")) {
+        input = document.getElementById(node.getAttribute("data-input-id"));
+      }
+      if (!input && node && node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) input = wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      if (!input) return null;
+
+      var fieldName = "";
+      if (input.name && input.name.indexOf("inpt_") === 0) fieldName = input.name.slice(5);
+      if (!fieldName) {
+        var fieldWrapper = input.closest && input.closest(".uir-field-wrapper[data-field-name]");
+        fieldName = fieldWrapper ? fieldWrapper.getAttribute("data-field-name") : "";
+      }
+      if (!fieldName) return null;
+
+      var dropdown = document.querySelector(".ns-dropdown[data-name='" + CSS.escape(fieldName) + "']");
+      var hidden = document.querySelector("input[type='hidden'][name='" + CSS.escape(fieldName) + "']");
+      var index = hidden && hidden.id ? document.getElementById(hidden.id.replace(/^hddn_/, "indx_")) : null;
+      return { input: input, fieldName: fieldName, dropdown: dropdown, hidden: hidden, index: index };
+    }
+
+    function setNativeValue(node, nextValue) {
+      try {
+        var proto = node.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        var descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+        if (descriptor && descriptor.set) descriptor.set.call(node, nextValue);
+        else node.value = nextValue;
+      } catch (e) { node.value = nextValue; }
+    }
+
+    var dropdownParts = findNetsuiteDropdownParts(el);
+    if (dropdownParts && dropdownParts.dropdown && dropdownParts.hidden) {
+      var options = [];
+      try { options = JSON.parse(dropdownParts.dropdown.getAttribute("data-options") || "[]"); } catch (e) {}
+      var needle = value.trim().toLowerCase();
+      var option = options.filter(function (opt) {
+        return String(opt.value) === value || String(opt.text).trim().toLowerCase() === needle;
+      })[0] || options.filter(function (opt) {
+        return String(opt.text).trim().toLowerCase().indexOf(needle) !== -1;
+      })[0];
+      if (!option) {
+        return {
+          ok: false,
+          error: "No NetSuite dropdown option matched: " + value,
+          selector: ${JSON.stringify(selector)},
+          fieldName: dropdownParts.fieldName,
+          options: options.slice(0, 20)
+        };
+      }
+
+      setNativeValue(dropdownParts.input, String(option.text || " "));
+      setNativeValue(dropdownParts.hidden, String(option.value || ""));
+      if (dropdownParts.index) {
+        var idx = options.indexOf(option);
+        setNativeValue(dropdownParts.index, idx >= 0 ? String(idx) : "");
+      }
+      dropdownParts.input.dispatchEvent(new Event("input", { bubbles: true }));
+      dropdownParts.input.dispatchEvent(new Event("change", { bubbles: true }));
+      dropdownParts.hidden.dispatchEvent(new Event("input", { bubbles: true }));
+      dropdownParts.hidden.dispatchEvent(new Event("change", { bubbles: true }));
+      return {
+        ok: true,
+        selector: ${JSON.stringify(selector)},
+        fieldName: dropdownParts.fieldName,
+        value: String(option.value || ""),
+        text: String(option.text || ""),
+        mode: "netsuite-dropdown"
+      };
+    }
+
+    el.focus();
+    try {
+      setNativeValue(el, value);
+    } catch (e) { el.value = value; }
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, selector: ${JSON.stringify(selector)}, value: el.value };
+  })()`;
+  const value2 = await evalInSuiteletTab(expression);
+  return { content: [{ type: "text", text: JSON.stringify(value2, null, 2) }] };
+}
+
+async function handleSuiteletClick(args) {
+  const selector = String(args?.selector || "").trim();
+  const text = String(args?.text || "").trim();
+  if (!selector && !text) throw new Error("Provide a selector or visible text to click.");
+  await focusSuiteletControlTab();
+  const tabId = requireSuiteletControlTab();
+  await ensureSuiteletDebugger(tabId);
+  const expression = `(function () {
+    function isVisible(node) {
+      if (!node) return false;
+      var r = node.getBoundingClientRect();
+      var s = window.getComputedStyle(node);
+      return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
+    }
+
+    function bestNetsuiteDropdownClickTarget(node) {
+      var input = null;
+      if (node && node.matches && node.matches("input.dropdownInput, input.nldropdown")) input = node;
+      if (!input && node && node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) input = wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      if (!input) return node;
+
+      var arrow = null;
+      if (input.id) {
+        arrow = document.querySelector(".ddarrowSpan[data-input-id='" + CSS.escape(input.id) + "'], .uir-field-dropdown-arrow[data-input-id='" + CSS.escape(input.id) + "']");
+      }
+      if (!arrow) {
+        var container = input.closest(".uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        arrow = container && container.querySelector(".ddarrowSpan, .uir-field-dropdown-arrow");
+      }
+      return arrow || input;
+    }
+
+    function findNetsuiteDropdownInput(node) {
+      if (!node) return null;
+      if (node.matches && node.matches("input.dropdownInput, input.nldropdown")) return node;
+      if (node.getAttribute && node.getAttribute("data-input-id")) {
+        var byId = document.getElementById(node.getAttribute("data-input-id"));
+        if (byId) return byId;
+      }
+      if (node.closest) {
+        var wrapper = node.closest(".uir-field-wrapper[data-nsps-label], .uir-select-input-container, .uir-field-input.nldropdown, span[data-fieldtype='select']");
+        if (wrapper) return wrapper.querySelector("input.dropdownInput, input.nldropdown");
+      }
+      return null;
+    }
+
+    function dropdownVisibleForInput(input) {
+      if (!input) return false;
+      var name = input.name || "";
+      if (name.indexOf("inpt_") === 0) name = name.slice(5);
+      var wrappers = Array.prototype.slice.call(document.querySelectorAll(".ns-dropdown"));
+      return wrappers.some(function (node) {
+        if (name && node.getAttribute("data-name") !== name) return false;
+        var r = node.getBoundingClientRect();
+        var s = getComputedStyle(node);
+        return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden";
+      });
+    }
+
+    function makeDropdownEvent(type, input) {
+      return {
+        type: type,
+        target: input,
+        currentTarget: input,
+        srcElement: input,
+        key: "ArrowDown",
+        code: "ArrowDown",
+        keyCode: 40,
+        which: 40,
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+        preventDefault: function () {},
+        stopPropagation: function () {},
+        stopImmediatePropagation: function () {}
+      };
+    }
+
+    function openNetsuiteDropdown(input) {
+      var attempts = [];
+      if (!input) return { attempted: false, open: false, attempts: attempts };
+      try { input.focus(); attempts.push("input.focus"); } catch (e) { attempts.push("input.focus:" + e.message); }
+
+      var controller = null;
+      try {
+        if (typeof window.getDropdown === "function") {
+          controller = window.getDropdown(input);
+          attempts.push("getDropdown");
+        }
+      } catch (e) { attempts.push("getDropdown:" + e.message); }
+
+      if (controller) {
+        [
+          ["handleOnFocus", makeDropdownEvent("focus", input)],
+          ["handleKeydown", makeDropdownEvent("keydown", input)],
+          ["handleKeypress", makeDropdownEvent("keypress", input)]
+        ].forEach(function (entry) {
+          try {
+            if (typeof controller[entry[0]] === "function") {
+              controller[entry[0]](entry[1]);
+              attempts.push(entry[0]);
+            }
+          } catch (e) { attempts.push(entry[0] + ":" + e.message); }
+        });
+
+        var methodNames = [];
+        try {
+          methodNames = Object.keys(controller);
+          var proto = Object.getPrototypeOf(controller);
+          if (proto) methodNames = methodNames.concat(Object.getOwnPropertyNames(proto));
+        } catch (e) {}
+        methodNames = methodNames.filter(function (name, idx, arr) {
+          return arr.indexOf(name) === idx && /^(open|show|expand|toggle|display)|dropdown|popup/i.test(name) && typeof controller[name] === "function";
+        });
+        methodNames.slice(0, 12).forEach(function (name) {
+          if (dropdownVisibleForInput(input)) return;
+          try {
+            controller[name]();
+            attempts.push(name);
+          } catch (e) { attempts.push(name + ":" + e.message); }
+        });
+      }
+
+      if (!dropdownVisibleForInput(input)) {
+        ["keydown", "keyup"].forEach(function (type) {
+          try {
+            input.dispatchEvent(new KeyboardEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              key: "ArrowDown",
+              code: "ArrowDown",
+              keyCode: 40,
+              which: 40,
+              altKey: true
+            }));
+            attempts.push(type + ":AltArrowDown");
+          } catch (e) { attempts.push(type + ":" + e.message); }
+        });
+      }
+
+      return { attempted: true, open: dropdownVisibleForInput(input), attempts: attempts };
+    }
+
+    function dispatchJsClick(node, x, y) {
+      ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach(function (type) {
+        try {
+          var EventCtor = type.indexOf("pointer") === 0 && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent;
+          node.dispatchEvent(new EventCtor(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+            buttons: type === "pointerdown" || type === "mousedown" ? 1 : 0,
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true
+          }));
+        } catch (e) {
+          try {
+            node.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }));
+          } catch (ignored) {}
+        }
+      });
+    }
+
+    function fireNetsuiteArrowClick(input, arrow) {
+      if (!input || !arrow) return false;
+      try { input.focus(); } catch (e) {}
+      ["mouseover", "mousedown", "mouseup", "click"].forEach(function (type) {
+        try {
+          arrow.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0
+          }));
+        } catch (e) {}
+      });
+      return true;
+    }
+
+    var el = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : "null"};
+    if (!el && ${JSON.stringify(text)}) {
+      var needle = ${JSON.stringify(text.toLowerCase())};
+      var cands = Array.prototype.slice.call(
+        document.querySelectorAll("button, a, input[type=button], input[type=submit], [role=button], .uir-button, span.bntxt, td.bntxt, .ddarrowSpan, .uir-field-dropdown-arrow, input.dropdownInput, .uir-label-span, .uir-field-wrapper[data-nsps-label]")
+      );
+      el = cands.filter(function (c) {
+        var labelledBy = c.getAttribute("aria-labelledby") ? document.getElementById(c.getAttribute("aria-labelledby")) : null;
+        var wrapper = c.closest ? c.closest(".uir-field-wrapper[data-nsps-label]") : null;
+        var label = (c.innerText || c.value || c.getAttribute("title") || c.getAttribute("data-nsps-label") || (labelledBy && labelledBy.innerText) || (wrapper && wrapper.getAttribute("data-nsps-label")) || "").trim().toLowerCase();
+        return label === needle;
+      })[0] || cands.filter(function (c) {
+        var labelledBy = c.getAttribute("aria-labelledby") ? document.getElementById(c.getAttribute("aria-labelledby")) : null;
+        var wrapper = c.closest ? c.closest(".uir-field-wrapper[data-nsps-label]") : null;
+        var label = (c.innerText || c.value || c.getAttribute("title") || c.getAttribute("data-nsps-label") || (labelledBy && labelledBy.innerText) || (wrapper && wrapper.getAttribute("data-nsps-label")) || "").trim().toLowerCase();
+        return label.indexOf(needle) !== -1;
+      })[0];
+    }
+    if (!el) return { ok: false, error: "Clickable element not found." };
+    var dropdownInput = findNetsuiteDropdownInput(el);
+    el = bestNetsuiteDropdownClickTarget(el);
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center" });
+    var r = el.getBoundingClientRect();
+    var x = r.left + r.width / 2;
+    var y = r.top + r.height / 2;
+    if (!isVisible(el)) return { ok: false, error: "Clickable element is not visible." };
+    try { el.focus && el.focus(); } catch (e) {}
+    var usedNetsuiteArrowSequence = dropdownInput ? fireNetsuiteArrowClick(dropdownInput, el) : false;
+    dispatchJsClick(el, x, y);
+    var dropdownOpen = openNetsuiteDropdown(dropdownInput);
+    return {
+      ok: true,
+      clicked: (el.innerText || el.value || el.id || el.getAttribute("title") || el.tagName || "").toString().trim().slice(0, 100),
+      x: x,
+      y: y,
+      tag: el.tagName,
+      id: el.id || "",
+      className: String(el.className || ""),
+      usedNetsuiteArrowSequence: usedNetsuiteArrowSequence,
+      netsuiteDropdown: dropdownOpen
+    };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  if (value?.ok && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))) {
+    try {
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: Number(value.x),
+        y: Number(value.y),
+        buttons: 0
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: Number(value.x),
+        y: Number(value.y),
+        button: "left",
+        buttons: 1,
+        clickCount: 1
+      });
+      await sendSuiteletDebuggerCommand(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: Number(value.x),
+        y: Number(value.y),
+        button: "left",
+        buttons: 0,
+        clickCount: 1
+      });
+      if (value.netsuiteDropdown?.attempted && !value.netsuiteDropdown?.open) {
+        await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key: "ArrowDown",
+          code: "ArrowDown",
+          windowsVirtualKeyCode: 40,
+          nativeVirtualKeyCode: 40,
+          modifiers: 1
+        });
+        await sendSuiteletDebuggerCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "ArrowDown",
+          code: "ArrowDown",
+          windowsVirtualKeyCode: 40,
+          nativeVirtualKeyCode: 40,
+          modifiers: 1
+        });
+      }
+    } catch (e) {
+      value.nativeClickError = String(e?.message || e);
+    }
+  }
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+async function handleSuiteletRead(args) {
+  const selector = String(args?.selector || "").trim();
+  const maxLength = Math.max(100, Math.min(40000, Number(args?.maxLength) || 8000));
+  const expression = `(function () {
+    var target = ${selector ? `document.querySelector(${JSON.stringify(selector)})` : "document.body"};
+    if (!target) return { ok: false, error: "Element not found." };
+    var text = (target.value != null && target.value !== "") ? target.value : (target.innerText || target.textContent || "");
+    return { ok: true, selector: ${JSON.stringify(selector || "body")}, length: text.length, text: text.slice(0, ${maxLength}) };
+  })()`;
+  const value = await evalInSuiteletTab(expression);
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+async function handleSuiteletEval(args) {
+  const expression = String(args?.expression || "").trim();
+  if (!expression) throw new Error("expression is required.");
+  const value = await evalInSuiteletTab(`(function () { return (${expression}); })()`).catch(async (err) => {
+    // Allow statement-style snippets too (not just expressions).
+    if (/SyntaxError|Unexpected/i.test(String(err?.message || err))) {
+      return evalInSuiteletTab(`(function () { ${expression} })()`);
+    }
+    throw err;
+  });
+  return { content: [{ type: "text", text: JSON.stringify({ ok: true, value }, null, 2) }] };
+}
+
+// -----------------------------
+// Tab Helpers
+// -----------------------------
+
+/**
+ * Extracts the NetSuite account ID from a tab URL.
+ * E.g., "https://9937091-sb1.app.netsuite.com/..." -> "9937091_SB1"
+ * The subdomain portion is uppercased and hyphens are replaced with underscores.
+ */
+function extractAccountIdFromUrl(url) {
+  try {
+    const hostname = new URL(url).hostname; // e.g. "9937091-sb1.app.netsuite.com"
+    const parts = hostname.split(".");
+    if (parts.length < 3) return null;
+    const subdomain = parts[0]; // e.g. "9937091-sb1"
+    return subdomain.toUpperCase().replace(/-/g, "_"); // e.g. "9937091_SB1"
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Discovers all NetSuite tabs with app.netsuite.com, checks which ones have
+ * the content script connected (CHECK_CONNECTION), and returns the first tab
+ * that matches the preferred account from settings.
+ *
+ * For MCP calls, this function also manages the dedicated governance tab:
+ *  1. If a dedicated tab exists and matches the preferred account, check its
+ *     governance and refresh it if needed.
+ *  2. If the selected tab has low governance, create a dedicated tab.
+ *
+ * Fallback behavior:
+ *  - If no preferredAccount is set -> falls back to active tab (legacy behavior)
+ *  - If preferredAccount is set but no matching connected tab -> tries dedicated tab
+ */
+async function getPreferredNetsuiteTab() {
+  // Read preferred account from settings
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const preferredAccount = storageResult?.magic_netsuite_settings?.mcpPreferredAccount || "";
+
+  // If no preference is set, fall back to the active tab (legacy behavior)
+  if (!preferredAccount) {
+    return getActiveNetsuiteTab();
+  }
+
+  // ── Step 1: Check if we have a valid dedicated tab for this account ──
+  if (mcpDedicatedTabId && mcpDedicatedTabAccountId === preferredAccount) {
+    const dedicatedTab = await validateDedicatedTab();
+    if (dedicatedTab) {
+      // Check governance and refresh if low
+      const remaining = await checkTabGovernance(dedicatedTab.id);
+      if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
+        console.log(`[MCP] Dedicated tab governance low (${remaining}), refreshing...`);
+        await refreshDedicatedTab();
+      }
+      return dedicatedTab;
+    }
+    // Dedicated tab is invalid — clear and fall through to find another
+  }
+
+  // ── Step 2: Find any existing connected tab for this account ──
+  const allTabs = await dashboardTabsQuery({});
+  const netsuiteTabs = allTabs.filter(
+    (tab) => tab.url && tab.url.includes("app.netsuite.com") && tab.id
+  );
+
+  if (netsuiteTabs.length === 0) {
+    // No NetSuite tabs at all — create a dedicated tab
+    console.log(`[MCP] No NetSuite tabs found, creating dedicated tab for ${preferredAccount}`);
+    const domain = getAccountDomain(preferredAccount);
+    const newTab = await createMcpDedicatedTab(domain);
+    return newTab;
+  }
+
+  // Check connection status for each NS tab in parallel
+  const connectionChecks = netsuiteTabs.map(async (tab) => {
+    try {
+      const response = await sendMessageToTab(tab.id, {
+        action: "CHECK_CONNECTION",
+        data: {},
+        mode: "normal"
+      });
+      return {
+        tab,
+        connected: response?.message === "connected",
+        accountId: extractAccountIdFromUrl(tab.url)
+      };
+    } catch {
+      return { tab, connected: false, accountId: null };
+    }
+  });
+
+  const results = await Promise.all(connectionChecks);
+  const connectedTabs = results.filter((r) => r.connected);
+
+  if (connectedTabs.length === 0) {
+    // No connected tabs — create a dedicated tab
+    console.log(`[MCP] No connected NetSuite tabs, creating dedicated tab for ${preferredAccount}`);
+    const domain = getAccountDomain(preferredAccount);
+    const newTab = await createMcpDedicatedTab(domain);
+    return newTab;
+  }
+
+  // Find a tab matching the preferred account
+  const matchingTab = connectedTabs.find((r) => r.accountId === preferredAccount);
+
+  if (!matchingTab) {
+    // No matching tab — create a dedicated tab for the preferred account
+    console.log(
+      `[MCP] No tab for account "${preferredAccount}", creating dedicated tab. ` +
+      `Available: ${connectedTabs.map((r) => r.accountId).filter(Boolean).join(", ")}`
+    );
+    const domain = getAccountDomain(preferredAccount);
+    const newTab = await createMcpDedicatedTab(domain);
+    return newTab;
+  }
+
+  // ── Step 3: Check governance on the matching tab ──
+  const remaining = await checkTabGovernance(matchingTab.tab.id);
+  if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
+    console.log(
+      `[MCP] Tab ${matchingTab.tab.id} governance low (${remaining} remaining), ` +
+      `creating dedicated tab for ${preferredAccount}`
+    );
+    const domain = getAccountDomain(preferredAccount);
+    const newTab = await createMcpDedicatedTab(domain);
+    return newTab;
+  }
+
+  return matchingTab.tab;
+}
+
+function getActiveNetsuiteTab(): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      if (!tab?.id || !tab.url?.includes("app.netsuite.com")) {
+        reject(new Error("No active NetSuite tab"));
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function sendMessageToTab(tabId, message): Promise<any> {
+  return new Promise<any>((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}

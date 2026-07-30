@@ -1,0 +1,437 @@
+const exportRecordDetails = (N, config: any = {}) => {
+  const {
+    blackListFields = [],
+    blackListSublistFields = [],
+    blackListSublists = [],
+    whiteListFields = null,
+    whiteListSublists = null,
+    whiteListSublistFields = null,
+    include = null
+  } = config;
+
+  const { record, currentRecord } = N;
+
+  const currRec = currentRecord.get();
+  const recordId = currRec.id;
+  const recordType = currRec.type;
+
+  console.log("Exporting record:", {
+    recordId,
+    recordType,
+    config
+  });
+
+  if (!recordId || !recordType) {
+    console.log("No record selected");
+    return;
+  }
+
+  // Load record
+  let rec = null;
+  try {
+    rec = record.load({
+      type: recordType,
+      id: recordId
+    });
+  } catch (error) {
+    console.log("Record not found", error);
+    return;
+  }
+
+  if (!rec) {
+    console.log("Record not found");
+    return;
+  }
+
+  const exportData: any = {};
+
+  // Helper function to build field data based on include array
+  const buildFieldData = (fieldId, getText, getValue, getField) => {
+    if (include === null) {
+      return getText();
+    }
+
+    const fieldData: any = {};
+
+    if (include.includes("fieldId")) {
+      fieldData.fieldId = fieldId;
+    }
+
+    if (include.includes("fieldName")) {
+      const field = getField();
+      fieldData.fieldName = field ? field.label : null;
+    }
+
+    if (include.includes("text")) {
+      fieldData.text = getText();
+    }
+
+    if (include.includes("value")) {
+      fieldData.value = getValue();
+    }
+
+    return fieldData;
+  };
+
+  // Export body fields
+  const fieldIds = rec.getFields();
+  exportData.body = {};
+
+  fieldIds.forEach((fid) => {
+    // Apply blacklist first
+    if (blackListFields.includes(fid)) return;
+
+    // Then apply whitelist if specified
+    if (whiteListFields !== null && !whiteListFields.includes(fid)) return;
+
+    exportData.body[fid] = buildFieldData(
+      fid,
+      () => rec.getText({ fieldId: fid }),
+      () => rec.getValue({ fieldId: fid }),
+      () => rec.getField({ fieldId: fid })
+    );
+  });
+
+  // Export sublists and their fields
+  const sublistIds = rec.getSublists();
+  exportData.sublists = {};
+
+  sublistIds.forEach((sublistId) => {
+    // ✅ Apply blacklist for sublists
+    if (blackListSublists.includes(sublistId)) return;
+
+    // Apply whitelist for sublists if specified
+    if (whiteListSublists !== null && !whiteListSublists.includes(sublistId))
+      return;
+
+    const lineCount = rec.getLineCount({ sublistId });
+    exportData.sublists[sublistId] = [];
+
+    for (let i = 0; i < lineCount; i++) {
+      const lineFields = rec.getSublistFields({ sublistId });
+      const lineData: any = {};
+
+      lineFields.forEach((fieldId) => {
+        // ✅ Apply blacklist for sublist fields
+        if (blackListSublistFields.includes(fieldId)) return;
+
+        // ✅ Apply whitelist for sublist fields if specified
+        if (
+          whiteListSublistFields !== null &&
+          !whiteListSublistFields.includes(fieldId)
+        )
+          return;
+
+        lineData[fieldId] = buildFieldData(
+          fieldId,
+          () => rec.getSublistText({ sublistId, fieldId, line: i }),
+          () => rec.getSublistValue({ sublistId, fieldId, line: i }),
+          () => rec.getSublistField({ sublistId, fieldId, line: i })
+        );
+      });
+
+      exportData.sublists[sublistId].push(lineData);
+    }
+  });
+
+  return exportData;
+};
+
+window.exportRecord = async (N, config: any = {}) => {
+  const exportedRecord = exportRecordDetails(N, config);
+  return exportedRecord;
+};
+
+/**
+ * Load a record by type + id and return all body field values + all sublist rows.
+ * Each field is returned as { value, text } to expose both the stored value and
+ * the display text (e.g. for select fields: value = internalId, text = label).
+ *
+ * @param {object} N - NetSuite modules (must expose N.record)
+ * @param {object} options
+ * @param {string} options.type - Record type (e.g. 'salesorder', 'customer')
+ * @param {string|number} options.id - Internal ID of the record
+ * @param {string[]|null} [options.sublistIds] - Whitelist of sublists to include (null = all)
+ * @returns {{ id: string, type: string, body: object, sublists: object }}
+ */
+window.loadRecordById = (N, { type, id, bodyOnly = false }) => {
+  const { record } = N;
+  const rec = record.load({ type, id });
+
+  // Body fields
+  const body = {};
+  for (const fieldId of rec.getFields()) {
+    try {
+      body[fieldId] = {
+        value: rec.getValue({ fieldId }),
+        text: rec.getText({ fieldId })
+      };
+    } catch {
+      // Skip fields that error (formula fields, etc.)
+    }
+  }
+
+  if (bodyOnly) {
+    return { id: String(rec.id), type: rec.type, body };
+  }
+
+  // Sublists (legacy path — kept for backward compat)
+  const sublists = {};
+  const availableSublists = rec.getSublists();
+  for (const sublistId of availableSublists) {
+    const lineCount = rec.getLineCount({ sublistId });
+    const sublistFieldIds = rec.getSublistFields({ sublistId });
+    const rows = [];
+    for (let i = 0; i < lineCount; i++) {
+      const row = {};
+      for (const fieldId of sublistFieldIds) {
+        try {
+          row[fieldId] = {
+            value: rec.getSublistValue({ sublistId, fieldId, line: i }),
+            text: rec.getSublistText({ sublistId, fieldId, line: i })
+          };
+        } catch {
+          // Skip fields that error on this line
+        }
+      }
+      rows.push(row);
+    }
+    sublists[sublistId] = rows;
+  }
+
+  return { id: String(rec.id), type: rec.type, body, sublists };
+};
+
+const HARNESS_SKIP_FIELD_IDS = new Set([
+  "_csrf",
+  "custpage_cs_msgs",
+  "custpage_ctk_download",
+  "custpage_hide_column_edit",
+  "billingaddress2_set",
+  "shippingaddress2_set",
+  "entryformquerystring"
+]);
+
+const extractToJsonFieldValue = (fieldObj) => {
+  if (fieldObj === null || fieldObj === undefined) {
+    return { value: null, text: null };
+  }
+  if (typeof fieldObj !== "object") {
+    return { value: fieldObj, text: fieldObj };
+  }
+  const value =
+    fieldObj.legacyStringValue ??
+    fieldObj.value ??
+    fieldObj.text ??
+    fieldObj;
+  const text = fieldObj.text ?? fieldObj.legacyStringValue ?? fieldObj.value ?? value;
+  return { value, text };
+};
+
+const shouldSkipHarnessField = (fieldId, display) => {
+  if (HARNESS_SKIP_FIELD_IDS.has(fieldId)) return true;
+  if (fieldId.startsWith("custpage_")) return true;
+  if (typeof display !== "string") return false;
+  if (display.includes("<script") || display.includes("javascript:void")) return true;
+  if (display.length > 4000) return true;
+  return false;
+};
+
+const normalizeToJsonSublistRows = (sublistData) => {
+  if (!sublistData || typeof sublistData !== "object") return [];
+
+  const rows = [];
+  for (const [lineKey, lineData] of Object.entries(sublistData)) {
+    if (lineKey === "currentline" || !/^line\s+\d+$/i.test(lineKey)) continue;
+    if (!lineData || typeof lineData !== "object") continue;
+
+    const row = {};
+    for (const [fieldId, fieldObj] of Object.entries(lineData)) {
+      row[fieldId] = extractToJsonFieldValue(fieldObj);
+    }
+    rows.push(row);
+  }
+  return rows;
+};
+
+/**
+ * Fast record load via record.load().toJSON().
+ * Normalizes to the same { id, type, body, sublists } shape as loadRecordById so
+ * consumers can treat both paths consistently. MCP / netsuite_load_record keeps
+ * the slower getValue/getText path (bodyOnly).
+ */
+window.loadRecordByIdToJson = (N, { type, id, includeSublists = true }) => {
+  const { record } = N;
+  const rec = record.load({ type, id });
+  const json =
+    typeof rec.toJSON === "function" ? rec.toJSON() : { fields: {}, sublists: {} };
+
+  const body = {};
+  const fields = json.fields || {};
+  for (const [fieldId, fieldData] of Object.entries(fields)) {
+    body[fieldId] = extractToJsonFieldValue(fieldData);
+  }
+
+  const sublists = {};
+  if (includeSublists && json.sublists && typeof json.sublists === "object") {
+    for (const [sublistId, sublistData] of Object.entries(json.sublists)) {
+      const rows = normalizeToJsonSublistRows(sublistData);
+      sublists[sublistId] = rows;
+    }
+  }
+
+  return {
+    id: String(json.id ?? rec.id),
+    type: String(json.type ?? rec.type ?? type),
+    body,
+    sublists
+  };
+};
+
+/**
+ * Load a record's sublist rows only — no body fields.
+ * Useful when the body is already known and only line-item data is needed.
+ *
+ * @param {object} N - NetSuite modules (must expose N.record)
+ * @param {object} options
+ * @param {string} options.type - Record type (e.g. 'salesorder')
+ * @param {string|number} options.id - Internal ID of the record
+ * @param {string[]|null} [options.sublistIds] - Whitelist of sublists to include (null = all)
+ * @returns {{ id: string, type: string, sublists: object }}
+ */
+window.loadRecordSublists = (N, { type, id, sublistIds = null }) => {
+  const { record } = N;
+  const rec = record.load({ type, id });
+
+  const sublists = {};
+  const availableSublists = rec.getSublists();
+  const targetSublists = sublistIds
+    ? availableSublists.filter((s) => sublistIds.includes(s))
+    : availableSublists;
+
+  for (const sublistId of targetSublists) {
+    const lineCount = rec.getLineCount({ sublistId });
+    const sublistFieldIds = rec.getSublistFields({ sublistId });
+    const rows = [];
+    for (let i = 0; i < lineCount; i++) {
+      const row = {};
+      for (const fieldId of sublistFieldIds) {
+        try {
+          row[fieldId] = {
+            value: rec.getSublistValue({ sublistId, fieldId, line: i }),
+            text: rec.getSublistText({ sublistId, fieldId, line: i })
+          };
+        } catch {
+          // Skip fields that error on this line
+        }
+      }
+      rows.push(row);
+    }
+    sublists[sublistId] = rows;
+  }
+
+  return { id: String(rec.id), type: rec.type, sublists };
+};
+
+/**
+ * Get available body fields and sublist fields for a record type, without loading
+ * a real record. Creates a temporary in-memory record via record.create() and uses
+ * getFields() / getSublists() / getSublistFields() to enumerate metadata.
+ *
+ * @param {object} N - NetSuite modules (must expose N.record)
+ * @param {object} options
+ * @param {string} options.type - Record type (e.g. 'salesorder', 'customer', 'customrecord_foo')
+ * @returns {{ type: string, fields: string[], sublists: Record<string, string[]> }}
+ */
+window.getRecordFields = (N, { type }) => {
+  const { record } = N;
+  const tempRec = record.create({ type });
+
+  const fields = tempRec.getFields();
+  const sublistIds = tempRec.getSublists();
+
+  const sublists = {};
+  for (const sublistId of sublistIds) {
+    sublists[sublistId] = tempRec.getSublistFields({ sublistId });
+  }
+
+  return { type, fields, sublists };
+};
+
+const createTemporaryRecord = (record, type) => {
+  try {
+    return record.create({ type });
+  } catch (error) {
+    const enumKey = String(type)
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .toUpperCase();
+    const enumType = record.Type?.[enumKey];
+
+    if (enumType && enumType !== type) {
+      return record.create({ type: enumType });
+    }
+
+    throw error;
+  }
+};
+
+const readFieldProperty = (field, property) => {
+  try {
+    const value = field?.[property];
+    if (value === null || value === undefined) return "";
+    return typeof value === "string" ? value : String(value);
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Get NetSuite runtime field metadata for a record type by creating a temporary
+ * record and reading each field through Record.getField(). This exposes
+ * Field.type, which can differ from SuiteQL Records Catalog labels.
+ *
+ * @param {object} N - NetSuite modules (must expose N.record)
+ * @param {object} options
+ * @param {string} options.type - Record type (e.g. 'salesorder', 'customer')
+ * @param {string[]|null} [options.fieldIds] - Optional body fields to inspect
+ * @returns {{ type: string, fields: Record<string, { id: string, label: string, type: string, error?: string }> }}
+ */
+window.getRecordFieldTypes = (N, { type, id = null, fieldIds = null }) => {
+  if (!type) throw new Error("type is required");
+
+  const { record } = N;
+  const tempRec =
+    id !== null && id !== undefined && id !== ""
+      ? record.load({ type, id })
+      : createTemporaryRecord(record, type);
+  const targetFields =
+    Array.isArray(fieldIds) && fieldIds.length > 0
+      ? fieldIds
+      : tempRec.getFields();
+
+  const fields = {};
+  for (const fieldId of targetFields) {
+    const normalizedFieldId = String(fieldId);
+    try {
+      const field = tempRec.getField({ fieldId: normalizedFieldId });
+      fields[normalizedFieldId] = {
+        id: normalizedFieldId,
+        label: readFieldProperty(field, "label"),
+        type: readFieldProperty(field, "type")
+      };
+    } catch (error) {
+      fields[normalizedFieldId] = {
+        id: normalizedFieldId,
+        label: "",
+        type: "",
+        error:
+          error && typeof error.message === "string"
+            ? error.message
+            : String(error)
+      };
+    }
+  }
+
+  return { type, fields };
+};

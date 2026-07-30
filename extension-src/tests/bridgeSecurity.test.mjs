@@ -6,11 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   MESSAGE_TYPES,
   createMessageFilter,
-} from "./constants.js";
+} from "../../src/content/core/messaging/constants.js";
 import {
   createBridgeCapability,
   injectScript,
-} from "../injection/scriptInjector.js";
+} from "../../src/content/core/injection/scriptInjector.js";
 
 const PAGE_ORIGIN = "https://123456.app.netsuite.com";
 
@@ -105,7 +105,7 @@ test("injector exposes the capability only to the NetSuite API entry script", ()
 
 test("page bridge rejects messages with the wrong capability or origin before API access", async () => {
   const testFile = fileURLToPath(import.meta.url);
-  const apiFile = new URL("../../../netsuiteApi/netsuiteApi.js", import.meta.url);
+  const apiFile = new URL("../../src/netsuiteApi/netsuiteApi.js", import.meta.url);
   const source = fs.readFileSync(fileURLToPath(apiFile), "utf8");
   let messageListener;
   let documentAccesses = 0;

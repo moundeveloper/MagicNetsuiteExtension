@@ -6,14 +6,14 @@ Clear-Host
 # === CONFIGURATION ===
 $vueFolder = "vue-ui"         # Folder containing the Vue project
 
-# === 1. Build Vue Project ===
+# === 1. Build Vue UI and extension TypeScript ===
 $vuePath = Resolve-Path $vueFolder -ErrorAction SilentlyContinue
 if (-not $vuePath) {
     Write-Host "❌ Folder not found: $vueFolder"
     exit 1
 }
 
-Write-Host "=== Running pnpm build in $vueFolder ===`n"
+Write-Host "=== Building Vue UI and extension scripts from $vueFolder ===`n"
 
 # Save current location
 $rootPath = Get-Location

@@ -44,7 +44,7 @@ jobs:
       - name: Enforce custom single-choice controls
         shell: bash
         run: |
-          if grep -RInE '<(select|option)([ >])' vue-ui/src; then
+          if grep -RInE '<(select|option)([ >])' vue-ui/src extension-src; then
             echo "Use MSelect instead of native select/option controls."
             exit 1
           fi
@@ -93,11 +93,14 @@ jobs:
         working-directory: mcp_server
       - name: Check extension bridge syntax
         run: |
+          node vue-ui/scripts/checkExtensionBuild.mjs
           node --check src/background.js
           node --check src/content/content_export.js
           node --check src/content/core/messaging/messageListener.js
           node --check src/netsuiteApi/netsuiteApi.js
           node --check src/netsuiteApi/sandboxCode.js
+      - name: Test extension bridge security
+        run: node --test extension-src/tests/*.test.mjs
       - name: Check SDF companion syntax
         run: |
           node --check sdf_tool/src/cli.js
