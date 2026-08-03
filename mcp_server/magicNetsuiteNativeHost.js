@@ -35,6 +35,10 @@ for (const candidateDir of [path.dirname(process.execPath), __dirname]) {
 const LOG_FILE = path.join(BASE_DIR, `magicNetsuiteNativeHost_${process.pid}.log`);
 const LOG_FILE_LATEST = path.join(BASE_DIR, "magicNetsuiteNativeHost.log");
 const CUSTOM_TOOLS_MANIFEST_PATH = path.join(BASE_DIR, "custom-tools-manifest.json");
+const TOOL_SKILL_BINDINGS_MANIFEST_PATH = path.join(
+  BASE_DIR,
+  "tool-skill-bindings-manifest.json"
+);
 
 function log(...args) {
   if (!shouldLog) return;
@@ -452,6 +456,78 @@ function writeCustomToolsManifest(tools) {
   return true;
 }
 
+function normalizeToolSkillBindingsManifest(bindings) {
+  if (!Array.isArray(bindings)) return [];
+  return bindings
+    .map((binding) => ({
+      toolName: String(binding?.toolName || "").trim(),
+      skillIds: [
+        ...new Set(
+          (Array.isArray(binding?.skillIds) ? binding.skillIds : [])
+            .map(Number)
+            .filter((id) => Number.isInteger(id) && id > 0)
+        )
+      ],
+      updatedAt: String(binding?.updatedAt || "")
+    }))
+    .filter(
+      (binding) =>
+        binding.toolName &&
+        binding.toolName !== "magic_netsuite_prepare_tool" &&
+        binding.skillIds.length > 0
+    )
+    .sort((a, b) => a.toolName.localeCompare(b.toolName));
+}
+
+function readToolSkillBindingsManifest() {
+  try {
+    const parsed = JSON.parse(
+      fs
+        .readFileSync(TOOL_SKILL_BINDINGS_MANIFEST_PATH, "utf8")
+        .replace(/^\uFEFF/, "")
+    );
+    return Array.isArray(parsed?.bindings) ? parsed.bindings : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeToolSkillBindingsManifest(bindings) {
+  const normalized = normalizeToolSkillBindingsManifest(bindings);
+  if (
+    JSON.stringify(readToolSkillBindingsManifest()) ===
+    JSON.stringify(normalized)
+  ) {
+    return false;
+  }
+  const payload =
+    JSON.stringify(
+      {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        bindings: normalized
+      },
+      null,
+      2
+    ) + "\n";
+  const temporaryPath = `${TOOL_SKILL_BINDINGS_MANIFEST_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, payload, "utf8");
+  try {
+    fs.renameSync(temporaryPath, TOOL_SKILL_BINDINGS_MANIFEST_PATH);
+  } catch (error) {
+    try {
+      fs.unlinkSync(TOOL_SKILL_BINDINGS_MANIFEST_PATH);
+    } catch {}
+    fs.renameSync(temporaryPath, TOOL_SKILL_BINDINGS_MANIFEST_PATH);
+  }
+  log(
+    "tool skill bindings manifest updated",
+    TOOL_SKILL_BINDINGS_MANIFEST_PATH,
+    normalized.length
+  );
+  return true;
+}
+
 function handleExtensionMessage(message) {
   log("extension -> native host", message);
 
@@ -465,6 +541,18 @@ function handleExtensionMessage(message) {
       writeCustomToolsManifest(message.tools);
     } catch (error) {
       log("failed writing custom tools manifest", error.message || String(error));
+    }
+    return;
+  }
+
+  if (message.type === "TOOL_SKILL_BINDINGS_SYNC") {
+    try {
+      writeToolSkillBindingsManifest(message.bindings);
+    } catch (error) {
+      log(
+        "failed writing tool skill bindings manifest",
+        error.message || String(error)
+      );
     }
     return;
   }

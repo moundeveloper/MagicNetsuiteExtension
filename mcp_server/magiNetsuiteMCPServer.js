@@ -6,6 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const net = require("net");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 
 // -----------------------------------------------
@@ -169,16 +170,16 @@ async function appendTemplateDesignSkillPreflight(sessionResult) {
   const session = parseMcpTextPayload(sessionResult);
   if (
     !session ||
-    typeof session !== "object" ||
-    Number(session.sourceVersion || 0) > 0
+    typeof session !== "object"
   ) {
     return sessionResult;
   }
 
   const query = [
-    "netsuite freemarker advanced pdf bfo template visual design first draft",
+    "netsuite freemarker advanced pdf bfo template visual design render review",
     String(session.name || ""),
     String(session.prompt || ""),
+    String(session.templateFileName || ""),
     String(session.recordType || "")
   ].filter(Boolean).join(" ");
 
@@ -253,8 +254,8 @@ async function appendTemplateDesignSkillPreflight(sessionResult) {
                 query,
                 loaded,
                 instruction: loaded.length
-                  ? "Apply these local skills before writing the initial FreeMarker. More specific reviewed custom guidance takes precedence over the bundled baseline."
-                  : "No relevant enabled local FreeMarker skill was found. Continue with the workflow guidance and render quality gate."
+                  ? "Apply these skills beneath explicit user instructions and observed reference evidence. Before claiming a BFO/FreeMarker limitation, research the exact behavior with the host's available documentation or web-search tools, open a primary Oracle/Big Faceless/FreeMarker source, and verify the finding with a minimal render experiment. Do not replace unresolved layout behavior with another asset by default."
+                  : "No relevant enabled local FreeMarker skill was found. Continue with the reference-first render quality gate. Research uncertain BFO/FreeMarker behavior in primary sources and verify it with a render before claiming a limitation."
               }
             },
             null,
@@ -316,7 +317,14 @@ const LOG_FILE = path.join(BASE_DIR, `magiNetsuiteMCPServer_${process.pid}.log`)
 // Also maintain a rolling "latest" symlink-style copy for quick tailing.
 const LOG_FILE_LATEST = path.join(BASE_DIR, "magiNetsuiteMCPServer.log");
 const CUSTOM_TOOLS_MANIFEST_PATH = path.join(BASE_DIR, "custom-tools-manifest.json");
+const TOOL_SKILL_BINDINGS_MANIFEST_PATH = path.join(
+  BASE_DIR,
+  "tool-skill-bindings-manifest.json"
+);
 const CUSTOM_TOOL_PREFIX = "magic_custom_";
+const SKILL_PREFLIGHT_RECEIPT_FIELD = "skillPreflightReceipt";
+const SKILL_PREFLIGHT_TTL_MS = 20 * 60 * 1000;
+const MAX_SKILL_PREFLIGHT_RECEIPTS = 64;
 
 function log(...args) {
   if (!shouldLog) return;
@@ -372,9 +380,209 @@ function mergeCustomToolDefinitions(staticTools) {
 
 function findCustomToolByExposedName(name) {
   if (!String(name || "").startsWith(CUSTOM_TOOL_PREFIX)) return null;
-  return readCustomToolsManifest().find(
+  return ( readCustomToolsManifest().find(
     (tool) => `${CUSTOM_TOOL_PREFIX}${tool.name}` === name
-  ) || null;
+  ) || null
+  );
+}
+
+function readToolSkillBindingsManifest() {
+  try {
+    const parsed = JSON.parse(
+      fs
+        .readFileSync(TOOL_SKILL_BINDINGS_MANIFEST_PATH, "utf8")
+        .replace(/^\uFEFF/, "")
+    );
+    return Array.isArray(parsed?.bindings) ? parsed.bindings : [];
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      log(
+        "failed reading tool skill bindings manifest",
+        error.message || String(error)
+      );
+    }
+    return [];
+  }
+}
+
+function getToolSkillBinding(toolName) {
+  return (
+    readToolSkillBindingsManifest().find(
+      (binding) =>
+        String(binding?.toolName || "") === String(toolName || "") &&
+        Array.isArray(binding?.skillIds) &&
+        binding.skillIds.length > 0
+    ) || null
+  );
+}
+
+function addSkillPreflightToToolDefinition(tool) {
+  const binding = getToolSkillBinding(tool?.name);
+  if (!binding || tool.name === "magic_netsuite_prepare_tool") return tool;
+  const inputSchema =
+    tool.inputSchema &&
+    typeof tool.inputSchema === "object" &&
+    !Array.isArray(tool.inputSchema)
+      ? tool.inputSchema
+      : { type: "object", properties: {} };
+  const required = new Set(
+    Array.isArray(inputSchema.required) ? inputSchema.required : []
+  );
+  required.add(SKILL_PREFLIGHT_RECEIPT_FIELD);
+  return {
+    ...tool,
+    description:
+      `${tool.description || ""} Before calling this tool, call ` +
+      "`magic_netsuite_prepare_tool` with this exact tool name, read every " +
+      `returned skill, and pass its receipt as \`${SKILL_PREFLIGHT_RECEIPT_FIELD}\`.`,
+    inputSchema: {
+      ...inputSchema,
+      properties: {
+        ...(inputSchema.properties || {}),
+        [SKILL_PREFLIGHT_RECEIPT_FIELD]: {
+          type: "string",
+          description:
+            "Short-lived receipt returned by magic_netsuite_prepare_tool after its required skills were loaded."
+        }
+      },
+      required: [...required]
+    }
+  };
+}
+
+const skillPreflightReceipts = new Map();
+
+function pruneSkillPreflightReceipts() {
+  const now = Date.now();
+  for (const [receipt, value] of skillPreflightReceipts.entries()) {
+    if (!value || Number(value.expiresAt || 0) <= now) {
+      skillPreflightReceipts.delete(receipt);
+    }
+  }
+  while (skillPreflightReceipts.size > MAX_SKILL_PREFLIGHT_RECEIPTS) {
+    skillPreflightReceipts.delete(skillPreflightReceipts.keys().next().value);
+  }
+}
+
+function skillPreflightRequiredResult(toolName, reason = "missing_receipt") {
+  const binding = getToolSkillBinding(toolName);
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            error: "skill_preflight_required",
+            reason,
+            targetTool: toolName,
+            requiredSkillIds: binding?.skillIds || [],
+            requiredTool: "magic_netsuite_prepare_tool",
+            instruction:
+              `Call magic_netsuite_prepare_tool with toolName "${toolName}", ` +
+              "read and apply every returned skill, then retry this tool with " +
+              `${SKILL_PREFLIGHT_RECEIPT_FIELD}.`
+          },
+          null,
+          2
+        )
+      }
+    ]
+  };
+}
+
+async function prepareBoundTool(params) {
+  const extensionResult = await callExtension("tools/call", params);
+  const payload = parseMcpTextPayload(extensionResult);
+  if (!payload?.prepared) return extensionResult;
+  pruneSkillPreflightReceipts();
+  const receipt = crypto.randomUUID();
+  const expiresAt = Date.now() + SKILL_PREFLIGHT_TTL_MS;
+  skillPreflightReceipts.set(receipt, {
+    targetTool: payload.targetTool,
+    skillIds: payload.skillIds,
+    skillFingerprint: payload.skillFingerprint,
+    context:
+      params?.arguments?.context &&
+      typeof params.arguments.context === "object" &&
+      !Array.isArray(params.arguments.context)
+        ? params.arguments.context
+        : {},
+    expiresAt
+  });
+  const nonTextContent = Array.isArray(extensionResult?.content)
+    ? extensionResult.content.filter((item) => item?.type !== "text")
+    : [];
+  return {
+    ...extensionResult,
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            ...payload,
+            preflightReceipt: receipt,
+            expiresAt: new Date(expiresAt).toISOString()
+          },
+          null,
+          2
+        )
+      },
+      ...nonTextContent
+    ]
+  };
+}
+
+async function authorizeBoundToolCall(params) {
+  const toolName = String(params?.name || "");
+  const args =
+    params?.arguments &&
+    typeof params.arguments === "object" &&
+    !Array.isArray(params.arguments)
+      ? params.arguments
+      : {};
+  const receipt = String(args[SKILL_PREFLIGHT_RECEIPT_FIELD] || "");
+  const cleanArguments = { ...args };
+  delete cleanArguments[SKILL_PREFLIGHT_RECEIPT_FIELD];
+  const cleanParams = { ...params, arguments: cleanArguments };
+  const binding = getToolSkillBinding(toolName);
+  if (!binding || toolName === "magic_netsuite_prepare_tool") {
+    return { allowed: true, params: cleanParams };
+  }
+  pruneSkillPreflightReceipts();
+  const prepared = skillPreflightReceipts.get(receipt);
+  if (!receipt || !prepared || prepared.targetTool !== toolName) {
+    return {
+      allowed: false,
+      params: cleanParams,
+      result: skillPreflightRequiredResult(
+        toolName,
+        receipt ? "invalid_or_expired_receipt" : "missing_receipt"
+      )
+    };
+  }
+  const validationResult = await callExtension("tools/call", {
+    name: "magic_netsuite_validate_skill_preflight",
+    arguments: {
+      targetTool: prepared.targetTool,
+      skillIds: prepared.skillIds,
+      skillFingerprint: prepared.skillFingerprint,
+      context: prepared.context
+    }
+  });
+  const validation = parseMcpTextPayload(validationResult);
+  if (!validation?.valid) {
+    skillPreflightReceipts.delete(receipt);
+    return {
+      allowed: false,
+      params: cleanParams,
+      result: skillPreflightRequiredResult(
+        toolName,
+        validation?.reason || "skill_snapshot_changed"
+      )
+    };
+  }
+  return { allowed: true, params: cleanParams };
 }
 
 let mcpInitialized = false;
@@ -392,7 +600,11 @@ function notifyCustomToolsListChanged() {
 
 try {
   const watcher = fs.watch(BASE_DIR, (_eventType, filename) => {
-    if (String(filename || "").toLowerCase() === path.basename(CUSTOM_TOOLS_MANIFEST_PATH).toLowerCase()) {
+    const changedName =String(filename || "").toLowerCase();
+    if (
+      changedName === path.basename(CUSTOM_TOOLS_MANIFEST_PATH).toLowerCase() ||
+      changedName ===
+        path.basename(TOOL_SKILL_BINDINGS_MANIFEST_PATH).toLowerCase()) {
       notifyCustomToolsListChanged();
     }
   });
@@ -599,7 +811,8 @@ const MIME_BY_EXTENSION = {
 };
 
 function guessMimeType(filePath) {
-  return MIME_BY_EXTENSION[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+  return ( MIME_BY_EXTENSION[path.extname(filePath).toLowerCase()] || "application/octet-stream"
+  );
 }
 
 function normalizeUploadFileSpecs(args = {}) {
@@ -1043,10 +1256,9 @@ async function enrichNetsuiteReadFilePdfResult(result) {
     payload.pageCount = parsed?.numpages || undefined;
     payload.content = extractedText;
     if (parserError) {
-      payload.pdfExtractionWarning =
-        `Used built-in PDF text extraction; optional parser failed: ${
-          parserError?.message || String(parserError)
-        }`;
+      payload.pdfExtractionWarning = `Used built-in PDF text extraction; optional parser failed: ${
+        parserError?.message || String(parserError)
+      }`;
     }
   } catch (err) {
     const message = err?.message || String(err);
@@ -1226,11 +1438,25 @@ async function handleMcp(req) {
 
   try {
     let result = null;
+    let toolPreflightBlock = null;
+    if (
+      method === "tools/call" &&
+      params?.name !== "magic_netsuite_prepare_tool"
+    ) {
+      const authorization = await authorizeBoundToolCall(params);
+      if (authorization.allowed) {
+        params.arguments = authorization.params.arguments;
+      } else {
+        toolPreflightBlock = authorization.result;
+      }
+    }
 
     // -------------------------
     // REQUIRED MCP METHODS
     // -------------------------
-    if (method === "initialize") {
+    if (toolPreflightBlock) {
+      result = toolPreflightBlock;
+    } else if (method === "initialize") {
       mcpInitialized = true;
       result = {
         protocolVersion: params.protocolVersion,
@@ -1265,6 +1491,27 @@ async function handleMcp(req) {
             inputSchema: {
               type: "object",
               properties: { message: { type: "string" } }
+            }
+          },
+          {
+            name: "magic_netsuite_prepare_tool",
+            description:
+              "Load every skill configured in the Magic NetSuite Skills UI for a target MCP tool. Read and apply the returned instructions, then pass its short-lived preflightReceipt to the target tool.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                toolName: {
+                  type: "string",
+                  description:
+                    "Exact target MCP tool name, including magic_custom_ for a custom tool."
+                },
+                context: {
+                  type: "object",
+                  description:
+                    "Optional routing context such as sessionId, recordType, accountId, or custom toolName."
+                }
+              },
+              required: ["toolName"]
             }
           },
           {
@@ -1932,7 +2179,8 @@ async function handleMcp(req) {
                 },
                 values: {
                   type: "object",
-                  description: "Body field values keyed by field ID, e.g. { \"companyname\": \"Acme\" }."
+                  description:
+                    'Body field values keyed by field ID, e.g. { "companyname": "Acme" }.'
                 },
                 defaultValues: {
                   type: "object",
@@ -1974,7 +2222,8 @@ async function handleMcp(req) {
                 },
                 values: {
                   type: "object",
-                  description: "Body field values keyed by field ID, e.g. { \"memo\": \"Updated by MCP\" }."
+                  description:
+                    'Body field values keyed by field ID, e.g. { "memo": "Updated by MCP" }.'
                 },
                 enableSourcing: {
                   type: "boolean",
@@ -2628,7 +2877,8 @@ async function handleMcp(req) {
                   items: {
                     type: "object",
                     properties: {
-                      xml: { type: "string", description: "Full SDF object XML, e.g. <customrecordtype scriptid=\"customrecord_x\">...</customrecordtype>." },
+                      xml: { type: "string", description:
+                          'Full SDF object XML, e.g. <customrecordtype scriptid="customrecord_x">...</customrecordtype>.' },
                       template: {
                         type: "object",
                         description: "Template source sidecar (<scriptid>.template.xml) for advanced PDF/HTML templates.",
@@ -2738,7 +2988,8 @@ async function handleMcp(req) {
                 type: {
                   type: "array",
                   items: { type: "string" },
-                  description: "Object type(s) to list, e.g. [\"customrecordtype\",\"advancedpdftemplate\"]. Omit to list all."
+                  description:
+                    'Object type(s) to list, e.g. ["customrecordtype","advancedpdftemplate"]. Omit to list all.'
                 },
                 scriptId: { type: "string", description: "Only list objects whose script id contains this value." },
                 accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
@@ -2782,10 +3033,80 @@ async function handleMcp(req) {
                 code: {
                   type: "string",
                   description:
-                    "SuiteScript/JavaScript body to execute, e.g. \"console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;\""
+                    'SuiteScript/JavaScript body to execute, e.g. "console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;"'
                 }
               },
               required: ["code"]
+            }
+          },
+          {
+            name: "magic_netsuite_template_asset_list",
+            description:
+              'List the current Template Studio image assets as safe metadata only when AI asset tooling is enabled for the session. A disabled response exposes no assets. Assets are not the default for simple geometry; prefer native BFO/FreeMarker layout. This tool never returns raster bytes or base64.',
+            inputSchema: {
+              type: "object",
+              properties: {
+                sessionId: {
+                  type: "string",
+                  description:
+                    "Optional session ID. Defaults to the current session."
+                }
+              }
+            }
+          },
+          {
+            name: "magic_netsuite_template_asset_get_svg",
+            description:
+              "Read the editable XML source of one Template Studio SVG asset when AI asset tooling is enabled for the session. Raster assets are deliberately opaque and cannot be read, preventing base64 from entering model context.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                sessionId: { type: "string" },
+                assetId: {
+                  type: "string",
+                  description: "SVG asset ID returned by template_asset_list."
+                }
+              },
+              required: ["assetId"]
+            }
+          },
+          {
+            name: "magic_netsuite_template_asset_save_svg",
+            description:
+              "Create or update an editable SVG only when AI asset tooling is enabled for the session and the reference requires irreducible vector artwork. Do not create SVGs for panels, bands, pills, dividers, simple dots, or layout geometry that BFO tables/cells can reproduce. Never use a generic substitute. Returns metadata and a placeholder, never PNG/base64.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                sessionId: { type: "string" },
+                assetId: {
+                  type: "string",
+                  description:
+                    "Existing SVG asset ID to update. Omit to create."
+                },
+                name: { type: "string" },
+                svg: {
+                  type: "string",
+                  description:
+                    "Complete editable <svg> XML without scripts, external resources, or embedded base64 images."
+                },
+                width: { type: "number" },
+                height: { type: "number" }
+              },
+              required: ["name", "svg"]
+            }
+          },
+          {
+            name: "magic_netsuite_template_asset_delete",
+            description:
+              "Delete one Template Studio image asset when AI asset tooling is enabled. Deletion is rejected while its placeholder is used in FreeMarker unless force:true.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                sessionId: { type: "string" },
+                assetId: { type: "string" },
+                force: { type: "boolean" }
+              },
+              required: ["assetId"]
             }
           },
           {
@@ -2834,6 +3155,7 @@ async function handleMcp(req) {
         ]
       };
       result.tools = mergeCustomToolDefinitions(result.tools);
+      result.tools = result.tools.map(addSkillPreflightToToolDefinition);
     }
 
     // suiteql_get_guide is handled locally — no extension needed
@@ -2848,8 +3170,11 @@ async function handleMcp(req) {
 
     // ✅ ONLY HERE we depend on extension
     else if (method === "tools/call") {
+      if(params?.name === "magic_netsuite_prepare_tool") {
+        result = await prepareBoundTool(params);
+      }
       const customTool = findCustomToolByExposedName(params?.name);
-      if (customTool) {
+      if (!result &&customTool) {
         result = await callExtension("tools/call", {
           name: "magic_netsuite_call_custom_tool",
           arguments: {
@@ -2888,7 +3213,7 @@ async function handleMcp(req) {
                 ...(extensionPayload && typeof extensionPayload === "object" ? extensionPayload : { switched: true, accountId: requestedAccount }),
                 sdfAuth
               }, null, 2)
-            }],
+            }]
             // The NetSuite environment switch itself succeeded. Surface SDF
             // setup problems as structured status without misreporting the
             // whole switch as failed.

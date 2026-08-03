@@ -19,6 +19,14 @@ import {
   type SkillSource,
   type SkillConfidence
 } from "../utils/skillsDb";
+import {
+  getBindableTools,
+  getToolSkillBindings,
+  removeSkillFromToolBindings,
+  setSkillToolBindings,
+  type BindableTool,
+  type ToolSkillBinding
+} from "../utils/toolSkillBindings";
 
 const props = defineProps<{ vhOffset: number }>();
 
@@ -53,6 +61,10 @@ const viewMode = ref<"edit" | "preview">("edit");
 const saving = ref(false);
 const statusMessage = ref("");
 const dependencyToAdd = ref<number | null>(null);
+const toolToBind = ref<string | null>(null);
+const boundToolNames = ref<string[]>([]);
+const bindableTools = ref<BindableTool[]>([]);
+const toolBindings = ref<ToolSkillBinding[]>([]);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const skillListWidth = ref(27);
 const isResizingSkillList = ref(false);
@@ -125,9 +137,43 @@ const dependencySkills = computed(() =>
     .filter((skill): skill is Skill => Boolean(skill))
 );
 
+const toolByName = computed(
+  () => new Map(bindableTools.value.map((tool) => [tool.name, tool]))
+);
+
+const toolBindingOptions = computed(() =>
+  bindableTools.value
+    .filter((tool) => !boundToolNames.value.includes(tool.name))
+    .map((tool) => ({
+      value: tool.name,
+      label: `${tool.source === "custom" ? "Custom · " : ""}${tool.label}`
+    }))
+);
+
+const boundTools = computed(() =>
+  boundToolNames.value.map(
+    (toolName) =>
+      toolByName.value.get(toolName) ?? {
+        name: toolName,
+        label: toolName,
+        description: "This tool is no longer present in the current MCP catalog.",
+        source: "built_in" as const
+      }
+  )
+);
+
+const loadBindingConfiguration = async () => {
+  [bindableTools.value, toolBindings.value] = await Promise.all([
+    getBindableTools(),
+    getToolSkillBindings()
+  ]);
+};
+
 const loadSkills = async () => {
   skills.value = await getAllSkills();
   if (selectedId.value && skills.value.some((skill) => skill.id === selectedId.value)) {
+    const selected = skills.value.find((skill) => skill.id === selectedId.value);
+    if (selected) selectSkill(selected);
     return;
   }
   const first = skills.value[0];
@@ -140,6 +186,7 @@ const loadSkills = async () => {
 
 const refreshSkills = async () => {
   statusMessage.value = "";
+  await loadBindingConfiguration();
   await loadSkills();
 };
 
@@ -213,6 +260,12 @@ const selectSkill = (skill: Skill) => {
     lastReviewedAt: (skill.lastReviewedAt ?? "").slice(0, 10),
     confidence: skill.confidence ?? ""
   };
+  boundToolNames.value = skill.id === undefined
+    ? []
+    : toolBindings.value
+        .filter((binding) => binding.skillIds.includes(skill.id!))
+        .map((binding) => binding.toolName);
+  toolToBind.value = null;
   statusMessage.value = "";
 };
 
@@ -220,6 +273,8 @@ const createNewSkill = () => {
   selectedId.value = null;
   form.value = emptyForm();
   dependencyToAdd.value = null;
+  toolToBind.value = null;
+  boundToolNames.value = [];
   viewMode.value = "edit";
   statusMessage.value = "";
 };
@@ -250,6 +305,10 @@ const saveSkill = async () => {
     } else {
       selectedId.value = await addSkill({ ...payload, enabled: true });
     }
+    toolBindings.value = await setSkillToolBindings(
+      selectedId.value,
+      boundToolNames.value
+    );
     statusMessage.value = "Saved";
     await loadSkills();
   } catch (error) {
@@ -278,6 +337,19 @@ const removeDependency = (id: number) => {
   );
 };
 
+const addToolBinding = (value: string | number | null) => {
+  const toolName = String(value ?? "").trim();
+  toolToBind.value = null;
+  if (!toolName || boundToolNames.value.includes(toolName)) return;
+  boundToolNames.value.push(toolName);
+};
+
+const removeToolBinding = (toolName: string) => {
+  boundToolNames.value = boundToolNames.value.filter(
+    (candidate) => candidate !== toolName
+  );
+};
+
 const toggleSkillEnabled = async (skill: Skill) => {
   if (skill.id === undefined) return;
   await updateSkill(skill.id, { enabled: skill.enabled === false });
@@ -290,6 +362,7 @@ const removeSelectedSkill = async () => {
   if (!target) return;
   const confirmed = window.confirm(`Delete "${target.name}"?`);
   if (!confirmed) return;
+  await removeSkillFromToolBindings(selectedId.value);
   await deleteSkill(selectedId.value);
   selectedId.value = null;
   await loadSkills();
@@ -362,6 +435,7 @@ onMounted(async () => {
   await chrome.runtime
     .sendMessage({ type: "ENSURE_RECORD_BINDING_SKILL" })
     .catch(() => undefined);
+  await loadBindingConfiguration();
   await loadSkills();
 });
 
@@ -585,6 +659,41 @@ onBeforeUnmount(() => {
                       </span>
                     </div>
                     <small>Loaded recursively in this order; circular calls are rejected.</small>
+                  </div>
+                  <div class="field-wide dependency-field tool-binding-field">
+                    <span>Required before MCP tools</span>
+                    <MSelect
+                      :model-value="toolToBind"
+                      :options="toolBindingOptions"
+                      option-label="label"
+                      option-value="value"
+                      searchable
+                      size="small"
+                      placeholder="Bind this skill to a tool…"
+                      @update:model-value="addToolBinding"
+                    />
+                    <div v-if="boundTools.length" class="dependency-list tool-binding-list">
+                      <span
+                        v-for="tool in boundTools"
+                        :key="tool.name"
+                        class="dependency-chip tool-binding-chip"
+                        :title="tool.description"
+                      >
+                        <i :class="tool.source === 'custom' ? 'pi pi-code' : 'pi pi-wrench'" />
+                        <span>{{ tool.label }}</span>
+                        <small>{{ tool.name }}</small>
+                        <button
+                          type="button"
+                          :aria-label="`Remove ${tool.label} tool binding`"
+                          @click="removeToolBinding(tool.name)"
+                        >
+                          <i class="pi pi-times" />
+                        </button>
+                      </span>
+                    </div>
+                    <small>
+                      Codex, Claude Code, and other MCP clients must load this skill and provide a fresh preflight receipt before a bound tool can run.
+                    </small>
                   </div>
                 </div>
               </div>
@@ -1141,6 +1250,40 @@ onBeforeUnmount(() => {
 
 .dependency-chip button:hover {
   background: var(--skills-accent-icon-surface);
+}
+
+.tool-binding-field {
+  margin-top: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--p-slate-200);
+}
+
+.tool-binding-list {
+  flex-direction: column;
+  flex-wrap: nowrap;
+}
+
+.tool-binding-chip {
+  width: 100%;
+  border-radius: 5px;
+  background: var(--skills-accent-surface);
+}
+
+.tool-binding-chip > span {
+  min-width: 90px;
+  flex: 0 1 auto;
+}
+
+.tool-binding-chip > small {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--p-slate-400);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.62rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .skill-input,

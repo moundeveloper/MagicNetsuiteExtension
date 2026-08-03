@@ -520,8 +520,7 @@ const extractQuizCodeReferences = (value) => {
     text.match(
       /[A-Za-z_$][\w$]*(?:\s*(?:\(\s*\))?\s*\.\s*[A-Za-z_$][\w$]*(?:\s*\(\s*\))?)+/g
     ) || [];
-  const modulePaths =
-    text.match(/[A-Za-z][\w-]*(?:\/[A-Za-z][\w-]*)+/g) || [];
+  const modulePaths = text.match(/[A-Za-z][\w-]*(?:\/[A-Za-z][\w-]*)+/g) || [];
   return [
     ...new Set(
       [...references, ...modulePaths]
@@ -605,7 +604,11 @@ const findQuizLiteralCodeCopyAnswer = ({
   return (
     options
       .filter((option) => correctIds.has(option.id))
-      .map((option) => String(option.text || "").trim().replace(/\(\)$/, ""))
+      .map((option) =>
+        String(option.text || "")
+          .trim()
+          .replace(/\(\)$/, "")
+      )
       .filter((answer) => /^[A-Za-z_$][\w$-]*$/.test(answer))
       .find((answer) =>
         new RegExp(
@@ -699,7 +702,10 @@ const mutateStoredJobs = (mutation) => {
       notifyJobsChanged();
       return result;
     });
-  jobsWriteQueue = pending.then(() => undefined, () => undefined);
+  jobsWriteQueue = pending.then(
+    () => undefined,
+    () => undefined
+  );
   return pending;
 };
 
@@ -790,7 +796,9 @@ const handleJobsList = ({ sendResponse }) =>
 const handleJobsGet = ({ message, sendResponse }) =>
   sendJobResponse(sendResponse, async () => {
     await jobsWriteQueue.catch(() => undefined);
-    return (await readStoredJobs()).find((job) => job.id === message.id) || null;
+    return (
+      (await readStoredJobs()).find((job) => job.id === message.id) || null
+    );
   });
 
 const handleJobsCreate = ({ message, sendResponse }) =>
@@ -830,8 +838,7 @@ const repairKnownQuizQuestionIssues = (quiz) => {
           question?.prompt === CLIENT_EDIT_GUARD_PROMPT &&
           Array.isArray(citations) &&
           citations.some(
-            (citation) =>
-              citation?.quote === CLIENT_EDIT_GUARD_UNRELATED_QUOTE
+            (citation) => citation?.quote === CLIENT_EDIT_GUARD_UNRELATED_QUOTE
           )
         ) {
           changed = true;
@@ -866,10 +873,7 @@ const repairKnownQuizQuestionIssues = (quiz) => {
           QUIZ_PLAIN_LANGUAGE_EXPLANATION_REPAIRS[repairedQuestion?.id];
         const repairedOptions =
           QUIZ_PLAIN_LANGUAGE_OPTION_REPAIRS[repairedQuestion?.id];
-        if (
-          repairedPrompt &&
-          repairedQuestion?.prompt !== repairedPrompt
-        ) {
+        if (repairedPrompt && repairedQuestion?.prompt !== repairedPrompt) {
           changed = true;
           repairedQuestion = {
             ...repairedQuestion,
@@ -889,14 +893,11 @@ const repairKnownQuizQuestionIssues = (quiz) => {
         if (repairedOptions && Array.isArray(repairedQuestion?.options)) {
           const options = repairedQuestion.options.map((option) => {
             const text = repairedOptions[option?.id];
-            return text && text !== option?.text
-              ? { ...option, text }
-              : option;
+            return text && text !== option?.text ? { ...option, text } : option;
           });
           if (
             options.some(
-              (option, index) =>
-                option !== repairedQuestion.options[index]
+              (option, index) => option !== repairedQuestion.options[index]
             )
           ) {
             changed = true;
@@ -977,9 +978,7 @@ const normalizeQuizQuestion = (value, questionIndex) => {
   const options = input.options.map((option, optionIndex) => {
     const optionInput =
       option && typeof option === "object" ? option : { text: option };
-    const id = String(
-      optionInput.id || `option-${optionIndex + 1}`
-    ).trim();
+    const id = String(optionInput.id || `option-${optionIndex + 1}`).trim();
     const text = String(optionInput.text || "").trim();
     if (!id || !text) {
       throw new Error(
@@ -1032,28 +1031,26 @@ const normalizeQuizQuestion = (value, questionIndex) => {
       `Question ${questionIndex + 1} citations must be an array when provided.`
     );
   }
-  const citations = (
-    Array.isArray(input.citations) ? input.citations : []
-  ).map((citation, citationIndex) => {
-    const citationInput =
-      citation && typeof citation === "object" ? citation : {};
-    const title = String(citationInput.title || "").trim();
-    const url = String(citationInput.url || "").trim();
-    const quote = stripQuizCitationMarkdown(citationInput.quote);
-    if (!title || !quote || !isNetsuiteHelpCitationUrl(url)) {
-      throw new Error(
-        `Question ${questionIndex + 1}, citation ${citationIndex + 1} must include a title, exact quote, and NetSuite Help Center URL.`
-      );
+  const citations = (Array.isArray(input.citations) ? input.citations : []).map(
+    (citation, citationIndex) => {
+      const citationInput =
+        citation && typeof citation === "object" ? citation : {};
+      const title = String(citationInput.title || "").trim();
+      const url = String(citationInput.url || "").trim();
+      const quote = stripQuizCitationMarkdown(citationInput.quote);
+      if (!title || !quote || !isNetsuiteHelpCitationUrl(url)) {
+        throw new Error(
+          `Question ${questionIndex + 1}, citation ${citationIndex + 1} must include a title, exact quote, and NetSuite Help Center URL.`
+        );
+      }
+      return { title, url, quote: quote.slice(0, 1000) };
     }
-    return { title, url, quote: quote.slice(0, 1000) };
-  });
+  );
 
   let code;
   if (input.code !== undefined && input.code !== null) {
     if (typeof input.code !== "object" || Array.isArray(input.code)) {
-      throw new Error(
-        `Question ${questionIndex + 1} code must be an object.`
-      );
+      throw new Error(`Question ${questionIndex + 1} code must be an object.`);
     }
     const content = String(input.code.content || "").trim();
     if (!content) {
@@ -1195,9 +1192,7 @@ const validateQuizAgainstDocsBatch = async (quiz) => {
       `Documentation batch "${quiz.sourceBatchJobId}" was not found or has expired.`
     );
   }
-  if (
-    !["completed", "completed_with_errors"].includes(batch.status)
-  ) {
+  if (!["completed", "completed_with_errors"].includes(batch.status)) {
     throw new Error(
       `Documentation batch "${quiz.sourceBatchJobId}" is ${batch.status}; wait for usable completed results before creating the quiz.`
     );
@@ -1306,9 +1301,7 @@ const deleteStoredNetsuiteQuiz = (idValue) => {
 };
 
 const handleQuizzesDelete = ({ message, sendResponse }) =>
-  sendJobResponse(sendResponse, () =>
-    deleteStoredNetsuiteQuiz(message.id)
-  );
+  sendJobResponse(sendResponse, () => deleteStoredNetsuiteQuiz(message.id));
 
 const getImportedQuizCandidates = (payload) => {
   if (Array.isArray(payload)) return payload;
@@ -1416,9 +1409,7 @@ async function handleMagicCreateQuiz(args) {
 
 async function handleMagicListQuizzes() {
   await netsuiteQuizWriteQueue.catch(() => undefined);
-  return asMcpTextResult(
-    (await readStoredNetsuiteQuizzes()).map(quizSummary)
-  );
+  return asMcpTextResult((await readStoredNetsuiteQuizzes()).map(quizSummary));
 }
 
 async function handleMagicGetQuiz(args) {
@@ -1460,9 +1451,7 @@ const dashboardTabsGet = (tabId) =>
 const dashboardTabsCreate = (createProperties) =>
   chromeCallback((done) => chrome.tabs.create(createProperties, done));
 const dashboardTabsUpdate = (tabId, updateProperties) =>
-  chromeCallback((done) =>
-    chrome.tabs.update(tabId, updateProperties, done)
-  );
+  chromeCallback((done) => chrome.tabs.update(tabId, updateProperties, done));
 const dashboardTabsRemove = (tabIds) =>
   chromeCallback((done) => chrome.tabs.remove(tabIds, () => done()));
 const dashboardTabsGroup = (options) =>
@@ -1563,7 +1552,8 @@ async function saveTemplateReviewState(state, { notify = true } = {}) {
 }
 
 async function updateTemplateReviewState(patch, { increment = true } = {}) {
-  const current = (await getTemplateReviewState()) || defaultTemplateReviewState();
+  const current =
+    (await getTemplateReviewState()) || defaultTemplateReviewState();
   const cleanPatch = Object.fromEntries(
     Object.entries(patch || {}).filter(([, value]) => value !== undefined)
   );
@@ -1621,7 +1611,11 @@ async function ensureTemplateReviewTab(reviewId, { active = true } = {}) {
   return (await dashboardTabsGet(tab.id).catch(() => tab)) || tab;
 }
 
-async function waitForTemplateReviewRendered(reviewId, version, timeoutMs = 8000) {
+async function waitForTemplateReviewRendered(
+  reviewId,
+  version,
+  timeoutMs = 8000
+) {
   const deadline = Date.now() + timeoutMs;
   let state = null;
   while (Date.now() < deadline) {
@@ -1731,10 +1725,9 @@ async function handleTemplateReviewSurfaceOpen(args) {
     updatedAt: new Date().toISOString()
   });
   const tab = await ensureTemplateReviewTab(state.reviewId, { active: true });
-  const rendered = (await waitForTemplateReviewRendered(
-    state.reviewId,
-    state.version
-  )) || state;
+  const rendered =
+    (await waitForTemplateReviewRendered(state.reviewId, state.version)) ||
+    state;
   return templateReviewToolResult(
     rendered,
     await captureTemplateReviewTab(tab).catch(() => "")
@@ -1746,10 +1739,9 @@ async function handleTemplateReviewSurfaceUpdate(args) {
   if (!current) throw new Error("No template review is open.");
   const state = await updateTemplateReviewState(args);
   const tab = await ensureTemplateReviewTab(state.reviewId, { active: false });
-  const rendered = (await waitForTemplateReviewRendered(
-    state.reviewId,
-    state.version
-  )) || state;
+  const rendered =
+    (await waitForTemplateReviewRendered(state.reviewId, state.version)) ||
+    state;
   return templateReviewToolResult(
     rendered,
     await captureTemplateReviewTab(tab).catch(() => "")
@@ -1781,6 +1773,13 @@ const TEMPLATE_STUDIO_CAPTURE_REQUEST_KEY =
   "magic_netsuite_template_studio_capture_request";
 const TEMPLATE_STUDIO_CAPTURE_RESPONSE_KEY =
   "magic_netsuite_template_studio_capture_response";
+const TEMPLATE_STUDIO_ASSET_REQUEST_KEY =
+  "magic_netsuite_template_studio_asset_request";
+const TEMPLATE_STUDIO_ASSET_RESPONSE_KEY =
+  "magic_netsuite_template_studio_asset_response";
+const TEMPLATE_IMAGE_ASSET_URI_PREFIX = "mns-asset://";
+const TEMPLATE_IMAGE_ASSET_PATTERN = /mns-asset:\/\/asset_[a-z0-9_-]+/gi;
+const EMBEDDED_IMAGE_DATA_URL_PATTERN = /data:image\/[a-z0-9.+-]+;base64,/i;
 const MAX_TEMPLATE_SESSION_REVISIONS = 30;
 
 const defaultTemplateDesignSessionStore = () => ({
@@ -1794,18 +1793,63 @@ const normalizeTemplateDesignSession = (value: AnyRecord = {}) => ({
   id: String(value.id || ""),
   name: String(value.name || "Untitled template"),
   prompt: String(value.prompt || ""),
+  templateFileName: String(value.templateFileName || ""),
   referenceImages: Array.isArray(value.referenceImages)
     ? value.referenceImages.filter(
         (image) =>
-          image &&
-          typeof image === "object" &&
-          image.id &&
-          image.dataUrl
+          image && typeof image === "object" && image.id && image.dataUrl
       )
     : [],
+  imageAssets: Array.isArray(value.imageAssets)
+    ? value.imageAssets
+        .filter((asset) => {
+          if (!asset || typeof asset !== "object" || !asset.id) return false;
+          return (
+            String(asset.svgSource || "")
+              .trim()
+              .startsWith("<") ||
+            /^data:image\/(?:png|jpe?g);base64,/i.test(
+              String(asset.dataUrl || "")
+            )
+          );
+        })
+        .map((asset) => {
+          const isSvg = Boolean(String(asset.svgSource || "").trim());
+          const rasterMimeType = /^data:image\/(?:jpeg|jpg);base64,/i.test(
+            String(asset.dataUrl || "")
+          )
+            ? "image/jpeg"
+            : "image/png";
+          return {
+            id: String(asset.id),
+            name: String(
+              asset.name ||
+                (isSvg ? "template-image.svg" : "template-image.png")
+            ),
+            placeholder: `${TEMPLATE_IMAGE_ASSET_URI_PREFIX}${String(asset.id)}`,
+            kind: isSvg ? "svg" : "raster",
+            mimeType: isSvg ? "image/svg+xml" : rasterMimeType,
+            originalMimeType: String(
+              asset.originalMimeType ||
+                (isSvg ? "image/svg+xml" : rasterMimeType)
+            ),
+            source: asset.source === "ai_svg" ? "ai_svg" : "upload",
+            width: Math.max(1, Number(asset.width) || 1),
+            height: Math.max(1, Number(asset.height) || 1),
+            byteSize: Math.max(0, Number(asset.byteSize) || 0),
+            ...(isSvg
+              ? { svgSource: String(asset.svgSource || "") }
+              : { dataUrl: String(asset.dataUrl || "") }),
+            createdAt: String(asset.createdAt || new Date().toISOString()),
+            updatedAt: String(
+              asset.updatedAt || asset.createdAt || new Date().toISOString()
+            )
+          };
+        })
+    : [],
+  assetToolsEnabled: value.assetToolsEnabled !== false,
   contextMode:
-    value.contextMode === "transaction" ||
-    value.contextMode === "customrecord"
+    value.contextMode === "transaction" || value.contextMode === "customrecord"
       ? value.contextMode
       : "freestyle",
   recordType: String(value.recordType || ""),
@@ -1907,50 +1951,92 @@ const templateDesignSessionSummary = (
     (feedback) => !feedback?.checked
   );
   return {
-  id: session.id,
-  name: session.name,
-  prompt: session.prompt,
-  references: session.referenceImages.map((image) => ({
-    id: image.id,
-    name: image.name,
-    mimeType: image.mimeType,
-    createdAt: image.createdAt
-  })),
-  contextMode: session.contextMode,
-  recordType: session.recordType,
-  recordId: session.recordId,
-  recordLabel: session.recordLabel,
-  accountId: session.accountId,
-  ...(includeFreemarker ? { freemarker: session.freemarker } : {}),
-  pdfReady: Boolean(session.pdfDataUrl),
-  renderError: session.renderError,
-  feedback: includeFeedbackHistory ? session.feedback : activeFeedback,
-  openFeedback: activeFeedback.filter(
-    (feedback) => feedback?.status === "open"
-  ),
-  addressedFeedback: activeFeedback.filter(
-    (feedback) => feedback?.status === "addressed"
-  ),
-  ...(includeFeedbackHistory
-    ? {
-        checkedFeedback: session.feedback.filter(
-          (feedback) => feedback?.checked
-        )
-      }
-    : {}),
-  revisions: session.revisions.map((revision) => ({
-    id: revision.id,
-    actor: revision.actor,
-    summary: revision.summary,
-    createdAt: revision.createdAt
-  })),
-  status: session.status,
-  version: session.version,
-  sourceVersion: session.sourceVersion,
-  renderVersion: session.renderVersion,
-  createdAt: session.createdAt,
-  updatedAt: session.updatedAt,
-  lastRenderedAt: session.lastRenderedAt
+    id: session.id,
+    name: session.name,
+    prompt: session.prompt,
+    templateFileName: session.templateFileName,
+    startingPoint: session.templateFileName
+      ? "uploaded_template"
+      : "visual_references",
+    initialReviewInstructions: session.templateFileName
+      ? "This session began with an uploaded template. Preserve the existing source as the starting draft. Before editing it, render if needed, capture page 1, read the page count, and inspect every rendered page. Then patch only after comparing the source with those screenshots."
+      : "Treat the selected visual reference as the authority for composition and visual facts. Isolate the intended page, inventory every landmark and distinctive asset before coding, treat the first render as diagnostic, then audit and patch every material deviation before presenting it.",
+    referenceAuthorityInstructions:
+      "Explicit user instructions and observed reference evidence outrank every skill. Skills provide methods and verified facts, not permission to introduce or propagate motifs. Measure page-relative landmark bounds and correct the largest structural mismatch before decorative details. Never replace a distinctive asset with a generic substitute, silently omit a landmark, reinterpret a reconstruction as a redesign, or accept a recognizable-but-materially-different result as complete.",
+    technicalResearchInstructions:
+      "Before claiming BFO/FreeMarker cannot reproduce a required result, use the host's available documentation or web-search capability to research the exact behavior in primary Oracle NetSuite, Big Faceless, or FreeMarker sources. Open the source, derive a testable hypothesis, and verify it with a minimal render experiment. If browsing is unavailable, say so and rely on controlled render tests; never invent research or replace the problem with another asset by default.",
+    references: session.referenceImages.map((image) => ({
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      createdAt: image.createdAt
+    })),
+    assetToolsEnabled: session.assetToolsEnabled,
+    imageAssetCount: session.imageAssets.length,
+    imageAssets: session.assetToolsEnabled
+      ? session.imageAssets.map((asset) => ({
+          id: asset.id,
+          name: asset.name,
+          placeholder: asset.placeholder,
+          kind: asset.kind,
+          mimeType: asset.mimeType,
+          originalMimeType: asset.originalMimeType,
+          source: asset.source,
+          width: asset.width,
+          height: asset.height,
+          byteSize: asset.byteSize,
+          usageCount:
+            String(session.freemarker || "").split(asset.placeholder).length - 1,
+          createdAt: asset.createdAt,
+          updatedAt: asset.updatedAt
+        }))
+      : [],
+    imageAssetInstructions: session.assetToolsEnabled
+      ? 'Asset tools are available, but native BFO/FreeMarker layout is the default for panels, bands, rules, pills, simple dots, and other basic geometry. Use an asset only for irreducible artwork that the reference actually requires. Put its placeholder in an explicitly sized image URL, for example <img src="mns-asset://asset_..." width="120" height="40" />. Never substitute generic artwork or expose base64/data:image content.'
+      : "Asset tooling is disabled for this session. Do not call asset tools or create new assets. Use BFO/FreeMarker tables, cells, borders, backgrounds, dimensions, and document-flow restructuring. Existing placeholders continue to resolve during render, but their asset metadata is hidden from model context.",
+    contextMode: session.contextMode,
+    recordType: session.recordType,
+    recordId: session.recordId,
+    recordLabel: session.recordLabel,
+    accountId: session.accountId,
+    ...(includeFreemarker
+      ? EMBEDDED_IMAGE_DATA_URL_PATTERN.test(String(session.freemarker || ""))
+        ? {
+            freemarker: "",
+            freemarkerBlocked:
+              "Source omitted because it contains an embedded image data URL. Replace it in Template Studio with an mns-asset:// placeholder."
+          }
+        : { freemarker: session.freemarker }
+      : {}),
+    pdfReady: Boolean(session.pdfDataUrl),
+    renderError: session.renderError,
+    feedback: includeFeedbackHistory ? session.feedback : activeFeedback,
+    openFeedback: activeFeedback.filter(
+      (feedback) => feedback?.status === "open"
+    ),
+    addressedFeedback: activeFeedback.filter(
+      (feedback) => feedback?.status === "addressed"
+    ),
+    ...(includeFeedbackHistory
+      ? {
+          checkedFeedback: session.feedback.filter(
+            (feedback) => feedback?.checked
+          )
+        }
+      : {}),
+    revisions: session.revisions.map((revision) => ({
+      id: revision.id,
+      actor: revision.actor,
+      summary: revision.summary,
+      createdAt: revision.createdAt
+    })),
+    status: session.status,
+    version: session.version,
+    sourceVersion: session.sourceVersion,
+    renderVersion: session.renderVersion,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    lastRenderedAt: session.lastRenderedAt
   };
 };
 
@@ -2058,6 +2144,20 @@ const makeTemplateDesignRevision = (
   createdAt: new Date().toISOString()
 });
 
+function assertTemplateSourceHasNoEmbeddedImages(freemarker) {
+  if (EMBEDDED_IMAGE_DATA_URL_PATTERN.test(String(freemarker || ""))) {
+    throw new Error(
+      "Do not embed base64 image data in FreeMarker. Add the image in Template Studio's Images tab and use its mns-asset:// placeholder."
+    );
+  }
+}
+
+const sanitizeTemplateRenderError = (value) =>
+  String(value || "").replace(
+    /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi,
+    "[image data omitted]"
+  );
+
 async function updateTemplateDesignSession(args: AnyRecord = {}) {
   const store = await getTemplateDesignSessionStore();
   const session = getTemplateDesignSessionFromStore(store, args.sessionId);
@@ -2066,6 +2166,7 @@ async function updateTemplateDesignSession(args: AnyRecord = {}) {
     args.freemarker === undefined
       ? session.freemarker
       : String(args.freemarker || "");
+  assertTemplateSourceHasNoEmbeddedImages(nextFreemarker);
   const freemarkerChanged =
     args.freemarker !== undefined && nextFreemarker !== session.freemarker;
   const addressedIds = new Set(
@@ -2077,9 +2178,7 @@ async function updateTemplateDesignSession(args: AnyRecord = {}) {
   const next = normalizeTemplateDesignSession({
     ...session,
     ...(args.name !== undefined ? { name: String(args.name || "") } : {}),
-    ...(args.prompt !== undefined
-      ? { prompt: String(args.prompt || "") }
-      : {}),
+    ...(args.prompt !== undefined ? { prompt: String(args.prompt || "") } : {}),
     ...(args.contextMode !== undefined
       ? { contextMode: String(args.contextMode || "freestyle") }
       : {}),
@@ -2133,13 +2232,18 @@ async function updateTemplateDesignSession(args: AnyRecord = {}) {
 }
 
 const templateSourceLines = (freemarker) =>
-  String(freemarker || "").replace(/\r\n/g, "\n").split("\n");
+  String(freemarker || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n");
 
 async function handleTemplateDesignSessionRead(args: AnyRecord = {}) {
   const store = await getTemplateDesignSessionStore();
   const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  assertTemplateSourceHasNoEmbeddedImages(session.freemarker);
   const lines = templateSourceLines(session.freemarker);
-  const requestedSearch = String(args.search || "").trim().toLowerCase();
+  const requestedSearch = String(args.search || "")
+    .trim()
+    .toLowerCase();
   const contextLines = Math.min(
     100,
     Math.max(0, Number(args.contextLines) || 8)
@@ -2163,8 +2267,7 @@ async function handleTemplateDesignSessionRead(args: AnyRecord = {}) {
   const source = lines
     .slice(startLine - 1, endLine)
     .map(
-      (line, index) =>
-        `${String(startLine + index).padStart(5, " ")} | ${line}`
+      (line, index) => `${String(startLine + index).padStart(5, " ")} | ${line}`
     )
     .join("\n");
   return {
@@ -2287,14 +2390,13 @@ async function renderTemplateDesignSession(args: AnyRecord = {}) {
   await saveTemplateDesignSessionStore(store);
 
   try {
+    const resolvedTemplate = await resolveTemplateImageAssetsForRender(session);
     const result = await callNetsuiteRoute(
       "RENDER_FREEMARKER_TEMPLATE",
       {
-        template: session.freemarker,
+        template: resolvedTemplate,
         recordType:
-          session.contextMode === "freestyle"
-            ? undefined
-            : session.recordType,
+          session.contextMode === "freestyle" ? undefined : session.recordType,
         recordId:
           session.contextMode === "freestyle" ? undefined : session.recordId
       },
@@ -2325,7 +2427,9 @@ async function renderTemplateDesignSession(args: AnyRecord = {}) {
     session = normalizeTemplateDesignSession({
       ...session,
       pdfDataUrl: "",
-      renderError: error instanceof Error ? error.message : String(error),
+      renderError: sanitizeTemplateRenderError(
+        error instanceof Error ? error.message : String(error)
+      ),
       status: "render_error",
       renderVersion: session.renderVersion + 1,
       version: session.version + 1,
@@ -2346,15 +2450,16 @@ async function openTemplateStudioInDashboard(session) {
   const dashboardTab = live?.dashboardTab || embeddedDashboardTab;
   if (!dashboardTab?.id) {
     throw new Error(
-      "Open the Magic NetSuite dashboard or its in-page workspace before requesting a Template Studio screenshot."
+      "Open the Magic NetSuite dashboard or its in-page workspace before requesting Template Studio browser processing."
     );
   }
   if (live?.dashboardTab?.id) {
     await focusDashboardPreviewSession(live);
   } else {
     if (dashboardTab.windowId) {
-      await dashboardWindowsUpdate(dashboardTab.windowId, { focused: true })
-        .catch(() => undefined);
+      await dashboardWindowsUpdate(dashboardTab.windowId, {
+        focused: true
+      }).catch(() => undefined);
     }
     await dashboardTabsUpdate(dashboardTab.id, { active: true });
   }
@@ -2385,10 +2490,290 @@ async function openTemplateStudioInDashboard(session) {
   await delay(200);
   if (!readyView) {
     throw new Error(
-      "Template Studio did not finish loading the generated PDF. Keep the dashboard open and retry."
+      "Template Studio did not finish loading. Keep the dashboard open and retry."
     );
   }
   return readyView;
+}
+
+async function rasterizeTemplateSvgAssets(session, assetIds) {
+  if (!assetIds.length) return new Map();
+  await openTemplateStudioInDashboard(session);
+  const requestId = `asset_rasterize_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  await chrome.storage.local.remove(TEMPLATE_STUDIO_ASSET_RESPONSE_KEY);
+  try {
+    await chrome.storage.local.set({
+      [TEMPLATE_STUDIO_ASSET_REQUEST_KEY]: {
+        requestId,
+        operation: "rasterize",
+        sessionId: session.id,
+        assetIds
+      }
+    });
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const stored = await chrome.storage.local.get(
+        TEMPLATE_STUDIO_ASSET_RESPONSE_KEY
+      );
+      const response = stored[TEMPLATE_STUDIO_ASSET_RESPONSE_KEY];
+      if (response?.requestId === requestId) {
+        if (response.error) throw new Error(response.error);
+        const resolved = new Map();
+        for (const asset of Array.isArray(response.assets)
+          ? response.assets
+          : []) {
+          if (
+            asset?.id &&
+            String(asset.dataUrl || "").startsWith("data:image/png;base64,")
+          ) {
+            resolved.set(String(asset.id), String(asset.dataUrl));
+          }
+        }
+        return resolved;
+      }
+      await delay(100);
+    }
+    throw new Error(
+      "Template Studio did not finish rasterizing SVG assets for render."
+    );
+  } finally {
+    await chrome.storage.local.remove([
+      TEMPLATE_STUDIO_ASSET_REQUEST_KEY,
+      TEMPLATE_STUDIO_ASSET_RESPONSE_KEY
+    ]);
+  }
+}
+
+async function resolveTemplateImageAssetsForRender(session) {
+  const source = String(session.freemarker || "");
+  assertTemplateSourceHasNoEmbeddedImages(source);
+  const placeholders = [
+    ...new Set(source.match(TEMPLATE_IMAGE_ASSET_PATTERN) || [])
+  ];
+  if (!placeholders.length) return source;
+
+  const assetsByPlaceholder = new Map<string, AnyRecord>(
+    session.imageAssets.map((asset): [string, AnyRecord] => [
+      asset.placeholder,
+      asset
+    ])
+  );
+  const missing = placeholders.filter(
+    (placeholder) => !assetsByPlaceholder.has(placeholder)
+  );
+  if (missing.length) {
+    throw new Error(
+      `FreeMarker references missing template image asset${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`
+    );
+  }
+  const usedAssets = placeholders.map((placeholder) =>
+    assetsByPlaceholder.get(placeholder)!
+  );
+  const svgIds = usedAssets
+    .filter((asset) => asset?.kind === "svg")
+    .map((asset) => asset.id);
+  const rasterizedSvg = await rasterizeTemplateSvgAssets(session, svgIds);
+
+  let resolved = source;
+  for (const asset of usedAssets) {
+    const dataUrl =
+      asset.kind === "svg"
+        ? rasterizedSvg.get(asset.id)
+        : String(asset.dataUrl || "");
+    if (!/^data:image\/(?:png|jpe?g);base64,/i.test(String(dataUrl || ""))) {
+      throw new Error(
+        `Template image asset "${asset.name}" could not be prepared for render.`
+      );
+    }
+    resolved = resolved.split(asset.placeholder).join(dataUrl);
+  }
+  return resolved;
+}
+
+const templateImageAssetMetadata = (asset, freemarker = "") => ({
+  id: asset.id,
+  name: asset.name,
+  placeholder: asset.placeholder,
+  kind: asset.kind,
+  mimeType: asset.mimeType,
+  originalMimeType: asset.originalMimeType,
+  source: asset.source,
+  width: asset.width,
+  height: asset.height,
+  byteSize: asset.byteSize,
+  usageCount: String(freemarker || "").split(asset.placeholder).length - 1,
+  createdAt: asset.createdAt,
+  updatedAt: asset.updatedAt
+});
+
+const templateImageAssetToolResult = (value) => ({
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify(value, null, 2)
+    }
+  ]
+});
+
+const assertTemplateAssetToolsEnabled = (session) => {
+  if (session.assetToolsEnabled === false) {
+    throw new Error(
+      "Template image-asset tooling is disabled for this session in Template Studio. Use native FreeMarker/BFO layout alternatives or ask the user to enable it."
+    );
+  }
+};
+
+async function handleTemplateImageAssetList(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  if (!session.assetToolsEnabled) {
+    return templateImageAssetToolResult({
+      sessionId: session.id,
+      enabled: false,
+      assets: [],
+      instructions:
+        "AI asset tooling is disabled for this session. Do not call asset get/save/delete tools. Use native FreeMarker/BFO layout alternatives. Existing placeholders still render."
+    });
+  }
+  return templateImageAssetToolResult({
+    sessionId: session.id,
+    enabled: true,
+    assets: session.imageAssets.map((asset) =>
+      templateImageAssetMetadata(asset, session.freemarker)
+    ),
+    instructions:
+      "Use placeholders only as image URLs. SVG is editable through get_svg/save_svg and rasterized transiently during render. Raster bytes and render-time PNG data are intentionally never returned."
+  });
+}
+
+async function handleTemplateImageAssetGetSvg(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  assertTemplateAssetToolsEnabled(session);
+  const asset = session.imageAssets.find(
+    (candidate) => candidate.id === String(args.assetId || "")
+  );
+  if (!asset) throw new Error("Template image asset was not found.");
+  if (asset.kind !== "svg" || !asset.svgSource) {
+    throw new Error(
+      "Only SVG assets have editable source. Raster asset bytes are intentionally not exposed."
+    );
+  }
+  if (EMBEDDED_IMAGE_DATA_URL_PATTERN.test(asset.svgSource)) {
+    throw new Error(
+      "This legacy SVG contains embedded base64 image data and cannot be returned to model context. Re-upload a pure vector SVG in Template Studio."
+    );
+  }
+  return templateImageAssetToolResult({
+    sessionId: session.id,
+    asset: templateImageAssetMetadata(asset, session.freemarker),
+    svg: asset.svgSource
+  });
+}
+
+async function handleTemplateImageAssetSaveSvg(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  assertTemplateAssetToolsEnabled(session);
+  if (args.assetId) {
+    const existing = session.imageAssets.find(
+      (asset) => asset.id === String(args.assetId)
+    );
+    if (!existing) throw new Error("The SVG asset was not found.");
+    if (existing.kind !== "svg") {
+      throw new Error(
+        "A raster asset cannot be replaced through the SVG editor. Create a new SVG asset instead."
+      );
+    }
+  }
+  const svg = String(args.svg || "");
+  if (!svg.trim()) throw new Error("SVG source is required.");
+  if (new Blob([svg]).size > 10 * 1024 * 1024) {
+    throw new Error("SVG source must be 10 MB or smaller.");
+  }
+  if (EMBEDDED_IMAGE_DATA_URL_PATTERN.test(svg)) {
+    throw new Error(
+      "SVG assets cannot contain embedded base64 images. Keep the SVG as editable vector markup."
+    );
+  }
+  await openTemplateStudioInDashboard(session);
+  const requestId = `asset_save_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+  await chrome.storage.local.remove(TEMPLATE_STUDIO_ASSET_RESPONSE_KEY);
+  try {
+    await chrome.storage.local.set({
+      [TEMPLATE_STUDIO_ASSET_REQUEST_KEY]: {
+        requestId,
+        operation: "save_svg",
+        sessionId: session.id,
+        ...(args.assetId ? { assetId: String(args.assetId) } : {}),
+        name: String(args.name || "generated-image.svg"),
+        svg,
+        ...(args.width !== undefined ? { width: Number(args.width) } : {}),
+        ...(args.height !== undefined ? { height: Number(args.height) } : {})
+      }
+    });
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      const stored = await chrome.storage.local.get(
+        TEMPLATE_STUDIO_ASSET_RESPONSE_KEY
+      );
+      const response = stored[TEMPLATE_STUDIO_ASSET_RESPONSE_KEY];
+      if (response?.requestId === requestId) {
+        if (response.error) throw new Error(response.error);
+        if (!response.asset?.id) {
+          throw new Error("Template Studio returned an empty SVG asset.");
+        }
+        return templateImageAssetToolResult({
+          sessionId: session.id,
+          asset: response.asset,
+          snippet: `<img src="${response.asset.placeholder}" />`
+        });
+      }
+      await delay(100);
+    }
+    throw new Error("Template Studio did not finish saving the SVG asset.");
+  } finally {
+    await chrome.storage.local.remove([
+      TEMPLATE_STUDIO_ASSET_REQUEST_KEY,
+      TEMPLATE_STUDIO_ASSET_RESPONSE_KEY
+    ]);
+  }
+}
+
+async function handleTemplateImageAssetDelete(args: AnyRecord = {}) {
+  const store = await getTemplateDesignSessionStore();
+  const session = getTemplateDesignSessionFromStore(store, args.sessionId);
+  assertTemplateAssetToolsEnabled(session);
+  const index = session.imageAssets.findIndex(
+    (candidate) => candidate.id === String(args.assetId || "")
+  );
+  if (index < 0) throw new Error("Template image asset was not found.");
+  const asset = session.imageAssets[index];
+  const usageCount =
+    String(session.freemarker || "").split(asset.placeholder).length - 1;
+  if (usageCount && args.force !== true) {
+    throw new Error(
+      `The asset is used ${usageCount} time${usageCount === 1 ? "" : "s"} in FreeMarker. Remove its placeholder first or retry with force:true.`
+    );
+  }
+  const sessionIndex = store.sessions.findIndex(
+    (candidate) => candidate.id === session.id
+  );
+  const updated = normalizeTemplateDesignSession({
+    ...session,
+    imageAssets: session.imageAssets.filter(
+      (candidate) => candidate.id !== asset.id
+    ),
+    version: session.version + 1,
+    updatedAt: new Date().toISOString()
+  });
+  store.sessions[sessionIndex] = updated;
+  await saveTemplateDesignSessionStore(store);
+  return templateImageAssetToolResult({
+    sessionId: session.id,
+    deletedAsset: templateImageAssetMetadata(asset, session.freemarker),
+    placeholderStillReferenced: usageCount > 0
+  });
 }
 
 async function renderTemplatePdfPage(session, args: AnyRecord = {}) {
@@ -2443,7 +2828,9 @@ async function handleTemplateDesignSessionScreenshot(args: AnyRecord = {}) {
   }
   if (!session.pdfDataUrl) {
     if (session.renderError) return templateDesignSessionToolResult(session);
-    throw new Error("Render the current FreeMarker session before capturing its PDF.");
+    throw new Error(
+      "Render the current FreeMarker session before capturing its PDF."
+    );
   }
   const capture = await renderTemplatePdfPage(session, args);
   return templateDesignSessionToolResult(session, {
@@ -2573,7 +2960,9 @@ const downloadAnalyzerReady = chrome.storage.local
   });
 
 const notifyDownloadAnalyzerChanged = () => {
-  chrome.runtime.sendMessage({ type: "DOWNLOAD_ANALYZER_UPDATED" }).catch(() => {});
+  chrome.runtime
+    .sendMessage({ type: "DOWNLOAD_ANALYZER_UPDATED" })
+    .catch(() => {});
 };
 
 const queueDownloadAnalyzerMutation = (mutation) => {
@@ -2610,7 +2999,10 @@ const isNetSuiteDownload = (item) =>
   isNetSuiteUrl(item?.finalUrl) ||
   isNetSuiteUrl(item?.referrer);
 
-const truncateAnalyzerValue = (value, maxLength = DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH) => {
+const truncateAnalyzerValue = (
+  value,
+  maxLength = DOWNLOAD_ANALYZER_MAX_VALUE_LENGTH
+) => {
   const text = String(value ?? "");
   return text.length > maxLength
     ? `${text.slice(0, maxLength)}\n[truncated ${text.length - maxLength} characters]`
@@ -2629,7 +3021,8 @@ const sanitizeHeaders = (headers = []) =>
       value: hidden
         ? "[redacted]"
         : truncateAnalyzerValue(
-            value ?? (binaryValue ? `[${binaryValue.length} binary bytes]` : ""),
+            value ??
+              (binaryValue ? `[${binaryValue.length} binary bytes]` : ""),
             8000
           )
     };
@@ -2642,9 +3035,7 @@ const serializeRequestBody = (requestBody) => {
       formData: Object.fromEntries(
         Object.entries(requestBody.formData).map(([key, values]) => [
           key,
-          (values as any[]).map((value) =>
-            truncateAnalyzerValue(value, 8000)
-          )
+          (values as any[]).map((value) => truncateAnalyzerValue(value, 8000))
         ])
       )
     };
@@ -2652,7 +3043,9 @@ const serializeRequestBody = (requestBody) => {
   const raw = (requestBody.raw || []).map((part) => {
     if (!part.bytes) return { file: part.file || null };
     try {
-      return { text: truncateAnalyzerValue(new TextDecoder("utf-8").decode(part.bytes)) };
+      return {
+        text: truncateAnalyzerValue(new TextDecoder("utf-8").decode(part.bytes))
+      };
     } catch {
       return { text: "[unreadable request body]" };
     }
@@ -2684,32 +3077,37 @@ chrome.webRequest.onBeforeRequest.addListener(
     const requestBody = serializeRequestBody(details.requestBody);
     void upsertDownloadAnalyzerEntry(
       `request:${details.requestId}`,
-      () => isNetSuiteUrl(details.url) ? ({
-        id: `request:${details.requestId}`,
-        kind: "request",
-        requestId: details.requestId,
-        startedAt: details.timeStamp,
-        state: "pending",
-        method: details.method,
-        url: details.url,
-        finalUrl: details.url,
-        requestUrls: [details.url],
-        requestType: details.type,
-        tabId: details.tabId,
-        frameId: details.frameId,
-        parentFrameId: details.parentFrameId,
-        initiator: details.initiator || null,
-        documentUrl: details.documentUrl || null,
-        requestBody,
-        requestHeaders: [],
-        responseHeaders: [],
-        redirects: []
-      }) : null,
+      () =>
+        isNetSuiteUrl(details.url)
+          ? {
+              id: `request:${details.requestId}`,
+              kind: "request",
+              requestId: details.requestId,
+              startedAt: details.timeStamp,
+              state: "pending",
+              method: details.method,
+              url: details.url,
+              finalUrl: details.url,
+              requestUrls: [details.url],
+              requestType: details.type,
+              tabId: details.tabId,
+              frameId: details.frameId,
+              parentFrameId: details.parentFrameId,
+              initiator: details.initiator || null,
+              documentUrl: details.documentUrl || null,
+              requestBody,
+              requestHeaders: [],
+              responseHeaders: [],
+              redirects: []
+            }
+          : null,
       (entry) => ({
         ...entry,
         requestBody: requestBody || entry.requestBody,
         finalUrl: details.url,
-        requestUrls: Array.from(new Set([...(entry.requestUrls || []), details.url]))
+        requestUrls: Array.from(
+          new Set([...(entry.requestUrls || []), details.url])
+        )
       })
     );
   },
@@ -2722,7 +3120,10 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     void upsertDownloadAnalyzerEntry(
       `request:${details.requestId}`,
       null,
-      (entry) => ({ ...entry, requestHeaders: sanitizeHeaders(details.requestHeaders) })
+      (entry) => ({
+        ...entry,
+        requestHeaders: sanitizeHeaders(details.requestHeaders)
+      })
     );
   },
   { urls: ["<all_urls>"] },
@@ -2832,29 +3233,35 @@ chrome.downloads.onCreated.addListener((item) => {
 });
 
 chrome.downloads.onChanged.addListener((delta) => {
-  void upsertDownloadAnalyzerEntry(
-    `download:${delta.id}`,
-    null,
-    (entry) => {
-      const next = { ...entry };
-      for (const key of [
-        "state", "filename", "url", "finalUrl", "mime", "totalBytes",
-        "bytesReceived", "fileSize", "danger", "paused", "canResume", "error",
-        "endTime", "exists"
-      ]) {
-        if (delta[key]?.current !== undefined) next[key] = delta[key].current;
-      }
-      return next;
+  void upsertDownloadAnalyzerEntry(`download:${delta.id}`, null, (entry) => {
+    const next = { ...entry };
+    for (const key of [
+      "state",
+      "filename",
+      "url",
+      "finalUrl",
+      "mime",
+      "totalBytes",
+      "bytesReceived",
+      "fileSize",
+      "danger",
+      "paused",
+      "canResume",
+      "error",
+      "endTime",
+      "exists"
+    ]) {
+      if (delta[key]?.current !== undefined) next[key] = delta[key].current;
     }
-  );
+    return next;
+  });
 });
 
 chrome.downloads.onErased.addListener((downloadId) => {
-  void upsertDownloadAnalyzerEntry(
-    `download:${downloadId}`,
-    null,
-    (entry) => ({ ...entry, erased: true })
-  );
+  void upsertDownloadAnalyzerEntry(`download:${downloadId}`, null, (entry) => ({
+    ...entry,
+    erased: true
+  }));
 });
 
 const handleDownloadAnalyzerGetState = ({ sendResponse }) => {
@@ -4294,10 +4701,12 @@ let mcpSuiteletServerUrlCache = null;
 
 const SKILLS_DB_NAME = "MagicNetsuiteSkills";
 const SKILLS_STORE_NAME = "skills";
+const TOOL_SKILL_BINDINGS_STORAGE_KEY = "magic_netsuite_tool_skill_bindings_v1";
+const CUSTOM_TOOL_EXPOSED_PREFIX = "magic_custom_";
 const RECORD_BINDING_SKILL_SEED_KEY =
   "magic_netsuite_record_binding_skill_seed_v1";
 const TEMPLATE_DESIGN_SKILL_SEED_KEY =
-  "magic_netsuite_template_design_skill_seed_v1";
+  "magic_netsuite_template_design_skill_seed_v7";
 
 function openSkillsDb(): Promise<any> {
   return new Promise<any>((resolve, reject) => {
@@ -4355,6 +4764,223 @@ async function getAllStoredSkills(): Promise<AnyRecord[]> {
   return withSkillsStore("readonly", (store) => requestToPromise(store.getAll()));
 }
 
+function normalizeToolSkillBindings(
+  value
+): Array<{ toolName: string; skillIds: number[]; updatedAt: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((binding) => ({
+      toolName: String(binding?.toolName || "").trim(),
+      skillIds: [
+        ...new Set<number>(
+          (Array.isArray(binding?.skillIds) ? binding.skillIds : [])
+            .map((id) => Number(id))
+            .filter((id) => Number.isInteger(id) && id > 0)
+        )
+      ],
+      updatedAt: String(binding?.updatedAt || "")
+    }))
+    .filter(
+      (binding) =>
+        binding.toolName &&
+        binding.toolName !== "magic_netsuite_prepare_tool" &&
+        binding.skillIds.length > 0
+    )
+    .sort((a, b) => a.toolName.localeCompare(b.toolName));
+}
+
+async function getToolSkillBindings() {
+  const stored = await chrome.storage.local.get(
+    TOOL_SKILL_BINDINGS_STORAGE_KEY
+  );
+  return normalizeToolSkillBindings(stored[TOOL_SKILL_BINDINGS_STORAGE_KEY]);
+}
+
+async function syncToolSkillBindingsManifest(port = mcpNativePort) {
+  if (!port) return;
+  port.postMessage({
+    type: "TOOL_SKILL_BINDINGS_SYNC",
+    bindings: await getToolSkillBindings()
+  });
+}
+
+async function sha256Text(value) {
+  const bytes = new TextEncoder().encode(String(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function resolveToolBindingName(toolName, context: AnyRecord = {}) {
+  const normalized = String(toolName || "").trim();
+  if (normalized === "magic_netsuite_call_custom_tool" && context?.toolName) {
+    return `${CUSTOM_TOOL_EXPOSED_PREFIX}${String(context.toolName).trim().toLowerCase()}`;
+  }
+  return normalized;
+}
+
+async function buildToolSkillSnapshot(toolName, context: AnyRecord = {}) {
+  const bindingName = resolveToolBindingName(toolName, context);
+  const bindings = await getToolSkillBindings();
+  const binding = bindings.find((item) => item.toolName === bindingName);
+  if (!binding) {
+    return {
+      ok: false,
+      reason: "no_binding",
+      targetTool: bindingName,
+      skillIds: []
+    };
+  }
+
+  const storedSkills = await getAllStoredSkills();
+  const byId = new Map<number, AnyRecord>(
+    storedSkills.map((skill) => [Number(skill.id), skill])
+  );
+  const unavailableSkillIds = binding.skillIds.filter((id) => {
+    const skill = byId.get(id);
+    return (
+      !skill ||
+      skill.enabled === false ||
+      String(skill.status || "active") !== "active"
+    );
+  });
+  if (unavailableSkillIds.length) {
+    return {
+      ok: false,
+      reason: "bound_skill_unavailable",
+      targetTool: bindingName,
+      skillIds: binding.skillIds,
+      unavailableSkillIds
+    };
+  }
+
+  const fingerprintEntries: Array<{
+    id: number;
+    updatedAt: string;
+    content: string;
+  }> = [];
+  const skills = binding.skillIds.map((skillId) => {
+    const skill = byId.get(skillId);
+    const loaded = new Set<number>([skillId]);
+    const dependencies: Array<{ id: number; name: string }> = [];
+    const sections = [String(skill.content || "")];
+    const appendDependencies = (parent, depth) => {
+      if (depth > 8) return;
+      for (const dependencyId of parent.dependencies || []) {
+        const normalizedId = Number(dependencyId);
+        if (loaded.has(normalizedId)) continue;
+        const dependency = byId.get(normalizedId);
+        if (
+          !dependency ||
+          dependency.enabled === false ||
+          String(dependency.status || "active") !== "active"
+        ) {
+          continue;
+        }
+        loaded.add(normalizedId);
+        dependencies.push({
+          id: normalizedId,
+          name: String(dependency.name || "")
+        });
+        sections.push(
+          `\n\n---\n\n## Sub-skill: ${dependency.name}\n\n${dependency.content || ""}`
+        );
+        appendDependencies(dependency, depth + 1);
+      }
+    };
+    appendDependencies(skill, 1);
+    for (const loadedId of loaded) {
+      const loadedSkill = byId.get(loadedId);
+      fingerprintEntries.push({
+        id: loadedId,
+        updatedAt: String(loadedSkill?.updatedAt || ""),
+        content: String(loadedSkill?.content || "")
+      });
+    }
+    return {
+      id: skillId,
+      name: String(skill.name || ""),
+      description: String(skill.description || ""),
+      content: sections.join(""),
+      dependencies,
+      updatedAt: String(skill.updatedAt || "")
+    };
+  });
+
+  fingerprintEntries.sort((a, b) => a.id - b.id);
+  const fingerprint = await sha256Text(
+    JSON.stringify({
+      targetTool: bindingName,
+      skillIds: binding.skillIds,
+      bindingUpdatedAt: binding.updatedAt,
+      skills: fingerprintEntries
+    })
+  );
+
+  return {
+    ok: true,
+    targetTool: bindingName,
+    skillIds: [...binding.skillIds],
+    fingerprint,
+    skills
+  };
+}
+
+async function handleMagicPrepareTool(args) {
+  const targetTool = String(args?.toolName || args?.targetTool || "").trim();
+  if (!targetTool) throw new Error("toolName is required.");
+  const context =
+    args?.context &&
+    typeof args.context === "object" &&
+    !Array.isArray(args.context)
+      ? args.context
+      : {};
+  const snapshot = await buildToolSkillSnapshot(targetTool, context);
+  if (!snapshot.ok) {
+    return {
+      ...asMcpTextResult({
+        prepared: false,
+        ...snapshot,
+        instruction:
+          snapshot.reason === "no_binding"
+            ? "This tool has no configured skill binding and can be called directly."
+            : "Enable and activate every bound skill in the Skills UI, then prepare the tool again."
+      }),
+      isError: snapshot.reason !== "no_binding"
+    };
+  }
+  return asMcpTextResult({
+    prepared: true,
+    targetTool: snapshot.targetTool,
+    skillIds: snapshot.skillIds,
+    skillFingerprint: snapshot.fingerprint,
+    instruction:
+      "Read and apply every skill below before calling the target tool. Pass the preflight receipt returned by the MCP server.",
+    skills: snapshot.skills
+  });
+}
+
+async function handleMagicValidateSkillPreflight(args) {
+  const targetTool = String(args?.targetTool || args?.toolName || "").trim();
+  const snapshot = await buildToolSkillSnapshot(
+    targetTool,
+    args?.context || {}
+  );
+  const expectedIds = Array.isArray(args?.skillIds)
+    ? args.skillIds.map(Number)
+    : [];
+  const valid =
+    snapshot.ok &&
+    snapshot.fingerprint === String(args?.skillFingerprint || "") &&
+    JSON.stringify(snapshot.skillIds) === JSON.stringify(expectedIds);
+  return asMcpTextResult({
+    valid,
+    targetTool: snapshot.targetTool,
+    reason: valid ? "valid" : snapshot.reason || "skill_snapshot_changed"
+  });
+}
+
 async function ensureBundledSkill(seedKey, skillPath, loadErrorMessage) {
   const seedState = await chrome.storage.local.get(seedKey);
   if (seedState[seedKey]) return null;
@@ -4371,6 +4997,20 @@ async function ensureBundledSkill(seedKey, skillPath, loadErrorMessage) {
       String(definition.name || "").toLowerCase()
   );
   let skillId = existing?.id || null;
+  if (existing?.source === "built_in") {
+    const timestamp = new Date().toISOString();
+    await withSkillsStore("readwrite", (store) =>
+      requestToPromise(
+        store.put({
+          ...existing,
+          ...definition,
+          id: existing.id,
+          enabled: existing.enabled !== false,
+          updatedAt: timestamp
+        })
+      )
+    );
+  } else
   if (!existing) {
     const timestamp = new Date().toISOString();
     skillId = await withSkillsStore("readwrite", (store) =>
@@ -4867,19 +5507,19 @@ async function handleMagicUpdateCustomTool(args) {
     name: has("name") ? String(args.name || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 64) : existing.name,
     displayName: has("displayName") ? String(args.displayName || "").trim() : existing.displayName,
     description: has("description") ? String(args.description || "").trim() : existing.description,
-    tags: has("tags") ? (Array.isArray(args.tags) ? [...new Set(args.tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : []) : existing.tags,
+    tags: has("tags") ?Array.isArray(args.tags) ? [...new Set(args.tags.map((tag) => String(tag).trim().toLowerCase()).filter(Boolean))] : [] : existing.tags,
     domain: has("domain") ? String(args.domain) : existing.domain,
-    modules: has("modules") ? (Array.isArray(args.modules) ? [...new Set(args.modules.map(String))] : []) : existing.modules,
+    modules: has("modules") ?Array.isArray(args.modules) ? [...new Set(args.modules.map(String))] : [] : existing.modules,
     inputSchema: has("inputSchema") ? args.inputSchema : existing.inputSchema,
-    testInput: has("testInput") ? (args.testInput && typeof args.testInput === "object" && !Array.isArray(args.testInput) ? args.testInput : {}) : existing.testInput,
+    testInput: has("testInput") ?args.testInput && typeof args.testInput === "object" && !Array.isArray(args.testInput) ? args.testInput : {} : existing.testInput,
     code: has("code") ? String(args.code || "") : existing.code,
-    risk: has("risk") ? (args.risk === "write" ? "write" : "read") : existing.risk,
+    risk: has("risk") ?args.risk === "write" ? "write" : "read" : existing.risk,
     enabled: has("enabled") ? Boolean(args.enabled) : existing.enabled,
     status: "draft",
     updatedAt: new Date().toISOString()
   };
   validateCustomToolDefinition(updated, tools, existing.id);
-  await saveStoredCustomTools(tools.map((tool) => tool.id === existing.id ? updated : tool));
+  await saveStoredCustomTools(tools.map((tool) => ( tool.id === existing.id ? updated : tool)));
   return asMcpTextResult({ updated: true, status: "draft", tool: updated });
 }
 
@@ -4942,7 +5582,7 @@ async function executeStoredCustomTool(tool, args) {
   }
   const requestedDomain = args?.executionDomain;
   if (requestedDomain && !["client", "server"].includes(requestedDomain)) throw new Error("executionDomain must be client or server.");
-  const executionDomain = tool.domain === "both" ? (requestedDomain || "client") : tool.domain;
+  const executionDomain = tool.domain === "both" ?requestedDomain || "client" : tool.domain;
   if (requestedDomain && tool.domain !== "both" && requestedDomain !== tool.domain) throw new Error(`This tool is restricted to ${tool.domain} execution.`);
   const allowedModules = customToolDomainModules(tool.domain);
   const modules = Array.isArray(tool.modules)
@@ -4991,7 +5631,7 @@ async function handleMagicTestCustomTool(args) {
   const tool = (await getStoredCustomTools()).find((candidate) => String(candidate?.name || "").toLowerCase() === toolName);
   if (!tool) throw new Error(`Custom tool "${toolName}" was not found.`);
   const testInput = args?.input && typeof args.input === "object" && !Array.isArray(args.input) ? args.input : tool.testInput;
-  const domain = tool.domain === "both" ? (args?.executionDomain || "client") : tool.domain;
+  const domain = tool.domain === "both" ?args?.executionDomain || "client" : tool.domain;
   try {
     const result = await executeStoredCustomTool(tool, { ...args, input: testInput, executionDomain: domain });
     await saveStoredCustomToolTestState(tool.id, testInput, result, domain);
@@ -5250,7 +5890,7 @@ const handleClaudeCliClear = ({ message, sendResponse }) => {
       delete runs[message.runId];
     } else {
       for (const [runId, run] of Object.entries(runs)) {
-        if (!['running', 'starting'].includes(run.status)) delete runs[runId];
+        if (!["running", "starting"].includes(run.status)) delete runs[runId];
       }
     }
     await chrome.storage.session.set({ [CLAUDE_CLI_RUNS_KEY]: runs });
@@ -5313,6 +5953,7 @@ async function mcpConnect() {
       version: chrome.runtime.getManifest?.().version || "unknown"
     });
     await syncCustomToolsManifest(port);
+    await syncToolSkillBindingsManifest(port);
 
     console.log("[MCP Native Bridge] connected to native host");
   } catch (err) {
@@ -5602,6 +6243,15 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     });
     return;
   }
+  if (areaName === "local" && changes[TOOL_SKILL_BINDINGS_STORAGE_KEY]) {
+    syncToolSkillBindingsManifest().catch((error) => {
+      console.warn(
+        "[MCP Native Bridge] failed to sync tool skill bindings manifest",
+        error
+      );
+    });
+    return;
+  }
   if (areaName !== "sync") return;
   const settingsChange = changes.magic_netsuite_settings;
   if (!settingsChange) return;
@@ -5803,6 +6453,27 @@ const MCP_TOOL_DEFINITIONS = [
           description: "Optional message to echo back"
         }
       }
+    }
+  },
+  {
+    name: "magic_netsuite_prepare_tool",
+    description:
+      "Load the UI-configured skills required by a target MCP tool before calling it. Returns the full skill instructions; the MCP server adds a short-lived preflight receipt that the target tool requires.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        toolName: {
+          type: "string",
+          description:
+            "Exact MCP tool name to prepare, including the magic_custom_ prefix for an exposed custom tool."
+        },
+        context: {
+          type: "object",
+          description:
+            "Optional routing context such as sessionId, recordType, accountId, or custom toolName."
+        }
+      },
+      required: ["toolName"]
     }
   },
   {
@@ -6481,7 +7152,8 @@ const MCP_TOOL_DEFINITIONS = [
         },
         values: {
           type: "object",
-          description: "Body field values keyed by field ID, e.g. { \"companyname\": \"Acme\" }."
+          description:
+            'Body field values keyed by field ID, e.g. { "companyname": "Acme" }.'
         },
         defaultValues: {
           type: "object",
@@ -6523,7 +7195,8 @@ const MCP_TOOL_DEFINITIONS = [
         },
         values: {
           type: "object",
-          description: "Body field values keyed by field ID, e.g. { \"memo\": \"Updated by MCP\" }."
+          description:
+            'Body field values keyed by field ID, e.g. { "memo": "Updated by MCP" }.'
         },
         enableSourcing: {
           type: "boolean",
@@ -7142,7 +7815,8 @@ const MCP_TOOL_DEFINITIONS = [
           items: {
             type: "object",
             properties: {
-              xml: { type: "string", description: "Full SDF object XML, e.g. <customrecordtype scriptid=\"customrecord_x\">...</customrecordtype>." },
+              xml: { type: "string", description:
+                  'Full SDF object XML, e.g. <customrecordtype scriptid="customrecord_x">...</customrecordtype>.' },
               template: {
                 type: "object",
                 description: "Template source sidecar (<scriptid>.template.xml) for advanced PDF/HTML templates.",
@@ -7253,7 +7927,8 @@ const MCP_TOOL_DEFINITIONS = [
         type: {
           type: "array",
           items: { type: "string" },
-          description: "Object type(s) to list, e.g. [\"customrecordtype\",\"advancedpdftemplate\"]. Omit to list all."
+          description:
+            'Object type(s) to list, e.g. ["customrecordtype","advancedpdftemplate"]. Omit to list all.'
         },
         scriptId: { type: "string", description: "Only list objects whose script id contains this value." },
         accountId: { type: "string", description: "Optional account override. Defaults to the currently selected MCP account." }
@@ -7298,7 +7973,7 @@ const MCP_TOOL_DEFINITIONS = [
         code: {
           type: "string",
           description:
-            "SuiteScript/JavaScript body to execute, e.g. \"console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;\""
+            'SuiteScript/JavaScript body to execute, e.g. "console.log(runtime.getCurrentUser().id); return runtime.getCurrentUser().name;"'
         }
       },
       required: ["code"]
@@ -7325,7 +8000,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_get_current",
     description:
-      "Load current Template Studio metadata, references, record context, render status, and active fix-request todos. The MCP hosts automatically search and load relevant local/custom FreeMarker design skills for a new session before the first draft. Checked history and FreeMarker source are omitted by default.",
+      "Load current Template Studio metadata, visual references, reference-authority and technical-research rules, uploaded-template starting point, per-session AI asset-tool state, record context, render status, and active fix-request todos. Measure and correct major page geometry before decoration. Research uncertain BFO/FreeMarker behavior in primary sources and verify it with a render before claiming a limitation. Asset metadata is hidden when AI asset tooling is disabled; raster bytes are never included.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7358,6 +8033,87 @@ const MCP_TOOL_DEFINITIONS = [
         sessionId: { type: "string", description: "Template Studio session ID." }
       },
       required: ["sessionId"]
+    }
+  },
+  {
+    name: "magic_netsuite_template_asset_list",
+    description:
+      "List safe asset metadata only when AI asset tooling is enabled for the session. A disabled response exposes no assets. Prefer native BFO/FreeMarker layout for simple geometry. This tool never returns raster bytes or base64.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: {
+          type: "string",
+          description: "Optional session ID. Defaults to the current session."
+        }
+      }
+    }
+  },
+  {
+    name: "magic_netsuite_template_asset_get_svg",
+    description:
+      "Read editable SVG XML when AI asset tooling is enabled for the session. Raster assets remain opaque so base64 cannot enter model context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        assetId: {
+          type: "string",
+          description: "SVG asset ID returned by template_asset_list."
+        }
+      },
+      required: ["assetId"]
+    }
+  },
+  {
+    name: "magic_netsuite_template_asset_save_svg",
+    description:
+      "Create or update SVG only when AI asset tooling is enabled and the reference requires irreducible vector artwork. Do not create SVGs for panels, bands, pills, dividers, simple dots, or layout geometry that BFO tables/cells can reproduce. Never use a generic substitute. Returns metadata and a placeholder, never PNG/base64.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        assetId: {
+          type: "string",
+          description: "Existing SVG asset ID to update. Omit to create."
+        },
+        name: {
+          type: "string",
+          description: "Human-readable filename ending in .svg."
+        },
+        svg: {
+          type: "string",
+          description:
+            "Complete editable <svg> XML. Do not include scripts, external resources, or embedded base64 images."
+        },
+        width: {
+          type: "number",
+          description: "Optional rendered width in pixels."
+        },
+        height: {
+          type: "number",
+          description: "Optional rendered height in pixels."
+        }
+      },
+      required: ["name", "svg"]
+    }
+  },
+  {
+    name: "magic_netsuite_template_asset_delete",
+    description:
+      "Delete one image asset when AI asset tooling is enabled. Deletion is rejected while its placeholder is used in FreeMarker unless force:true.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sessionId: { type: "string" },
+        assetId: { type: "string" },
+        force: {
+          type: "boolean",
+          description:
+            "Delete even if FreeMarker still references the placeholder."
+        }
+      },
+      required: ["assetId"]
     }
   },
   {
@@ -7427,7 +8183,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_update",
     description:
-      "Create the initial complete FreeMarker document or replace it explicitly. Before the initial draft, call template_session_get_current and apply its automatically loaded localSkillPreflight. For later revisions use template_session_read + template_session_patch to avoid retransmitting unchanged source.",
+      "Create the initial complete FreeMarker document or replace it explicitly. For reference-led work, first call template_session_get_current, isolate the intended page, inventory its geometry/landmarks/assets and motif scope, and apply loaded skills only as methods beneath reference evidence. The first render is diagnostic and must be followed by a landmark deviation audit. If source was uploaded, inspect and patch it instead of replacing it. Use compact reads and patches later.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7492,7 +8248,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_render",
     description:
-      "Render the current session's saved FreeMarker directly through NetSuite. The resulting PDF and any render error are written back into the durable session.",
+      "Render the current session's saved FreeMarker directly through NetSuite. mns-asset:// placeholders are resolved only in memory; used SVG assets are transiently rasterized, and no base64 is returned or persisted into source. The resulting PDF and any render error are written back into the durable session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7518,7 +8274,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "magic_netsuite_template_session_screenshot",
     description:
-      "Rasterize one complete generated PDF page directly from the PDF bytes. Page selection is explicit and independent of viewer zoom, scroll, and viewport; no browser screenshot, Playwright, or chrome.debugger is used.",
+      "Rasterize one complete generated PDF page directly from the PDF bytes for a reference-fidelity audit. Compare every inventoried landmark, asset, region boundary, repeated count, and local motif scope; do not accept recognizability as fidelity. Page selection is independent of viewer zoom, scroll, and viewport.",
     inputSchema: {
       type: "object",
       properties: {
@@ -7748,11 +8504,12 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_suitelet_control_open",
     description:
-      "START HERE to drive a Suitelet. Opens it in a real NetSuite browser tab (foreground) and attaches the controller. This toolset is fully self-contained — do NOT use Claude-in-Chrome, tab-context, navigate, or any other browser/screenshot tools; use this family (inspect/fill/click/read/eval/screenshot) for everything. PREFERRED: pass { query: \"<suitelet name>\" } (e.g. \"CTK SuiteQL\") and the correct account URL is resolved automatically — never invent or guess a URL. Alternatively pass { scriptId, deployId } from netsuite_suitelet_stream_list, or a full scriptlet.nl url. Omit all to control the already-active NetSuite tab. Returns the controlled url+title, the matched Suitelet, alternatives, a screenshot, and a snapshot of visible interactive elements for fill/click/read.",
+      'START HERE to drive a Suitelet. Opens it in a real NetSuite browser tab (foreground) and attaches the controller. This toolset is fully self-contained — do NOT use Claude-in-Chrome, tab-context, navigate, or any other browser/screenshot tools; use this family (inspect/fill/click/read/eval/screenshot) for everything. PREFERRED: pass { query: "<suitelet name>" } (e.g. "CTK SuiteQL") and the correct account URL is resolved automatically — never invent or guess a URL. Alternatively pass { scriptId, deployId } from netsuite_suitelet_stream_list, or a full scriptlet.nl url. Omit all to control the already-active NetSuite tab. Returns the controlled url+title, the matched Suitelet, alternatives, a screenshot, and a snapshot of visible interactive elements for fill/click/read.',
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Suitelet name or keyword to look up and open (recommended, e.g. \"CTK SuiteQL\")." },
+        query: { type: "string", description:
+            'Suitelet name or keyword to look up and open (recommended, e.g. "CTK SuiteQL").' },
         scriptId: { type: "string", description: "Script internal id (use with deployId)." },
         deployId: { type: "string", description: "Deployment id (use with scriptId)." },
         url: { type: "string", description: "Full scriptlet.nl URL (only if you already have the exact account URL)." }
@@ -7787,12 +8544,12 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_suitelet_scroll",
     description:
-      "Scroll the controlled Suitelet (window, or a specific scrollable element by selector) and return a screenshot of the new view. Use to reveal content below the fold such as a results table. Omit args to page down; use to:\"bottom\"/\"top\", a dy pixel delta, or a selector to scroll an element into view.",
+      'Scroll the controlled Suitelet (window, or a specific scrollable element by selector) and return a screenshot of the new view. Use to reveal content below the fold such as a results table. Omit args to page down; use to:"bottom"/"top", a dy pixel delta, or a selector to scroll an element into view.',
     inputSchema: {
       type: "object",
       properties: {
         selector: { type: "string", description: "CSS selector to scroll into view, or the scrollable container to scroll." },
-        to: { type: "string", description: "\"top\" or \"bottom\" to jump to an edge." },
+        to: { type: "string", description: '"top" or "bottom" to jump to an edge.' },
         dy: { type: "number", description: "Vertical pixels to scroll by (positive = down). Defaults to ~600 for window." },
         dx: { type: "number", description: "Horizontal pixels to scroll by." }
       }
@@ -7814,7 +8571,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_suitelet_click",
     description:
-      "Click an element in the controlled Suitelet, either by CSS selector or by visible button/link text (e.g. \"Run Query\").",
+      'Click an element in the controlled Suitelet, either by CSS selector or by visible button/link text (e.g. "Run Query").',
     inputSchema: {
       type: "object",
       properties: {
@@ -7880,7 +8637,8 @@ async function handleRequest({ requestId, method, params }) {
       const disabledTools = storageResult?.magic_netsuite_settings?.mcpDisabledTools ?? [];
       result = {
         tools: disabledTools.length > 0
-          ? MCP_TOOL_DEFINITIONS.filter(t => !disabledTools.includes(t.name))
+          ? MCP_TOOL_DEFINITIONS.filter(
+                (t) => !disabledTools.includes(t.name))
           : MCP_TOOL_DEFINITIONS
       };
     } else if (method === "tools/call") {
@@ -7933,6 +8691,12 @@ async function handleRequest({ requestId, method, params }) {
           const text = args.message ? `pong: ${args.message}` : "pong";
           const accountInfo = pingAccount ? ` (account: ${pingAccount})` : "";
           result = { content: [{ type: "text", text: text + accountInfo }] };
+          executionSide = "local";
+        } else if (name === "magic_netsuite_prepare_tool") {
+          result = await handleMagicPrepareTool(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_validate_skill_preflight") {
+          result = await handleMagicValidateSkillPreflight(args);
           executionSide = "local";
         } else if (name === "magic_netsuite_save_skill") {
           result = await handleMagicSaveSkill(args);
@@ -8071,6 +8835,18 @@ async function handleRequest({ requestId, method, params }) {
           executionSide = "local";
         } else if (name === "magic_netsuite_template_session_set_current") {
           result = await handleTemplateDesignSessionSetCurrent(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_asset_list") {
+          result = await handleTemplateImageAssetList(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_asset_get_svg") {
+          result = await handleTemplateImageAssetGetSvg(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_asset_save_svg") {
+          result = await handleTemplateImageAssetSaveSvg(args);
+          executionSide = "local";
+        } else if (name === "magic_netsuite_template_asset_delete") {
+          result = await handleTemplateImageAssetDelete(args);
           executionSide = "local";
         } else if (name === "magic_netsuite_template_session_read") {
           result = await handleTemplateDesignSessionRead(args);
@@ -8262,11 +9038,11 @@ async function handleNetsuiteSwitchEnvironment(args: AnyRecord = {}) {
 
 async function handleSuiteQLTool(toolName, args) {
   const actionMap = {
-    "suiteql_search_tables": "FETCH_SUITEQL_TABLES",
-    "suiteql_get_table_fields": "FETCH_SUITEQL_TABLE_DETAIL",
-    "suiteql_get_table_joins": "FETCH_SUITEQL_TABLE_DETAIL",
-    "suiteql_execute_query": "RUN_SUITEQL_QUERY",
-    "suiteql_discover_field_values": "RUN_SUITEQL_QUERY"
+    suiteql_search_tables: "FETCH_SUITEQL_TABLES",
+    suiteql_get_table_fields: "FETCH_SUITEQL_TABLE_DETAIL",
+    suiteql_get_table_joins: "FETCH_SUITEQL_TABLE_DETAIL",
+    suiteql_execute_query: "RUN_SUITEQL_QUERY",
+    suiteql_discover_field_values: "RUN_SUITEQL_QUERY"
   };
 
   const action = actionMap[toolName];
@@ -8313,7 +9089,7 @@ async function handleSuiteQLTool(toolName, args) {
     const rawMsg = response?.message;
     const errMsg =
       rawMsg
-        ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+        ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
         : "Failed to execute SuiteQL tool";
     throw new Error(errMsg);
   }
@@ -8325,7 +9101,8 @@ async function handleSuiteQLTool(toolName, args) {
     const data = resultData?.data ?? (Array.isArray(resultData) ? resultData : []);
     const query = (args.query || "").toLowerCase();
     const filtered = query
-      ? data.filter(t =>
+      ? data.filter(
+          (t) =>
           t.id.toLowerCase().includes(query) ||
           t.label.toLowerCase().includes(query)
         )
@@ -8339,8 +9116,8 @@ async function handleSuiteQLTool(toolName, args) {
   } else if (toolName === "suiteql_get_table_fields") {
     const data = resultData?.data ?? resultData ?? {};
     const fields = (data.fields ?? [])
-      .filter(f => f.isColumn)
-      .map(f => ({
+      .filter((f) => f.isColumn)
+      .map((f) => ({
         id: f.id,
         label: f.label,
         dataType: f.dataType
@@ -8353,7 +9130,7 @@ async function handleSuiteQLTool(toolName, args) {
     };
   } else if (toolName === "suiteql_get_table_joins") {
     const data = resultData?.data ?? resultData ?? {};
-    const joins = (data.joins ?? []).map(j => ({
+    const joins = (data.joins ?? []).map((j) => ({
       id: j.id,
       label: j.label,
       joinType: j.joinType,
@@ -8389,8 +9166,8 @@ async function handleSuiteQLTool(toolName, args) {
     const payload = resultData?.results ?? resultData ?? [];
     const results = Array.isArray(payload) ? payload : (payload.results ?? []);
     const values = results
-      .map(r => r[args.fieldId] ?? Object.values(r)[0])
-      .filter(v => v !== null && v !== undefined && v !== "");
+      .map((r) => r[args.fieldId] ?? Object.values(r)[0])
+      .filter((v) => v !== null && v !== undefined && v !== "");
 
     resultData = {
       success: true,
@@ -8965,8 +9742,8 @@ async function handleNetsuitListBundles(args) {
   }
 
   const bundles = response.message?.bundles ?? [];
-  const installed = bundles.filter(b => b.type === "installed").length;
-  const created = bundles.filter(b => b.type === "created").length;
+  const installed = bundles.filter((b) => b.type === "installed").length;
+  const created = bundles.filter((b) => b.type === "created").length;
   return {
     content: [{
       type: "text",
@@ -9027,7 +9804,7 @@ async function handleNetsuiteLoadRecord(args) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : `Failed to load record ${recordType}/${recordId}`;
     throw new Error(errMsg);
   }
@@ -9058,7 +9835,7 @@ async function handleNetsuiteGetRecordSublists(args) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : `Failed to load sublists for record ${recordType}/${recordId}`;
     throw new Error(errMsg);
   }
@@ -9087,7 +9864,7 @@ async function handleNetsuiteGetRecordFields(args) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : `Failed to get fields for record type ${recordType}`;
     throw new Error(errMsg);
   }
@@ -9113,7 +9890,7 @@ async function handleNetsuiteListRecordTypes() {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : "Failed to get record types";
     throw new Error(errMsg);
   }
@@ -9257,7 +10034,7 @@ function getRouteResult(response, fallbackMessage) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message ?? response?.error;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : fallbackMessage;
     throw new Error(errMsg);
   }
@@ -9369,7 +10146,7 @@ async function handleNetsuiteFindFile(args) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : "Failed to find files";
     throw new Error(errMsg);
   }
@@ -9420,7 +10197,7 @@ async function handleNetsuiteFindFolder(args) {
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
     const errMsg = rawMsg
-      ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg))
+      ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)
       : "Failed to find folders";
     throw new Error(errMsg);
   }
@@ -9459,11 +10236,11 @@ async function handleNetsuiteListFolder(args) {
 
   if (!subfoldersResp || subfoldersResp.status === "error") {
     const msg = subfoldersResp?.message;
-    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list subfolders");
+    throw new Error(msg ?typeof msg === "string" ? msg : JSON.stringify(msg) : "Failed to list subfolders");
   }
   if (!filesResp || filesResp.status === "error") {
     const msg = filesResp?.message;
-    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : "Failed to list files");
+    throw new Error(msg ?typeof msg === "string" ? msg : JSON.stringify(msg) : "Failed to list files");
   }
 
   const subfolders = subfoldersResp.message ?? [];
@@ -9501,7 +10278,7 @@ async function handleNetsuiteReadFile(args) {
 
   if (!urlResp || urlResp.status === "error") {
     const msg = urlResp?.message;
-    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : `Failed to look up file ${fileId}`);
+    throw new Error(msg ?typeof msg === "string" ? msg : JSON.stringify(msg) : `Failed to look up file ${fileId}`);
   }
 
   const rows = urlResp.message ?? [];
@@ -9520,7 +10297,7 @@ async function handleNetsuiteReadFile(args) {
 
   if (!contentResp || contentResp.status === "error") {
     const msg = contentResp?.message;
-    throw new Error(msg ? (typeof msg === "string" ? msg : JSON.stringify(msg)) : `Failed to fetch content of file ${fileId}`);
+    throw new Error(msg ?typeof msg === "string" ? msg : JSON.stringify(msg) : `Failed to fetch content of file ${fileId}`);
   }
 
   const { content, contentType, binary } = contentResp.message ?? {};
@@ -9591,7 +10368,7 @@ async function callMcpSuiteletServerTool(name, args) {
 
   const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
   const overrideUrl = String(storageResult?.magic_netsuite_settings?.mcpSuiteletDeploymentUrl || "").trim();
-  const suiteletUrl = overrideUrl || await resolveMcpSuiteletServerUrl();
+  const suiteletUrl = overrideUrl || ( await resolveMcpSuiteletServerUrl());
   if (!suiteletUrl) return null;
 
   const body = new URLSearchParams();
@@ -9617,7 +10394,7 @@ async function callMcpSuiteletServerTool(name, args) {
   if (payload?.ok === undefined) return null;
   if (!payload?.ok) {
     const raw = payload?.error;
-    throw new Error(raw ? (typeof raw === "string" ? raw : JSON.stringify(raw)) : "MCP Suitelet server route failed.");
+    throw new Error(raw ?typeof raw === "string" ? raw : JSON.stringify(raw) : "MCP Suitelet server route failed.");
   }
   return payload.result;
 }
@@ -9689,7 +10466,7 @@ async function handleNetsuiteUpdateFileContent(args) {
   if (isNaN(fileId)) throw new Error("fileId must be a numeric file ID.");
   if (args?.fileContent === undefined) throw new Error("fileContent is required.");
 
-  const file = (!args.fileName || !args.folderId || !args.mediaType)
+  const file =!args.fileName || !args.folderId || !args.mediaType
     ? await lookupFileCabinetFile(fileId)
     : null;
 
@@ -9713,7 +10490,7 @@ async function handleNetsuiteRenameFile(args) {
   const newName = String(args?.newName ?? "").trim();
   if (!newName) throw new Error("newName is required.");
 
-  const file = (!args.folderId || !args.filetype || !args.filesize)
+  const file =!args.folderId || !args.filetype || !args.filesize
     ? await lookupFileCabinetFile(fileId)
     : null;
 
@@ -9836,13 +10613,14 @@ async function handleNetsuiteGetScripts(args) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch scripts");
+    throw new Error(rawMsg ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg) : "Failed to fetch scripts");
   }
 
   let results = response.message;
   if (args.search && !args.scriptId && Array.isArray(results)) {
     const term = String(args.search).toLowerCase();
-    results = results.filter(s =>
+    results = results.filter(
+      (s) =>
       String(s.name ?? "").toLowerCase().includes(term) ||
       String(s.scriptid ?? "").toLowerCase().includes(term) ||
       String(s.owner ?? "").toLowerCase().includes(term) ||
@@ -9865,7 +10643,7 @@ async function handleNetsuiteGetScriptFiles(args) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch script files");
+    throw new Error(rawMsg ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg) : "Failed to fetch script files");
   }
 
   return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
@@ -9886,7 +10664,7 @@ async function handleNetsuiteRunQuickScript(args) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to run quick script");
+    throw new Error(rawMsg ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg) : "Failed to run quick script");
   }
 
   return { content: [{ type: "text", text: JSON.stringify(response.message, null, 2) }] };
@@ -9977,10 +10755,14 @@ function htmlToFreemarkerPdf(html, { title = "FreeMarker Template" } = {}) {
 <!DOCTYPE pdf PUBLIC "-//big.faceless.org//report" "report-1.1.dtd">
 <pdf>
   <head>
-    <title>${escapeHtmlText(title)}</title>${styles ? `
+    <title>${escapeHtmlText(title)}</title>${
+      styles
+        ? `
     <style type="text/css">
 ${styles}
-    </style>` : ""}
+    </style>`
+        : ""
+    }
   </head>
   <body size="Letter">
 ${body}
@@ -9992,11 +10774,13 @@ function isRendererReady(status) {
   if (!status || typeof status !== "object") return false;
   if (status.allReady === true || status.ready === true || status.isReady === true) return true;
   const components = Array.isArray(status.components) ? status.components : [];
-  return components.length > 0 && components.every(component =>
+  return ( components.length > 0 && components.every(
+      (component) =>
     component?.ready === true ||
     component?.exists === true ||
     component?.status === "ready" ||
     component?.status === "deployed"
+  )
   );
 }
 
@@ -10211,7 +10995,7 @@ async function handleNetsuiteGetDeployedScripts(args) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : `Failed to fetch deployed scripts for ${recordType}`);
+    throw new Error(rawMsg ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg) : `Failed to fetch deployed scripts for ${recordType}`);
   }
 
   const scripts = Array.isArray(response.message) ? response.message : [];
@@ -10229,7 +11013,7 @@ async function handleNetsuiteGetLogs(args) {
 
   const normalizeNumericIds = (value) => {
     if (!Array.isArray(value)) return [];
-    return value.map(v => Number(v)).filter(v => Number.isInteger(v) && v > 0);
+    return value.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v > 0);
   };
 
   const now = new Date();
@@ -10254,7 +11038,7 @@ async function handleNetsuiteGetLogs(args) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch logs");
+    throw new Error(rawMsg ?typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg) : "Failed to fetch logs");
   }
 
   let results = response.message;
@@ -10347,7 +11131,8 @@ async function getSuiteletViewport(tabId) {
         title: document.title || ""
       })
     });
-    return result?.result || { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
+    return ( result?.result || { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" }
+    );
   } catch {
     return { width: 1280, height: 720, devicePixelRatio: 1, scrollX: 0, scrollY: 0, title: "" };
   }
@@ -10531,19 +11316,37 @@ async function querySuitelets(query) {
 
   if (!response || response.status === "error") {
     const rawMsg = response?.message;
-    throw new Error(rawMsg ? (typeof rawMsg === "string" ? rawMsg : JSON.stringify(rawMsg)) : "Failed to fetch Suitelets");
+    throw new Error(
+      rawMsg
+        ? typeof rawMsg === "string"
+          ? rawMsg
+          : JSON.stringify(rawMsg)
+        : "Failed to fetch Suitelets"
+    );
   }
 
   const origin = getTabOrigin(tab.url);
-  const rows = Array.isArray(response.message) ? response.message : (response.message?.results ?? []);
+  const rows = Array.isArray(response.message)
+    ? response.message
+    : (response.message?.results ?? []);
   const suitelets = rows
     .map((row) => {
-      const scriptId = String(row.scriptinternalid || row.scriptInternalId || row.id || "");
-      const deployId = String(row.deploymentid || row.deploymentId || "").trim();
-      const deploymentRecordId = String(row.deploymentrecordid || row.deploymentRecordId || row.primarykey || "").trim();
+      const scriptId = String(
+        row.scriptinternalid || row.scriptInternalId || row.id || ""
+      );
+      const deployId = String(
+        row.deploymentid || row.deploymentId || ""
+      ).trim();
+      const deploymentRecordId = String(
+        row.deploymentrecordid || row.deploymentRecordId || row.primarykey || ""
+      ).trim();
       const scriptName = String(row.scriptname || row.scriptName || "Suitelet");
-      const deploymentScriptId = String(row.deploymentscriptid || row.deploymentScriptId || "");
-      const scriptScriptId = String(row.scriptscriptid || row.scriptScriptId || row.scriptid || "");
+      const deploymentScriptId = String(
+        row.deploymentscriptid || row.deploymentScriptId || ""
+      );
+      const scriptScriptId = String(
+        row.scriptscriptid || row.scriptScriptId || row.scriptid || ""
+      );
       return {
         scriptInternalId: scriptId,
         scriptId: scriptScriptId,
@@ -10552,9 +11355,10 @@ async function querySuitelets(query) {
         deploymentRecordId,
         deploymentScriptId,
         status: String(row.status || ""),
-        url: origin && scriptId && deployId
-          ? `${origin}/app/site/hosting/scriptlet.nl?script=${encodeURIComponent(scriptId)}&deploy=${encodeURIComponent(deployId)}`
-          : ""
+        url:
+          origin && scriptId && deployId
+            ? `${origin}/app/site/hosting/scriptlet.nl?script=${encodeURIComponent(scriptId)}&deploy=${encodeURIComponent(deployId)}`
+            : ""
       };
     })
     .filter((suitelet) => suitelet.url)
@@ -10566,10 +11370,12 @@ async function querySuitelets(query) {
 async function handleSuiteletStreamList(args) {
   const { suitelets } = await querySuitelets(args?.query);
   return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
-    }]
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ count: suitelets.length, suitelets }, null, 2)
+      }
+    ]
   };
 }
 
@@ -10579,33 +11385,55 @@ async function resolveSuiteletTarget(args) {
   const rawUrl = String(args?.url || "").trim();
   if (rawUrl) {
     let parsed;
-    try { parsed = new URL(rawUrl); } catch { throw new Error(`Invalid Suitelet URL: ${rawUrl}`); }
-    if (!/\.app\.netsuite\.com$/i.test(parsed.hostname) || parsed.pathname !== "/app/site/hosting/scriptlet.nl") {
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error(`Invalid Suitelet URL: ${rawUrl}`);
+    }
+    if (
+      !/\.app\.netsuite\.com$/i.test(parsed.hostname) ||
+      parsed.pathname !== "/app/site/hosting/scriptlet.nl"
+    ) {
       throw new Error(
         `Refusing to open "${rawUrl}" — not a Suitelet (expected an <account>.app.netsuite.com/app/site/hosting/scriptlet.nl URL). ` +
-        `Pass { query: "<name>" } or { scriptId, deployId } instead and the URL will be resolved for you.`
+          `Pass { query: "<name>" } or { scriptId, deployId } instead and the URL will be resolved for you.`
       );
     }
     return { url: parsed.href, matched: null, alternatives: [] };
   }
 
-  const scriptId = String(args?.scriptId ?? args?.scriptInternalId ?? "").trim();
+  const scriptId = String(
+    args?.scriptId ?? args?.scriptInternalId ?? ""
+  ).trim();
   const deployId = String(args?.deployId ?? args?.deploymentId ?? "").trim();
   if (/^\d+$/.test(scriptId) && /^\d+$/.test(deployId)) {
     const tab = await getPreferredNetsuiteTab();
     const origin = tab ? getTabOrigin(tab.url) : "";
-    if (!origin) throw new Error("No NetSuite tab open to resolve the account URL. Open a NetSuite page first.");
-    return { url: `${origin}/app/site/hosting/scriptlet.nl?script=${scriptId}&deploy=${deployId}`, matched: null, alternatives: [] };
+    if (!origin)
+      throw new Error(
+        "No NetSuite tab open to resolve the account URL. Open a NetSuite page first."
+      );
+    return {
+      url: `${origin}/app/site/hosting/scriptlet.nl?script=${scriptId}&deploy=${deployId}`,
+      matched: null,
+      alternatives: []
+    };
   }
 
   const query = String(args?.query ?? args?.name ?? "").trim();
   if (query) {
     const { suitelets } = await querySuitelets(query);
-    if (!suitelets.length) throw new Error(`No deployed Suitelet matches "${query}".`);
+    if (!suitelets.length)
+      throw new Error(`No deployed Suitelet matches "${query}".`);
     return {
       url: suitelets[0].url,
       matched: suitelets[0],
-      alternatives: suitelets.slice(1, 6).map((s) => ({ scriptName: s.scriptName, scriptInternalId: s.scriptInternalId, deploymentId: s.deploymentId, url: s.url }))
+      alternatives: suitelets.slice(1, 6).map((s) => ({
+        scriptName: s.scriptName,
+        scriptInternalId: s.scriptInternalId,
+        deploymentId: s.deploymentId,
+        url: s.url
+      }))
     };
   }
 
@@ -10633,9 +11461,11 @@ async function handleSuiteletProbeUrl(args) {
   });
 
   const body = await response.text();
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(body)?.[1]
-    ?.replace(/\s+/g, " ")
-    .trim() || "";
+  const title =
+    /<title[^>]*>([\s\S]*?)<\/title>/i
+      .exec(body)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() || "";
   const bodyText = body
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -10647,35 +11477,43 @@ async function handleSuiteletProbeUrl(args) {
   const csp = headers["content-security-policy"] || "";
   const xFrameOptions = headers["x-frame-options"] || "";
   const frameBlockedByHeaders = Boolean(
-    xFrameOptions ||
-    /frame-ancestors/i.test(csp)
+    xFrameOptions || /frame-ancestors/i.test(csp)
   );
-  const looksLikeLogin = /login|system\.netsuite|email address|password|compid/i.test(`${title} ${bodyText}`);
+  const looksLikeLogin =
+    /login|system\.netsuite|email address|password|compid/i.test(
+      `${title} ${bodyText}`
+    );
   const looksEmpty = body.trim().length < 200;
 
   return {
-    content: [{
-      type: "text",
-      text: JSON.stringify({
-        ok: response.ok,
-        status: response.status,
-        statusText: response.statusText,
-        requestedUrl: targetUrl.href,
-        finalUrl: response.url,
-        redirected: response.redirected,
-        headers,
-        title,
-        bodyLength: body.length,
-        bodyPreview: bodyText,
-        hints: {
-          frameBlockedByHeaders,
-          xFrameOptions: xFrameOptions || null,
-          frameAncestors: /frame-ancestors([^;]+)/i.exec(csp)?.[0] || null,
-          looksLikeLogin,
-          looksEmpty
-        }
-      }, null, 2)
-    }]
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            ok: response.ok,
+            status: response.status,
+            statusText: response.statusText,
+            requestedUrl: targetUrl.href,
+            finalUrl: response.url,
+            redirected: response.redirected,
+            headers,
+            title,
+            bodyLength: body.length,
+            bodyPreview: bodyText,
+            hints: {
+              frameBlockedByHeaders,
+              xFrameOptions: xFrameOptions || null,
+              frameAncestors: /frame-ancestors([^;]+)/i.exec(csp)?.[0] || null,
+              looksLikeLogin,
+              looksEmpty
+            }
+          },
+          null,
+          2
+        )
+      }
+    ]
   };
 }
 
@@ -11118,9 +11956,11 @@ function decodeHtmlAttribute(value) {
 }
 
 function rewriteCssUrls(css, cssUrl) {
-  return String(css || "").replace(/url\((['"]?)(?!data:|https?:|#)([^'")]+)\1\)/gi, (_match, quote, value) => {
-    return `url(${quote}${absolutizeSuiteletUrl(value, cssUrl)}${quote})`;
-  });
+  return String(css || "").replace(/url\((['"]?)(?!data:|https?:|#)([^'")]+)\1\)/gi,
+    (_match, quote, value) => {
+      return `url(${quote}${absolutizeSuiteletUrl(value, cssUrl)}${quote})`;
+    }
+  );
 }
 
 async function fetchTextForSuiteletRender(resourceUrl) {
@@ -11162,35 +12002,53 @@ async function inlineSuiteletAssets(html, finalUrl) {
     failures: []
   };
 
-  const stylesheetPattern = /<link\b([^>]*?rel=["'][^"']*stylesheet[^"']*["'][^>]*?)>/gi;
-  output = await replaceAsync(output, stylesheetPattern, async (match, attrs) => {
-    stats.stylesheetsFound += 1;
-    const href = /href=["']([^"']+)["']/i.exec(attrs)?.[1];
-    if (!href) return match;
-    const resourceUrl = absolutizeSuiteletUrl(href, finalUrl);
-    try {
-      const fetched = await fetchTextForSuiteletRender(resourceUrl);
-      stats.stylesheetsInlined += 1;
-      return `<style data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">${rewriteCssUrls(fetched.text, fetched.url)}</style>`;
-    } catch (error) {
-      stats.failures.push({ type: "stylesheet", url: resourceUrl, error: String(error?.message || error) });
-      return `<!-- Magic NetSuite failed to inline stylesheet ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+  const stylesheetPattern =
+    /<link\b([^>]*?rel=["'][^"']*stylesheet[^"']*["'][^>]*?)>/gi;
+  output = await replaceAsync(
+    output,
+    stylesheetPattern,
+    async (match, attrs) => {
+      stats.stylesheetsFound += 1;
+      const href = /href=["']([^"']+)["']/i.exec(attrs)?.[1];
+      if (!href) return match;
+      const resourceUrl = absolutizeSuiteletUrl(href, finalUrl);
+      try {
+        const fetched = await fetchTextForSuiteletRender(resourceUrl);
+        stats.stylesheetsInlined += 1;
+        return `<style data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">${rewriteCssUrls(fetched.text, fetched.url)}</style>`;
+      } catch (error) {
+        stats.failures.push({
+          type: "stylesheet",
+          url: resourceUrl,
+          error: String(error?.message || error)
+        });
+        return `<!-- Magic NetSuite failed to inline stylesheet ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+      }
     }
-  });
+  );
 
-  const scriptPattern = /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>\s*<\/script>/gi;
-  output = await replaceAsync(output, scriptPattern, async (match, before, src, after) => {
-    stats.scriptsFound += 1;
-    const resourceUrl = absolutizeSuiteletUrl(src, finalUrl);
-    try {
-      const fetched = await fetchTextForSuiteletRender(resourceUrl);
-      stats.scriptsInlined += 1;
-      return `<script${before}${after} data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">\n${fetched.text}\n//# sourceURL=${fetched.url}\n</script>`;
-    } catch (error) {
-      stats.failures.push({ type: "script", url: resourceUrl, error: String(error?.message || error) });
-      return `<!-- Magic NetSuite failed to inline script ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+  const scriptPattern =
+    /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>\s*<\/script>/gi;
+  output = await replaceAsync(
+    output,
+    scriptPattern,
+    async (match, before, src, after) => {
+      stats.scriptsFound += 1;
+      const resourceUrl = absolutizeSuiteletUrl(src, finalUrl);
+      try {
+        const fetched = await fetchTextForSuiteletRender(resourceUrl);
+        stats.scriptsInlined += 1;
+        return `<script${before}${after} data-magic-inline-source="${fetched.url.replace(/"/g, "&quot;")}">\n${fetched.text}\n//# sourceURL=${fetched.url}\n</script>`;
+      } catch (error) {
+        stats.failures.push({
+          type: "script",
+          url: resourceUrl,
+          error: String(error?.message || error)
+        });
+        return `<!-- Magic NetSuite failed to inline script ${resourceUrl}: ${String(error?.message || error)} -->${match}`;
+      }
     }
-  });
+  );
 
   return { html: output, stats };
 }
@@ -11207,15 +12065,23 @@ async function replaceAsync(source, pattern, replacer) {
   return parts.join("");
 }
 
-async function prepareSuiteletHtmlForSrcdoc(html, finalUrl, originalUrl = finalUrl) {
+async function prepareSuiteletHtmlForSrcdoc(
+  html,
+  finalUrl,
+  originalUrl = finalUrl
+) {
   const baseTag = `<base href="${String(finalUrl).replace(/"/g, "&quot;")}">`;
   const inlined = await inlineSuiteletAssets(html, finalUrl);
   let output = inlined.html;
 
   // CSP delivered inside the HTML can block srcdoc rendering in the MCP app even
   // when the network response itself is valid.
-  output = output.replace(/<meta[^>]+http-equiv=["']content-security-policy["'][^>]*>/gi, "");
-  output = output.replace(/<meta[^>]+http-equiv=["']x-frame-options["'][^>]*>/gi, "");
+  output = output.replace(
+    /<meta[^>]+http-equiv=["']content-security-policy["'][^>]*>/gi,
+    ""
+  );
+  output = output.replace(
+    /<meta[^>]+http-equiv=["']x-frame-options["'][^>]*>/gi, "");
 
   if (/<head[^>]*>/i.test(output)) {
     return {
@@ -12306,7 +13172,10 @@ async function getPreferredNetsuiteTab() {
     // No matching tab — create a dedicated tab for the preferred account
     console.log(
       `[MCP] No tab for account "${preferredAccount}", creating dedicated tab. ` +
-      `Available: ${connectedTabs.map((r) => r.accountId).filter(Boolean).join(", ")}`
+        `Available: ${connectedTabs
+          .map((r) => r.accountId)
+          .filter(Boolean)
+          .join(", ")}`
     );
     const domain = getAccountDomain(preferredAccount);
     const newTab = await createMcpDedicatedTab(domain);
