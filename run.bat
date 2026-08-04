@@ -176,11 +176,14 @@ echo ====================================
 echo Step 5: Installing native messaging host
 echo ====================================
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST_FOLDER%\mcpServer\installNativeHost.ps1" -ExtensionId nnkjegioomnaelmeiemdfmhipcpgomlp
-
-if %ERRORLEVEL% NEQ 0 (
-    echo ERROR: Failed to install native messaging host
-    exit /b 1
+if defined MAGIC_NETSUITE_EXTENSION_ID (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%DEST_FOLDER%\mcpServer\installNativeHost.ps1" -ExtensionId "%MAGIC_NETSUITE_EXTENSION_ID%"
+    if %ERRORLEVEL% NEQ 0 (
+        echo ERROR: Failed to install native messaging host
+        exit /b 1
+    )
+) else (
+    echo Skipping native host registration. Install it once from the extension's Native Host Install section.
 )
 
 echo.

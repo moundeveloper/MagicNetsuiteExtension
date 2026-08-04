@@ -443,8 +443,9 @@ onBeforeUnmount(() => {
       <div class="mcp-section">
         <h2>Native Host Install</h2>
         <p class="section-description">
-          Run this command to register the native messaging host with Chrome.
-          The extension ID and path are pre-filled below.
+          Run this command once to register the native messaging host with
+          Chrome. The registration is stored in your Windows profile and
+          survives Git updates of the extension folder.
         </p>
 
         <div v-if="installInfoLoading" class="fetch-status">

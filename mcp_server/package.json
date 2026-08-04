@@ -4,7 +4,8 @@
   "description": "",
   "main": "magiNetsuiteMCPServer.js",
   "scripts": {
-    "check": "node --check magiNetsuiteMCPServer.js && node --check magicNetsuiteNativeHost.js",
+    "check": "node --check magiNetsuiteMCPServer.js && node --check magicNetsuiteNativeHost.js && node --test tests/*.test.js",
+    "test": "node --test tests/*.test.js",
     "start": "node magiNetsuiteMCPServer.js",
     "start:native-host": "node magicNetsuiteNativeHost.js"
   },
