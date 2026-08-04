@@ -189,7 +189,12 @@ window.addEventListener("message", async (event) => {
     const result =
       (await handler({ modules, payload, csrfToken: csrfToken })) || null;
 
-    sendToExtension({ requestId, status: "ok", message: result });
+    // Streaming handlers deliver their own chunks and terminal event. Sending a
+    // normal acknowledgement here injects an unrelated { message: null }
+    // payload into the stream before it closes.
+    if (mode !== "stream") {
+      sendToExtension({ requestId, status: "ok", message: result });
+    }
   } catch (err) {
     console.log("Error:", err);
     // Safely extract a string message from any thrown value.
@@ -209,7 +214,15 @@ window.addEventListener("message", async (event) => {
     } else {
       errMsg = "Unknown error";
     }
-    sendToExtension({ requestId, status: "error", message: errMsg });
+    if (mode === "stream") {
+      sendToExtension({
+        requestId,
+        type: "STREAM_ERROR",
+        error: errMsg
+      });
+    } else {
+      sendToExtension({ requestId, status: "error", message: errMsg });
+    }
   }
 });
 
@@ -3108,11 +3121,19 @@ const handlers = {
     console.log("Custom Record URL action received:", recordId);
     return window.getCustomRecordListUrl(modules, { recordId });
   },
-  RUN_QUICK_SCRIPT: async ({ modules, payload: { code, requestId, mode } }) => {
+  RUN_QUICK_SCRIPT: async ({
+    modules,
+    payload: { code, requestId, mode, bridgeCapability }
+  }) => {
     console.log("Run Quick Script action received", { mode });
     try {
       // Pass mode to runQuickScript
-      const result = await window.runQuickScript(modules, { code, requestId, mode });
+      const result = await window.runQuickScript(modules, {
+        code,
+        requestId,
+        mode,
+        bridgeCapability
+      });
 
       // For streaming, don't return anything here - data flows through postMessage
       if (mode === "stream") {
@@ -3121,6 +3142,11 @@ const handlers = {
 
       return result;
     } catch (err) {
+      // Let the central dispatcher terminate a failed stream with STREAM_ERROR.
+      // Returning an error object in stream mode would leave the port waiting
+      // because normal acknowledgements are intentionally not stream chunks.
+      if (mode === "stream") throw err;
+
       return {
         result: null,
         error: err?.message || String(err),

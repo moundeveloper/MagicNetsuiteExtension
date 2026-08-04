@@ -109,7 +109,7 @@ interface MonacoEditorProps {
 const props = withDefaults(defineProps<MonacoEditorProps>(), {
   modelValue: "",
   language: "javascript",
-  theme: "vs-dark",
+  theme: "monokai",
   readonly: false,
   options: () => ({}),
   completionItems: () => [],

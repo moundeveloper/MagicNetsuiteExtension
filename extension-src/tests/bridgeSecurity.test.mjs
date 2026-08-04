@@ -185,3 +185,83 @@ test("page bridge rejects messages with the wrong capability or origin before AP
   assert.equal(documentAccesses, 0);
   assert.equal(postedMessages, 0);
 });
+
+test("Run Quick Script forwards authenticated console output and closes its stream", async () => {
+  const apiFile = new URL("../../src/netsuiteApi/netsuiteApi.js", import.meta.url);
+  const sandboxFile = new URL("../../src/netsuiteApi/sandboxCode.js", import.meta.url);
+  const apiSource = fs.readFileSync(fileURLToPath(apiFile), "utf8");
+  const sandboxSource = fs.readFileSync(fileURLToPath(sandboxFile), "utf8");
+  let messageListener;
+  const postedMessages = [];
+  const pageWindow = {
+    location: { origin: PAGE_ORIGIN },
+    addEventListener(name, listener) {
+      if (name === "message") messageListener = listener;
+    },
+    postMessage(message) {
+      postedMessages.push(message);
+    },
+  };
+  const context = {
+    window: pageWindow,
+    document: {
+      currentScript: {
+        src:
+          "chrome-extension://extension-id/netsuiteApi/netsuiteApi.js" +
+          "?bridgeCapability=expected-capability",
+      },
+      querySelector: () => null,
+      createElement: () => ({ dataset: {} }),
+      head: { appendChild() {} },
+      documentElement: { appendChild() {} },
+    },
+    location: { origin: PAGE_ORIGIN, search: "" },
+    console: { log() {}, warn() {}, error() {} },
+    URL,
+    setTimeout,
+    clearTimeout,
+    require(_modules, onSuccess) {
+      onSuccess({ log: {} });
+    },
+  };
+
+  vm.createContext(context);
+  vm.runInContext(sandboxSource, context);
+  vm.runInContext(apiSource, context);
+  assert.equal(typeof messageListener, "function");
+
+  await messageListener({
+    source: pageWindow,
+    origin: PAGE_ORIGIN,
+    data: {
+      type: MESSAGE_TYPES.FROM_EXTENSION,
+      capability: "expected-capability",
+      payload: {
+        requestId: "quick-script-request",
+        action: "RUN_QUICK_SCRIPT",
+        data: { code: 'console.log("ciao")' },
+        mode: "stream",
+      },
+    },
+  });
+
+  const payloads = postedMessages.map((message) => message.payload);
+  const logChunk = payloads.find(
+    (payload) => payload?.event === "chunk" && payload?.data?.type === "log",
+  );
+  const streamEnd = payloads.find((payload) => payload?.type === "STREAM_END");
+
+  assert.deepEqual(Array.from(logChunk?.data?.values ?? []), ["ciao"]);
+  assert.equal(logChunk?.requestId, "quick-script-request");
+  assert.equal(streamEnd?.requestId, "quick-script-request");
+  assert.equal(
+    postedMessages.every(
+      (message) => message.capability === "expected-capability",
+    ),
+    true,
+  );
+  assert.equal(
+    payloads.some((payload) => payload?.status === "ok"),
+    false,
+  );
+});

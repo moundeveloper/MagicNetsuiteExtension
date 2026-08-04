@@ -104,7 +104,7 @@ window.runQuickScriptServer = async (N, { code, userId }, csrfToken) => {
   });
 
   return {
-    success: true,
+    success: execResult?.success !== false && !execResult?.error,
     logs: execResult?.logs || [],
     result: execResult?.result,
     error: execResult?.error,
@@ -1375,11 +1375,32 @@ define(
 
   var executeUserCode = function(code, N) {
     var __logs = [];
+    var __pushLog = function(type, args) {
+      __logs.push({
+        type: type,
+        values: Array.prototype.slice.call(args).map(__serialize)
+      });
+    };
     var fakeConsole = {
-      log:   function() { __logs.push({ type: 'log',   values: Array.prototype.slice.call(arguments).map(__serialize) }); },
-      warn:  function() { __logs.push({ type: 'warn',  values: Array.prototype.slice.call(arguments).map(__serialize) }); },
-      error: function() { __logs.push({ type: 'error', values: Array.prototype.slice.call(arguments).map(__serialize) }); },
-      info:  function() { __logs.push({ type: 'log',   values: Array.prototype.slice.call(arguments).map(__serialize) }); }
+      log:   function() { __pushLog('log', arguments); },
+      warn:  function() { __pushLog('warn', arguments); },
+      error: function() { __pushLog('error', arguments); },
+      info:  function() { __pushLog('log', arguments); }
+    };
+    var __forwardNLog = function(method, type, args) {
+      __pushLog(type, args);
+      try {
+        if (N.log && typeof N.log[method] === 'function') {
+          return N.log[method].apply(N.log, Array.prototype.slice.call(args));
+        }
+      } catch (__logError) {}
+    };
+    var fakeLog = {
+      LOG_LEVELS: N.log && N.log.LOG_LEVELS,
+      debug: function() { return __forwardNLog('debug', 'log', arguments); },
+      audit: function() { return __forwardNLog('audit', 'log', arguments); },
+      error: function() { return __forwardNLog('error', 'error', arguments); },
+      emergency: function() { return __forwardNLog('emergency', 'error', arguments); }
     };
     var __result;
     try {
@@ -1394,7 +1415,7 @@ define(
         code
       );
       __result = userFn(
-        N.record, N.search, N.query, N.log, N.file, N.url, N.runtime,
+        N.record, N.search, N.query, fakeLog, N.file, N.url, N.runtime,
         N.format, N.email, N.render, N.task, N.workflow,
         N.https, N.http, N.encode, N.nsError, N.xml, N.crypto,
         N.currency, N.transaction, N.redirect,

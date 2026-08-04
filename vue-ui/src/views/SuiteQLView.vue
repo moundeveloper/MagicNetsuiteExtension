@@ -38,6 +38,17 @@
                 <kbd class="run-kbd">Ctrl+↵</kbd>
               </Button>
               <Button
+                @click="traceCurrentQuery"
+                :disabled="currentFile?.isExecuting"
+                severity="secondary"
+                outlined
+                class="w-full"
+                title="Run the query as inspectable logical stages"
+              >
+                <i class="pi pi-sitemap font-medium"></i>
+                <span class="flex-1 text-left">Trace Query</span>
+              </Button>
+              <Button
                 @click="fetchTables"
                 :disabled="isLoadingTables"
                 severity="secondary"
@@ -135,6 +146,16 @@
                 >
                   <i class="pi pi-align-left"></i>
                   <span>Format</span>
+                </button>
+                <button
+                  class="toolbar-btn"
+                  :class="bottomTab === 'trace' ? 'toolbar-btn-active' : ''"
+                  :disabled="file.isExecuting"
+                  @click="traceCurrentQuery"
+                  title="Execute inspectable source, join, subquery, and final stages"
+                >
+                  <i class="pi pi-sitemap"></i>
+                  <span>Trace</span>
                 </button>
                 <button
                   class="toolbar-btn"
@@ -283,13 +304,33 @@
                         <div
                           class="bottom-tabbar shrink-0 flex items-center border-b border-slate-200"
                         >
-                          <div class="bottom-panel-title">
-                            <i class="pi pi-list" />
-                            <span>Results</span>
+                          <div class="bottom-panel-tabs">
+                            <button
+                              type="button"
+                              :class="{ 'bottom-panel-tab--active': bottomTab === 'results' }"
+                              @click="bottomTab = 'results'"
+                            >
+                              <i class="pi pi-list" />
+                              <span>Results</span>
+                            </button>
+                            <button
+                              type="button"
+                              :class="{ 'bottom-panel-tab--active': bottomTab === 'trace' }"
+                              @click="bottomTab = 'trace'"
+                            >
+                              <i class="pi pi-sitemap" />
+                              <span>Execution trace</span>
+                              <small v-if="file.tracePlan?.stages.length">
+                                {{ file.tracePlan.stages.length }}
+                              </small>
+                            </button>
                           </div>
 
                           <!-- Right side of tab bar -->
-                          <div class="ml-auto flex items-center gap-2 px-3">
+                          <div
+                            v-if="bottomTab === 'results'"
+                            class="ml-auto flex items-center gap-2 px-3"
+                          >
                             <span
                               v-if="file.results.length > 0"
                               class="text-xs font-mono text-emerald-600 font-semibold"
@@ -335,7 +376,7 @@
                         </div>
 
                         <div
-                          v-if="currentLintIssues.length"
+                          v-if="bottomTab === 'results' && currentLintIssues.length"
                           class="query-diagnostics shrink-0"
                         >
                           <div class="query-diagnostics__summary">
@@ -374,9 +415,12 @@
                         </div>
 
                         <!-- Tab content -->
-                        <div class="flex-1 overflow-auto">
+                        <div
+                          class="flex-1 min-h-0"
+                          :class="bottomTab === 'trace' ? 'overflow-hidden' : 'overflow-auto'"
+                        >
                           <!-- Results -->
-                          <div class="h-full">
+                          <div v-show="bottomTab === 'results'" class="h-full">
                             <table
                               v-if="file.results.length > 0"
                               class="results-table w-full"
@@ -416,6 +460,12 @@
                               <span class="text-xs opacity-60">Ctrl+Enter</span>
                             </div>
                           </div>
+
+                          <SuiteQLTracePanel
+                            v-if="bottomTab === 'trace'"
+                            :plan="file.tracePlan"
+                            :is-running="file.isTracing"
+                          />
 
                           <!-- Tables browser -->
                           <div v-show="bottomTab === 'tables'" class="p-3">
@@ -723,6 +773,7 @@ import { InputText } from "primevue";
 import VueSplitter from "@rmp135/vue-splitter";
 import SuiteQLCodeEditor from "../components/SuiteQLCodeEditor.vue";
 import SuiteQLSchemaPanel from "../components/SuiteQLSchemaPanel.vue";
+import SuiteQLTracePanel from "../components/SuiteQLTracePanel.vue";
 
 import ExpandableSidebar from "../components/universal/sidebar/MExpandableSidebar.vue";
 import MCard from "../components/universal/card/MCard.vue";
@@ -745,6 +796,11 @@ import {
 import type { SuiteQLSchemaContext } from "../utils/suiteqlLinter";
 import { parseSuiteQLQueryStructure } from "../utils/suiteqlQueryStructure";
 import { runSuiteQLExecution } from "../utils/suiteqlExecution";
+import {
+  createSuiteQLTracePlan,
+  type SuiteQLTracePlan,
+  type SuiteQLTraceStage,
+} from "../utils/suiteqlTrace";
 
 const router = useRouter();
 const toast = useToast();
@@ -761,7 +817,9 @@ interface QueryFile {
   columns: string[];
   error: string;
   isExecuting: boolean;
+  isTracing: boolean;
   totalCount: number;
+  tracePlan: SuiteQLTracePlan | null;
 }
 
 interface TableInfo {
@@ -1106,7 +1164,9 @@ const addNewFile = () => {
     columns: [],
     error: "",
     isExecuting: false,
+    isTracing: false,
     totalCount: 0,
+    tracePlan: null,
   });
   openTabs.value.push(newId);
   activeFileId.value = newId;
@@ -1439,10 +1499,13 @@ const formatCurrentSQL = (fileId: string) => {
 // Query Execution
 // ============================================================================
 
+const pendingUnlimitedAction = ref<"run" | "trace">("run");
+
 const runCurrentQuery = async () => {
   const file = currentFile.value;
   if (!file || file.isExecuting) return;
 
+  pendingUnlimitedAction.value = "run";
   showLimitConfirm.value = false;
   if (detectDebounceTimer !== null) {
     clearTimeout(detectDebounceTimer);
@@ -1477,6 +1540,45 @@ const runCurrentQuery = async () => {
   });
 };
 
+const traceCurrentQuery = async () => {
+  const file = currentFile.value;
+  if (!file || file.isExecuting) return;
+
+  pendingUnlimitedAction.value = "trace";
+  showLimitConfirm.value = false;
+  if (detectDebounceTimer !== null) {
+    clearTimeout(detectDebounceTimer);
+    detectDebounceTimer = null;
+  }
+  const requestedLimit = limitValue.value;
+  await runSuiteQLExecution({
+    isBusy: () => file.isExecuting,
+    setBusy: (busy) => {
+      file.isExecuting = busy;
+    },
+    validate: () => validateSuiteQLBeforeExecution(file),
+    countRows:
+      requestedLimit === null
+        ? async () => {
+            try {
+              const response = (await callApi(RequestRoutes.GET_SUITEQL_COUNT, {
+                sql: file.code,
+              })) as ApiResponse;
+              return response.status === "ok" ? Number(response.message) : null;
+            } catch {
+              return null;
+            }
+          }
+        : undefined,
+    confirmationThreshold: 4000,
+    onConfirmationRequired: (count) => {
+      pendingConfirmCount.value = count;
+      showLimitConfirm.value = true;
+    },
+    execute: () => executeQueryTrace(file, requestedLimit),
+  });
+};
+
 const confirmUnlimitedQuery = async (file: QueryFile) => {
   showLimitConfirm.value = false;
   await runSuiteQLExecution({
@@ -1485,7 +1587,10 @@ const confirmUnlimitedQuery = async (file: QueryFile) => {
       file.isExecuting = busy;
     },
     validate: () => validateSuiteQLBeforeExecution(file),
-    execute: () => executeQuery(file, null),
+    execute: () =>
+      pendingUnlimitedAction.value === "trace"
+        ? executeQueryTrace(file, null)
+        : executeQuery(file, null),
   });
 };
 
@@ -1675,6 +1780,96 @@ const executeQuery = async (file: QueryFile, limit: number | null) => {
   }
 };
 
+const unpackSuiteQLResponse = (response: ApiResponse) => {
+  const payload = response.message as
+    | { results: Record<string, any>[]; totalCount: number }
+    | Record<string, any>[];
+  const results = Array.isArray(payload)
+    ? payload
+    : ((payload as any)?.results ?? []);
+  const totalCount = Array.isArray(payload)
+    ? results.length
+    : Number((payload as any)?.totalCount ?? results.length);
+  return { results, totalCount };
+};
+
+const runTraceStage = async (
+  traceStage: SuiteQLTraceStage,
+  finalLimit: number | null,
+) => {
+  if (!traceStage.executable) return;
+  traceStage.status = "running";
+  traceStage.error = "";
+  traceStage.rows = [];
+  traceStage.columns = [];
+  traceStage.rowCount = null;
+
+  try {
+    const response = (await callApi(RequestRoutes.RUN_SUITEQL_QUERY, {
+      sql: traceStage.sql,
+      limit: traceStage.kind === "final" ? finalLimit : 25,
+    })) as ApiResponse;
+    if (response.status === "error") {
+      traceStage.status = "error";
+      traceStage.error = String(response.message || "Stage execution failed");
+      return;
+    }
+    const { results, totalCount } = unpackSuiteQLResponse(response);
+    traceStage.rows = results;
+    traceStage.columns = results.length ? Object.keys(results[0]!) : [];
+    traceStage.rowCount = totalCount;
+    traceStage.status = "success";
+  } catch (error: any) {
+    traceStage.status = "error";
+    traceStage.error = String(error?.message ?? error);
+  }
+};
+
+const executeQueryTrace = async (file: QueryFile, limit: number | null) => {
+  const plan = createSuiteQLTracePlan(file.code);
+  file.tracePlan = plan;
+  file.isTracing = true;
+  file.results = [];
+  file.columns = [];
+  file.error = "";
+  file.totalCount = 0;
+  bottomTab.value = "trace";
+
+  try {
+    if (plan.stages.length === 0) {
+      file.error = plan.warnings.join("\n");
+      return;
+    }
+
+    for (const traceStage of plan.stages) {
+      await runTraceStage(traceStage, limit);
+    }
+
+    const finalStage = plan.stages.find((traceStage) => traceStage.kind === "final");
+    if (!finalStage) return;
+    if (finalStage.status === "success") {
+      file.results = finalStage.rows;
+      file.columns = finalStage.columns;
+      file.totalCount = finalStage.rowCount ?? finalStage.rows.length;
+      if (finalStage.rowCount === 0) {
+        file.error = explainSuiteQLError(
+          file.code,
+          "Query returned 0 rows",
+          getSuiteQLSchemaContext(),
+        );
+      }
+    } else if (finalStage.error) {
+      file.error = explainSuiteQLError(
+        file.code,
+        finalStage.error,
+        getSuiteQLSchemaContext(),
+      );
+    }
+  } finally {
+    file.isTracing = false;
+  }
+};
+
 // ============================================================================
 // Open in RunQuickScript
 // ============================================================================
@@ -1710,6 +1905,10 @@ let detectDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const onCodeChange = (fileId: string, newCode: string) => {
   if (fileId !== activeFileId.value) return;
+  const file = files.value.find((candidate) => candidate.id === fileId);
+  if (file?.tracePlan && file.tracePlan.sql !== newCode.trim()) {
+    file.tracePlan = null;
+  }
   if (detectDebounceTimer !== null) clearTimeout(detectDebounceTimer);
   detectDebounceTimer = setTimeout(async () => {
     detectDebounceTimer = null;
@@ -1922,7 +2121,9 @@ onMounted(async () => {
       columns: [],
       error: "",
       isExecuting: false,
+      isTracing: false,
       totalCount: 0,
+      tracePlan: null,
     }));
     files.value = restoredFiles;
 
@@ -1957,7 +2158,9 @@ onMounted(async () => {
             columns: [],
             error: "",
             isExecuting: false,
+            isTracing: false,
             totalCount: 0,
+            tracePlan: null,
           });
           openTabs.value.push(newId);
           activeFileId.value = newId;
@@ -2045,6 +2248,11 @@ onBeforeUnmount(async () => {
   color: var(--p-slate-800);
   border-color: var(--p-slate-400);
   background: var(--p-slate-50);
+}
+
+.toolbar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .toolbar-btn i {
@@ -2141,6 +2349,53 @@ onBeforeUnmount(async () => {
 .bottom-tabbar {
   background: var(--p-slate-100);
   min-height: 34px;
+}
+
+.bottom-panel-tabs {
+  display: flex;
+  height: 100%;
+  align-items: stretch;
+  padding-left: 0.25rem;
+}
+
+.bottom-panel-tabs button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.35rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--p-slate-500);
+  cursor: pointer;
+  padding: 0 0.65rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bottom-panel-tabs button:hover {
+  background: var(--p-slate-50);
+  color: var(--p-slate-800);
+}
+
+.bottom-panel-tabs button.bottom-panel-tab--active {
+  border-bottom-color: #4f46e5;
+  background: #f1f4fe;
+  color: #4f46e5;
+}
+
+.bottom-panel-tabs button i {
+  font-size: 0.66rem;
+}
+
+.bottom-panel-tabs button small {
+  border-radius: 0.2rem;
+  background: #e0e7ff;
+  color: #4f46e5;
+  padding: 0.08rem 0.28rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.5rem;
 }
 
 .bottom-panel-title {
@@ -2557,9 +2812,9 @@ onBeforeUnmount(async () => {
 
 /* ── Schema documentation toggle ── */
 .toolbar-btn-active {
-  border-color: var(--p-slate-400) !important;
-  background: var(--m-slate-250) !important;
-  color: var(--p-slate-900) !important;
+  border-color: #a5b4fc !important;
+  background: #f1f4fe !important;
+  color: #4f46e5 !important;
 }
 
 /* ── Schema documentation panel (drag-resizable) ── */

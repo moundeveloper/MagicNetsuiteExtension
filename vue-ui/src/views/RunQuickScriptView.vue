@@ -100,29 +100,41 @@
               class="w-full mb-2"
             />
             <div class="flex flex-col gap-1 overflow-y-auto pr-2 flex-1 min-h-0" >
-              <div
-                v-for="file in filteredFiles"
-                :key="file.id"
-                class="file-item flex items-center gap-2 py-2 px-4 rounded cursor-pointer hover:bg-slate-200 transition-colors group"
-                :class="{ 'bg-slate-200': activeFileId === file.id }"
-                @click="openFileInTab(file.id)"
-              >
-                <i class="pi pi-file text-sm" style="color: var(--p-slate-600)"></i>
-                <MInput
-                  v-model="file.name"
-                  outlined
-                  item-dynamic
-                  class="flex-1 text-ellipsis overflow-hidden"
-                />
-                <button
-                  class="ml-auto p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-slate-300"
-                  @click.stop="removeFile(file.id)"
-                >
-                  <i class="pi pi-times text-xs"></i>
-                </button>
+              <div v-if="isRestoring" class="rqs-loading-state rqs-loading-state--sidebar">
+                <i class="pi pi-spinner pi-spin" aria-hidden="true"></i>
+                <span>Loading scripts…</span>
               </div>
+              <template v-else>
+                <div
+                  v-for="file in filteredFiles"
+                  :key="file.id"
+                  class="file-item flex items-center gap-2 py-2 px-4 rounded cursor-pointer hover:bg-slate-200 transition-colors group"
+                  :class="{ 'bg-slate-200': activeFileId === file.id }"
+                  @click="openFileInTab(file.id)"
+                >
+                  <i class="pi pi-file text-sm" style="color: var(--p-slate-600)"></i>
+                  <MInput
+                    v-model="file.name"
+                    outlined
+                    item-dynamic
+                    class="flex-1 text-ellipsis overflow-hidden"
+                  />
+                  <button
+                    class="ml-auto p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-slate-300"
+                    @click.stop="removeFile(file.id)"
+                  >
+                    <i class="pi pi-times text-xs"></i>
+                  </button>
+                </div>
+              </template>
             </div>
-            <Button size="small" text class="mt-2 w-full" @click="addNewFile">
+            <Button
+              size="small"
+              text
+              class="mt-2 w-full"
+              :disabled="isRestoring"
+              @click="addNewFile"
+            >
               <i class="pi pi-plus text-sm mr-1"></i>
               New File
             </Button>
@@ -147,8 +159,12 @@
       </ExpandableSidebar>
 
       <div class="flex-1 flex flex-col p-2" style="min-width: 0">
+       <div v-if="isRestoring" class="rqs-loading-state rqs-loading-state--main">
+          <i class="pi pi-spinner pi-spin" aria-hidden="true"></i>
+          <span>Loading scripts…</span>
+        </div>
        <MTabs
-  v-if="openTabs.length > 0"
+  v-else-if="openTabs.length > 0"
   :tabs="tabs"
   :dynamic="true"
   v-model="activeFileId"
@@ -195,7 +211,7 @@
         </MTabs>
 
         <div
-          v-if="openTabs.length === 0 && files.length > 0"
+          v-else-if="files.length > 0"
           class="flex-1 flex items-center justify-center text-gray-500"
         >
           <div class="text-center">
@@ -206,7 +222,7 @@
         </div>
 
         <div
-          v-else-if="files.length === 0"
+          v-else
           class="flex-1 flex items-center justify-center text-gray-500"
         >
           <div class="text-center">
@@ -433,7 +449,12 @@ const getModules = async () => {
 };
 
 const handleStreamingResponse = (
-  message: { isComplete: boolean; data: any },
+  message: {
+    isComplete: boolean;
+    data?: Log;
+    status?: string;
+    error?: unknown;
+  },
   fileId: string
 ) => {
   const file = files.value.find((f) => f.id === fileId);
@@ -441,11 +462,19 @@ const handleStreamingResponse = (
 
   console.log("[handleStreamingResponse]", message);
   if (message.isComplete) {
+    if (message.status === "error" || message.error) {
+      file.logs.push({
+        type: "error",
+        values: [String(message.error || "Script execution failed")]
+      });
+    }
     file.isExecuting = false;
     return;
   }
 
   const { data } = message;
+  if (!data || typeof data !== "object") return;
+
   const { type } = data;
 
   const allowedTypes = ["log", "warn", "error"];
@@ -505,13 +534,6 @@ const runFile = async (fileId: string) => {
         return;
       }
 
-      // Auto-convert console calls to N/log equivalents
-      let serverCode = file.code;
-      serverCode = serverCode.replace(/\bconsole\.log\b/g, "log.debug");
-      serverCode = serverCode.replace(/\bconsole\.warn\b/g, "log.audit");
-      serverCode = serverCode.replace(/\bconsole\.error\b/g, "log.error");
-      serverCode = serverCode.replace(/\bconsole\.info\b/g, "log.debug");
-
       if (!userId.value) {
         userId.value = await getExtensionUserId();
       }
@@ -519,7 +541,7 @@ const runFile = async (fileId: string) => {
       const response = await callApi(
         RequestRoutes.RUN_QUICK_SCRIPT_SERVER,
         {
-          code: serverCode,
+          code: file.code,
           userId: userId.value
         },
         ApiRequestType.NORMAL
@@ -663,42 +685,60 @@ onMounted(async () => {
   };
   document.addEventListener("visibilitychange", onHide);
 
-  // One-time migration from chrome.storage.local
-  if (typeof chrome !== "undefined" && chrome.storage?.local) {
-    await new Promise<void>((resolve) => {
-      chrome.storage.local.get(
-        ["cachedFiles", "cachedOpenTabs", "cachedActiveTab"],
-        async (result) => {
-          const existingFiles = await getAllScriptFiles();
-          if (existingFiles.length === 0 && Array.isArray(result.cachedFiles) && result.cachedFiles.length > 0) {
-            await bulkUpsertScriptFiles(result.cachedFiles.map((f: any) => ({
-              fileId: f.id || generateId(),
-              name: f.name || "script.js",
-              code: f.code || "",
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString()
-            })));
-            if (Array.isArray(result.cachedOpenTabs)) {
-              await setRQSUiState("openTabs", result.cachedOpenTabs);
-            }
-            if (result.cachedActiveTab) {
-              await setRQSUiState("activeTab", result.cachedActiveTab);
-            }
-            chrome.storage.local.remove(["cachedFiles", "cachedOpenTabs", "cachedActiveTab"]);
-          }
-          resolve();
-        }
-      );
+  const readLocalStorage = (keys: string[]) =>
+    new Promise<Record<string, any>>((resolve) => {
+      chrome.storage.local.get(keys, (result) => resolve(result));
     });
-  }
 
-  // Restore from IndexedDB
+  // Restore IndexedDB first. Legacy storage is consulted only when the current
+  // database is actually empty, avoiding an extra round trip on every mount.
   try {
-    const [storedFiles, storedOpenTabs, storedActiveTab] = await Promise.all([
+    let [storedFiles, storedOpenTabs, storedActiveTab] = await Promise.all([
       getAllScriptFiles(),
       getRQSUiState<string[]>("openTabs", []),
       getRQSUiState<string>("activeTab", "")
     ]);
+
+    if (
+      storedFiles.length === 0 &&
+      typeof chrome !== "undefined" &&
+      chrome.storage?.local
+    ) {
+      const legacy = await readLocalStorage([
+        "cachedFiles",
+        "cachedOpenTabs",
+        "cachedActiveTab"
+      ]);
+
+      if (Array.isArray(legacy.cachedFiles) && legacy.cachedFiles.length > 0) {
+        const now = new Date().toISOString();
+        storedFiles = legacy.cachedFiles.map((file: any) => ({
+          fileId: file.id || generateId(),
+          name: file.name || "script.js",
+          code: file.code || "",
+          createdAt: now,
+          updatedAt: now
+        }));
+        storedOpenTabs = Array.isArray(legacy.cachedOpenTabs)
+          ? legacy.cachedOpenTabs
+          : [];
+        storedActiveTab =
+          typeof legacy.cachedActiveTab === "string"
+            ? legacy.cachedActiveTab
+            : "";
+
+        await Promise.all([
+          bulkUpsertScriptFiles(storedFiles),
+          setRQSUiState("openTabs", storedOpenTabs),
+          setRQSUiState("activeTab", storedActiveTab)
+        ]);
+        chrome.storage.local.remove([
+          "cachedFiles",
+          "cachedOpenTabs",
+          "cachedActiveTab"
+        ]);
+      }
+    }
 
     const restoredFiles: ScriptFile[] = storedFiles.map((f) => ({
       id: f.fileId,
@@ -720,17 +760,10 @@ onMounted(async () => {
         ? storedActiveTab
         : validTabs[0] || "";
 
-    // Get or generate user ID
-    userId.value = await getExtensionUserId();
-  } catch (error) {
-    console.error("Restore from IndexedDB failed:", error);
-    openTabs.value = [];
-    activeFileId.value = "";
-  }
-
-  // Pick up any pending file transferred from SuiteQL Editor
-  if (typeof chrome !== "undefined" && chrome.storage?.local) {
-    chrome.storage.local.get(["rqs_pendingFile"], (result) => {
+    // Pick up any pending file transferred from SuiteQL Editor before exposing
+    // the restored state, so the view never flashes a stale/empty layout.
+    if (typeof chrome !== "undefined" && chrome.storage?.local) {
+      const result = await readLocalStorage(["rqs_pendingFile"]);
       if (result.rqs_pendingFile && typeof result.rqs_pendingFile === "object") {
         const pf = result.rqs_pendingFile as any;
         const pendingFile: ScriptFile = {
@@ -740,15 +773,54 @@ onMounted(async () => {
           logs: [],
           isExecuting: false
         };
-        files.value = [...files.value, pendingFile];
-        openTabs.value = [...openTabs.value, pendingFile.id];
+
+        const existingIndex = files.value.findIndex(
+          (file) => file.id === pendingFile.id
+        );
+        if (existingIndex >= 0) {
+          files.value.splice(existingIndex, 1, pendingFile);
+        } else {
+          files.value.push(pendingFile);
+        }
+        if (!openTabs.value.includes(pendingFile.id)) {
+          openTabs.value.push(pendingFile.id);
+        }
         activeFileId.value = pendingFile.id;
+
+        const now = new Date().toISOString();
+        await Promise.all([
+          bulkUpsertScriptFiles([
+            {
+              fileId: pendingFile.id,
+              name: pendingFile.name,
+              code: pendingFile.code,
+              createdAt: now,
+              updatedAt: now
+            }
+          ]),
+          setRQSUiState("openTabs", [...openTabs.value]),
+          setRQSUiState("activeTab", activeFileId.value)
+        ]);
         chrome.storage.local.remove("rqs_pendingFile");
       }
-    });
+    }
+  } catch (error) {
+    console.error("Restore from IndexedDB failed:", error);
+    openTabs.value = [];
+    activeFileId.value = "";
+  } finally {
+    isRestoring.value = false;
   }
 
-  isRestoring.value = false;
+  // This value is only needed for server execution and must not hold up file
+  // restoration or editor rendering.
+  getExtensionUserId()
+    .then((id) => {
+      userId.value = id;
+    })
+    .catch((error) => {
+      console.error("Failed to restore extension user ID:", error);
+    });
 });
 
 
@@ -764,6 +836,23 @@ onBeforeUnmount(async () => {
 </script>
 
 <style scoped>
+.rqs-loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--p-slate-500);
+  font-size: 0.75rem;
+}
+
+.rqs-loading-state--sidebar {
+  min-height: 4rem;
+}
+
+.rqs-loading-state--main {
+  flex: 1;
+}
+
 .sidebar-section {
   padding: 0.75rem;
   margin-bottom: 0.5rem;
