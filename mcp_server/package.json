@@ -15,7 +15,9 @@
   "type": "commonjs",
   "pkg": {
     "assets": [
-      "node_modules/pdf-parse/lib/pdf.js/**/*"
+      "dashboardTools.json",
+      "node_modules/pdf-parse/lib/pdf.js/**/*",
+      "customToolBrowserGuide.json"
     ]
   },
   "dependencies": {

@@ -14,6 +14,7 @@ export const initMagicNetsuiteSettings = async () => {
     extensionToggle: "Alt+Shift+U",
     drawerOpen: "ctrl+k",
     modulesSearch: "ctrl+m",
+    dashboardWheelShortcut: 'ctrl+alt+d',
     elementScreenshotShortcut: "ctrl+shift+s",
     openOnCustomizationPage: true,
     dashboardPreviewEnabled: false

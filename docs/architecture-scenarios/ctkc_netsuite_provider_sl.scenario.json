@@ -1,0 +1,26 @@
+{
+  "entryPoint": "onRequest",
+  "context": "SUITELET",
+  "clock": "2026-09-25T12:00:00.000Z",
+  "seed": 42,
+  "parameters": {},
+  "user": {
+    "id": 1,
+    "role": "ADMINISTRATOR",
+    "name": "Local test user"
+  },
+  "records": [],
+  "files": [],
+  "queryFixtures": [],
+  "httpFixtures": [],
+  "apiFixtures": [],
+  "input": {
+    "method": "GET",
+    "parameters": {
+      "action": "list_models"
+    },
+    "modelFamilies": {
+      "COHERE_COMMAND_R": "cohere.command-r"
+    }
+  }
+}

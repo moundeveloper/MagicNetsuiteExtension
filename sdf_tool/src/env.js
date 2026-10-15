@@ -38,9 +38,16 @@ function suitecloudEntry() {
     const candidates = [
         path.join(baseDir(), 'node_modules', '@oracle', 'suitecloud-cli', 'src', 'suitecloud.js')
     ];
+    // The normal packaged/local install is already on disk; avoid running npm
+    // or looking inside pkg's snapshot when this entry exists.
+    if (fs.existsSync(candidates[0])) return candidates[0];
     try {
-        // dev / global fallbacks
-        candidates.push(require.resolve('@oracle/suitecloud-cli/src/suitecloud.js'));
+        // Development fallback only. Oracle's CLI runs under external Node and
+        // is installed beside the exe by packageSdfTool.ps1; it must not be
+        // pulled into pkg's snapshot (its commands use dynamic requires).
+        if (!IS_PKG) {
+            candidates.push(require.resolve('@oracle/suitecloud-cli/src/suitecloud.js', 'must-exclude'));
+        }
     } catch (_) { /* not installed locally */ }
     try {
         const globalRoot = execFileSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true }).trim();

@@ -4,7 +4,7 @@ import {
   getRouteMap,
   isRouteVisibleInNavigation,
   RouteStatus,
-  RouteStatusColors
+  RouteStatusColors,
 } from "../router/routesMap";
 import { InputText } from "primevue";
 
@@ -18,16 +18,53 @@ import {
   getRecentViews,
   RECENT_VIEWS_CHANGED_EVENT,
   removeRecentView,
-  type RecentView
+  type RecentView,
 } from "../utils/recentViews";
 import { hasAdminAccess } from "../utils/adminAccess";
+import {
+  dashboardCommand,
+  observeDashboards,
+} from "../features/dashboards/api";
+import {
+  openSavedDashboard,
+  useDashboardLaunch,
+} from "../features/dashboards/launch";
+const { preferences: dashboardPreferences, update: updateDashboardLaunch } =
+  useDashboardLaunch();
+const dashboards = ref<
+  { id: string; title: string; mode: string; account?: string }[]
+>([]);
+const dashboardError = ref("");
+const pinnedDashboards = computed(() =>
+  dashboards.value.filter(
+    (d) =>
+      dashboardPreferences.value[d.id]?.pinned &&
+      d.title.toLowerCase().includes(searchFeatures.value.toLowerCase()),
+  ),
+);
+let stopDashboards: (() => void) | undefined;
+async function loadDashboards() {
+  try {
+    dashboards.value = await dashboardCommand("list");
+    dashboardError.value = "";
+  } catch (e) {
+    dashboardError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+async function unpinDashboard(id: string) {
+  try {
+    await updateDashboardLaunch(id, { pinned: false });
+  } catch (e) {
+    dashboardError.value = String(e);
+  }
+}
 const { settings, isSettingsLoaded } = useSettings();
 
 const searchFeatures = ref("");
 const recentViews = ref<RecentView[]>([]);
 const recentEnvironment = ref("unknown");
 const recentAccount = computed(
-  () => recentEnvironment.value.split(".")[0]?.toUpperCase() || "UNKNOWN"
+  () => recentEnvironment.value.split(".")[0]?.toUpperCase() || "UNKNOWN",
 );
 const props = defineProps<{
   vhOffset: number;
@@ -48,7 +85,7 @@ const allFeatures = computed(() => {
       route.status !== RouteStatus.deprecated &&
       (!route.adminOnly || hasAdminAccess.value) &&
       (privilegeLevel === Privilege.ADMIN ||
-        route.status === RouteStatus.release)
+        route.status === RouteStatus.release),
   );
 });
 
@@ -113,22 +150,25 @@ const handleRecentViewsChanged = () => void loadRecentViews();
 const handleEnvironmentChanged = () => void loadRecentViews();
 
 onMounted(() => {
+  void loadDashboards();
+  stopDashboards = observeDashboards(() => void loadDashboards());
   void loadRecentViews();
   window.addEventListener(RECENT_VIEWS_CHANGED_EVENT, handleRecentViewsChanged);
   window.addEventListener(
     "magic-netsuite-environment-changed",
-    handleEnvironmentChanged
+    handleEnvironmentChanged,
   );
 });
 
 onBeforeUnmount(() => {
+  stopDashboards?.();
   window.removeEventListener(
     RECENT_VIEWS_CHANGED_EVENT,
-    handleRecentViewsChanged
+    handleRecentViewsChanged,
   );
   window.removeEventListener(
     "magic-netsuite-environment-changed",
-    handleEnvironmentChanged
+    handleEnvironmentChanged,
   );
 });
 
@@ -137,7 +177,7 @@ const testPing = async () => {
   const result = await callApi(
     "PING" as any,
     { delay: 30000 },
-    ApiRequestType.NORMAL
+    ApiRequestType.NORMAL,
   );
   console.log("Ping result:", result);
 };
@@ -157,6 +197,49 @@ const testPing = async () => {
     data-ignore
     class="flex flex-col gap-4 overflow-y-auto p-2"
   >
+    <p v-if="dashboardError" role="alert">{{ dashboardError }}</p>
+    <MPanel
+      v-if="pinnedDashboards.length"
+      expanded
+      toggleable
+      outline
+      header="Pinned dashboards"
+    >
+      <div class="pinned-dashboard-grid">
+        <article
+          v-for="dashboard in pinnedDashboards"
+          :key="dashboard.id"
+          class="pinned-dashboard"
+        >
+          <button
+            class="pinned-dashboard-open"
+            @click="openSavedDashboard(dashboard)"
+          >
+            <i class="pi pi-th-large" />
+            <span
+              ><strong>{{ dashboard.title }}</strong
+              ><small
+                >{{ dashboard.mode
+                }}<template v-if="dashboard.account">
+                  · {{ dashboard.account }}</template
+                ><template v-if="dashboardPreferences[dashboard.id]?.shortcut">
+                  · {{ dashboardPreferences[dashboard.id]?.shortcut }}</template
+                ></small
+              ></span
+            >
+            <i class="pi pi-arrow-up-right" />
+          </button>
+          <button
+            class="pinned-dashboard-unpin"
+            :aria-label="`Unpin ${dashboard.title}`"
+            title="Unpin from Home"
+            @click="unpinDashboard(dashboard.id)"
+          >
+            <i class="pi pi-star-fill" />
+          </button>
+        </article>
+      </div>
+    </MPanel>
     <MPanel
       v-if="recentViews.length > 0 && !searchFeatures"
       expanded
@@ -169,7 +252,11 @@ const testPing = async () => {
           Continue in
           <strong>{{ recentAccount }}</strong>
         </span>
-        <button class="recent-clear" title="Clear workspace trail" @click="clearRecent">
+        <button
+          class="recent-clear"
+          title="Clear workspace trail"
+          @click="clearRecent"
+        >
           Clear
         </button>
       </div>
@@ -187,7 +274,10 @@ const testPing = async () => {
             </span>
             <span class="recent-copy">
               <strong>{{ view.label }}</strong>
-              <small>{{ view.section }} · {{ formatRecentTime(view.visitedAt) }}</small>
+              <small
+                >{{ view.section }} ·
+                {{ formatRecentTime(view.visitedAt) }}</small
+              >
             </span>
             <span
               class="recent-remove"
@@ -225,7 +315,7 @@ const testPing = async () => {
             class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
             :class="{
               'feature-development': feature.status !== RouteStatus.release,
-              'feature-disabled': isDisabled(feature)
+              'feature-disabled': isDisabled(feature),
             }"
             @click="
               () => {
@@ -246,7 +336,7 @@ const testPing = async () => {
               v-if="feature.status !== RouteStatus.release"
               class="feature-status"
               :style="{
-                backgroundColor: RouteStatusColors[feature.status] || ''
+                backgroundColor: RouteStatusColors[feature.status] || '',
               }"
             >
               {{ feature.status }}
@@ -279,7 +369,7 @@ const testPing = async () => {
             class="menu-item aspect-square flex flex-col items-center justify-center position-relative"
             :class="{
               'feature-development': feature.status !== RouteStatus.release,
-              'feature-disabled': isDisabled(feature)
+              'feature-disabled': isDisabled(feature),
             }"
             @click="
               () => {
@@ -300,7 +390,7 @@ const testPing = async () => {
               v-if="feature.status !== RouteStatus.release"
               class="feature-status"
               :style="{
-                backgroundColor: RouteStatusColors[feature.status] || ''
+                backgroundColor: RouteStatusColors[feature.status] || '',
               }"
             >
               {{ feature.status }}
@@ -315,6 +405,60 @@ const testPing = async () => {
 </template>
 
 <style scoped>
+.pinned-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.65rem;
+  padding: 0.3rem;
+}
+.pinned-dashboard {
+  display: flex;
+  border: 1px solid var(--p-content-border-color);
+  border-radius: 0.6rem;
+  background: var(--p-content-background);
+}
+.pinned-dashboard:hover {
+  border-color: var(--p-primary-color);
+}
+.pinned-dashboard-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 1rem;
+  background: transparent;
+  border: 0;
+  color: var(--p-text-color);
+  text-align: left;
+  cursor: pointer;
+}
+.pinned-dashboard-open > span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.pinned-dashboard-open strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pinned-dashboard-open small {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+}
+.pinned-dashboard-open > i {
+  color: var(--p-primary-color);
+}
+.pinned-dashboard-unpin {
+  border: 0;
+  background: transparent;
+  color: var(--p-primary-color);
+  padding: 0.7rem;
+  cursor: pointer;
+  align-self: flex-start;
+}
 .recent-panel-heading {
   display: flex;
   align-items: center;

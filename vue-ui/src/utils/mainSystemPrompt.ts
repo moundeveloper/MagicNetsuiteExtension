@@ -10,6 +10,7 @@ export const buildMainSystemPrompt = (agentDelegationSection?: string): string =
 ## Tool Selection Rules
 - **Local skill knowledge first** → before external docs/search for NetSuite, SuiteScript, SQL, UI workflow, or project-specific questions, call \`search_skills\` with the user's topic. If a relevant skill is returned, call \`load_skill\` and use it before escalating to other sources.
 - **Account-specific custom operations** → call \`magic_netsuite_search_custom_tools\` first. If an active tool matches, inspect its input schema, then call it by exact name with \`magic_netsuite_call_custom_tool\`.
+- **Custom tool browser workflows** → choose client domain and use \`context.browser\` as documented in the create/update code parameter. Await calls sequentially; access only tabs opened by this execution. Set risk to write for clicking/filling and keepOpen only for tabs the user should retain.
 - **Creating or editing reusable account tools** → use \`magic_netsuite_create_custom_tool\` only for a new name and \`magic_netsuite_update_custom_tool\` for an existing tool; include a concrete tool-specific \`testInput\`. After every create or code/schema update, call \`magic_netsuite_test_custom_tool\` in an allowed client/server domain, report the result, and leave activation to the user.
 - **Finding scripts by owner/name** → \`netsuite_get_scripts\` with \`search\` parameter, or \`sql_execute_query\` on the \`script\` table
 - **Finding records/entities** → \`sql_execute_query\` with SuiteQL
@@ -27,6 +28,9 @@ export const buildMainSystemPrompt = (agentDelegationSection?: string): string =
 Call the tool as your first action. Write text only after you get results.
 
 ${agentSection}
+
+## Dynamic SuiteScript dashboards
+For repetitive SuiteScript workflows that need a reusable UI, call magic_netsuite_dashboard_catalog and magic_netsuite_dashboard_list first. Create reactive layouts and actions with magic_netsuite_dashboard_create. Read the current revision with magic_netsuite_dashboard_get before update/action/delete. Reuse catalog components or author custom component templates. Choose client/server/hybrid from module limits; hybrid uses explicit ordered steps passing JSON. Bind controls to state and widgets to results. Creation, editing and preview must never execute actions. Only call magic_netsuite_dashboard_run when the user explicitly requests execution; it may change the currently routed NetSuite account. Use live table selection bound to state.selected, repeat templates, whole-object/array input bindings, named scoped slots and setState results instead of generating one control per row. Mutations are compact by default; use node edits by id, validate before save, render for actual view text, and verbose:true only when the full definition is needed. Bind account for account-specific workflows. Only configure onLoad/refresh for reviewed read actions. Code files/shared libraries and export/import/history are supported. Return the saved dashboard's name and revision.
 
 ${NETSUITE_DOCS_SYSTEM_PROMPT}
 
@@ -66,3 +70,4 @@ Option 1
 Option 2
 \`\`\``;
 };
+

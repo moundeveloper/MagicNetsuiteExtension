@@ -3123,7 +3123,7 @@ const handlers = {
   },
   RUN_QUICK_SCRIPT: async ({
     modules,
-    payload: { code, requestId, mode, bridgeCapability }
+    payload: { code, requestId, mode, bridgeCapability, browserSession }
   }) => {
     console.log("Run Quick Script action received", { mode });
     try {
@@ -3132,7 +3132,8 @@ const handlers = {
         code,
         requestId,
         mode,
-        bridgeCapability
+        bridgeCapability,
+        browserSession
       });
 
       // For streaming, don't return anything here - data flows through postMessage

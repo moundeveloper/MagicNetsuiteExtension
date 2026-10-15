@@ -116,27 +116,19 @@ export class NormalRequestHandler {
     window.addEventListener("message", this.handleResponse);
 
     this.timeoutId = setTimeout(() => {
-      if (this.retryAttempts < MAX_RETRY_ATTEMPTS) {
-        console.warn(
-          `[Request ${this.requestId}] Timeout, retrying... (${this.retryAttempts + 1}/${MAX_RETRY_ATTEMPTS})`
-        );
-        this.cleanup();
-        this.sendResponse({
-          status: "retry",
-          requestId: this.requestId,
-          attempt: this.retryAttempts + 1
-        });
-      } else {
-        console.error(
-          `[Request ${this.requestId}] Timeout after ${MAX_RETRY_ATTEMPTS} attempts`
-        );
-        this.sendResponse({
-          status: "error",
-          error: "Request timeout",
-          requestId: this.requestId
-        });
-        this.cleanup();
-      }
+      // No caller re-sends on a "retry" status: background callers treated it
+      // as success (e.g. SuiteQL returned 0 rows). Always report an error.
+      const message =
+        `NetSuite page did not respond within ${STREAM_TIMEOUT}ms. ` +
+        "The operation may still complete in NetSuite; verify before retrying a write.";
+      console.error(`[Request ${this.requestId}] ${message} (attempt ${this.retryAttempts + 1}/${MAX_RETRY_ATTEMPTS})`);
+      this.sendResponse({
+        status: "error",
+        error: "Request timeout",
+        message,
+        requestId: this.requestId
+      });
+      this.cleanup();
     }, STREAM_TIMEOUT);
 
     console.log(`[Request ${this.requestId}] Started`);

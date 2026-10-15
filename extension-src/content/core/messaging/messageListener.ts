@@ -153,6 +153,19 @@ const extractHelpPageContent = (root: Element, pageUrl: string) => {
 };
 
 export const setupMessageListener = (bridgeCapability: string) => {
+  const browserTokens = new Set<string>();
+  window.addEventListener('message', async event => {
+    const message = event.data;
+    if (event.source !== window || event.origin !== location.origin ||
+        message?.type !== 'CUSTOM_TOOL_BROWSER_REQUEST' || message.capability !== bridgeCapability ||
+        !browserTokens.has(message.token) || message.operation === 'begin') return;
+    let response;
+    try {
+      response = await chrome.runtime.sendMessage({ type: 'CUSTOM_TOOL_BROWSER', token: message.token, operation: message.operation, args: message.args });
+    } catch (error) { response = { error: String(error?.message || error) }; }
+    if (message.operation === 'dispose') browserTokens.delete(message.token);
+    window.postMessage({ type: 'CUSTOM_TOOL_BROWSER_RESPONSE', capability: bridgeCapability, token: message.token, id: message.id, ...response }, location.origin);
+  });
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "stream-api") return;
 
@@ -203,6 +216,8 @@ export const setupMessageListener = (bridgeCapability: string) => {
   // ============================================================================
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    // These controls are handled by the isolated-world workspace listener.
+    if (msg.type === 'OPEN_NAVIGATOR_WIDGET' || msg.type === 'NAVIGATOR_PAGE_VISIBLE' || msg.type === 'NAVIGATOR_WIDGET_EXISTS') return;
     const { action, data, mode = REQUEST_MODES.NORMAL } = msg;
     const requestId = generateRequestId();
 
@@ -439,14 +454,21 @@ export const setupMessageListener = (bridgeCapability: string) => {
     requestManager.addRequest(requestId, handler);
     handler.start();
 
-    window.postMessage(
-      {
-        type: MESSAGE_TYPES.FROM_EXTENSION,
-        capability: bridgeCapability,
-        payload: { ...msg, requestId }
-      },
-      window.location.origin
-    );
+    const dispatch = async () => {
+      const payload = { ...msg, requestId, data: { ...msg.data } };
+      if (action === 'RUN_QUICK_SCRIPT' && msg.data?.customToolBrowser) {
+        const response = await chrome.runtime.sendMessage({ type: 'CUSTOM_TOOL_BROWSER', operation: 'begin', risk: msg.data.customToolBrowser.risk });
+        if (response.error) throw new Error(response.error);
+        browserTokens.add(response.result.token);
+        payload.data.browserSession = response.result.token;
+        setTimeout(() => browserTokens.delete(response.result.token), 10 * 60 * 1000);
+      }
+      window.postMessage({ type: MESSAGE_TYPES.FROM_EXTENSION, capability: bridgeCapability, payload }, window.location.origin);
+    };
+    dispatch().catch(error => {
+      handler.cleanup();
+      sendResponse({ status: 'error', message: String(error?.message || error) });
+    });
 
     return true;
   });

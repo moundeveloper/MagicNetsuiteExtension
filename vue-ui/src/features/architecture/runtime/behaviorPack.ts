@@ -1,0 +1,42 @@
+/** Versioned local rules. All runs remain APPROXIMATE until account conformance. */
+export const behaviorPack = {
+  id: "local-server-2026.2-v1",
+  fidelity: "APPROXIMATE",
+  supportedReleases: ["2026.1", "2026.2"],
+  limits: {
+    UserEventScript: 1000,
+    Suitelet: 1000,
+    Restlet: 5000,
+    ScheduledScript: 10000,
+    getInputData: 10000,
+    map: 1000,
+    reduce: 5000,
+    summarize: 10000,
+  },
+  recordCosts: {
+    create: [2, 5, 10],
+    load: [2, 5, 10],
+    save: [4, 10, 20],
+    submitFields: [2, 5, 10],
+    delete: [4, 10, 20],
+  },
+  costs: {
+    "N/query.runSuiteQL": 10,
+    "N/file.load": 10,
+    "N/file.save": 20,
+    "N/file.delete": 20,
+    "N/https.request": 10,
+    "N/task.submit": 20,
+    "N/search.lookupFields": 1,
+    "N/search.load": 5,
+    "N/search.getRange": 10,
+    "N/search.each": 10,
+    "N/llm.generateText": 100,
+  },
+  sources: [
+    "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_157072844224.html",
+    "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_4480364878.html",
+    "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_4407992281.html",
+    "https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_4387811519.html",
+  ],
+};

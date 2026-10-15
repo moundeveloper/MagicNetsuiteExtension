@@ -2,6 +2,7 @@
 
 "use strict";
 
+const customToolBrowserGuide = require("./customToolBrowserGuide.json");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -633,6 +634,17 @@ let bridgeBuffer = "";
 let pending = new Map();
 let idCounter = 0;
 let currentAccount = null; // Account ID from latest extension response
+// Account this MCP session explicitly switched to. Sent with every tool call so
+// the extension routes this session to its own account even when another
+// session (or the extension UI) changed the global preferred account.
+let sessionTargetAccount = null;
+// Timeout ladder: extension internals < native host (55s) < this (57s) <
+// typical MCP client (60s), so the most specific timeout message reaches the
+// model instead of a generic client-side "Request timed out".
+const EXTENSION_CALL_TIMEOUT_MS = Math.max(
+  15000,
+  Number(process.env.MAGIC_NETSUITE_MCP_CALL_TIMEOUT_MS) || 57000
+);
 
 function writeBridgeMessage(socket, message) {
   socket.write(JSON.stringify(message) + "\n");
@@ -676,7 +688,12 @@ function attachBridgeHandlers(socket) {
       pending.delete(msg.requestId);
 
       if (msg.success) cb.resolve(msg.result);
-      else cb.reject(new Error(msg.error || "Extension error"));
+      else {
+        const error = new Error(msg.error || "Extension tool call failed without an error message.");
+        if (msg.errorCode) error.code = msg.errorCode;
+        if (msg.errorDetails) error.details = msg.errorDetails;
+        cb.reject(error);
+      }
     }
   });
 
@@ -762,9 +779,17 @@ async function callExtension(method, params) {
     const timer = setTimeout(() => {
       if (pending.has(requestId)) {
         pending.delete(requestId);
-        reject(new Error("Extension timeout"));
+        const toolName =
+          method === "tools/call" ? String(params?.name || "unknown tool") : String(method);
+        reject(
+          new Error(
+            `Native bridge did not return a response for "${toolName}" within ${EXTENSION_CALL_TIMEOUT_MS}ms. ` +
+              "The request may still be running in the extension or NetSuite. This timeout alone is not evidence " +
+              "that the Chrome extension is disconnected or broken."
+          )
+        );
       }
-    }, 10000);
+    }, EXTENSION_CALL_TIMEOUT_MS);
 
     pending.set(requestId, {
       resolve: (r) => {
@@ -778,6 +803,13 @@ async function callExtension(method, params) {
     });
 
     const payload = { requestId, method, params };
+    if (
+      method === "tools/call" &&
+      sessionTargetAccount &&
+      params?.name !== "netsuite_switch_environment"
+    ) {
+      payload.expectedAccount = sessionTargetAccount;
+    }
     log("→ native bridge", payload);
 
     try {
@@ -946,7 +978,7 @@ function resolveSdfDeployBin() {
 // currently selected MCP account (populated from bridge responses; nudged with
 // a cheap ping if nothing has talked to the extension yet).
 async function resolveSdfAccountId(explicit) {
-  let accountId = explicit || currentAccount;
+  let accountId = explicit || sessionTargetAccount || currentAccount;
   if (!accountId) {
     try { await callExtension("tools/call", { name: "ping", arguments: {} }); }
     catch { /* extension may be down; fall through */ }
@@ -1487,7 +1519,9 @@ async function handleMcp(req) {
           },
           {
             name: "ping",
-            description: "Ping the Chrome extension. Returns pong.",
+            description:
+              "Check bridge connectivity and report the configured/selected NetSuite routing target. " +
+              "This is a local diagnostic; it does not execute in the NetSuite server runtime and must not be used to prove runtime.accountId.",
             inputSchema: {
               type: "object",
               properties: { message: { type: "string" } }
@@ -1661,7 +1695,7 @@ async function handleMcp(req) {
                 tags: { type: "array", items: { type: "string" } },
                 domain: { type: "string", enum: ["client", "server", "both"] },
                 modules: { type: "array", items: { type: "string" } },
-                inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string" },
+                inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string", description: customToolBrowserGuide.codeDescription },
                 risk: { type: "string", enum: ["read", "write"] }
               },
               required: ["name", "displayName", "description", "domain", "modules", "inputSchema", "testInput", "code", "risk"]
@@ -1677,7 +1711,7 @@ async function handleMcp(req) {
                 description: { type: "string" }, tags: { type: "array", items: { type: "string" } },
                 domain: { type: "string", enum: ["client", "server", "both"] },
                 modules: { type: "array", items: { type: "string" } }, inputSchema: { type: "object" }, testInput: { type: "object" },
-                code: { type: "string" }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
+                code: { type: "string", description: customToolBrowserGuide.codeDescription }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
               },
               required: ["toolName"]
             }
@@ -1713,7 +1747,8 @@ async function handleMcp(req) {
               "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
               "This also switches the SDF project authentication. If the account has no SuiteCloud login, " +
               "one login console/browser prompt is opened in the background. Pass an account ID such as " +
-              "1964539 or 9937091_SB1. Empty accountId restores active-tab routing.",
+              "1964539 or 9937091_SB1. Account-specific Suitelet routing is cleared and server runtime identity " +
+              "is validated before server-side execution. Empty accountId restores active-tab routing.",
             inputSchema: {
               type: "object",
               properties: {
@@ -3112,7 +3147,8 @@ async function handleMcp(req) {
           {
             name: "netsuite_server_info",
             description:
-              "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in extension settings.",
+              "Verify and return the deployed MCP Suitelet's actual server-side runtime.accountId. " +
+              "Fails with MCP_RUNTIME_ACCOUNT_MISMATCH when it differs from the selected MCP account; ping is not a substitute for this check.",
             inputSchema: {
               type: "object",
               properties: {}
@@ -3154,14 +3190,16 @@ async function handleMcp(req) {
           }
         ]
       };
+      result.tools.push(...require('./dashboardTools.json'));
       result.tools = mergeCustomToolDefinitions(result.tools);
       result.tools = result.tools.map(addSkillPreflightToToolDefinition);
     }
 
     // suiteql_get_guide is handled locally — no extension needed
     else if (method === "tools/call" && params?.name === "suiteql_get_guide") {
-      const accountNote = currentAccount
-        ? `\n\n## CURRENT ACCOUNT\nYou are connected to NetSuite account: **${currentAccount}**`
+      const guideAccount = sessionTargetAccount || currentAccount;
+      const accountNote = guideAccount
+        ? `\n\n## CURRENT ACCOUNT\nYou are connected to NetSuite account: **${guideAccount}**`
         : "";
       result = {
         content: [{ type: "text", text: SUITEQL_GUIDE + accountNote }]
@@ -3170,6 +3208,9 @@ async function handleMcp(req) {
 
     // ✅ ONLY HERE we depend on extension
     else if (method === "tools/call") {
+      if (require('./dashboardTools.json').some(tool=>tool.name===params?.name)) {
+        result = await require('./dashboardFiles.js').callDashboardWithFiles(params.name,params.arguments||{},(name,args)=>callExtension('tools/call',{...params,name,arguments:args}));
+      }
       if(params?.name === "magic_netsuite_prepare_tool") {
         result = await prepareBoundTool(params);
       }
@@ -3204,6 +3245,7 @@ async function handleMcp(req) {
           // The extension switch succeeded, so keep local SDF routing in lockstep
           // even if the native bridge response did not include account metadata.
           currentAccount = requestedAccount;
+          sessionTargetAccount = requestedAccount;
           const sdfAuth = await prepareSdfAccountOnSwitch(requestedAccount);
           const extensionPayload = parseMcpTextPayload(extensionResult);
           result = {
@@ -3219,6 +3261,8 @@ async function handleMcp(req) {
             // whole switch as failed.
           };
         } else {
+          // Empty accountId restores active-tab routing for this session.
+          sessionTargetAccount = null;
           result = extensionResult;
         }
       }
@@ -3262,7 +3306,19 @@ async function handleMcp(req) {
           }
         ]
       };
+    } else if (method === "ping") {
+      result = {};
     } else {
+      // Notifications (no id) never get a response. Unknown requests must get
+      // one, otherwise the client waits until its own request timeout.
+      if (id === undefined || id === null) return;
+      const error = {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: `Method not found: ${method}` }
+      };
+      process.stdout.write(JSON.stringify(error) + "\n");
+      log("ERROR", error);
       return;
     }
 
@@ -3270,14 +3326,27 @@ async function handleMcp(req) {
     process.stdout.write(JSON.stringify(response) + "\n");
     log("→ OpenCode", response);
   } catch (err) {
-    const error = {
-      jsonrpc: "2.0",
-      id,
-      error: { code: -32000, message: err.message }
-    };
+    const message = err instanceof Error ? err.message : String(err);
+    // Tool failures are tool results with isError, not JSON-RPC protocol
+    // errors. Some clients (Claude Desktop agent mode) tear down and respawn
+    // the server after a JSON-RPC error, which drops all per-session state.
+    const response = method === "tools/call"
+      ? {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            content: [{ type: "text", text: message }],
+            isError: true
+          }
+        }
+      : {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32000, message }
+        };
 
-    process.stdout.write(JSON.stringify(error) + "\n");
-    log("ERROR", error);
+    process.stdout.write(JSON.stringify(response) + "\n");
+    log("ERROR", response);
   }
 }
 

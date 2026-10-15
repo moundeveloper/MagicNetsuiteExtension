@@ -270,7 +270,7 @@ export const buildCustomToolExecutionCode = (tool: CustomToolRecord, input: Reco
     : `(async function(input, context) {\n${tool.code}\n})(__customToolInput, __customToolContext)`;
   return [
     `const __customToolInput = JSON.parse(${serializedInput});`,
-    `const __customToolContext = Object.freeze({ ...JSON.parse(${context}), modules: Object.freeze({ ${moduleObject} }) });`,
+    `const __customToolContext = Object.freeze({ ...JSON.parse(${context}), ${tool.domain === 'client' ? 'browser: __customToolBrowser,' : ''} modules: Object.freeze({ ${moduleObject} }) });`,
     `return ${invocation};`
   ].join("\n");
 };
@@ -295,7 +295,7 @@ const runCustomTool = async (
   const executionTool = { ...tool, domain: executionDomain };
   const response = await callApi(
     executionDomain === "server" ? RequestRoutes.RUN_QUICK_SCRIPT_SERVER : RequestRoutes.RUN_QUICK_SCRIPT,
-    { code: buildCustomToolExecutionCode(executionTool, input) }
+    { code: buildCustomToolExecutionCode(executionTool, input), ...(executionDomain === 'client' ? { customToolBrowser: { risk: tool.risk } } : {}) }
   );
   const execution = response.message as { result?: unknown; logs?: unknown; error?: unknown };
   if (execution?.error) throw new Error(String(execution.error));

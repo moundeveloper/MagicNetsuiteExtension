@@ -1,7 +1,15 @@
+import customToolBrowserGuide from '../mcp_server/customToolBrowserGuide.json';
 // This worker intentionally accepts messages and storage records from several
 // independently deployed extension surfaces. Keep those runtime contracts
 // permissive while the producers are migrated; TypeScript still validates the
 // syntax and strips the annotations during the production build.
+import { createDashboardService, DASHBOARDS_STORAGE_KEY, normalizeDashboardAccount } from '../shared/dashboards';
+import dashboardToolDefinitions from '../mcp_server/dashboardTools.json';
+import { DASHBOARD_LAUNCH_KEY, dashboardPath, reservedDashboardShortcuts, updateDashboardLaunchPreferences } from '../shared/dashboardLaunch';
+import { getPreferredViews } from '../shared/navigationViews';
+import { registerNavigatorWorkspace, openInCurrentWorkspace } from './navigationWorkspace';
+import { registerCustomToolBrowser } from './customToolBrowser';
+registerCustomToolBrowser();
 type AnyRecord = Record<string, any>;
 type RuntimeMessage = AnyRecord & {
   type?: string;
@@ -3433,6 +3441,10 @@ const CUSTOM_RECORD_FIELD_TYPE_HINTS = [
 
 // PORT LISTENERS
 chrome.runtime.onConnect.addListener((port: any) => {
+  if (port.name === 'navigatorWorkspace') {
+    registerNavigatorWorkspace(port);
+    return;
+  }
   const connectPortMap = {
     [CONNECT_PORT.SIDE_PANEL]: setPanelState,
     [CONNECT_PORT.DISCONNECT]: disconnectPort
@@ -3535,6 +3547,10 @@ chrome.runtime.onMessage.addListener(
   ) => {
   console.log("Message: ", message.type);
   const messageMap = {
+    DASHBOARD_COMMAND: handleDashboardCommand,
+    DASHBOARD_LAUNCH_PREFERENCES: handleDashboardLaunchPreferences,
+    OPEN_SAVED_DASHBOARD: openSavedDashboardFromNetsuite,
+    OPEN_PREFERRED_VIEW: openPreferredViewFromNetsuite,
     CLOSE_PANEL: closeResetPanel,
     OPEN_MAIN_SETUP: createTabOnMainSetup,
     OPEN_NON_ACTIVE_TAB: openNonActiveTab,
@@ -4171,6 +4187,7 @@ const recoverDashboardPreviewSession = ({ message, sendResponse }) => {
 const ensureDashboardPreviewOpen = async (message, sender) => {
     let enablerTab = null;
     let dashboardTab = null;
+    let openingSessionId = '';
     try {
       // First and absolute rule: if the Chrome group already exists, open it.
       // Nothing else in this flow is allowed to run before this check.
@@ -4201,6 +4218,7 @@ const ensureDashboardPreviewOpen = async (message, sender) => {
 
       const sourceUrl = new URL(sourceTab.url);
       const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      openingSessionId = sessionId;
       const accountId = getAccountIdFromUrl(sourceUrl.href);
 
       enablerTab = await dashboardTabsCreate({
@@ -4219,11 +4237,22 @@ const ensureDashboardPreviewOpen = async (message, sender) => {
         DASHBOARD_ENABLER_TAB_TITLE
       );
 
+      // The Vue app can mount and run onLoad before tabs.onUpdated reports
+      // complete. Publish its execution context before creating that page.
+      const openingSessions = await getDashboardPreviewSessions();
+      openingSessions[sessionId] = {
+        sessionId, accountId, accountDomain: sourceUrl.hostname,
+        sourceTabId: sourceTab.id, enablerTabId: enablerTab.id,
+        dashboardTabId: null, groupId: TAB_GROUP_ID_NONE, createdAt: Date.now(),
+      };
+      await saveDashboardPreviewSessions(openingSessions);
+
       const dashboardUrl = new URL(
         chrome.runtime.getURL("dist/vue-ui/index.html")
       );
       dashboardUrl.searchParams.set("magicDashboardPreview", sessionId);
       dashboardUrl.searchParams.set("account", accountId);
+      if (message.dashboardRoute) dashboardUrl.searchParams.set('initialRoute', message.dashboardRoute);
 
       dashboardTab = await dashboardTabsCreate({
         url: dashboardUrl.href,
@@ -4261,6 +4290,11 @@ const ensureDashboardPreviewOpen = async (message, sender) => {
 
       return { ok: true, sessionId };
     } catch (error) {
+      if (openingSessionId) {
+        const sessions = await getDashboardPreviewSessions().catch(() => ({}));
+        delete sessions[openingSessionId];
+        await saveDashboardPreviewSessions(sessions).catch(() => undefined);
+      }
       if (dashboardTab?.id) {
         await dashboardTabsRemove(dashboardTab.id).catch(() => undefined);
       }
@@ -4289,6 +4323,65 @@ const openDashboardPreview = ({ message, sender, sendResponse }) => {
 
   return true;
 };
+
+let dashboardLaunchWriteQueue = Promise.resolve();
+function handleDashboardLaunchPreferences({ message, sender, sendResponse }) {
+  if (sender.id !== chrome.runtime.id || !String(sender.url || '').startsWith(chrome.runtime.getURL(''))) {
+    sendResponse({ ok: false, error: 'Dashboard preferences are available only to extension views.' });
+    return false;
+  }
+  const pending = dashboardLaunchWriteQueue.then(async () => {
+    const stored = await chrome.storage.local.get([DASHBOARD_LAUNCH_KEY, DASHBOARDS_STORAGE_KEY]);
+    const settings = (await chrome.storage.sync.get('magic_netsuite_settings')).magic_netsuite_settings || {};
+    const preferences = updateDashboardLaunchPreferences(stored[DASHBOARD_LAUNCH_KEY] || {}, String(message.dashboardId),
+      message.patch || {}, (stored[DASHBOARDS_STORAGE_KEY] || []).map(d => d.id), reservedDashboardShortcuts(settings));
+    await chrome.storage.local.set({ [DASHBOARD_LAUNCH_KEY]: preferences });
+    return preferences;
+  });
+  dashboardLaunchWriteQueue = pending.then(() => undefined, () => undefined);
+  pending.then(preferences => sendResponse({ ok: true, preferences }), error => sendResponse({ ok: false, error: error.message }));
+  return true;
+}
+
+async function openNavigatorDestination(path: string, label: string, sender, type = 'OPEN_SAVED_DASHBOARD_VIEW') {
+  const fromWidget = sender.url && new URL(sender.url).searchParams.has('magicDashboardWidget');
+  const existingWidget = !fromWidget && await chrome.tabs.sendMessage(sender.tab.id, {type: 'NAVIGATOR_WIDGET_EXISTS'}).catch(() => null);
+  if (!fromWidget && !existingWidget?.exists && await openInCurrentWorkspace(sender.tab, path, label, type === 'OPEN_PREFERRED_VIEW_TAB')) return;
+  const response = await chrome.tabs.sendMessage(sender.tab.id, {type: 'OPEN_NAVIGATOR_WIDGET', path, label});
+  if (!response?.ok) throw new Error(response?.error || 'Could not open the dashboard widget. Refresh this NetSuite page and retry.');
+}
+
+function openPreferredViewFromNetsuite({ message, sender, sendResponse }) {
+  (async () => {
+    try {
+      if (sender.id !== chrome.runtime.id || !isNetsuiteAppUrl(sender.tab?.url))
+        throw new Error('Open this shortcut from a NetSuite page.');
+      const settings = (await chrome.storage.sync.get('magic_netsuite_settings')).magic_netsuite_settings || {};
+      const view = getPreferredViews(settings.preferredFeatures).find(view => view.route === message.path);
+      if (!view) throw new Error('Choose a preferred view from Home.');
+      await openNavigatorDestination(view.route, view.name, sender, 'OPEN_PREFERRED_VIEW_TAB');
+      sendResponse({ ok: true });
+    } catch (error) { sendResponse({ ok: false, error: error.message }); }
+  })();
+  return true;
+}
+
+function openSavedDashboardFromNetsuite({ message, sender, sendResponse }) {
+  (async () => {
+    try {
+      if (sender.id !== chrome.runtime.id || !isNetsuiteAppUrl(sender.tab?.url))
+        throw new Error('Open this shortcut from a NetSuite page.');
+      const dashboard = await dashboardService('get', { dashboardId: message.dashboardId });
+      const sourceAccount = extractAccountIdFromUrl(sender.tab.url);
+      if (dashboard.account && normalizeDashboardAccount(dashboard.account) !== normalizeDashboardAccount(sourceAccount))
+        throw new Error(`This dashboard is tied to ${dashboard.account}. Open its shortcut from that account.`);
+      const path = dashboardPath(dashboard.id, dashboard.title);
+      await openNavigatorDestination(path, dashboard.title, sender);
+      sendResponse({ ok: true });
+    } catch (error) { sendResponse({ ok: false, error: error.message }); }
+  })();
+  return true;
+}
 
 const switchDashboardAccount = ({ message, sendResponse }) => {
   (async () => {
@@ -4685,19 +4778,42 @@ const MCP_NATIVE_HOST_NAME = "com.magicnetsuite.mcp_bridge";
 let mcpNativePort = null;
 let mcpNativeConnecting = false;
 let mcpNativeLastError = null;
+// Reconnect the native port automatically (with backoff) when the host exits
+// unexpectedly; otherwise every MCP process stays "not connected" until the
+// extension is reloaded or the MCP Server page is opened.
+let mcpNativeManualDisconnect = false;
+let mcpNativeReconnectTimer = null;
+let mcpNativeReconnectDelayMs = 1000;
+const MCP_NATIVE_RECONNECT_MAX_DELAY_MS = 60000;
 
-// ── MCP: Dedicated Tab for Governance ──
-// When a tab runs out of SuiteScript governance, the MCP server creates a
-// persistent (non-temporary) tab on mainsetup.nl for the preferred account.
-// This tab stays open and auto-refreshes when governance drops below the threshold.
-let mcpDedicatedTabId = null;
-let mcpDedicatedTabAccountId = null;
+// ── MCP: Dedicated Tabs for Governance ──
+// When no connected tab exists for an account (or its governance is low), MCP
+// opens a persistent (non-temporary) tab on mainsetup.nl for that account.
+// Tabs are tracked per account so switching between accounts reuses them
+// instead of forgetting and re-creating (and leaking) a tab on every switch.
+const mcpDedicatedTabs = new Map<string, number>();
+const mcpDedicatedTabCreations = new Map<string, Promise<any>>();
+const mcpDedicatedTabRefreshing = new Set<number>();
 const MCP_GOVERNANCE_THRESHOLD = 100;
-let mcpDedicatedTabRefreshing = false;
-let mcpDedicatedTabCreating = false;
+// Upper bound for a CHECK_CONNECTION / CHECK_GOVERNANCE probe. Without it a
+// single unresponsive tab (login/2FA page, blocking dialog, frozen tab) stalls
+// every MCP call until the native host's timeout.
+const MCP_TAB_PROBE_TIMEOUT_MS = 5000;
+
+// ── MCP: Per-session account routing ──
+// Each MCP session sends the account it switched to (expectedAccount).
+// Requests for the same account run concurrently; a request for a different
+// account waits until in-flight requests finish, so one session never executes
+// on the account another session switched to.
+let mcpRoutingAccount: string | null = null;
+let mcpRoutingInflight = 0;
+const mcpRoutingWaiters: Array<() => void> = [];
+const MCP_ROUTING_WAIT_TIMEOUT_MS = 20000;
 const MAGIC_NETSUITE_SERVER_SCRIPT_ID = "customscript_magic_netsuite_server";
 const MAGIC_NETSUITE_SERVER_DEPLOYMENT_SCRIPT_ID = "customdeploy_magic_netsuite_server_dp";
 let mcpSuiteletServerUrlCache = null;
+let mcpSuiteletVerificationCache = null;
+const MCP_SUITELET_REQUEST_TIMEOUT_MS = 45000;
 
 const SKILLS_DB_NAME = "MagicNetsuiteSkills";
 const SKILLS_STORE_NAME = "skills";
@@ -5386,6 +5502,112 @@ async function handleMagicSetSkillEnabled(args) {
   return { content: [{ type: "text", text: JSON.stringify({ id, enabled }, null, 2) }] };
 }
 
+const dashboardStorage = {
+  read: async () => (await chrome.storage.local.get(DASHBOARDS_STORAGE_KEY))[DASHBOARDS_STORAGE_KEY] || [],
+  write: async all => { await chrome.storage.local.set({ [DASHBOARDS_STORAGE_KEY]: all }); }
+};
+const dashboardService = createDashboardService(dashboardStorage, async (step, code) => {
+  const execution = await callNetsuiteRoute(step.domain === 'server' ? 'RUN_QUICK_SCRIPT_SERVER' : 'RUN_QUICK_SCRIPT', {code}, `Dashboard step ${step.id} failed.`);
+  if (execution?.error || execution?.success === false) throw new Error(String(execution.error || 'SuiteScript execution failed.'));
+  // Preserve null results; an envelope must never become the next step's input.
+  return execution && Object.hasOwn(execution, 'result') ? execution.result : execution;
+}, {getAccount:async()=>extractAccountIdFromUrl(getTabNavigationUrl(await getPreferredNetsuiteTab()))});
+
+async function renderDashboard(args) {
+  const dashboard = await dashboardService('get', args);
+  const request = async () => {
+    try { return await chrome.runtime.sendMessage({type:'DASHBOARD_RENDER_VIEW', dashboardId:dashboard.id}); } catch { return null; }
+  };
+  const live = await request();
+  if(live?.id === dashboard.id && live.revision === dashboard.revision) return live;
+  // Render with the actual Vue runtime. Preview never runs onLoad or refresh.
+  const url=new URL(chrome.runtime.getURL('dist/vue-ui/index.html'));
+  url.searchParams.set('initialRoute',`/dashboards?dashboard=${encodeURIComponent(dashboard.id)}&preview=1`);
+  url.searchParams.set('magicExecutionSurface','1');
+  const tab=await chrome.tabs.create({url:url.href,active:false});
+  try {
+    for(let i=0;i<32;i++) {
+      await new Promise(resolve=>setTimeout(resolve,250));
+      const rendered=await request();
+      if(rendered?.id===dashboard.id && rendered.revision===dashboard.revision)return rendered;
+    }
+    throw new Error('Dashboard renderer did not respond. Open the dashboard view and retry.');
+  } finally {if(tab.id)await chrome.tabs.remove(tab.id).catch(()=>{});}
+}
+
+async function dashboardWorkerCommand(operation,args) {
+  if(operation==='render')return renderDashboard(args);
+  if(operation==='recordUrl'){
+    const d=await dashboardService('get',args);
+    const account=extractAccountIdFromUrl(getTabNavigationUrl(await getPreferredNetsuiteTab()));
+    if(d.account&&normalizeDashboardAccount(d.account)!==normalizeDashboardAccount(account))throw new Error(`Dashboard account mismatch: expected ${d.account}.`);
+    if(typeof args.recordType!=='string'||!args.recordType||!['string','number'].includes(typeof args.recordId))throw new Error('Record type and id are required.');
+    return callNetsuiteRoute('GET_RECORD_URL',{type:args.recordType,id:args.recordId},'Could not resolve record URL.');
+  }
+  return dashboardService(operation,args);
+}
+
+function handleDashboardCommand({ message, sender, sendResponse }) {
+  if (sender.id !== chrome.runtime.id || !String(sender.url || '').startsWith(chrome.runtime.getURL(''))) {
+    sendResponse({ok: false, error: 'Dashboard commands are available only to extension views.'});
+    return false;
+  }
+  (async () => {
+    let held = false;
+    try {
+      if (message.operation === 'run' || message.operation === 'recordUrl') {
+        const sessionId = new URL(sender.url).searchParams.get('magicDashboardPreview');
+        const sessions = sessionId ? await getDashboardPreviewSessions() : {};
+        const session = sessionId ? sessions[sessionId] : null;
+        if (sessionId && !session) throw new Error('Dashboard connection expired. Reopen it from NetSuite.');
+        // UI actions follow their own NetSuite window; MCP continues using its selected account.
+        let context = session || (isNetsuiteAppUrl(sender.tab?.url) ? {
+          sourceTabId: sender.tab.id, enablerTabId: sender.tab.id,
+          accountId: extractAccountIdFromUrl(sender.tab.url),
+        } : null);
+        if (!context) {
+          const active = await getActiveNetsuiteTab().catch(() => null);
+          if (active?.id && isNetsuiteAppUrl(active.url)) context = {
+            sourceTabId: active.id, enablerTabId: active.id,
+            accountId: extractAccountIdFromUrl(active.url),
+          };
+        }
+        if (context) {
+          const execute = async (action, data, domain) => {
+            const target = await dashboardTabsGet(domain === 'client' ? context.sourceTabId : context.enablerTabId);
+            if (!target?.id || normalizeDashboardAccount(extractAccountIdFromUrl(target.url)) !== normalizeDashboardAccount(context.accountId))
+              throw new Error('The dashboard execution page is unavailable or has changed account. Reopen it from NetSuite.');
+            return getRouteResult(await sendMessageToTab(target.id, { action, data, mode: 'normal' }), 'Dashboard action failed.');
+          };
+          const scoped = createDashboardService(dashboardStorage, async (step, code) => {
+            const result = await execute(step.domain === 'server' ? 'RUN_QUICK_SCRIPT_SERVER' : 'RUN_QUICK_SCRIPT', { code }, step.domain);
+            if (result?.error || result?.success === false) throw new Error(String(result.error || 'SuiteScript execution failed.'));
+            return result && Object.hasOwn(result, 'result') ? result.result : result;
+          }, { getAccount: async () => context.accountId });
+          let result;
+          if (message.operation === 'recordUrl') {
+            const d = await scoped('get', message.args || {});
+            if (d.account && normalizeDashboardAccount(d.account) !== normalizeDashboardAccount(context.accountId)) throw new Error(`Dashboard account mismatch: expected ${d.account}.`);
+            if (typeof message.args?.recordType !== 'string' || !message.args.recordType || !['string', 'number'].includes(typeof message.args.recordId)) throw new Error('Record type and id are required.');
+            result = await execute('GET_RECORD_URL', { type: message.args.recordType, id: message.args.recordId }, 'server');
+          } else result = await scoped('run', message.args || {});
+          sendResponse({ ok: true, result });
+          return;
+        }
+        const tab = await getPreferredNetsuiteTab();
+        const account = extractAccountIdFromUrl(getTabNavigationUrl(tab));
+        if (!account) throw new Error('A logged-in NetSuite account is required.');
+        held = await acquireMcpRouting(account);
+      }
+      const result = await dashboardWorkerCommand(String(message.operation), message.args || {});
+      sendResponse({ok: true, result});
+    } catch (error) {
+      sendResponse({ok: false, error: error instanceof Error ? error.message : String(error)});
+    } finally { if (held) releaseMcpRouting(); }
+  })();
+  return true;
+}
+
 const CUSTOM_TOOLS_STORAGE_KEY = "magic_netsuite_custom_tools_v1";
 const CUSTOM_TOOL_BOTH_MODULES = [
   "record", "search", "query", "runtime", "log", "url", "format", "email",
@@ -5601,12 +5823,12 @@ async function executeStoredCustomTool(tool, args) {
     : `(async function(input, context) {\n${String(tool.code || "")}\n})(__customToolInput, __customToolContext)`;
   const code = [
     `const __customToolInput = JSON.parse(${inputJson});`,
-    `const __customToolContext = Object.freeze({ ...JSON.parse(${metadataJson}), modules: Object.freeze({ ${moduleObject} }) });`,
+    `const __customToolContext = Object.freeze({ ...JSON.parse(${metadataJson}), ${executionDomain === 'client' ? 'browser: __customToolBrowser,' : ''} modules: Object.freeze({ ${moduleObject} }) });`,
     `return ${invocation};`
   ].join("\n");
   const execution = await callNetsuiteRoute(
     executionDomain === "server" ? "RUN_QUICK_SCRIPT_SERVER" : "RUN_QUICK_SCRIPT",
-    { code },
+    { code, ...(executionDomain === 'client' ? { customToolBrowser: { risk: tool.risk } } : {}) },
     `Custom tool "${tool.name}" failed.`
   );
   if (execution?.error) throw new Error(String(execution.error));
@@ -5924,9 +6146,23 @@ async function isMcpEnabled() {
 // -----------------------------
 // Public connect/disconnect
 // -----------------------------
+function scheduleMcpNativeReconnect() {
+  if (mcpNativeManualDisconnect || mcpNativeReconnectTimer) return;
+  const delay = mcpNativeReconnectDelayMs;
+  mcpNativeReconnectDelayMs = Math.min(delay * 2, MCP_NATIVE_RECONNECT_MAX_DELAY_MS);
+  mcpNativeReconnectTimer = setTimeout(async () => {
+    mcpNativeReconnectTimer = null;
+    if (mcpNativeManualDisconnect || mcpNativePort) return;
+    if (!(await isMcpEnabled())) return;
+    console.log(`[MCP Native Bridge] reconnecting after ${delay}ms`);
+    await mcpConnect();
+  }, delay);
+}
+
 async function mcpConnect() {
   if (mcpNativePort || mcpNativeConnecting) return;
 
+  mcpNativeManualDisconnect = false;
   mcpNativeConnecting = true;
   mcpNativeLastError = null;
 
@@ -5935,6 +6171,8 @@ async function mcpConnect() {
     mcpNativePort = port;
 
     port.onMessage.addListener((message) => {
+      // Any traffic from the host proves the connection is healthy.
+      mcpNativeReconnectDelayMs = 1000;
       handleNativeBridgeMessage(port, message);
     });
 
@@ -5944,6 +6182,7 @@ async function mcpConnect() {
       console.warn("[MCP Native Bridge] disconnected", message || "");
       if (mcpNativePort === port) {
         mcpNativePort = null;
+        scheduleMcpNativeReconnect();
       }
     });
 
@@ -5960,12 +6199,18 @@ async function mcpConnect() {
     mcpNativePort = null;
     mcpNativeLastError = err instanceof Error ? err.message : String(err);
     console.error("[MCP Native Bridge] failed to connect", err);
+    scheduleMcpNativeReconnect();
   } finally {
     mcpNativeConnecting = false;
   }
 }
 
 async function mcpDisconnect() {
+  mcpNativeManualDisconnect = true;
+  if (mcpNativeReconnectTimer) {
+    clearTimeout(mcpNativeReconnectTimer);
+    mcpNativeReconnectTimer = null;
+  }
   if (mcpNativePort) {
     try { mcpNativePort.disconnect(); } catch {}
   }
@@ -5990,9 +6235,9 @@ function getMcpConnectionDetails() {
 }
 
 function getMcpDedicatedTabInfo() {
-  return mcpDedicatedTabId
-    ? { tabId: mcpDedicatedTabId, accountId: mcpDedicatedTabAccountId }
-    : null;
+  const accountId = mcpRoutingAccount || [...mcpDedicatedTabs.keys()].pop() || null;
+  const tabId = accountId ? mcpDedicatedTabs.get(accountId) : null;
+  return tabId ? { tabId, accountId } : null;
 }
 
 // -----------------------------
@@ -6014,7 +6259,7 @@ async function checkTabGovernance(tabId) {
       action: "CHECK_GOVERNANCE",
       data: {},
       mode: "normal"
-    });
+    }, MCP_TAB_PROBE_TIMEOUT_MS);
     if (response?.status === "ok" && response.message?.remaining !== undefined) {
       return response.message.remaining;
     }
@@ -6063,158 +6308,259 @@ function waitForTabComplete(tabId, timeoutMs = 15000): Promise<void> {
   });
 }
 
+function normalizeMcpAccountId(accountId) {
+  return String(accountId ?? "").trim().toUpperCase().replace(/-/g, "_");
+}
+
+async function getStoredMcpPreferredAccount() {
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  return normalizeMcpAccountId(storageResult?.magic_netsuite_settings?.mcpPreferredAccount);
+}
+
 /**
- * Creates a persistent dedicated MCP tab for the given account domain.
- * This is NOT a temporary tab — it stays open and is reused across MCP calls.
+ * Account MCP routing currently targets: the account held by in-flight session
+ * requests, else the stored preference ("" = active-tab routing).
  */
-async function createMcpDedicatedTab(accountDomain) {
-  // Guard: if another creation is in progress, wait for it to finish
-  if (mcpDedicatedTabCreating) {
-    console.log(`[MCP Dedicated Tab] Creation already in progress, waiting...`);
-    return waitForExistingDedicatedTab(accountDomain);
+async function getMcpTargetAccount() {
+  return mcpRoutingAccount || (await getStoredMcpPreferredAccount());
+}
+
+/**
+ * Persists the global preferred account (UI default and fallback for sessions
+ * that never switched). Re-reads settings right before writing to minimise
+ * lost updates, and skips no-op writes to save storage.sync write quota.
+ */
+async function persistMcpPreferredAccount(accountId) {
+  const account = normalizeMcpAccountId(accountId);
+  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
+  const settings = storageResult?.magic_netsuite_settings || {};
+  if (
+    settings.mcpPreferredAccount !== undefined &&
+    normalizeMcpAccountId(settings.mcpPreferredAccount) === account
+  ) {
+    return;
   }
-
-  const url = `https://${accountDomain}/app/setup/mainsetup.nl?sc=-90`;
-
-  console.log(`[MCP Dedicated Tab] Creating persistent tab for ${accountDomain}`);
-
-  mcpDedicatedTabCreating = true;
-
-  return new Promise((resolve, reject) => {
-    chrome.tabs.create({ url, active: false }, async (tab) => {
-      if (!tab?.id) {
-        mcpDedicatedTabCreating = false;
-        return reject(new Error("Failed to create dedicated MCP tab"));
-      }
-
-      try {
-        await waitForTabComplete(tab.id);
-        mcpDedicatedTabId = tab.id;
-        mcpDedicatedTabAccountId = extractAccountIdFromUrl(tab.url || url);
-        mcpDedicatedTabCreating = false;
-        console.log(`[MCP Dedicated Tab] Created tab ${tab.id} for account ${mcpDedicatedTabAccountId}`);
-        resolve(tab);
-      } catch (err) {
-        mcpDedicatedTabCreating = false;
-        // Tab failed to load — clean up
-        try { chrome.tabs.remove(tab.id); } catch {}
-        reject(err);
-      }
-    });
+  await chrome.storage.sync.set({
+    magic_netsuite_settings: { ...settings, mcpPreferredAccount: account }
   });
 }
 
-/**
- * Waits for an already-in-progress dedicated tab creation to complete.
- * Polls every 200ms up to 30s for mcpDedicatedTabId to be set.
- */
-async function waitForExistingDedicatedTab(accountDomain) {
-  const start = Date.now();
-  const timeout = 30000;
-  while (Date.now() - start < timeout) {
-    if (mcpDedicatedTabId) {
-      const tab = await validateDedicatedTab();
-      if (tab) return tab;
+async function acquireMcpRouting(accountId, timeoutMs = MCP_ROUTING_WAIT_TIMEOUT_MS) {
+  const account = normalizeMcpAccountId(accountId);
+  if (!account) return false;
+  const deadline = Date.now() + timeoutMs;
+  while (mcpRoutingInflight > 0 && mcpRoutingAccount !== account) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new Error(
+        `MCP_ROUTING_BUSY: Another MCP session is running a tool on ${mcpRoutingAccount}. ` +
+          `This request targets ${account} and was NOT executed. Retry in a few seconds.`
+      );
     }
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, remaining);
+      mcpRoutingWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
-  // Timed out — the creating call might have failed; create a new one
-  console.warn(`[MCP Dedicated Tab] Timed out waiting for existing creation, forcing new tab`);
-  mcpDedicatedTabCreating = false;
-  return createMcpDedicatedTab(accountDomain);
+  mcpRoutingAccount = account;
+  mcpRoutingInflight += 1;
+  return true;
+}
+
+function releaseMcpRouting() {
+  mcpRoutingInflight = Math.max(0, mcpRoutingInflight - 1);
+  if (mcpRoutingInflight === 0) {
+    mcpRoutingAccount = null;
+    mcpRoutingWaiters.splice(0).forEach((wake) => wake());
+  }
+}
+
+function isNetsuiteAppUrl(url) {
+  try {
+    return /\.app\.netsuite\.com$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isNetsuiteLoginUrl(url) {
+  return /\/app\/login\/|\/pages\/customerlogin|loginrouter\.nl/i.test(String(url || ""));
 }
 
 /**
- * Returns the domain (hostname) for a given account ID by finding a matching
- * NetSuite tab's URL. Falls back to constructing it from the account ID.
+ * URL a tab is on or navigating to. Right after chrome.tabs.create the tab's
+ * url is "" (or about:blank) and only pendingUrl carries the target.
+ */
+function getTabNavigationUrl(tab) {
+  const url = String(tab?.url || "");
+  return /^https?:/i.test(url) ? url : String(tab?.pendingUrl || url);
+}
+
+async function isTabConnected(tabId, attempts = 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await sendMessageToTab(tabId, {
+        action: "CHECK_CONNECTION",
+        data: {},
+        mode: "normal"
+      }, MCP_TAB_PROBE_TIMEOUT_MS);
+      if (response?.message === "connected") return true;
+    } catch {
+      // Not injected yet, navigating, or unresponsive.
+    }
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+  return false;
+}
+
+function isMcpDedicatedTab(tabId) {
+  for (const id of mcpDedicatedTabs.values()) {
+    if (id === tabId) return true;
+  }
+  return false;
+}
+
+function forgetMcpDedicatedTab(tabId) {
+  for (const [account, id] of mcpDedicatedTabs) {
+    if (id === tabId) mcpDedicatedTabs.delete(account);
+  }
+}
+
+/**
+ * Creates (or joins an in-progress creation of) the persistent dedicated MCP
+ * tab for one account. Concurrent callers for the same account share one tab;
+ * callers for other accounts never receive it.
+ *
+ * Resolves with a FRESH tab object: the object passed to the chrome.tabs.create
+ * callback is a pre-navigation snapshot whose url is still "", which used to
+ * make a successful switch report "selected tab belongs to unknown".
+ */
+function createMcpDedicatedTab(accountId) {
+  const account = normalizeMcpAccountId(accountId);
+  const inProgress = mcpDedicatedTabCreations.get(account);
+  if (inProgress) return inProgress;
+
+  const creation = (async () => {
+    const url = `https://${getAccountDomain(account)}/app/setup/mainsetup.nl?sc=-90`;
+    console.log(`[MCP Dedicated Tab] Creating persistent tab for ${account}`);
+    const created = await dashboardTabsCreate({ url, active: false });
+    if (!created?.id) throw new Error("Failed to create dedicated MCP tab");
+
+    try {
+      await waitForTabComplete(created.id, 30000);
+    } catch (err) {
+      // SSO / login redirects can be slow. Keep the tab open so the user can
+      // finish logging in; the checks below decide whether it is usable.
+      console.warn(`[MCP Dedicated Tab] ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const tab = await dashboardTabsGet(created.id).catch(() => null);
+    if (!tab?.id) {
+      throw new Error(`The dedicated MCP tab for ${account} was closed while loading.`);
+    }
+    const landedUrl = getTabNavigationUrl(tab);
+    const landedAccount = extractAccountIdFromUrl(landedUrl);
+    if (landedAccount !== account) {
+      throw new Error(
+        `MCP_ACCOUNT_LOGIN_REQUIRED: The tab opened for ${account} (tab ${tab.id}) landed on ` +
+          `${landedUrl || "an unknown page"}. Log in to ${account} in that tab and retry. ` +
+          "No tool was executed on another account."
+      );
+    }
+
+    mcpDedicatedTabs.set(account, tab.id);
+    console.log(`[MCP Dedicated Tab] Created tab ${tab.id} for account ${account}`);
+    return { ...tab, url: landedUrl };
+  })().finally(() => {
+    mcpDedicatedTabCreations.delete(account);
+  });
+
+  mcpDedicatedTabCreations.set(account, creation);
+  return creation;
+}
+
+/**
+ * Returns the domain (hostname) for a given account ID.
  */
 function getAccountDomain(accountId) {
   // Convert account ID format (e.g. "9937091_SB1") back to subdomain format ("9937091-sb1")
-  const subdomain = accountId.toLowerCase().replace(/_/g, "-");
+  const subdomain = normalizeMcpAccountId(accountId).toLowerCase().replace(/_/g, "-");
   return `${subdomain}.app.netsuite.com`;
 }
 
 /**
- * Validates the dedicated MCP tab still exists and is usable.
- * Returns the tab if valid, null otherwise.
+ * Returns the dedicated tab for an account if it still exists, still shows that
+ * account, and its content script is connected. Discarded tabs are reloaded.
  */
-async function validateDedicatedTab() {
-  if (!mcpDedicatedTabId) return null;
+async function validateDedicatedTab(accountId) {
+  const account = normalizeMcpAccountId(accountId);
+  const tabId = mcpDedicatedTabs.get(account);
+  if (!tabId) return null;
 
   try {
-    const tab = await dashboardTabsGet(mcpDedicatedTabId);
-    if (!tab || !tab.url?.includes("app.netsuite.com")) {
-      // Tab was closed or navigated away
-      mcpDedicatedTabId = null;
-      mcpDedicatedTabAccountId = null;
+    let tab = await dashboardTabsGet(tabId);
+    if (tab?.discarded) {
+      await chrome.tabs.reload(tabId);
+      await waitForTabComplete(tabId, 30000);
+      tab = await dashboardTabsGet(tabId);
+    }
+    if (!tab?.id || extractAccountIdFromUrl(tab.url) !== account || !(await isTabConnected(tab.id))) {
+      mcpDedicatedTabs.delete(account);
       return null;
     }
-
-    // Check that the content script is still connected
-    const response = await sendMessageToTab(tab.id, {
-      action: "CHECK_CONNECTION",
-      data: {},
-      mode: "normal"
-    });
-
-    if (response?.message !== "connected") {
-      mcpDedicatedTabId = null;
-      mcpDedicatedTabAccountId = null;
-      return null;
-    }
-
     return tab;
   } catch {
-    mcpDedicatedTabId = null;
-    mcpDedicatedTabAccountId = null;
+    mcpDedicatedTabs.delete(account);
     return null;
   }
 }
 
 /**
- * Refreshes the dedicated MCP tab to replenish governance.
- * Reloads the tab and waits for it to finish loading.
+ * Refreshes a dedicated MCP tab to replenish governance.
  */
-async function refreshDedicatedTab() {
-  if (!mcpDedicatedTabId || mcpDedicatedTabRefreshing) return;
+async function refreshDedicatedTab(tabId) {
+  if (!tabId || mcpDedicatedTabRefreshing.has(tabId)) return;
 
-  mcpDedicatedTabRefreshing = true;
-  console.log(`[MCP Dedicated Tab] Refreshing tab ${mcpDedicatedTabId} to replenish governance`);
+  mcpDedicatedTabRefreshing.add(tabId);
+  console.log(`[MCP Dedicated Tab] Refreshing tab ${tabId} to replenish governance`);
 
   try {
-    chrome.tabs.reload(mcpDedicatedTabId);
-    await waitForTabComplete(mcpDedicatedTabId);
-    console.log(`[MCP Dedicated Tab] Tab ${mcpDedicatedTabId} refreshed successfully`);
+    await chrome.tabs.reload(tabId);
+    await waitForTabComplete(tabId);
+    console.log(`[MCP Dedicated Tab] Tab ${tabId} refreshed successfully`);
   } catch (err) {
     console.error(`[MCP Dedicated Tab] Failed to refresh tab: ${err.message}`);
-    // Tab may have been closed — invalidate
-    mcpDedicatedTabId = null;
-    mcpDedicatedTabAccountId = null;
+    forgetMcpDedicatedTab(tabId);
   } finally {
-    mcpDedicatedTabRefreshing = false;
+    mcpDedicatedTabRefreshing.delete(tabId);
   }
 }
 
 /**
- * Checks governance on the dedicated tab and refreshes it if below threshold.
- * Called after each MCP tool call to ensure the tab is ready for the next call.
+ * Checks governance on an account's dedicated tab and refreshes it if below
+ * threshold. Called after each MCP tool call so the next call has headroom.
  */
-async function checkAndRefreshDedicatedTabGovernance() {
-  if (!mcpDedicatedTabId) return;
+async function checkAndRefreshDedicatedTabGovernance(accountId) {
+  const tabId = mcpDedicatedTabs.get(normalizeMcpAccountId(accountId));
+  if (!tabId) return;
 
-  const remaining = await checkTabGovernance(mcpDedicatedTabId);
+  const remaining = await checkTabGovernance(tabId);
   if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
     console.log(`[MCP Dedicated Tab] Governance low (${remaining} remaining), refreshing tab`);
-    await refreshDedicatedTab();
+    await refreshDedicatedTab(tabId);
   }
 }
 
-// Listen for tab removal to clear the dedicated tab reference
+// Listen for tab removal to clear dedicated tab references
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === mcpDedicatedTabId) {
+  if (isMcpDedicatedTab(tabId)) {
     console.log(`[MCP Dedicated Tab] Tab ${tabId} was closed`);
-    mcpDedicatedTabId = null;
-    mcpDedicatedTabAccountId = null;
+    forgetMcpDedicatedTab(tabId);
   }
 });
 
@@ -6235,7 +6581,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   })().catch(() => undefined);
 });
 
-// Listen for account preference changes to reset the dedicated tab
+// Listen for account preference / Suitelet URL changes to reset route caches
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === "local" && changes[CUSTOM_TOOLS_STORAGE_KEY]) {
     syncCustomToolsManifest().catch((error) => {
@@ -6258,17 +6604,16 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 
   const oldAccount = settingsChange.oldValue?.mcpPreferredAccount || "";
   const newAccount = settingsChange.newValue?.mcpPreferredAccount || "";
+  const oldSuiteletUrl = settingsChange.oldValue?.mcpSuiteletDeploymentUrl || "";
+  const newSuiteletUrl = settingsChange.newValue?.mcpSuiteletDeploymentUrl || "";
 
-  if (oldAccount !== newAccount && mcpDedicatedTabId) {
-    console.log(
-      `[MCP Dedicated Tab] Account changed from "${oldAccount}" to "${newAccount}" — ` +
-      `dedicated tab ${mcpDedicatedTabId} will no longer be used`
-    );
-    // Don't close the old tab (it may be useful for other work),
-    // just stop using it as the dedicated MCP tab.
-    mcpDedicatedTabId = null;
-    mcpDedicatedTabAccountId = null;
+  if (oldAccount !== newAccount || oldSuiteletUrl !== newSuiteletUrl) {
+    // A Suitelet URL is account-specific. Never reuse a URL resolved for the
+    // previous account after an environment switch or URL override change.
+    mcpSuiteletServerUrlCache = null;
+    mcpSuiteletVerificationCache = null;
   }
+
 });
 
 // -----------------------------
@@ -6442,9 +6787,12 @@ const NETSUITE_QUIZ_QUESTION_INPUT_SCHEMA = {
 };
 
 const MCP_TOOL_DEFINITIONS = [
+  ...dashboardToolDefinitions,
   {
     name: "ping",
-    description: "Ping the Chrome extension. Returns pong.",
+    description:
+      "Check bridge connectivity and report the configured/selected NetSuite routing target. " +
+      "This is a local diagnostic; it does not execute in the NetSuite server runtime and must not be used to prove runtime.accountId.",
     inputSchema: {
       type: "object",
       properties: {
@@ -6623,7 +6971,7 @@ const MCP_TOOL_DEFINITIONS = [
         tags: { type: "array", items: { type: "string" } },
         domain: { type: "string", enum: ["client", "server", "both"] },
         modules: { type: "array", items: { type: "string" } },
-        inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string" },
+        inputSchema: { type: "object" }, testInput: { type: "object", description: "Concrete saved test arguments matching inputSchema." }, code: { type: "string", description: customToolBrowserGuide.codeDescription },
         risk: { type: "string", enum: ["read", "write"] }
       },
       required: ["name", "displayName", "description", "domain", "modules", "inputSchema", "testInput", "code", "risk"]
@@ -6639,7 +6987,7 @@ const MCP_TOOL_DEFINITIONS = [
         description: { type: "string" }, tags: { type: "array", items: { type: "string" } },
         domain: { type: "string", enum: ["client", "server", "both"] },
         modules: { type: "array", items: { type: "string" } }, inputSchema: { type: "object" }, testInput: { type: "object" },
-        code: { type: "string" }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
+        code: { type: "string", description: customToolBrowserGuide.codeDescription }, risk: { type: "string", enum: ["read", "write"] }, enabled: { type: "boolean" }
       },
       required: ["toolName"]
     }
@@ -6674,7 +7022,8 @@ const MCP_TOOL_DEFINITIONS = [
     description:
       "Switch the NetSuite account environment used by subsequent MCP tool calls. " +
       "Pass an account ID such as 1964539 or 9937091_SB1. The extension selects a connected tab for that account, " +
-      "or opens a dedicated background tab when necessary. Use an empty accountId to restore active-tab routing.",
+      "or opens a dedicated background tab when necessary. Account-specific Suitelet routing is reset and validated separately. " +
+      "Use an empty accountId to restore active-tab routing.",
     inputSchema: {
       type: "object",
       properties: {
@@ -8358,7 +8707,8 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "netsuite_server_info",
     description:
-      "Return server-side NetSuite runtime information from the deployed MCP Suitelet. Requires MCP Suitelet deployment URL in settings.",
+      "Verify and return the deployed MCP Suitelet's actual server-side runtime.accountId. " +
+      "Fails with MCP_RUNTIME_ACCOUNT_MISMATCH when it differs from the selected MCP account; ping is not a substitute for this check.",
     inputSchema: {
       type: "object",
       properties: {}
@@ -8628,7 +8978,9 @@ const getMcpJobSourcePath = (toolName) => {
   return "/mcp-server";
 };
 
-async function handleRequest({ requestId, method, params }) {
+async function handleRequest({ requestId, method, params, expectedAccount = "" }) {
+  let routingHeld = false;
+  let routeAccount = "";
   try {
     let result;
 
@@ -8651,14 +9003,19 @@ async function handleRequest({ requestId, method, params }) {
         throw new Error(`Tool "${name}" is disabled. Enable it in the MCP Server settings.`);
       }
 
+      // The account this call must run on: the requested account for a switch,
+      // else the calling session's own account, else the stored preference.
+      routeAccount = name === "netsuite_switch_environment"
+        ? normalizeMcpAccountId(args.accountId)
+        : normalizeMcpAccountId(expectedAccount) ||
+          normalizeMcpAccountId(storageForCall?.magic_netsuite_settings?.mcpPreferredAccount);
+      routingHeld = await acquireMcpRouting(routeAccount);
+
       let executionSide = "client";
       let executionJobId = "";
       if (shouldTrackMcpJob(name)) {
         try {
-          const account =
-            mcpDedicatedTabAccountId ||
-            storageForCall?.magic_netsuite_settings?.mcpPreferredAccount ||
-            "unknown";
+          const account = routeAccount || "active-tab";
           const job = await createStoredJob({
             title: formatMcpJobTitle(name),
             kind: "mcp-tool-execution",
@@ -8685,12 +9042,35 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleNetsuiteSwitchEnvironment(args);
           executionSide = "local";
         } else if (name === "ping") {
-          // Include account info so agents can discover which account is targeted
-          const storageForPing = await chrome.storage.sync.get(["magic_netsuite_settings"]);
-          const pingAccount = storageForPing?.magic_netsuite_settings?.mcpPreferredAccount || null;
-          const text = args.message ? `pong: ${args.message}` : "pong";
-          const accountInfo = pingAccount ? ` (account: ${pingAccount})` : "";
-          result = { content: [{ type: "text", text: text + accountInfo }] };
+          // This is a routing/transport diagnostic, not a server-runtime call.
+          // Be explicit so an agent cannot mistake the configured target for
+          // runtime.accountId evidence.
+          const configuredAccount = routeAccount || null;
+          const globalPreferredAccount = (await getStoredMcpPreferredAccount()) || null;
+          let selectedTab = null;
+          let routingError = null;
+          try {
+            const tab = await getPreferredNetsuiteTab();
+            selectedTab = {
+              tabId: tab?.id || null,
+              accountId: extractAccountIdFromUrl(tab?.url),
+              url: tab?.url || null
+            };
+          } catch (error) {
+            routingError = error instanceof Error ? error.message : String(error);
+          }
+          result = asMcpTextResult({
+            pong: args.message || true,
+            bridgeConnected: Boolean(mcpNativePort),
+            configuredTargetAccount: configuredAccount,
+            globalPreferredAccount,
+            selectedTab,
+            routingError,
+            executionVerified: false,
+            note:
+              "ping is local and does not execute SuiteScript. It confirms bridge/tab routing only; " +
+              "use netsuite_server_info to verify runtime.accountId."
+          });
           executionSide = "local";
         } else if (name === "magic_netsuite_prepare_tool") {
           result = await handleMagicPrepareTool(args);
@@ -8725,6 +9105,15 @@ async function handleRequest({ requestId, method, params }) {
         } else if (name === "magic_netsuite_delete_quiz") {
           result = await handleMagicDeleteQuiz(args);
           executionSide = "local";
+        } else if (dashboardToolDefinitions.some(tool => tool.name === name)) {
+          if (name.endsWith('_run') && !routingHeld) {
+            const dashboardTab = await getPreferredNetsuiteTab();
+            const dashboardAccount = extractAccountIdFromUrl(getTabNavigationUrl(dashboardTab));
+            if (!dashboardAccount) throw new Error('A logged-in NetSuite account is required.');
+            routingHeld = await acquireMcpRouting(dashboardAccount);
+          }
+          result = asMcpTextResult(await dashboardWorkerCommand(name.replace('magic_netsuite_dashboard_', ''), args));
+          executionSide = name.endsWith('_run') ? 'dashboard' : 'local';
         } else if (name === "magic_netsuite_search_custom_tools") {
           result = await handleMagicSearchCustomTools(args);
           executionSide = "local";
@@ -8923,6 +9312,12 @@ async function handleRequest({ requestId, method, params }) {
           result = await handleSuiteletRead(args);
         } else if (name === "netsuite_suitelet_eval") {
           result = await handleSuiteletEval(args);
+        } else if (name === "netsuite_server_info") {
+          throw new Error(
+            `MCP_SUITELET_UNAVAILABLE: The Magic NetSuite MCP Suitelet is not deployed (or not reachable) in ` +
+              `${routeAccount || "the active-tab account"}. Server-side runtime identity cannot be verified there; ` +
+              "server-side tools in this account fall back to client-side execution in the browser tab."
+          );
         } else {
           throw new Error(`Unknown tool: ${name}`);
         }
@@ -8946,7 +9341,7 @@ async function handleRequest({ requestId, method, params }) {
         // and refresh it if needed for the next call.
         // Fire-and-forget — don't block the response.
         if (!name.startsWith("netsuite_suitelet_")) {
-          checkAndRefreshDedicatedTabGovernance().catch((err) => {
+          checkAndRefreshDedicatedTabGovernance(routeAccount).catch((err) => {
             console.debug(`[MCP] Post-call governance check failed: ${err.message}`);
           });
         }
@@ -8973,11 +9368,7 @@ async function handleRequest({ requestId, method, params }) {
       throw new Error(`Unknown method: ${method}`);
     }
 
-    const responseStorage = await chrome.storage.sync.get(["magic_netsuite_settings"]);
-    const responseAccount =
-      mcpDedicatedTabAccountId ||
-      responseStorage?.magic_netsuite_settings?.mcpPreferredAccount ||
-      null;
+    const responseAccount = routeAccount || (await getStoredMcpPreferredAccount()) || null;
     return { requestId, success: true, result, account: responseAccount };
   } catch (err) {
     // Handle non-Error throws (plain objects, strings) that have no .message
@@ -8987,7 +9378,20 @@ async function handleRequest({ requestId, method, params }) {
         : typeof err === "string"
         ? err
         : JSON.stringify(err);
-    return { requestId, success: false, error: msg };
+    const explicitCode = /^([A-Z][A-Z0-9_]+):/.exec(msg)?.[1];
+    return {
+      requestId,
+      success: false,
+      error: msg,
+      errorCode: explicitCode || "EXTENSION_TOOL_ERROR",
+      errorDetails: {
+        stage: "extension-tool-execution",
+        tool: method === "tools/call" ? params?.name || null : null,
+        method
+      }
+    };
+  } finally {
+    if (routingHeld) releaseMcpRouting();
   }
 }
 
@@ -8995,44 +9399,81 @@ async function handleRequest({ requestId, method, params }) {
 // SuiteQL Tool Handler
 // -----------------------------
 async function handleNetsuiteSwitchEnvironment(args: AnyRecord = {}) {
-  const requestedAccount = String(args.accountId ?? "")
-    .trim()
-    .toUpperCase()
-    .replace(/-/g, "_");
+  const requestedAccount = normalizeMcpAccountId(args.accountId);
   const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
   const settings = storageResult?.magic_netsuite_settings || {};
 
-  await chrome.storage.sync.set({
-    magic_netsuite_settings: {
-      ...settings,
-      mcpPreferredAccount: requestedAccount
-    }
-  });
-
   if (!requestedAccount) {
     const tab = await getActiveNetsuiteTab();
+    await persistMcpPreferredAccount("");
     return asMcpTextResult({
       switched: true,
       accountId: extractAccountIdFromUrl(tab.url),
       routing: "active-tab",
-      tabId: tab.id
+      tabId: tab.id,
+      note: "Active-tab routing follows whichever NetSuite tab is focused. Prefer an explicit accountId."
     });
   }
 
+  // Resolve and verify BEFORE persisting anything: a failed switch must not
+  // leave every session pointing at an unreachable account. handleRequest holds
+  // the routing lock for requestedAccount, so tab selection targets it.
   const tab = await getPreferredNetsuiteTab();
-  const resolvedAccount = extractAccountIdFromUrl(tab.url);
+  const tabUrl = getTabNavigationUrl(tab);
+  const resolvedAccount = extractAccountIdFromUrl(tabUrl);
   if (resolvedAccount !== requestedAccount) {
     throw new Error(
-      `Could not route MCP calls to account ${requestedAccount}; selected tab belongs to ${resolvedAccount || "unknown"}.`
+      `MCP_ACCOUNT_ROUTE_MISMATCH: Could not route MCP calls to account ${requestedAccount}; ` +
+        `the selected tab ${tab?.id ?? "?"} shows ${resolvedAccount || "an unknown page"} (${tabUrl || "no URL"}). ` +
+        "Routing was not changed."
     );
   }
+  if (isNetsuiteLoginUrl(tabUrl) || !(await isTabConnected(tab.id, 4))) {
+    throw new Error(
+      `MCP_ACCOUNT_LOGIN_REQUIRED: Tab ${tab.id} for ${requestedAccount} is not a logged-in NetSuite session ` +
+        `(${tabUrl}). Log in to ${requestedAccount} in that tab, then retry the switch. Routing was not changed.`
+    );
+  }
+
+  mcpSuiteletServerUrlCache = null;
+  mcpSuiteletVerificationCache = null;
+  await persistMcpPreferredAccount(requestedAccount);
+
+  const configuredSuiteletUrl = String(settings.mcpSuiteletDeploymentUrl || "").trim();
+  const configuredSuiteletAccount = extractAccountIdFromAccountUrl(configuredSuiteletUrl);
+  const suiteletRouteMismatch = Boolean(
+    configuredSuiteletUrl &&
+      configuredSuiteletAccount &&
+      configuredSuiteletAccount !== resolvedAccount
+  );
 
   return asMcpTextResult({
     switched: true,
     accountId: resolvedAccount,
-    routing: tab.id === mcpDedicatedTabId ? "dedicated-tab" : "connected-tab",
+    routing: isMcpDedicatedTab(tab.id) ? "dedicated-tab" : "connected-tab",
     tabId: tab.id,
-    url: tab.url
+    url: tabUrl,
+    loggedIn: true,
+    sessionScoped: true,
+    suiteletRouting: configuredSuiteletUrl
+      ? {
+          mode: "configured-url",
+          accountId: configuredSuiteletAccount,
+          ready: !suiteletRouteMismatch,
+          error: suiteletRouteMismatch
+            ? `Configured MCP Suitelet URL belongs to ${configuredSuiteletAccount}, not ${resolvedAccount}. ` +
+              "Server-side tools will be blocked before execution until the URL is cleared or changed."
+            : null
+        }
+      : {
+          mode: "auto-resolve-for-selected-account",
+          accountId: resolvedAccount,
+          ready: true
+        },
+    executionVerified: false,
+    note:
+      "The selected tab account and login are verified. This MCP session now routes to this account even if " +
+      "another session switches elsewhere. Server runtime identity is verified separately before the first server-side tool call."
   });
 }
 
@@ -9627,10 +10068,7 @@ async function handleNetsuiteSubmitDocsBatch(args) {
   });
 
   const settings = await chrome.storage.sync.get(["magic_netsuite_settings"]);
-  const account =
-    mcpDedicatedTabAccountId ||
-    settings?.magic_netsuite_settings?.mcpPreferredAccount ||
-    "unknown";
+  const account = (await getMcpTargetAccount()) || "unknown";
   await createStoredJob({
     id: jobId,
     title: `Research ${queries.length} NetSuite documentation topic${queries.length === 1 ? "" : "s"}`,
@@ -10368,39 +10806,211 @@ async function callMcpSuiteletServerTool(name, args) {
 
   const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
   const overrideUrl = String(storageResult?.magic_netsuite_settings?.mcpSuiteletDeploymentUrl || "").trim();
-  const suiteletUrl = overrideUrl || ( await resolveMcpSuiteletServerUrl());
+  const targetTab = await getPreferredNetsuiteTab();
+  const targetAccount = extractAccountIdFromUrl(targetTab?.url);
+  if (!targetAccount) {
+    throw new Error(
+      "MCP_ACCOUNT_ROUTE_UNKNOWN: A NetSuite tab was selected, but its account ID could not be read from the URL. " +
+        "No server-side tool was executed."
+    );
+  }
+
+  const overrideAccount = extractAccountIdFromAccountUrl(overrideUrl);
+  if (overrideUrl && overrideAccount && overrideAccount !== targetAccount) {
+    throw new Error(
+      `MCP_SUITELET_ACCOUNT_MISMATCH: The selected NetSuite tab is ${targetAccount}, but the configured MCP Suitelet URL ` +
+        `belongs to ${overrideAccount}. No tool was executed. Clear or replace mcpSuiteletDeploymentUrl in extension settings. ` +
+        "The bridge and extension are working; this is an account-routing configuration error."
+    );
+  }
+
+  const suiteletUrl = overrideUrl || (await resolveMcpSuiteletServerUrl(targetAccount));
   if (!suiteletUrl) return null;
+
+  const resolvedUrlAccount = extractAccountIdFromAccountUrl(suiteletUrl);
+  if (resolvedUrlAccount && resolvedUrlAccount !== targetAccount) {
+    mcpSuiteletServerUrlCache = null;
+    mcpSuiteletVerificationCache = null;
+    throw new Error(
+      `MCP_SUITELET_ACCOUNT_MISMATCH: Suitelet resolution selected account ${resolvedUrlAccount}, ` +
+        `but MCP routing targets ${targetAccount}. No tool was executed. ` +
+        "This is an account-routing error, not an extension connectivity failure."
+    );
+  }
+
+  if (name !== "netsuite_server_info") {
+    await verifyMcpSuiteletRuntimeAccount(suiteletUrl, targetAccount);
+  }
+
+  const payload = await requestMcpSuiteletTool(suiteletUrl, name, args, targetAccount);
+  if (payload?.unsupported) return null;
+  if (payload?.ok === undefined) return null;
+  if (!payload?.ok) {
+    const raw = payload?.error;
+    throw new Error(
+      raw
+        ? typeof raw === "string"
+          ? raw
+          : JSON.stringify(raw)
+        : `MCP Suitelet server route failed while running ${name} in ${targetAccount}.`
+    );
+  }
+
+  if (name === "netsuite_server_info") {
+    const runtimeAccount = extractRuntimeAccountId(payload.result);
+    if (!runtimeAccount) {
+      throw new Error(
+        `MCP_RUNTIME_ACCOUNT_UNVERIFIED: netsuite_server_info returned no runtime.accountId for target ${targetAccount}. ` +
+          "Do not infer which account executed the request."
+      );
+    }
+    if (runtimeAccount !== targetAccount) {
+      mcpSuiteletVerificationCache = null;
+      throw new Error(
+        `MCP_RUNTIME_ACCOUNT_MISMATCH: MCP routing targets ${targetAccount}, but the Suitelet reported runtime.accountId=${runtimeAccount}. ` +
+          "No conclusion should be drawn that the extension is broken or that the target account is unreachable. " +
+          "The configured/resolved Suitelet route points at the wrong account and must be corrected."
+      );
+    }
+    mcpSuiteletVerificationCache = {
+      url: suiteletUrl,
+      accountId: targetAccount,
+      verifiedAt: Date.now()
+    };
+  }
+
+  return payload.result;
+}
+
+function extractAccountIdFromAccountUrl(url) {
+  if (!url) return null;
+  const accountId = extractAccountIdFromUrl(url);
+  return accountId && /\d/.test(accountId) ? accountId : null;
+}
+
+function extractRuntimeAccountId(result) {
+  const text = result?.content?.find((item) => item?.type === "text")?.text;
+  if (typeof text !== "string") return null;
+  try {
+    const parsed = JSON.parse(text);
+    const raw = parsed?.accountId ?? parsed?.runtime?.accountId;
+    return raw == null
+      ? null
+      : String(raw).trim().toUpperCase().replace(/-/g, "_");
+  } catch {
+    return null;
+  }
+}
+
+async function verifyMcpSuiteletRuntimeAccount(suiteletUrl, targetAccount) {
+  if (
+    mcpSuiteletVerificationCache?.url === suiteletUrl &&
+    mcpSuiteletVerificationCache?.accountId === targetAccount &&
+    Date.now() - mcpSuiteletVerificationCache.verifiedAt < 60000
+  ) {
+    return;
+  }
+
+  const verification = await requestMcpSuiteletTool(
+    suiteletUrl,
+    "netsuite_server_info",
+    {},
+    targetAccount
+  );
+  if (!verification?.ok) {
+    const raw = verification?.error;
+    throw new Error(
+      `MCP_RUNTIME_ACCOUNT_UNVERIFIED: The Suitelet route for ${targetAccount} could not verify runtime.accountId` +
+        `${raw ? `: ${typeof raw === "string" ? raw : JSON.stringify(raw)}` : "."} ` +
+        "The requested server-side tool was not executed."
+    );
+  }
+
+  const runtimeAccount = extractRuntimeAccountId(verification.result);
+  if (!runtimeAccount) {
+    throw new Error(
+      `MCP_RUNTIME_ACCOUNT_UNVERIFIED: The Suitelet route for ${targetAccount} returned no runtime.accountId. ` +
+        "The requested server-side tool was not executed."
+    );
+  }
+  if (runtimeAccount !== targetAccount) {
+    throw new Error(
+      `MCP_RUNTIME_ACCOUNT_MISMATCH: MCP routing targets ${targetAccount}, but the Suitelet reported runtime.accountId=${runtimeAccount}. ` +
+        "The requested server-side tool was blocked before execution. This identifies a Suitelet account-routing problem, " +
+        "not a broken extension or proof that the target account is unreachable."
+    );
+  }
+
+  mcpSuiteletVerificationCache = {
+    url: suiteletUrl,
+    accountId: targetAccount,
+    verifiedAt: Date.now()
+  };
+}
+
+async function requestMcpSuiteletTool(suiteletUrl, name, args, targetAccount) {
 
   const body = new URLSearchParams();
   body.set("action", "mcpToolCall");
   body.set("name", name);
   body.set("arguments", JSON.stringify(args || {}));
 
-  const response = await fetch(suiteletUrl, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: body.toString()
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MCP_SUITELET_REQUEST_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(suiteletUrl, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: body.toString(),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(
+        `MCP_SUITELET_TIMEOUT: NetSuite account ${targetAccount} did not return ${name} within ` +
+          `${MCP_SUITELET_REQUEST_TIMEOUT_MS}ms. The bridge and extension completed routing; NetSuite/Suitelet execution timed out. ` +
+          "This is not evidence that the extension is disconnected or broken."
+      );
+    }
+    throw new Error(
+      `MCP_SUITELET_NETWORK_ERROR: The extension routed ${name} to NetSuite account ${targetAccount}, ` +
+        `but the Suitelet request failed: ${error instanceof Error ? error.message : String(error)}. ` +
+        "Check that account's login session and Suitelet deployment."
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
-    throw new Error(`MCP Suitelet server route failed with HTTP ${response.status}: ${await response.text()}`);
+    const responseText = await response.text();
+    throw new Error(
+      `MCP_SUITELET_HTTP_ERROR: NetSuite account ${targetAccount} returned HTTP ${response.status} while running ${name}: ` +
+        responseText.slice(0, 1000)
+    );
   }
 
-  const payload = await response.json();
-  if (payload?.unsupported) return null;
-  if (payload?.ok === undefined) return null;
-  if (!payload?.ok) {
-    const raw = payload?.error;
-    throw new Error(raw ?typeof raw === "string" ? raw : JSON.stringify(raw) : "MCP Suitelet server route failed.");
+  const responseText = await response.text();
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    throw new Error(
+      `MCP_SUITELET_INVALID_RESPONSE: NetSuite account ${targetAccount} returned a non-JSON response for ${name}. ` +
+        "The session may have redirected to a login or permission page. The extension bridge itself is connected. " +
+        `Response preview: ${responseText.slice(0, 300)}`
+    );
   }
-  return payload.result;
 }
 
-async function resolveMcpSuiteletServerUrl() {
-  if (mcpSuiteletServerUrlCache?.url && Date.now() - mcpSuiteletServerUrlCache.at < 60000) {
+async function resolveMcpSuiteletServerUrl(targetAccount) {
+  if (
+    mcpSuiteletServerUrlCache?.url &&
+    mcpSuiteletServerUrlCache?.accountId === targetAccount &&
+    Date.now() - mcpSuiteletServerUrlCache.at < 60000
+  ) {
     return mcpSuiteletServerUrlCache.url;
   }
 
@@ -10411,7 +11021,19 @@ async function resolveMcpSuiteletServerUrl() {
   ) || suitelets[0];
 
   if (!matched?.url) return "";
-  mcpSuiteletServerUrlCache = { url: matched.url, at: Date.now(), matched };
+  const resolvedAccount = extractAccountIdFromAccountUrl(matched.url);
+  if (resolvedAccount && resolvedAccount !== targetAccount) {
+    throw new Error(
+      `MCP_SUITELET_ACCOUNT_MISMATCH: Suitelet discovery ran for ${targetAccount}, but returned a URL for ${resolvedAccount}. ` +
+        "No server-side tool was executed."
+    );
+  }
+  mcpSuiteletServerUrlCache = {
+    url: matched.url,
+    accountId: targetAccount,
+    at: Date.now(),
+    matched
+  };
   return matched.url;
 }
 
@@ -13084,124 +13706,74 @@ function extractAccountIdFromUrl(url) {
 }
 
 /**
- * Discovers all NetSuite tabs with app.netsuite.com, checks which ones have
- * the content script connected (CHECK_CONNECTION), and returns the first tab
- * that matches the preferred account from settings.
- *
- * For MCP calls, this function also manages the dedicated governance tab:
- *  1. If a dedicated tab exists and matches the preferred account, check its
- *     governance and refresh it if needed.
- *  2. If the selected tab has low governance, create a dedicated tab.
- *
- * Fallback behavior:
- *  - If no preferredAccount is set -> falls back to active tab (legacy behavior)
- *  - If preferredAccount is set but no matching connected tab -> tries dedicated tab
+ * Returns the tab MCP calls should run in for the current target account
+ * (see getMcpTargetAccount):
+ *  1. that account's dedicated tab, if still valid (refreshed when governance is low);
+ *  2. a connected tab of that account (only tabs of that account are probed, so
+ *     an unresponsive tab of another account cannot stall routing);
+ *  3. otherwise a new dedicated tab for that account.
+ * With no target account it falls back to the active tab (legacy behavior).
  */
 async function getPreferredNetsuiteTab() {
-  // Read preferred account from settings
-  const storageResult = await chrome.storage.sync.get(["magic_netsuite_settings"]);
-  const preferredAccount = storageResult?.magic_netsuite_settings?.mcpPreferredAccount || "";
+  const preferredAccount = await getMcpTargetAccount();
 
-  // If no preference is set, fall back to the active tab (legacy behavior)
   if (!preferredAccount) {
     return getActiveNetsuiteTab();
   }
 
-  // ── Step 1: Check if we have a valid dedicated tab for this account ──
-  if (mcpDedicatedTabId && mcpDedicatedTabAccountId === preferredAccount) {
-    const dedicatedTab = await validateDedicatedTab();
-    if (dedicatedTab) {
-      // Check governance and refresh if low
-      const remaining = await checkTabGovernance(dedicatedTab.id);
-      if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
-        console.log(`[MCP] Dedicated tab governance low (${remaining}), refreshing...`);
-        await refreshDedicatedTab();
-      }
-      return dedicatedTab;
+  // ── Step 1: this account's dedicated tab ──
+  const dedicatedTab = await validateDedicatedTab(preferredAccount);
+  if (dedicatedTab) {
+    const remaining = await checkTabGovernance(dedicatedTab.id);
+    if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
+      console.log(`[MCP] Dedicated tab governance low (${remaining}), refreshing...`);
+      await refreshDedicatedTab(dedicatedTab.id);
+      return (await dashboardTabsGet(dedicatedTab.id).catch(() => null)) || dedicatedTab;
     }
-    // Dedicated tab is invalid — clear and fall through to find another
+    return dedicatedTab;
   }
 
-  // ── Step 2: Find any existing connected tab for this account ──
+  // ── Step 2: a connected tab of this account ──
   const allTabs = await dashboardTabsQuery({});
-  const netsuiteTabs = allTabs.filter(
-    (tab) => tab.url && tab.url.includes("app.netsuite.com") && tab.id
+  const candidateTabs = allTabs.filter(
+    (tab) =>
+      tab.id &&
+      !tab.discarded &&
+      isNetsuiteAppUrl(tab.url) &&
+      extractAccountIdFromUrl(tab.url) === preferredAccount
   );
-
-  if (netsuiteTabs.length === 0) {
-    // No NetSuite tabs at all — create a dedicated tab
-    console.log(`[MCP] No NetSuite tabs found, creating dedicated tab for ${preferredAccount}`);
-    const domain = getAccountDomain(preferredAccount);
-    const newTab = await createMcpDedicatedTab(domain);
-    return newTab;
-  }
-
-  // Check connection status for each NS tab in parallel
-  const connectionChecks = netsuiteTabs.map(async (tab) => {
-    try {
-      const response = await sendMessageToTab(tab.id, {
-        action: "CHECK_CONNECTION",
-        data: {},
-        mode: "normal"
-      });
-      return {
-        tab,
-        connected: response?.message === "connected",
-        accountId: extractAccountIdFromUrl(tab.url)
-      };
-    } catch {
-      return { tab, connected: false, accountId: null };
-    }
-  });
-
-  const results = await Promise.all(connectionChecks);
-  const connectedTabs = results.filter((r) => r.connected);
-
-  if (connectedTabs.length === 0) {
-    // No connected tabs — create a dedicated tab
-    console.log(`[MCP] No connected NetSuite tabs, creating dedicated tab for ${preferredAccount}`);
-    const domain = getAccountDomain(preferredAccount);
-    const newTab = await createMcpDedicatedTab(domain);
-    return newTab;
-  }
-
-  // Find a tab matching the preferred account
-  const matchingTab = connectedTabs.find((r) => r.accountId === preferredAccount);
+  const probes = await Promise.all(
+    candidateTabs.map(async (tab) => ({ tab, connected: await isTabConnected(tab.id) }))
+  );
+  const connectedTabs = probes.filter((probe) => probe.connected).map((probe) => probe.tab);
+  const matchingTab = connectedTabs.find((tab) => tab.active) || connectedTabs[0];
 
   if (!matchingTab) {
-    // No matching tab — create a dedicated tab for the preferred account
     console.log(
-      `[MCP] No tab for account "${preferredAccount}", creating dedicated tab. ` +
-        `Available: ${connectedTabs
-          .map((r) => r.accountId)
-          .filter(Boolean)
-          .join(", ")}`
+      `[MCP] No connected tab for account "${preferredAccount}" ` +
+        `(${candidateTabs.length} unconnected candidate(s)), creating dedicated tab.`
     );
-    const domain = getAccountDomain(preferredAccount);
-    const newTab = await createMcpDedicatedTab(domain);
-    return newTab;
+    return createMcpDedicatedTab(preferredAccount);
   }
 
-  // ── Step 3: Check governance on the matching tab ──
-  const remaining = await checkTabGovernance(matchingTab.tab.id);
+  // ── Step 3: governance on the matching tab ──
+  const remaining = await checkTabGovernance(matchingTab.id);
   if (remaining !== -1 && remaining < MCP_GOVERNANCE_THRESHOLD) {
     console.log(
-      `[MCP] Tab ${matchingTab.tab.id} governance low (${remaining} remaining), ` +
-      `creating dedicated tab for ${preferredAccount}`
+      `[MCP] Tab ${matchingTab.id} governance low (${remaining} remaining), ` +
+      `using a dedicated tab for ${preferredAccount}`
     );
-    const domain = getAccountDomain(preferredAccount);
-    const newTab = await createMcpDedicatedTab(domain);
-    return newTab;
+    return createMcpDedicatedTab(preferredAccount);
   }
 
-  return matchingTab.tab;
+  return matchingTab;
 }
 
 function getActiveNetsuiteTab(): Promise<any> {
   return new Promise<any>((resolve, reject) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs[0];
-      if (!tab?.id || !tab.url?.includes("app.netsuite.com")) {
+      if (!tab?.id || !isNetsuiteAppUrl(tab.url)) {
         reject(new Error("No active NetSuite tab"));
         return;
       }
@@ -13210,11 +13782,27 @@ function getActiveNetsuiteTab(): Promise<any> {
   });
 }
 
-function sendMessageToTab(tabId, message): Promise<any> {
+/**
+ * Sends a message to a tab's content script. With timeoutMs > 0 the promise
+ * rejects when the tab does not answer in time instead of hanging.
+ */
+function sendMessageToTab(tabId, message, timeoutMs = 0): Promise<any> {
   return new Promise<any>((resolve, reject) => {
+    let settled = false;
+    const timer = timeoutMs > 0
+      ? setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(`Tab ${tabId} did not answer ${message?.action || "message"} within ${timeoutMs}ms`));
+        }, timeoutMs)
+      : null;
     chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+      const lastError = chrome.runtime.lastError;
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (lastError) {
+        reject(new Error(lastError.message));
         return;
       }
       resolve(response);

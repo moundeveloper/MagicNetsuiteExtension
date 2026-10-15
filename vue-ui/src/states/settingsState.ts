@@ -9,6 +9,7 @@ export interface ShortcutsSettings {
   drawerOpen: string; // configurable, default "ctrl+k"
   modulesSearch: string; // configurable, default "ctrl+m"
   newDashboardTab: string; // configurable, default "ctrl+alt+n"
+  dashboardWheelShortcut: string;
   reopenClosedTab: string; // configurable, default "ctrl+alt+t"
   elementScreenshotShortcut: string; // configurable, default "ctrl+shift+s"
   openOnCustomizationPage: boolean;
@@ -75,6 +76,7 @@ const defaultSettings: ShortcutsSettings = {
   drawerOpen: "ctrl+k",
   modulesSearch: "ctrl+m",
   newDashboardTab: "ctrl+alt+n",
+  dashboardWheelShortcut: 'ctrl+alt+d',
   reopenClosedTab: "ctrl+alt+t",
   elementScreenshotShortcut: "ctrl+shift+s",
   openOnCustomizationPage: true,
@@ -107,6 +109,12 @@ const isSettingsLoaded = ref(false);
 let isLoaded = false;
 let loadPromise: Promise<void> | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+// Last synced settings known to be in chrome.storage.sync (loaded, written by
+// this page, or received via storage.onChanged). Saves write only the keys
+// that changed locally since then, so a page holding an old copy can no longer
+// overwrite values changed elsewhere — e.g. mcpPreferredAccount set by an MCP
+// netsuite_switch_environment call while this dashboard was open.
+let lastPersistedSynced: Record<string, unknown> = {};
 
 const toPlainSettings = (): ShortcutsSettings =>
   JSON.parse(JSON.stringify(settings)) as ShortcutsSettings;
@@ -122,22 +130,63 @@ const toSecretSettings = (value: ShortcutsSettings): SecretSettings => ({
   openrouterApiKey: value.openrouterApiKey
 });
 
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+const getChangedSyncedKeys = (synced: SyncedSettings) => {
+  const patch: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(synced)) {
+    if (!sameValue(value, lastPersistedSynced[key])) patch[key] = value;
+  }
+  return patch;
+};
+
 const saveSettings = async () => {
   if (!isLoaded) return;
   const plain = toPlainSettings();
+  const patch = getChangedSyncedKeys(toSyncedSettings(plain));
   try {
-    await Promise.all([
-      chrome.storage.sync.set({
-        [SETTINGS_KEY]: toSyncedSettings(plain)
-      }),
+    const writes: Promise<unknown>[] = [
       chrome.storage.local.set({
         [SECRETS_KEY]: toSecretSettings(plain)
       })
-    ]);
+    ];
+    if (Object.keys(patch).length > 0) {
+      const current = await chrome.storage.sync.get<StoredSettingsResult>([SETTINGS_KEY]);
+      const merged = { ...(current[SETTINGS_KEY] ?? {}), ...patch };
+      lastPersistedSynced = merged;
+      writes.push(chrome.storage.sync.set({ [SETTINGS_KEY]: merged }));
+    }
+    await Promise.all(writes);
   } catch {
     // Extension context may have been invalidated (e.g. after extension reload in dev mode).
   }
 };
+
+// Apply settings changed by other pages or the background (MCP account
+// switches) so this page's copy never goes stale.
+const applyExternalSyncedSettings = (next: Record<string, unknown> | undefined) => {
+  if (!next) return;
+  lastPersistedSynced = { ...next };
+  const target = settings as unknown as Record<string, unknown>;
+  for (const [key, value] of Object.entries(next)) {
+    if (key === "githubToken" || key === "openrouterApiKey") continue;
+    if (!(key in defaultSettings)) continue;
+    if (!sameValue(target[key], value)) {
+      target[key] = JSON.parse(JSON.stringify(value));
+    }
+  }
+};
+
+try {
+  chrome.storage?.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "sync" || !changes[SETTINGS_KEY] || !isLoaded) return;
+    applyExternalSyncedSettings(
+      changes[SETTINGS_KEY].newValue as Record<string, unknown> | undefined
+    );
+  });
+} catch {
+  // chrome API unavailable (e.g. dev mode outside extension).
+}
 
 const scheduleSave = () => {
   if (!isLoaded) return;
@@ -167,6 +216,7 @@ const loadSettings = async () => {
         settings.modulesSearch = stored.modulesSearch || defaultSettings.modulesSearch;
         settings.newDashboardTab =
           stored.newDashboardTab || defaultSettings.newDashboardTab;
+        settings.dashboardWheelShortcut = stored.dashboardWheelShortcut ?? defaultSettings.dashboardWheelShortcut;
         settings.reopenClosedTab =
           stored.reopenClosedTab || defaultSettings.reopenClosedTab;
         settings.elementScreenshotShortcut = stored.elementScreenshotShortcut || defaultSettings.elementScreenshotShortcut;
@@ -221,6 +271,10 @@ const loadSettings = async () => {
         ]);
       }
 
+      lastPersistedSynced = {
+        ...(result.magic_netsuite_settings ?? {}),
+        ...toSyncedSettings(toPlainSettings())
+      };
       isLoaded = true;
       isSettingsLoaded.value = true;
     } catch {

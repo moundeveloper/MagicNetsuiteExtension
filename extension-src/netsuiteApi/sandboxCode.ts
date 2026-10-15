@@ -1,11 +1,39 @@
 // Streaming-enabled runQuickScript
 window.runQuickScript = async (
   N,
-  { code, requestId, mode = "normal", bridgeCapability }
+  { code, requestId, mode = "normal", bridgeCapability, browserSession }
 ) => {
   console.log("[runQuickScript] requestId", requestId);
   const logs = [];
   const isStreaming = mode === "stream";
+  const pendingBrowserCalls = new Map();
+  const browserListener = event => {
+    const data = event.data;
+    if (event.source !== window || event.origin !== location.origin || data?.type !== 'CUSTOM_TOOL_BROWSER_RESPONSE' || data.capability !== bridgeCapability || data.token !== browserSession) return;
+    const pending = pendingBrowserCalls.get(data.id);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingBrowserCalls.delete(data.id);
+    data.error ? pending.reject(new Error(data.error)) : pending.resolve(data.result);
+  };
+  if (browserSession) window.addEventListener('message', browserListener);
+  const browserCall = (operation, args = {}) => new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { pendingBrowserCalls.delete(id); reject(new Error('Browser operation timed out: ' + operation)); }, 75000);
+    pendingBrowserCalls.set(id, { resolve, reject, timer });
+    window.postMessage({ type: 'CUSTOM_TOOL_BROWSER_REQUEST', capability: bridgeCapability, token: browserSession, id, operation, args }, location.origin);
+  });
+  const browser = browserSession ? Object.freeze({
+    openTab: options => browserCall('openTab', options),
+    openView: options => browserCall('openView', options),
+    getTab: tabId => browserCall('getTab', { tabId }),
+    navigate: (tabId, url) => browserCall('navigate', { tabId, url }),
+    waitForSelector: (tabId, selector, options = {}) => browserCall('waitForSelector', { ...options, tabId, selector }),
+    extract: (tabId, options = {}) => browserCall('extract', { ...options, tabId }),
+    click: (tabId, selector) => browserCall('click', { tabId, selector }),
+    fill: (tabId, selector, value) => browserCall('fill', { tabId, selector, value }),
+    closeTab: tabId => browserCall('closeTab', { tabId })
+  }) : undefined;
 
   const stringifyArg = (arg) => {
     if (typeof arg === "object" && arg !== null) {
@@ -268,7 +296,7 @@ window.runQuickScript = async (
       return (async () => { ${code} })();
     `;
 
-    const asyncFn = new Function("N", "console", wrappedCode);
+    const asyncFn = new Function("N", "console", "__customToolBrowser", wrappedCode);
 
     // ============================================================================
     // Execute with streaming support
@@ -285,7 +313,7 @@ window.runQuickScript = async (
     // Yield before executing to allow UI update
     await yieldToMain();
 
-    const result = await asyncFn(modifiedN, fakeConsole);
+    const result = await asyncFn(modifiedN, fakeConsole, browser);
 
     // Yield after execution
     await yieldToMain();
@@ -315,5 +343,12 @@ window.runQuickScript = async (
       error: err?.message || String(err),
       logs
     };
+  } finally {
+    if (browserSession) {
+      try { await browserCall('dispose'); } catch (error) { console.warn('Browser cleanup failed', error); }
+      window.removeEventListener('message', browserListener);
+      for (const pending of pendingBrowserCalls.values()) { clearTimeout(pending.timer); pending.reject(new Error('Tool execution finished.')); }
+      pendingBrowserCalls.clear();
+    }
   }
 };

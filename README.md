@@ -20,6 +20,9 @@ providers.
 The prioritized engineering and product review is in
 [`PROJECT_AUDIT.md`](PROJECT_AUDIT.md).
 
+Dynamic SuiteScript dashboards and their MCP authoring tools are described in
+[`docs/DYNAMIC_DASHBOARDS.md`](docs/DYNAMIC_DASHBOARDS.md).
+
 ## Prerequisites
 
 - Node.js 22

@@ -1,0 +1,61 @@
+{
+  "entryPoint": "execute",
+  "context": "SCHEDULED",
+  "clock": "2026-09-25T12:00:00.000Z",
+  "seed": 42,
+  "parameters": {},
+  "user": {
+    "id": 1,
+    "role": "ADMINISTRATOR",
+    "name": "Local test user"
+  },
+  "records": [
+    {
+      "type": "customrecord_ctkc_data_to_process",
+      "id": 1,
+      "fields": {
+        "custrecord_ctkc_dtp_status": 2,
+        "custrecord_ctkc_dtp_thread_id": "dead"
+      }
+    },
+    {
+      "type": "customrecord_ctkc_data_to_process",
+      "id": 2,
+      "fields": {
+        "custrecord_ctkc_dtp_status": 2,
+        "custrecord_ctkc_dtp_thread_id": "dead"
+      }
+    }
+  ],
+  "files": [],
+  "queryFixtures": [
+    {
+      "query": "SELECT id, custrecord_ctkc_dtp_kind AS kind, custrecord_ctkc_dtp_batch AS batch, custrecord_ctkc_dtp_attempts AS attempts, custrecord_ctkc_dtp_thread_id AS threadid FROM customrecord_ctkc_data_to_process WHERE custrecord_ctkc_dtp_status = ? AND lastmodified <= (CURRENT_DATE - (? / 1440)) ORDER BY id",
+      "params": [
+        2,
+        15
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "attempts": 1,
+          "threadid": "dead",
+          "batch": "test"
+        },
+        {
+          "id": 2,
+          "attempts": 3,
+          "threadid": "dead",
+          "batch": "test"
+        }
+      ]
+    }
+  ],
+  "httpFixtures": [],
+  "apiFixtures": [],
+  "input": {
+    "method": "GET",
+    "parameters": {},
+    "body": ""
+  }
+}

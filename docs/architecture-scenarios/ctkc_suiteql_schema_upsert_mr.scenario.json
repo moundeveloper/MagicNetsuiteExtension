@@ -1,0 +1,59 @@
+{
+  "entryPoint": "pipeline",
+  "context": "MAPREDUCE",
+  "clock": "2026-09-25T12:00:00.000Z",
+  "seed": 42,
+  "parameters": {
+    "custscript_ctkc_sqsu_file": 77
+  },
+  "user": {
+    "id": 1,
+    "role": "ADMINISTRATOR",
+    "name": "Local test user"
+  },
+  "records": [
+    {
+      "type": "customrecord_ctkc_suiteql_table_schema",
+      "id": 1,
+      "fields": {
+        "name": "salesorder",
+        "custrecord_ctkc_sqts_table": "salesorder"
+      }
+    }
+  ],
+  "files": [
+    {
+      "id": 77,
+      "path": "SuiteScripts/staged.json",
+      "folder": 1,
+      "contents": "[{\"table\":\"customer\",\"label\":\"Customer\",\"fields\":[{\"id\":\"id\",\"type\":\"integer\"}]},{\"table\":\"salesorder\",\"label\":\"Sales Order\",\"fields\":[]}]"
+    }
+  ],
+  "queryFixtures": [
+    {
+      "query": "SELECT id FROM customrecord_ctkc_suiteql_table_schema WHERE custrecord_ctkc_sqts_table = ? FETCH FIRST 1 ROWS ONLY",
+      "params": [
+        "customer"
+      ],
+      "rows": []
+    },
+    {
+      "query": "SELECT id FROM customrecord_ctkc_suiteql_table_schema WHERE custrecord_ctkc_sqts_table = ? FETCH FIRST 1 ROWS ONLY",
+      "params": [
+        "salesorder"
+      ],
+      "rows": [
+        {
+          "id": 1
+        }
+      ]
+    }
+  ],
+  "httpFixtures": [],
+  "apiFixtures": [],
+  "input": {
+    "method": "GET",
+    "parameters": {},
+    "body": ""
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "entryPoint": "post",
+  "context": "RESTLET",
+  "clock": "2026-09-25T12:00:00.000Z",
+  "seed": 42,
+  "parameters": {},
+  "user": {
+    "id": 1,
+    "role": "ADMINISTRATOR",
+    "name": "Local test user"
+  },
+  "records": [],
+  "files": [],
+  "queryFixtures": [],
+  "httpFixtures": [],
+  "apiFixtures": [],
+  "input": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "addNumbers",
+      "arguments": {
+        "a": 20,
+        "b": 22
+      }
+    }
+  }
+}

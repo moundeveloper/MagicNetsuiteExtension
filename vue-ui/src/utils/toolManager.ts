@@ -7,6 +7,7 @@ import { searchSkills, getSkillContent } from "./skillsDb";
 import { searchMembers, getMemberById, getModuleCount } from "./modulesDb";
 import { agentCache } from "./agentCacheStore";
 import { customToolAgentTools } from "./customToolAgentTools";
+import { dashboardAgentTools } from './dashboardAgentTools';
 
 type SuiteqlTableRef = {
   id: string;
@@ -287,6 +288,7 @@ const fetchAndCacheFileContent = async (
 
 export const tools: ToolDefinition[] = [
   ...customToolAgentTools,
+  ...dashboardAgentTools,
   {
     name: "calculate",
     description:

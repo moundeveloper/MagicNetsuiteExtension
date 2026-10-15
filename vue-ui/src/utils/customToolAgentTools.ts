@@ -1,3 +1,4 @@
+import browserGuide from '../../../mcp_server/customToolBrowserGuide.json';
 import type { ToolDefinition } from "../composables/useAgent";
 import {
   executeCustomTool,
@@ -46,7 +47,7 @@ export const customToolAgentTools: ToolDefinition[] = [
         modules: { type: "array", description: "SuiteScript module short names allowed by the selected domain.", items: { type: "string" } },
         inputSchema: { type: "object", description: "JSON Schema object describing tool input." },
         testInput: { type: "object", description: "Concrete test arguments matching inputSchema. Saved with this tool and used by the test operation." },
-        code: { type: "string", description: "JavaScript function body. Read arguments from input and return JSON-serializable data." },
+        code: { type: "string", description: browserGuide.codeDescription },
         risk: { type: "string", description: "Whether the implementation can mutate state.", enum: ["read", "write"] }
       },
       required: ["name", "displayName", "description", "domain", "modules", "inputSchema", "testInput", "code", "risk"]
@@ -88,7 +89,7 @@ export const customToolAgentTools: ToolDefinition[] = [
         modules: { type: "array", description: "Optional complete replacement module list.", items: { type: "string" } },
         inputSchema: { type: "object", description: "Optional replacement JSON input schema." },
         testInput: { type: "object", description: "Optional replacement saved test arguments." },
-        code: { type: "string", description: "Optional replacement JavaScript function body." },
+        code: { type: "string", description: browserGuide.codeDescription },
         risk: { type: "string", description: "Optional replacement risk classification.", enum: ["read", "write"] },
         enabled: { type: "boolean", description: "Optional enabled state." }
       },

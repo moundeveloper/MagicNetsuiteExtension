@@ -10,6 +10,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { registerDashboardTools } from './dashboard-tools.js';
 import { playwrightController, type ControlResult, type PwCookie } from "./playwright-controller.js";
 
 // When on (default), the Suitelet control tools drive Playwright's own Chromium
@@ -42,8 +43,17 @@ type BridgeResponse = {
   success: boolean;
   result?: unknown;
   error?: string;
+  errorCode?: string;
+  errorDetails?: Record<string, unknown>;
   account?: string | null;
 };
+
+// Timeout ladder: native host (55s) < this (57s) < typical MCP client (60s), so
+// the host's specific timeout message reaches the model first.
+const EXTENSION_TOOL_TIMEOUT_MS = Math.max(
+  15000,
+  Number(process.env.MAGIC_NETSUITE_MCP_APP_TIMEOUT_MS) || 57000,
+);
 
 type TextToolResult = {
   content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -125,7 +135,6 @@ const NETSUITE_TEMPLATE_RECREATION_WORKFLOW = `CURRENT TEMPLATE STUDIO WORKFLOW:
 
 let bridgeSocket: net.Socket | null = null;
 let bridgeConnecting: Promise<net.Socket> | null = null;
-let bridgeBuffer = "";
 let requestId = 0;
 let selectedContext: SelectedContextSnapshot | null = null;
 const pending = new Map<
@@ -134,10 +143,14 @@ const pending = new Map<
     resolve: (value: BridgeResponse) => void;
     reject: (reason: Error) => void;
     timer: NodeJS.Timeout;
+    socket: net.Socket;
   }
 >();
 
 function attachBridgeHandlers(socket: net.Socket): void {
+  // Buffer is per socket: a late "close" of a dead socket must not wipe the
+  // partial data of the socket that replaced it.
+  let bridgeBuffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk) => {
     bridgeBuffer += chunk;
@@ -164,11 +177,14 @@ function attachBridgeHandlers(socket: net.Socket): void {
   socket.on("close", () => {
     if (bridgeSocket === socket) bridgeSocket = null;
     bridgeBuffer = "";
-    for (const entry of pending.values()) {
+    // Only fail requests sent on THIS socket; requests already sent on a
+    // reconnected socket are still healthy.
+    for (const [id, entry] of pending) {
+      if (entry.socket !== socket) continue;
+      pending.delete(id);
       clearTimeout(entry.timer);
       entry.reject(new Error("Magic NetSuite native bridge disconnected."));
     }
-    pending.clear();
   });
 }
 
@@ -208,9 +224,13 @@ function connectNativeBridge(): Promise<net.Socket> {
   });
 
   bridgeConnecting = connecting;
-  connecting.finally(() => {
+  // then(onOk, onErr) instead of finally(): finally() returns a new promise
+  // that rejects with the connection error, and nothing handled it, so every
+  // failed connect crashed the process (Node exits on unhandled rejections).
+  const clearConnecting = () => {
     bridgeConnecting = null;
-  });
+  };
+  connecting.then(clearConnecting, clearConnecting);
 
   return connecting;
 }
@@ -222,10 +242,13 @@ async function callExtensionTool(name: string, args: Record<string, unknown> = {
   const response = await new Promise<BridgeResponse>((resolve, reject) => {
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Timed out while running ${name}.`));
-    }, 30000);
+      reject(new Error(
+        `Native bridge did not return a response for NetSuite tool "${name}" within ${EXTENSION_TOOL_TIMEOUT_MS}ms. ` +
+        "The tool may still be running in the extension or NetSuite; this timeout alone does not mean the extension is broken.",
+      ));
+    }, EXTENSION_TOOL_TIMEOUT_MS);
 
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, reject, timer, socket });
     socket.write(JSON.stringify({
       requestId: id,
       method: "tools/call",
@@ -726,6 +749,7 @@ export function createServer(): McpServer {
     version: "1.0.0",
   });
 
+  registerDashboardTools(server, callExtensionToolResult);
   const resourceUri = "ui://magic-netsuite/context-picker.html";
 
   server.registerPrompt("open_context_picker", {
@@ -1788,6 +1812,20 @@ export function createServer(): McpServer {
   }, async () => {
     const data = parseToolJson(await callExtensionTool("netsuite_suitelet_stream_frame"));
     return toolResult(isRecord(data) ? data : { value: data }, "Suitelet frame captured.");
+  });
+
+  server.registerTool("magic_netsuite_suitelet_stream_thumbnail", {
+    title: "Get Suitelet Thumbnail",
+    description: "INTERNAL viewer transport for live Suitelet panes — agents should NOT use this. Returns a small JPEG of the controlled Suitelet, or idle when none is open; never opens a browser. To see the Suitelet, use magic_netsuite_suitelet_screenshot.",
+    inputSchema: {
+      maxWidth: z.number().optional(),
+      quality: z.number().optional(),
+    },
+  }, async ({ maxWidth, quality }) => {
+    if (!USE_PLAYWRIGHT) {
+      return toolResult({ ok: false, idle: true }, "Thumbnails need the Playwright controller (MAGIC_NS_PLAYWRIGHT).");
+    }
+    return controlToolResult(await playwrightController.thumbnail({ maxWidth, quality }), "Suitelet thumbnail captured.");
   });
 
   server.registerTool("magic_netsuite_suitelet_stream_input", {

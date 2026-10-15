@@ -19,5 +19,6 @@ defineProps<{
   contextMenu?: ContextMenuItem[];
   searchable?: boolean;
   filterable?: boolean;
+  sortable?: boolean;
 }>();
 </script>

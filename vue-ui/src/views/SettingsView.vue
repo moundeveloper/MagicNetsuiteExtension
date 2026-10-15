@@ -577,6 +577,12 @@ onBeforeUnmount(() => {
         />
       </div>
       <div class="shortcut-item">
+        <label>Quick Dashboard Selector:</label>
+        <span class="shortcut-value">{{ settings.dashboardWheelShortcut || 'Disabled' }}</span>
+        <router-link to="/dashboards">Configure in Dashboards</router-link>
+        <small>Hold, point to a dashboard, then release to open its tab.</small>
+      </div>
+      <div class="shortcut-item">
         <label for="reopen-closed-tab">Reopen Closed Dashboard Tab:</label>
         <InputText
           id="reopen-closed-tab"

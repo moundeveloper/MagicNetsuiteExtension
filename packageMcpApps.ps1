@@ -27,8 +27,10 @@ function Copy-Directory {
     }
 }
 
-if (-not (Test-Path (Join-Path $McpAppRoot "dist\main.js"))) {
-    throw "mcp_app has not been built. Expected dist\main.js."
+foreach ($RequiredFile in @("dist\main.js", "dist\dashboard-tools.js", "dist\dashboard-resources\dashboardTools.json", "dist\dashboard-resources\dashboardFiles.cjs")) {
+    if (-not (Test-Path -LiteralPath (Join-Path $McpAppRoot $RequiredFile))) {
+        throw "mcp_app build is incomplete. Missing $RequiredFile. Run pnpm run build in mcp_app before packaging."
+    }
 }
 
 if (Test-Path $McpAppsDest) {

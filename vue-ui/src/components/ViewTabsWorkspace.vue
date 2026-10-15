@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter, type RouteLocationNormalizedLoaded } from "vue-router";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
+import {
+  useRoute,
+  useRouter,
+  type RouteLocationNormalizedLoaded,
+} from "vue-router";
 import { routes } from "../router/routesMap";
 import { getNetsuiteEnvironment } from "../utils/api";
 import { getWorkspaceState, saveWorkspaceState } from "../utils/workspaceState";
 import { useSettings } from "../states/settingsState";
 import {
   formatKeyboardShortcut,
-  keyboardShortcutMatches
+  keyboardShortcutMatches,
 } from "../utils/keyboardShortcut";
 import {
   OPEN_DASHBOARD_TAB_EVENT,
-  type OpenDashboardTabDetail
+  setDashboardWorkspaceReady,
+  type OpenDashboardTabDetail,
 } from "../utils/dashboardTabs";
 
 type TabGroup = "left" | "right";
@@ -57,9 +69,13 @@ type WorkspaceSnapshot = {
   workspace: SavedWorkspace;
 };
 
-defineProps<{
-  vhOffset: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    vhOffset: number;
+    ephemeral?: boolean;
+  }>(),
+  { ephemeral: false },
+);
 
 const route = useRoute();
 const router = useRouter();
@@ -93,11 +109,19 @@ let workspaceReady = false;
 let workspaceDisposed = false;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let workspaceTransitionQueue: Promise<void> = Promise.resolve();
-const closedTabs = ref<Array<{ tab: ViewTab; group: TabGroup | null; index: number }>>([]);
+const closedTabs = ref<
+  Array<{ tab: ViewTab; group: TabGroup | null; index: number }>
+>([]);
 
-const isSplit = computed(() => leftTabIds.value.length > 0 && rightTabIds.value.length > 0);
-const leftTabs = computed(() => leftTabIds.value.map(findTab).filter(Boolean) as ViewTab[]);
-const rightTabs = computed(() => rightTabIds.value.map(findTab).filter(Boolean) as ViewTab[]);
+const isSplit = computed(
+  () => leftTabIds.value.length > 0 && rightTabIds.value.length > 0,
+);
+const leftTabs = computed(
+  () => leftTabIds.value.map(findTab).filter(Boolean) as ViewTab[],
+);
+const rightTabs = computed(
+  () => rightTabIds.value.map(findTab).filter(Boolean) as ViewTab[],
+);
 
 const topLevelRouteItems = routes.flatMap((item) => [
   item,
@@ -105,8 +129,8 @@ const topLevelRouteItems = routes.flatMap((item) => [
     ...child,
     icon: item.icon,
     status: item.status,
-    route: child.route
-  }))
+    route: child.route,
+  })),
 ]);
 
 const pathMatchesPattern = (path: string, pattern: string) => {
@@ -122,6 +146,12 @@ const routeLabel = (currentRoute: {
   query?: Record<string, unknown>;
 }) => {
   if (
+    currentRoute.path.startsWith("/dashboard/") &&
+    typeof currentRoute.query?.label === "string"
+  ) {
+    return currentRoute.query.label || "Dashboard";
+  }
+  if (
     currentRoute.path === "/watchtower" &&
     typeof currentRoute.query?.label === "string" &&
     currentRoute.query.label.trim()
@@ -130,12 +160,21 @@ const routeLabel = (currentRoute: {
   }
   const match =
     topLevelRouteItems.find((item) => item.route === currentRoute.path) ??
-    topLevelRouteItems.find((item) => pathMatchesPattern(currentRoute.path, item.route));
+    topLevelRouteItems.find((item) =>
+      pathMatchesPattern(currentRoute.path, item.route),
+    );
 
-  return match?.tabLabel || match?.breadcrumb || match?.name || String(currentRoute.name ?? "View");
+  return (
+    match?.tabLabel ||
+    match?.breadcrumb ||
+    match?.name ||
+    String(currentRoute.name ?? "View")
+  );
 };
 
-const componentForRoute = (currentRoute: Pick<RouteLocationNormalizedLoaded, "matched">) => {
+const componentForRoute = (
+  currentRoute: Pick<RouteLocationNormalizedLoaded, "matched">,
+) => {
   const record = currentRoute.matched[currentRoute.matched.length - 1];
   return record?.components?.default ?? null;
 };
@@ -144,7 +183,9 @@ function findTab(id: string) {
   return tabs.value.find((tab) => tab.id === id);
 }
 
-const tabFromRoute = (currentRoute: RouteLocationNormalizedLoaded): ViewTab | null => {
+const tabFromRoute = (
+  currentRoute: RouteLocationNormalizedLoaded,
+): ViewTab | null => {
   const component = componentForRoute(currentRoute);
   if (!component) return null;
 
@@ -153,7 +194,7 @@ const tabFromRoute = (currentRoute: RouteLocationNormalizedLoaded): ViewTab | nu
     fullPath: currentRoute.fullPath,
     label: routeLabel(currentRoute),
     component,
-    routeHydrated: true
+    routeHydrated: true,
   };
 };
 
@@ -167,7 +208,7 @@ const tabFromPath = (path: string): ViewTab | null => {
     fullPath: resolved.fullPath,
     label: routeLabel(resolved),
     component,
-    routeHydrated: false
+    routeHydrated: false,
   };
 };
 
@@ -180,7 +221,10 @@ const ensureGroupState = () => {
     if (!leftActiveId.value || !leftTabIds.value.includes(leftActiveId.value)) {
       leftActiveId.value = leftTabIds.value[0] ?? "";
     }
-    if (!rightActiveId.value || !rightTabIds.value.includes(rightActiveId.value)) {
+    if (
+      !rightActiveId.value ||
+      !rightTabIds.value.includes(rightActiveId.value)
+    ) {
       rightActiveId.value = rightTabIds.value[0] ?? "";
     }
     [leftActiveId.value, rightActiveId.value].forEach((id) => {
@@ -225,8 +269,10 @@ const ensureRouteTab = (currentRoute: RouteLocationNormalizedLoaded) => {
   activeTabId.value = targetTab.id;
 
   if (isSplit.value) {
-    if (leftTabIds.value.includes(targetTab.id)) leftActiveId.value = targetTab.id;
-    else if (rightTabIds.value.includes(targetTab.id)) rightActiveId.value = targetTab.id;
+    if (leftTabIds.value.includes(targetTab.id))
+      leftActiveId.value = targetTab.id;
+    else if (rightTabIds.value.includes(targetTab.id))
+      rightActiveId.value = targetTab.id;
     else {
       const target = activeGroup.value ?? "right";
       addTabToGroup(targetTab.id, target);
@@ -275,7 +321,8 @@ const navigateTab = async (tabId: string, navigation: TabNavigation) => {
   tab.component = component;
   tab.routeHydrated = true;
 
-  if (activeTabId.value !== tabId || route.fullPath === resolved.fullPath) return;
+  if (activeTabId.value !== tabId || route.fullPath === resolved.fullPath)
+    return;
   tabActivationNavigationDepth += 1;
   try {
     if (navigation.replace) await router.replace(resolved.fullPath);
@@ -300,7 +347,7 @@ const closeTab = async (tabId: string) => {
         : rightTabIds.value.includes(tabId)
           ? "right"
           : null,
-      index
+      index,
     });
     closedTabs.value = closedTabs.value.slice(0, 10);
   }
@@ -312,7 +359,8 @@ const closeTab = async (tabId: string) => {
   if (!wasActive) return;
 
   const nextTab =
-    tabs.value[Math.max(0, Math.min(index, tabs.value.length - 1))] ?? tabs.value[0];
+    tabs.value[Math.max(0, Math.min(index, tabs.value.length - 1))] ??
+    tabs.value[0];
   if (nextTab) await activateTab(nextTab.id);
 };
 
@@ -332,10 +380,7 @@ const reopenClosedTab = async () => {
 
 const handleWorkspaceShortcut = (event: KeyboardEvent) => {
   if (
-    keyboardShortcutMatches(
-      event,
-      settings.newDashboardTab || "ctrl+alt+n"
-    )
+    keyboardShortcutMatches(event, settings.newDashboardTab || "ctrl+alt+n")
   ) {
     event.preventDefault();
     void newHomeTab();
@@ -343,10 +388,7 @@ const handleWorkspaceShortcut = (event: KeyboardEvent) => {
   }
 
   if (
-    keyboardShortcutMatches(
-      event,
-      settings.reopenClosedTab || "ctrl+alt+t"
-    )
+    keyboardShortcutMatches(event, settings.reopenClosedTab || "ctrl+alt+t")
   ) {
     event.preventDefault();
     void reopenClosedTab();
@@ -357,7 +399,7 @@ const showTabContextMenu = (event: MouseEvent, tabId: string) => {
   tabContextMenu.value = {
     tabId,
     x: Math.min(event.clientX, window.innerWidth - 220),
-    y: Math.min(event.clientY, window.innerHeight - 240)
+    y: Math.min(event.clientY, window.innerHeight - 240),
   };
 };
 
@@ -368,7 +410,7 @@ const hideTabContextMenu = () => {
 const reloadTab = (tabId: string) => {
   tabReloadVersions.value = {
     ...tabReloadVersions.value,
-    [tabId]: (tabReloadVersions.value[tabId] ?? 0) + 1
+    [tabId]: (tabReloadVersions.value[tabId] ?? 0) + 1,
   };
   hideTabContextMenu();
 };
@@ -395,20 +437,22 @@ const splitWithTab = async (tabId: string, side: TabGroup) => {
   if (tabs.value.length < 2 || !findTab(tabId)) return;
 
   if (!isSplit.value) {
-    const otherIds = tabs.value.map((tab) => tab.id).filter((id) => id !== tabId);
+    const otherIds = tabs.value
+      .map((tab) => tab.id)
+      .filter((id) => id !== tabId);
     if (side === "left") {
       leftTabIds.value = [tabId];
       rightTabIds.value = otherIds;
       leftActiveId.value = tabId;
       rightActiveId.value = otherIds.includes(activeTabId.value)
         ? activeTabId.value
-        : otherIds[0] ?? "";
+        : (otherIds[0] ?? "");
     } else {
       leftTabIds.value = otherIds;
       rightTabIds.value = [tabId];
       leftActiveId.value = otherIds.includes(activeTabId.value)
         ? activeTabId.value
-        : otherIds[0] ?? "";
+        : (otherIds[0] ?? "");
       rightActiveId.value = tabId;
     }
   } else {
@@ -474,7 +518,7 @@ const serializeWorkspace = (): SavedWorkspace => ({
   rightTabIds: [...rightTabIds.value],
   leftActiveId: leftActiveId.value,
   rightActiveId: rightActiveId.value,
-  splitRatio: splitRatio.value
+  splitRatio: splitRatio.value,
 });
 
 const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
@@ -484,14 +528,13 @@ const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
 
   const seenTabIds = new Set<string>();
   const normalizedTabs = candidate.tabs
-    .filter(
-      (tab): tab is { id: string; fullPath: string } =>
-        Boolean(
-          tab &&
-            typeof tab === "object" &&
-            typeof tab.id === "string" &&
-            typeof tab.fullPath === "string"
-        )
+    .filter((tab): tab is { id: string; fullPath: string } =>
+      Boolean(
+        tab &&
+        typeof tab === "object" &&
+        typeof tab.id === "string" &&
+        typeof tab.fullPath === "string",
+      ),
     )
     .filter((tab) => {
       if (seenTabIds.has(tab.id)) return false;
@@ -509,30 +552,28 @@ const normalizeSavedWorkspace = (value: unknown): SavedWorkspace | null => {
         : normalizedTabs[0]!.id,
     leftTabIds: Array.isArray(candidate.leftTabIds)
       ? candidate.leftTabIds.filter(
-          (id): id is string => typeof id === "string"
+          (id): id is string => typeof id === "string",
         )
       : [],
     rightTabIds: Array.isArray(candidate.rightTabIds)
       ? candidate.rightTabIds.filter(
-          (id): id is string => typeof id === "string"
+          (id): id is string => typeof id === "string",
         )
       : [],
     leftActiveId:
-      typeof candidate.leftActiveId === "string"
-        ? candidate.leftActiveId
-        : "",
+      typeof candidate.leftActiveId === "string" ? candidate.leftActiveId : "",
     rightActiveId:
       typeof candidate.rightActiveId === "string"
         ? candidate.rightActiveId
         : "",
     splitRatio: Number.isFinite(Number(candidate.splitRatio))
       ? Number(candidate.splitRatio)
-      : 50
+      : 50,
   };
 };
 
 const normalizeWorkspaceSnapshot = (
-  value: unknown
+  value: unknown,
 ): WorkspaceSnapshot | null => {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<WorkspaceSnapshot>;
@@ -550,7 +591,7 @@ const normalizeWorkspaceSnapshot = (
     createdAt: Number.isFinite(Number(candidate.createdAt))
       ? Number(candidate.createdAt)
       : Date.now(),
-    workspace
+    workspace,
   };
 };
 
@@ -558,7 +599,7 @@ const applySavedWorkspace = async (value: unknown) => {
   const saved = normalizeSavedWorkspace(value);
   if (!saved) return false;
   const requestedActiveId = saved.tabs.some(
-    (tab) => tab.id === saved.activeTabId
+    (tab) => tab.id === saved.activeTabId,
   )
     ? saved.activeTabId
     : saved.tabs[0]!.id;
@@ -569,7 +610,7 @@ const applySavedWorkspace = async (value: unknown) => {
         ? {
             ...tab,
             id: item.id,
-            routeHydrated: item.id === requestedActiveId
+            routeHydrated: item.id === requestedActiveId,
           }
         : null;
     })
@@ -595,7 +636,7 @@ const applySavedWorkspace = async (value: unknown) => {
     ...restoredTabs.map((tab) => {
       const match = tab.id.match(/view-tab-(\d+)/);
       return match ? Number(match[1]) + 1 : 1;
-    })
+    }),
   );
   const validIds = new Set(restoredTabs.map((tab) => tab.id));
   leftTabIds.value = saved.leftTabIds.filter((id) => validIds.has(id));
@@ -603,16 +644,16 @@ const applySavedWorkspace = async (value: unknown) => {
   activeTabId.value = active.id;
   leftActiveId.value = validIds.has(saved.leftActiveId)
     ? saved.leftActiveId
-    : leftTabIds.value[0] ?? "";
+    : (leftTabIds.value[0] ?? "");
   rightActiveId.value = validIds.has(saved.rightActiveId)
     ? saved.rightActiveId
-    : rightTabIds.value[0] ?? "";
+    : (rightTabIds.value[0] ?? "");
   splitRatio.value = Math.max(25, Math.min(75, saved.splitRatio || 50));
   ensureGroupState();
   const visibleIds = new Set([
     activeTabId.value,
     leftActiveId.value,
-    rightActiveId.value
+    rightActiveId.value,
   ]);
   restoredTabs.forEach((tab) => {
     if (visibleIds.has(tab.id)) tab.routeHydrated = true;
@@ -623,7 +664,7 @@ const applySavedWorkspace = async (value: unknown) => {
 };
 
 const scheduleWorkspaceSave = () => {
-  if (!workspaceReady) return;
+  if (!workspaceReady || props.ephemeral) return;
   if (saveTimer) clearTimeout(saveTimer);
   const environment = workspaceEnvironment;
   const workspace = serializeWorkspace();
@@ -641,13 +682,13 @@ const cancelScheduledWorkspaceSave = () => {
 
 const restoreWorkspace = async (environment?: string) => {
   workspaceEnvironment =
-    environment ??
-    (await getNetsuiteEnvironment().catch(() => "unknown"));
+    environment ?? (await getNetsuiteEnvironment().catch(() => "unknown"));
   if (workspaceDisposed) return false;
+  if (props.ephemeral) return false;
 
   const saved = await getWorkspaceState<unknown>(
     "dashboard",
-    workspaceEnvironment
+    workspaceEnvironment,
   );
   if (workspaceDisposed) return false;
   return applySavedWorkspace(saved);
@@ -658,13 +699,13 @@ const loadWorkspaceSnapshots = async () => {
   try {
     const stored = await getWorkspaceState<unknown>(
       "dashboard-snapshots",
-      workspaceEnvironment
+      workspaceEnvironment,
     );
     workspaceSnapshots.value = Array.isArray(stored)
       ? stored
           .map(normalizeWorkspaceSnapshot)
-          .filter(
-            (snapshot): snapshot is WorkspaceSnapshot => Boolean(snapshot)
+          .filter((snapshot): snapshot is WorkspaceSnapshot =>
+            Boolean(snapshot),
           )
       : [];
   } finally {
@@ -687,22 +728,22 @@ const saveWorkspaceSnapshot = async () => {
   if (!name || tabs.value.length === 0) return;
 
   const existing = workspaceSnapshots.value.find(
-    (snapshot) => snapshot.name.toLowerCase() === name.toLowerCase()
+    (snapshot) => snapshot.name.toLowerCase() === name.toLowerCase(),
   );
   const snapshot: WorkspaceSnapshot = {
     id: existing?.id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     name,
     createdAt: Date.now(),
-    workspace: serializeWorkspace()
+    workspace: serializeWorkspace(),
   };
   const nextSnapshots = [
     snapshot,
-    ...workspaceSnapshots.value.filter((item) => item.id !== snapshot.id)
+    ...workspaceSnapshots.value.filter((item) => item.id !== snapshot.id),
   ];
   await saveWorkspaceState(
     "dashboard-snapshots",
     workspaceEnvironment,
-    nextSnapshots
+    nextSnapshots,
   );
   workspaceSnapshots.value = nextSnapshots;
   workspaceSnapshotName.value = "";
@@ -727,7 +768,7 @@ const restoreWorkspaceSnapshot = async (snapshot: WorkspaceSnapshot) => {
     await saveWorkspaceState(
       "dashboard",
       workspaceEnvironment,
-      serializeWorkspace()
+      serializeWorkspace(),
     );
   } finally {
     workspaceReady = true;
@@ -737,12 +778,12 @@ const restoreWorkspaceSnapshot = async (snapshot: WorkspaceSnapshot) => {
 
 const deleteWorkspaceSnapshot = async (snapshotId: string) => {
   const nextSnapshots = workspaceSnapshots.value.filter(
-    (snapshot) => snapshot.id !== snapshotId
+    (snapshot) => snapshot.id !== snapshotId,
   );
   await saveWorkspaceState(
     "dashboard-snapshots",
     workspaceEnvironment,
-    nextSnapshots
+    nextSnapshots,
   );
   workspaceSnapshots.value = nextSnapshots;
 };
@@ -752,7 +793,7 @@ const formatSnapshotDate = (timestamp: number) =>
     month: "short",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
   });
 
 const switchWorkspaceEnvironment = async (nextEnvironment: string) => {
@@ -777,11 +818,11 @@ const switchWorkspaceEnvironment = async (nextEnvironment: string) => {
   await nextTick();
 
   try {
-    if (previousWorkspace) {
+    if (previousWorkspace && !props.ephemeral) {
       await saveWorkspaceState(
         "dashboard",
         previousEnvironment,
-        previousWorkspace
+        previousWorkspace,
       );
     }
 
@@ -833,14 +874,25 @@ const newHomeTab = async (group?: TabGroup) => {
 const openPathInDashboardTab = async ({
   path,
   label,
-  reuseExisting = true
+  reuseExisting = true,
+  reuseByPath = false,
 }: OpenDashboardTabDetail) => {
   const resolved = router.resolve(path);
   if (reuseExisting) {
     const existing = tabs.value.find(
-      (tab) => tab.fullPath === resolved.fullPath
+      (tab) =>
+        tab.fullPath === resolved.fullPath ||
+        (reuseByPath && router.resolve(tab.fullPath).path === resolved.path) ||
+        (resolved.name === "SavedDashboard" &&
+          router.resolve(tab.fullPath).name === "SavedDashboard" &&
+          router.resolve(tab.fullPath).params.dashboardId ===
+            resolved.params.dashboardId),
     );
     if (existing) {
+      if (resolved.name === "SavedDashboard") {
+        existing.fullPath = resolved.fullPath;
+        existing.label = label?.trim() || routeLabel(resolved);
+      }
       await activateTab(existing.id);
       return;
     }
@@ -871,7 +923,11 @@ const onTabBarWheel = (event: WheelEvent) => {
   target.scrollLeft += event.deltaY || event.deltaX;
 };
 
-const onTabDragStart = (event: DragEvent, tabId: string, group: TabGroup | null = null) => {
+const onTabDragStart = (
+  event: DragEvent,
+  tabId: string,
+  group: TabGroup | null = null,
+) => {
   draggingTabId.value = tabId;
   draggingGroup.value = group;
   event.dataTransfer?.setData("text/plain", tabId);
@@ -892,7 +948,7 @@ const onTabItemDragOver = (event: DragEvent, targetId: string) => {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
   reorderTarget.value = {
     id: targetId,
-    side: event.clientX < rect.left + rect.width / 2 ? "before" : "after"
+    side: event.clientX < rect.left + rect.width / 2 ? "before" : "after",
   };
 };
 
@@ -912,7 +968,11 @@ const onTabItemDragLeave = (event: DragEvent, targetId: string) => {
   if (reorderTarget.value?.id === targetId) reorderTarget.value = null;
 };
 
-const reorderTabs = (sourceId: string, targetId: string, side: "before" | "after") => {
+const reorderTabs = (
+  sourceId: string,
+  targetId: string,
+  side: "before" | "after",
+) => {
   const source = findTab(sourceId);
   if (!source || sourceId === targetId) return;
   tabs.value = tabs.value.filter((tab) => tab.id !== sourceId);
@@ -932,13 +992,18 @@ const reorderTabInGroup = (
   sourceId: string,
   targetId: string,
   side: "before" | "after",
-  group: TabGroup
+  group: TabGroup,
 ) => {
-  const targetIds = (group === "left" ? leftTabIds.value : rightTabIds.value)
-    .filter((id) => id !== sourceId);
+  const targetIds = (
+    group === "left" ? leftTabIds.value : rightTabIds.value
+  ).filter((id) => id !== sourceId);
   const targetIndex = targetIds.indexOf(targetId);
   if (targetIndex < 0) return;
-  targetIds.splice(side === "before" ? targetIndex : targetIndex + 1, 0, sourceId);
+  targetIds.splice(
+    side === "before" ? targetIndex : targetIndex + 1,
+    0,
+    sourceId,
+  );
 
   if (group === "left") {
     leftTabIds.value = targetIds;
@@ -960,7 +1025,12 @@ const onTabItemDrop = async (_event: DragEvent, targetId: string) => {
 
   reorderTabs(sourceId, targetId, reorderTarget.value.side);
   if (targetGroup) {
-    reorderTabInGroup(sourceId, targetId, reorderTarget.value.side, targetGroup);
+    reorderTabInGroup(
+      sourceId,
+      targetId,
+      reorderTarget.value.side,
+      targetGroup,
+    );
   }
   ensureGroupState();
   await activateTab(sourceId);
@@ -1016,7 +1086,7 @@ const getTabStyle = (tabId: string) => {
     overflow: "hidden",
     display: visible ? "flex" : "none",
     flexDirection: "column",
-    minWidth: "0"
+    minWidth: "0",
   } as Record<string, string>;
 
   if (!isSplit.value) {
@@ -1031,7 +1101,7 @@ const getTabStyle = (tabId: string) => {
     return {
       ...base,
       left: `calc(${splitRatio.value}% + 2.5px)`,
-      right: "0"
+      right: "0",
     };
   }
 
@@ -1064,14 +1134,22 @@ watch(
     if (workspaceReady && tabActivationNavigationDepth === 0) {
       ensureRouteTab(route);
     }
-  }
+  },
 );
 
 watch(tabs, ensureGroupState, { deep: true });
 watch(
-  [tabs, activeTabId, leftTabIds, rightTabIds, leftActiveId, rightActiveId, splitRatio],
+  [
+    tabs,
+    activeTabId,
+    leftTabIds,
+    rightTabIds,
+    leftActiveId,
+    rightActiveId,
+    splitRatio,
+  ],
   scheduleWorkspaceSave,
-  { deep: true }
+  { deep: true },
 );
 
 onMounted(async () => {
@@ -1086,26 +1164,28 @@ onMounted(async () => {
   window.addEventListener("mousedown", hideTabContextMenu);
   window.addEventListener(
     "magic-netsuite-environment-changed",
-    handleWorkspaceEnvironmentChanged
+    handleWorkspaceEnvironmentChanged,
   );
   window.addEventListener(OPEN_DASHBOARD_TAB_EVENT, handleOpenDashboardTab);
+  setDashboardWorkspaceReady(true);
 });
 
 onBeforeUnmount(() => {
+  setDashboardWorkspaceReady(false);
   const environment = workspaceEnvironment;
   const workspace = workspaceReady ? serializeWorkspace() : null;
   workspaceDisposed = true;
   workspaceReady = false;
   stopSplitResize();
   cancelScheduledWorkspaceSave();
-  if (workspace) {
+  if (workspace && !props.ephemeral) {
     void saveWorkspaceState("dashboard", environment, workspace);
   }
   window.removeEventListener("keydown", handleWorkspaceShortcut);
   window.removeEventListener("mousedown", hideTabContextMenu);
   window.removeEventListener(
     "magic-netsuite-environment-changed",
-    handleWorkspaceEnvironmentChanged
+    handleWorkspaceEnvironmentChanged,
   );
   window.removeEventListener(OPEN_DASHBOARD_TAB_EVENT, handleOpenDashboardTab);
 });
@@ -1128,8 +1208,10 @@ onBeforeUnmount(() => {
           class="view-tab"
           :class="{
             'view-tab--active': tab.id === activeTabId,
-            'view-tab--drop-before': reorderTarget?.id === tab.id && reorderTarget?.side === 'before',
-            'view-tab--drop-after': reorderTarget?.id === tab.id && reorderTarget?.side === 'after'
+            'view-tab--drop-before':
+              reorderTarget?.id === tab.id && reorderTarget?.side === 'before',
+            'view-tab--drop-after':
+              reorderTarget?.id === tab.id && reorderTarget?.side === 'after',
           }"
           draggable="true"
           @click="activateTab(tab.id)"
@@ -1145,6 +1227,7 @@ onBeforeUnmount(() => {
           <button
             v-if="tabs.length > 1"
             class="view-tab-close"
+            aria-label="Close tab"
             title="Close tab"
             @click.stop="closeTab(tab.id)"
           >
@@ -1167,6 +1250,7 @@ onBeforeUnmount(() => {
           <i class="pi pi-history"></i>
         </button>
         <button
+          v-if="!props.ephemeral"
           class="view-tab-add"
           title="Workspace library"
           @click="openWorkspaceLibrary"
@@ -1193,8 +1277,12 @@ onBeforeUnmount(() => {
               :class="{
                 'view-tab--active': tab.id === leftActiveId,
                 'view-tab--focused': tab.id === activeTabId,
-                'view-tab--drop-before': reorderTarget?.id === tab.id && reorderTarget?.side === 'before',
-                'view-tab--drop-after': reorderTarget?.id === tab.id && reorderTarget?.side === 'after'
+                'view-tab--drop-before':
+                  reorderTarget?.id === tab.id &&
+                  reorderTarget?.side === 'before',
+                'view-tab--drop-after':
+                  reorderTarget?.id === tab.id &&
+                  reorderTarget?.side === 'after',
               }"
               draggable="true"
               @click="activateTab(tab.id)"
@@ -1207,7 +1295,12 @@ onBeforeUnmount(() => {
               @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
               <span class="view-tab-label">{{ tab.label }}</span>
-              <button class="view-tab-close" title="Close tab" @click.stop="closeTab(tab.id)">
+              <button
+                class="view-tab-close"
+            aria-label="Close tab"
+                title="Close tab"
+                @click.stop="closeTab(tab.id)"
+              >
                 <i class="pi pi-times"></i>
               </button>
             </div>
@@ -1248,8 +1341,12 @@ onBeforeUnmount(() => {
               :class="{
                 'view-tab--active': tab.id === rightActiveId,
                 'view-tab--focused': tab.id === activeTabId,
-                'view-tab--drop-before': reorderTarget?.id === tab.id && reorderTarget?.side === 'before',
-                'view-tab--drop-after': reorderTarget?.id === tab.id && reorderTarget?.side === 'after'
+                'view-tab--drop-before':
+                  reorderTarget?.id === tab.id &&
+                  reorderTarget?.side === 'before',
+                'view-tab--drop-after':
+                  reorderTarget?.id === tab.id &&
+                  reorderTarget?.side === 'after',
               }"
               draggable="true"
               @click="activateTab(tab.id)"
@@ -1262,7 +1359,12 @@ onBeforeUnmount(() => {
               @contextmenu.prevent.stop="showTabContextMenu($event, tab.id)"
             >
               <span class="view-tab-label">{{ tab.label }}</span>
-              <button class="view-tab-close" title="Close tab" @click.stop="closeTab(tab.id)">
+              <button
+                class="view-tab-close"
+            aria-label="Close tab"
+                title="Close tab"
+                @click.stop="closeTab(tab.id)"
+              >
                 <i class="pi pi-times"></i>
               </button>
             </div>
@@ -1282,6 +1384,7 @@ onBeforeUnmount(() => {
               <i class="pi pi-history"></i>
             </button>
             <button
+              v-if="!props.ephemeral"
               class="view-tab-add"
               title="Workspace library"
               @click="openWorkspaceLibrary"
@@ -1293,7 +1396,10 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="view-pane-host" :class="{ 'view-pane-host--split-drag': draggingTabId && !isSplit }">
+    <div
+      class="view-pane-host"
+      :class="{ 'view-pane-host--split-drag': draggingTabId && !isSplit }"
+    >
       <div v-if="workspaceSwitching" class="view-workspace-switching">
         <i class="pi pi-spin pi-spinner"></i>
         <span>Loading account workspace...</span>
@@ -1408,7 +1514,10 @@ onBeforeUnmount(() => {
           <header>
             <div>
               <strong>Workspace Library</strong>
-              <span>Saved for {{ workspaceEnvironment.split(".")[0]?.toUpperCase() }}</span>
+              <span
+                >Saved for
+                {{ workspaceEnvironment.split(".")[0]?.toUpperCase() }}</span
+              >
             </div>
             <button
               type="button"
@@ -1460,7 +1569,9 @@ onBeforeUnmount(() => {
                       snapshot.workspace.rightTabIds.length
                     "
                   >
-                    · split {{ Math.round(snapshot.workspace.splitRatio) }}/{{ 100 - Math.round(snapshot.workspace.splitRatio) }}
+                    · split {{ Math.round(snapshot.workspace.splitRatio) }}/{{
+                      100 - Math.round(snapshot.workspace.splitRatio)
+                    }}
                   </template>
                   · {{ formatSnapshotDate(snapshot.createdAt) }}
                 </small>
@@ -1926,7 +2037,10 @@ onBeforeUnmount(() => {
   font-weight: 600;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+  transition:
+    opacity 0.12s,
+    background 0.12s,
+    border-color 0.12s;
   user-select: none;
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import browserGuide from "../../../mcp_server/customToolBrowserGuide.json";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Dialog from "primevue/dialog";
 import InputText from "primevue/inputtext";
@@ -459,6 +460,11 @@ onBeforeUnmount(() => stopWorkspaceResize?.());
 });
 return { entityId: customer.getValue({ fieldId: 'entityid' }) };</pre>
       <p><code>input</code> contains validated arguments. Return JSON-serializable data. Use <code>console.log()</code> for diagnostic output; captured logs are returned with the result.</p>
+      <h3>Browser automation (client tools)</h3>
+      <p>{{ browserGuide.codeDescription }}</p>
+      <pre>const tab = await context.browser.openTab({ url: input.url });
+await context.browser.waitForSelector(tab.id, ".results");
+return await context.browser.extract(tab.id, { selector: ".results", format: "text" });</pre>
       <h3>4. Test, review, activate</h3>
       <p>Each tool owns its test input and latest output; switching tools loads that tool's saved test state. AI creation includes a concrete test case and immediately runs it through the test operation. Draft tools remain invisible to normal routing. Combined tools can be tested once in each domain. Set status to <strong>active</strong> when the schema, permissions, and output have been reviewed.</p>
       <h3>AI workflow</h3>

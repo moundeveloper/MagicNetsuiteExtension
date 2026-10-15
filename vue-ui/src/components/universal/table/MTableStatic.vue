@@ -74,7 +74,8 @@
         :key="index"
         class="m-table-header-cell"
       >
-        {{ column.label }}
+        <button v-if="column.sortable" class="m-table-sort" type="button" :aria-label="`Sort by ${column.label}`" @click="$emit('sort', column.field)">{{ column.label }} <i :class="sortField === column.field ? (sortOrder === 'desc' ? 'pi pi-sort-down' : 'pi pi-sort-up') : 'pi pi-sort-alt'" /></button>
+        <template v-else>{{ column.label }}</template>
       </div>
     </div>
 
@@ -164,6 +165,7 @@ interface Column {
   contextMenu?: ContextMenuItem[];
   searchable?: boolean;
   filterable?: boolean;
+  sortable?: boolean;
 }
 
 interface ColumnWithVisibility extends Column {
@@ -178,6 +180,8 @@ const props = withDefaults(
     collapsible?: boolean;
     collapsibleKey?: string;
     loading?: boolean;
+    sortField?: string;
+    sortOrder?: string;
   }>(),
   {
     searchable: false,
@@ -189,6 +193,7 @@ const props = withDefaults(
 );
 
 const slots = defineSlots();
+defineEmits<{sort:[field:string]}>();
 const searchQuery = ref("");
 const showColumnControls = ref(false);
 const columnVisibility = ref<Record<string, boolean>>({});
@@ -227,6 +232,7 @@ const columns = computed<Column[]>(() => {
         contextMenu,
         searchable,
         filterable,
+        sortable: p.sortable === true,
       };
     });
 });

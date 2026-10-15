@@ -77,6 +77,10 @@ let extensionReady = false;
 let nextClientId = 0;
 let nextNativeRequestId = 0;
 let ipcServer = null;
+const EXTENSION_RESPONSE_TIMEOUT_MS = Math.max(
+  10000,
+  Number(process.env.MAGIC_NETSUITE_EXTENSION_TIMEOUT_MS) || 55000
+);
 const claudeRuns = new Map();
 
 function safeClaudeCwd(value) {
@@ -239,11 +243,12 @@ function writeClientMessage(socket, message) {
   socket.write(JSON.stringify(message) + "\n");
 }
 
-function rejectClientRequest(socket, requestId, message) {
+function rejectClientRequest(socket, requestId, message, details = {}) {
   writeClientMessage(socket, {
     requestId,
     success: false,
-    error: message
+    error: message,
+    ...details
   });
 }
 
@@ -307,7 +312,7 @@ function startIpcServer() {
 }
 
 function handleClientMessage(socket, clientId, message) {
-  const { requestId, method, params } = message;
+  const { requestId, method, params, expectedAccount } = message;
 
   if (!requestId) {
     rejectClientRequest(socket, requestId, "Missing requestId.");
@@ -331,23 +336,48 @@ function handleClientMessage(socket, clientId, message) {
   }
 
   const nativeRequestId = `native-${++nextNativeRequestId}`;
+  const toolName =
+    method === "tools/call" ? String(params?.name || "unknown tool") : String(method);
+  const startedAt = Date.now();
   const timer = setTimeout(() => {
     if (!pending.has(nativeRequestId)) return;
     pending.delete(nativeRequestId);
-    rejectClientRequest(socket, requestId, "Extension timeout");
-  }, 10000);
+    rejectClientRequest(
+      socket,
+      requestId,
+      `NetSuite tool "${toolName}" did not return within ${EXTENSION_RESPONSE_TIMEOUT_MS}ms. ` +
+        "The native bridge and Chrome extension are connected, and the request was delivered to the extension, " +
+        "but execution did not finish in time. This does not mean the extension is broken. " +
+        "Check the selected NetSuite account/tab, login state, and Suitelet response.",
+      {
+        errorCode: "EXTENSION_EXECUTION_TIMEOUT",
+        errorDetails: {
+          stage: "extension-processing",
+          tool: toolName,
+          timeoutMs: EXTENSION_RESPONSE_TIMEOUT_MS,
+          extensionConnected: true,
+          requestDelivered: true
+        }
+      }
+    );
+  }, EXTENSION_RESPONSE_TIMEOUT_MS);
 
   pending.set(nativeRequestId, {
     socket,
     clientId,
     clientRequestId: requestId,
-    timer
+    timer,
+    toolName,
+    startedAt
   });
 
   const payload = {
     requestId: nativeRequestId,
     method,
-    params
+    params,
+    // Per-session routing target set by that session's switch_environment.
+    expectedAccount:
+      typeof expectedAccount === "string" && expectedAccount ? expectedAccount : undefined
   };
 
   log("MCP client -> extension", clientId, payload);
@@ -630,6 +660,8 @@ function handleExtensionMessage(message) {
     success: Boolean(message.success),
     result: message.result,
     error: message.error,
+    errorCode: message.errorCode,
+    errorDetails: message.errorDetails,
     account: message.account || null
   };
 

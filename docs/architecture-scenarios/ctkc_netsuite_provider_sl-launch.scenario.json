@@ -1,0 +1,55 @@
+{
+  "entryPoint": "onRequest",
+  "context": "SUITELET",
+  "clock": "2026-09-25T12:00:00.000Z",
+  "seed": 42,
+  "parameters": {},
+  "user": {
+    "id": 1,
+    "role": "ADMINISTRATOR",
+    "name": "Local test user"
+  },
+  "records": [],
+  "files": [],
+  "queryFixtures": [
+    {
+      "query": "SELECT name, custrecord_ctkc_ac_ai_requirement AS airequirement, custrecord_ctkc_ac_model AS model, (SELECT pv.custrecord_ctkc_pv_key FROM customrecord_ctkc_provider pv WHERE pv.id = custrecord_ctkc_ac_provider) AS provider, custrecord_ctkc_ac_system_prompt AS systemprompt, custrecord_ctkc_ac_multi_task AS multitask FROM customrecord_ctkc_agent_config WHERE id = ?",
+      "params": [
+        7
+      ],
+      "rows": [
+        {
+          "name": "Local agent",
+          "airequirement": 1,
+          "model": "COHERE_COMMAND",
+          "provider": "NETSUITE",
+          "systemprompt": "",
+          "multitask": "F"
+        }
+      ]
+    }
+  ],
+  "httpFixtures": [],
+  "apiFixtures": [],
+  "input": {
+    "method": "POST",
+    "parameters": {
+      "action": "launch_agent"
+    },
+    "body": "{\"agentConfigId\":7,\"title\":\"Local agent\",\"userMessage\":\"Test\"}"
+  },
+  "selectOptions": [
+    {
+      "recordType": "customrecord_ctkc_agent_session",
+      "fieldId": "custrecord_ctkc_as_status",
+      "value": 4,
+      "text": "NOT_STARTED"
+    },
+    {
+      "recordType": "customrecord_ctkc_agent_session_event",
+      "fieldId": "custrecord_ctkc_ase_type",
+      "value": 1,
+      "text": "netsuite.session_started"
+    }
+  ]
+}
